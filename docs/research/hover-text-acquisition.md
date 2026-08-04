@@ -280,10 +280,35 @@ Updated 2026-08-04 against the first sweep
    during a hover, so it needs the follow instrument during real
    reading.
 
-### A question the sweep added
+### A question the sweep added, and answered
 
 8. **Is the low on-target rate inside documents empty space, or
-   inaccurate resolution?** The distances are consistent with "the
-   nearest line above an empty region", but that has not been separated
-   from the alternative. It needs points known to carry glyphs, which
-   this harness cannot identify.
+   inaccurate resolution?** · **answered: empty space, and there are two
+   populations rather than one.**
+
+   Recording which side of the resolved rectangle each miss fell on
+   settles it. Misses are strongly directional (`left 0, above 44` in
+   one window; `above 0, left 0, right 10` in another) and the direction
+   differs per window. Inaccurate resolution is symmetric noise and
+   cannot produce that; a layout can, because the direction is set by
+   where the empty region sits relative to the text.
+
+   The same measurement corrected a simpler reading: **misses on Text
+   controls are a different phenomenon.** They run to 7px at p95 and
+   14px at maximum, one rectangle each, which is glyph-box and
+   line-height slack rather than a wrong target.
+
+   So there are two clusters, separated by roughly 14px against 322px:
+   slack, which must be tolerated, and empty space, which must be
+   suppressed. A threshold of exactly zero would discard about a fifth
+   of good hits.
+
+### Still open
+
+9. **Is the once-per-window wake memo correct, or should it be
+   once-per-process?** Most windows report "no change" after a wake,
+   consistent with Chromium enabling accessibility process-wide. Needs a
+   freshly launched browser, swept before anything else touches it.
+10. **What does the 140ms wake settle cost on a hover budget** whose
+    entire dwell is 320ms? The sweep drives the wake explicitly and so
+    cannot answer it.
