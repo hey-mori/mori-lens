@@ -1,0 +1,24 @@
+[package]
+name = "lens"
+description = "Mori Lens: rest the pointer on a sentence and read it in your language."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+lens-core.workspace = true
+lens-platform-windows.workspace = true
+lens-translate.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_System_Console",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[lints]
+workspace = true

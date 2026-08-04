@@ -135,3 +135,172 @@ fn what_a_plain_win32_edit_returns() {
         Err(error) => println!("plain EDIT      → {}", error.reason()),
     }
 }
+
+/// The card must not take focus. Everything else about the overlay is
+/// subordinate to this.
+///
+/// A card that activates itself while the user is typing eats a keystroke and
+/// moves the caret, which is worse than showing no card at all. Three flags buy
+/// it and any one of them silently regressing would be invisible in a
+/// screenshot, so it is asserted here instead: record the foreground window,
+/// show a card, and require that it did not move.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn showing_a_card_does_not_move_the_foreground_window() {
+    use lens_core::card::Card;
+    use lens_core::geometry::ScreenRect;
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    let Some(overlay) = crate::Overlay::start() else {
+        panic!("could not create the overlay window");
+    };
+
+    // SAFETY: a read-only query of which window has focus.
+    let before = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+
+    let card = Card::translated(
+        "The output files came back empty, so the full test suite didn't produce anything.",
+        &QuickTranslation {
+            text:
+                "출력 파일이 비어 있었기 때문에 전체 테스트 스위트는 아무것도 생성하지 않았습니다."
+                    .to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "qwen2.5:3b".to_owned(),
+            latency_ms: 1090,
+        },
+    );
+    assert!(overlay.show(card, ScreenRect::new(400, 300, 520, 22)));
+
+    // Long enough for the window to be created, positioned, and painted.
+    std::thread::sleep(std::time::Duration::from_millis(700));
+
+    // SAFETY: read-only.
+    let after = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+    println!("foreground before {before:?} after {after:?}");
+
+    assert_eq!(
+        before.0 as isize, after.0 as isize,
+        "the overlay stole focus, which makes it unusable while typing",
+    );
+
+    assert!(overlay.hide());
+    std::thread::sleep(std::time::Duration::from_millis(200));
+}
+
+/// A translation with no original beside it is refused at the overlay too.
+///
+/// The rule lives in `Card::is_showable`, and this is the second place it is
+/// enforced. Belt and braces on purpose: it is the only mitigation for a model
+/// that was talked into emitting text a page chose
+/// (`docs/privacy-model.md` §1), so it should not rest on one call site.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn the_overlay_refuses_a_translation_with_no_original() {
+    use lens_core::card::Card;
+    use lens_core::geometry::ScreenRect;
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    let Some(overlay) = crate::Overlay::start() else {
+        panic!("could not create the overlay window");
+    };
+
+    let orphan = Card::translated(
+        "",
+        &QuickTranslation {
+            text: "무엇인가".to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "qwen2.5:3b".to_owned(),
+            latency_ms: 10,
+        },
+    );
+
+    assert!(
+        !overlay.show(orphan, ScreenRect::new(400, 300, 200, 20)),
+        "a translation was shown with no original to check it against",
+    );
+}
+
+/// The card actually paints text, proven by reading its own pixels back.
+///
+/// Every other check here would pass on a blank card: focus is not stolen by a
+/// window that draws nothing, and placement is arithmetic. This is the one that
+/// fails if `WM_PAINT` never runs, the font is missing, or the text is drawn in
+/// the background colour.
+///
+/// It copies **this process's own window** into memory and never touches the
+/// disk, so it does not conflict with the rule that no screen capture is ever
+/// written (`docs/privacy-model.md` §1). Nothing of the user's screen is read.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn a_shown_card_has_text_painted_on_it() {
+    use std::collections::HashSet;
+
+    use lens_core::card::Card;
+    use lens_core::geometry::ScreenRect;
+    use lens_core::translate::{EngineId, QuickTranslation};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Gdi::{
+        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
+        GetPixel, ReleaseDC, SelectObject, SRCCOPY,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
+
+    let Some(overlay) = crate::Overlay::start() else {
+        panic!("could not create the overlay window");
+    };
+
+    let card = Card::translated(
+        "The output files came back empty.",
+        &QuickTranslation {
+            text: "출력 파일이 비어 있었습니다.".to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "qwen2.5:3b".to_owned(),
+            latency_ms: 1090,
+        },
+    );
+    assert!(overlay.show(card, ScreenRect::new(500, 400, 400, 22)));
+    std::thread::sleep(std::time::Duration::from_millis(800));
+
+    let window = HWND(overlay.window_id() as *mut _);
+    // SAFETY: every GDI object below is released or deleted before returning,
+    // and the window is this process's own.
+    let colours: HashSet<u32> = unsafe {
+        let mut rect = windows::Win32::Foundation::RECT::default();
+        GetClientRect(window, &mut rect).expect("client rect");
+        let (width, height) = (rect.right, rect.bottom);
+        assert!(width > 100 && height > 60, "card is {width}x{height}");
+
+        // The overlay's own device context, so nothing of the user's screen
+        // is read even incidentally.
+        let source = GetDC(Some(window));
+        let memory = CreateCompatibleDC(Some(source));
+        let bitmap = CreateCompatibleBitmap(source, width, height);
+        let previous = SelectObject(memory, bitmap.into());
+
+        let copied = BitBlt(memory, 0, 0, width, height, Some(source), 0, 0, SRCCOPY).is_ok();
+
+        let mut seen = HashSet::new();
+        if copied {
+            for y in (0..height).step_by(3) {
+                for x in (0..width).step_by(3) {
+                    seen.insert(GetPixel(memory, x, y).0);
+                }
+            }
+        }
+
+        SelectObject(memory, previous);
+        let _ = DeleteObject(bitmap.into());
+        let _ = DeleteDC(memory);
+        ReleaseDC(Some(window), source);
+        seen
+    };
+
+    println!("distinct colours sampled on the card: {}", colours.len());
+    assert!(
+        colours.len() > 4,
+        "the card looks blank: {} distinct colours. Text is not being painted.",
+        colours.len(),
+    );
+
+    assert!(overlay.hide());
+}
