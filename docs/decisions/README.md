@@ -5,23 +5,29 @@ context that made it right and the consequences accepted along with it.
 It is not a design document and not a plan. If a reader can change the
 code without reading it, it is not an ADR.
 
-## Why this repository has them, and where the layout comes from
+## Why this repository keeps them separately
 
-Mori records its decisions inside living design documents, which works
-because Mori's decisions mostly concern its own screens. Lens is
-different in one way that matters: **its hardest decisions are about the
-operating system, and they are expensive to reverse.** Choosing the
-accessibility tree over OCR determines the permission model, the idle
-cost, the failure taxonomy, and the shape of the macOS adapter. A
-decision like that needs a stable address that an issue can cite, not a
-paragraph inside a document that gets rewritten as the design moves.
+A design document describes what the software should do, and it is
+rewritten whenever that changes. A decision record describes a choice
+that was made once, and it must **not** be rewritten, because its value
+is that it still says what was believed at the time.
 
-The directory name and the file naming follow
-[`swarea/areabase`](https://github.com/swarea/areabase), which is the
-sibling repository that already keeps ADRs and had settled on
-`docs/decisions/ADR-NNNN-slug.md`. There is no reason for two
-repositories in one organisation to disagree about where a decision
-lives, and the one with existing practice wins.
+Lens needs the second kind because its hardest choices are about the
+operating system and are expensive to reverse. Choosing the
+accessibility tree over OCR fixed the permission model, the idle cost,
+the failure taxonomy, and the shape of the macOS adapter. Six months
+from now the useful question is not "what do we do", it is "what did we
+think we knew when we decided this, and is any of it still true". A
+paragraph inside a living document cannot answer that, because it will
+have been edited by then.
+
+## Why the filenames carry `ADR-`
+
+`ADR-0004-native-overlay.md` rather than `0004-native-overlay.md`, for a
+mundane reason that compounds: these files are usually met as an editor
+tab, a search result, or a link in an issue, all of which show the
+filename without its directory. `0004-native-overlay` could be anything;
+`ADR-0004-native-overlay` says what it is and that it is citable.
 
 ## Format
 

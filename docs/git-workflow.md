@@ -5,9 +5,10 @@ How work moves from an idea to `main` in this repository. Commit
 [`commit-format.md`](commit-format.md); this file covers branches, pull
 requests, issues, CI, and releases.
 
-This workflow matches [`swarea/mori`](https://github.com/swarea/mori)'s
-deliberately. Where Lens differs from Mori, the difference is called out
-in place rather than left for a reader to notice.
+Every rule here states its own reason. A rule whose only justification
+is that some other repository does it the same way cannot be argued
+with, cannot be applied to a case it did not anticipate, and rots the
+day that repository changes.
 
 ## 1. The model: GitHub Flow, adapted
 
@@ -86,13 +87,15 @@ of reasons:
    statement of one change; collapsing a reviewed series into one blob
    throws that away.
 
-**The organisation is split on this, and the split is deliberate.**
-`swarea/areabase` merges with rebase for a linear history, and says so
-in its `CONTRIBUTING.md`. Lens follows Mori instead, because reason 1
-above is specific to how this pair of repositories is worked: sessions
-hand each other commit SHAs, and rebase-merge invalidates every one of
-them. Areabase does not work that way. Two answers to one question is
-fine when both are written down; an unwritten answer is not.
+**Rebase-merge is the reasonable alternative and is rejected here on one
+specific ground.** A linear history is genuinely easier to read, and a
+project whose commits are never cited by hash should probably prefer it.
+This one cites them constantly: an agent's notes, an issue body, and a
+hand-off between sessions all point at work by SHA. Rebase-merge replays
+those commits as new objects, so every citation silently starts pointing
+at nothing. That cost is particular to how this repository is worked,
+which is why the answer here can differ from the answer elsewhere
+without either being wrong.
 
 What this policy does **not** claim: merge commits are not a concurrency
 control. When `main` moves under a branch, both rebase and merge have to
@@ -109,19 +112,24 @@ pulled. Never rewrite `main`.
 ## 5. Pull requests
 
 **The title is a commit subject**: `<type>: <lower-case imperative
-summary>`, per [`commit-format.md`](commit-format.md). Not a headline,
-not sentence case. Both sibling repositories hold this without
-exception.
+summary>`, describing the net change rather than the branch. See
+[`commit-format.md`](commit-format.md) for why, and for what makes a
+subject good rather than merely conforming.
 
 A pull request body states what changed, why, and **how it was
 verified**. That last part is not optional, because a green `cargo test`
 is not evidence that a hover works against a real desktop.
 
-The template is a checklist, not a cage. Mori's own pull requests use
-their own headings and narrate the finding, keeping only a verification
-section that names the gate and the numbers. Follow that: what a
-reviewer needs is the evidence and the surprises, not five empty
-headings.
+The template is a checklist, not a cage. Replace its headings with ones
+that fit the change, and delete the rows that do not apply. What a
+reviewer needs is the evidence and the surprises: the measurement, the
+thing that turned out not to be true, the alternative that was tried and
+abandoned. Five headings with one sentence under each is worse than
+three paragraphs that say what happened.
+
+**Write down what went wrong on the way.** A pull request that only
+narrates the successful path teaches nobody, and the wrong belief that
+cost an hour is usually the most valuable thing in the diff.
 
 For this repository specifically: a change to the platform acquisition
 path is only verified by a **probe run against named applications**,
@@ -189,19 +197,21 @@ The description field is prose, and follows the prose rule.
 
 ## 8. Issues
 
-**An issue title states the problem, not the task.** "Empty states are
-split across 3 primitives" reads better in a backlog a month later than
-"Fix empty states", because it says what is wrong rather than assuming
-the fix. A `type:decision` issue is prefixed `Decide:` and phrased as a
-question, so a decision is visibly not a task. Both conventions come
-from `swarea/mori`'s backlog.
+**An issue title states the problem, not the task.** "The compatibility
+matrix is empty, so M1's gate is unmeasured" survives a month in a
+backlog; "Fill in the matrix" does not, because it assumes the fix and
+loses the reason. Naming the problem also keeps the issue honest when
+the fix turns out to be something else entirely.
 
-An issue title carries **no `type:` prefix**, even though Mori's newest
-issues have drifted into using one (`perf: pre-warm too late to help the
-first request`). The `type:*` label already says which kind it is, and a
-backlog where some titles are prefixed and some are not sorts and scans
-worse than either convention held consistently. Commit subjects and pull
-request titles do carry the prefix, because there is no label there.
+A `type:decision` issue is prefixed `Decide:` and phrased as a question,
+so a decision is visibly not a task and nobody closes it by writing
+code.
+
+An issue title carries **no `type:` prefix**. The `type:*` label already
+answers that, and a backlog where some titles are prefixed and some are
+not scans worse than either convention held consistently. Commit
+subjects and pull request titles do carry the prefix, because there is
+no label there to carry it for them.
 
 Issues carry labels along three axes so the backlog can be sliced by
 surface, kind, and urgency:

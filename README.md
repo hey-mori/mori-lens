@@ -1,6 +1,6 @@
 # Mori Lens
 
-Understand without stopping to read.
+Mori Lens explains what you are reading, without interrupting it.
 
 Mori Lens is a local-first language layer for everything on your
 screen. Rest the pointer on a word or a sentence in any application and
