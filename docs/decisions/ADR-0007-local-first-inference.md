@@ -19,7 +19,7 @@ That is not a setting to be defaulted, it is a property of the product.
 The local option is real now. Ollama serves an HTTP API on
 `127.0.0.1:11434`, keeps models resident between calls, supports JSON
 Schema-constrained output, and streams. Mori already drives it from Rust
-and measured the latency ([ADR-0005](0005-two-speed-ai.md)).
+and measured the latency ([ADR-0005](ADR-0005-two-speed-ai.md)).
 
 Bundling a model is the other candidate and is rejected: it adds
 gigabytes to the installer, freezes the model choice, and duplicates a
@@ -52,7 +52,7 @@ Concretely:
 
 ### Model roles, and what is actually installed
 
-Two roles, deliberately separable, per [ADR-0005](0005-two-speed-ai.md):
+Two roles, deliberately separable, per [ADR-0005](ADR-0005-two-speed-ai.md):
 
 | Role | Wanted | Why |
 |------|--------|-----|

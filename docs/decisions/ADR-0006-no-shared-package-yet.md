@@ -4,7 +4,7 @@
 
 ## Context
 
-[ADR-0001](0001-independent-repository.md) separates the repositories.
+[ADR-0001](ADR-0001-independent-repository.md) separates the repositories.
 This is the follow-up question: given two repositories that will
 plausibly both need an Ollama client, a language-answer schema, and a
 learning-item model, should a `mori-shared` package be extracted now?
@@ -17,7 +17,7 @@ The argument against is that neither interface is settled. Mori's
 language answer is shaped by *what the user selected* (word, phrase,
 sentence, paragraph) and is delivered as sections. Lens's quick
 translation is shaped by *what the pointer rested on* and is deliberately
-two fields ([ADR-0005](0005-two-speed-ai.md)). Those look similar and
+two fields ([ADR-0005](ADR-0005-two-speed-ai.md)). Those look similar and
 are not, and a shared type extracted today would be the union of two
 guesses. Worse, it would couple the release cadence of a shipping
 application to a repository whose first milestone is a measurement

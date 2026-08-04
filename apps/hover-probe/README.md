@@ -3,7 +3,7 @@
 Milestone 1's deliverable. It is an instrument, not a feature: it
 follows the pointer, resolves what is under it through UI Automation,
 and records what happened. It translates nothing and draws nothing
-([ADR-0008](../../docs/adr/0008-probe-before-product.md)).
+([ADR-0008](../../docs/decisions/ADR-0008-probe-before-product.md)).
 
 ## Run
 

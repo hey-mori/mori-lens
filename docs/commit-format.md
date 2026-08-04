@@ -7,7 +7,7 @@ hard rule.
 This format is inherited verbatim from
 [`swarea/mori`](https://github.com/swarea/mori)'s `docs/commit-format.md`
 and kept identical on purpose. The two repositories are independent
-products ([ADR-0001](adr/0001-independent-repository.md)) but they share
+products ([ADR-0001](decisions/ADR-0001-independent-repository.md)) but they share
 one maintainer and the same agents, and a history that reads the same
 way in both is worth more than a format tuned per repository.
 
@@ -24,8 +24,15 @@ way in both is worth more than a format tuned per repository.
 ## Rules
 
 - **Subject line**
-  - Starts with a `type:` prefix, one of `feat`, `fix`, `refactor`,
-    `test`, `docs`, `chore`.
+  - Starts with a `type:` prefix, one of `feat`, `fix`, `perf`,
+    `refactor`, `test`, `docs`, `chore`.
+  - `perf` is for a change whose *point* is speed or resource use, and it
+    earns its own type because `refactor` would describe it less
+    accurately. A restructuring that happens to be faster is still
+    `refactor`. Mori's own commit-format document omits `perf` while its
+    history uses it nine times and branches on it
+    (`perf/prewarm-at-startup`); `swarea/areabase` documents it with this
+    rationale. Lens follows the practice, not the stale document.
   - Do not add a scope. Use `feat: ...`, never `feat(scope): ...`.
   - The summary is a lower-case, imperative-mood English phrase
     ("add …", "make …", "stop …"), no trailing period.
@@ -71,7 +78,25 @@ feat: resolve the word under the pointer through ui automation
   exposes no text, so a failure can be attributed to the provider
 ```
 
+## The pull request title is a commit subject
+
+A pull request title follows this same spec: `<type>: <lower-case
+imperative summary>`. It is not a headline, and it is not sentence case.
+
+This is not a stylistic preference. `Merge pull request #N from
+<branch>` is what lands in the graph, so the title is what a reader sees
+in the pull request list and in every notification, and a list that
+mixes `feat: read the word under the pointer` with `Read the word under
+the pointer` reads as two projects. Both sibling repositories do it this
+way without exception; see `swarea/mori` pull requests #37 to #42.
+
 ## Not this
 
 A body written as prose paragraphs, even well-written prose, does
 **not** conform. The body must be a bullet list.
+
+`swarea/areabase` deliberately allows the opposite: up to three lines of
+prose saying *why*, then bullets. That divergence is real and is left
+alone. Lens sits next to Mori, shares its language and its release
+shape, and copying one sibling exactly is worth more than splitting the
+difference between two.

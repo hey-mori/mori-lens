@@ -49,7 +49,7 @@ Concretely:
 - Its own settings, its own storage, its own update path.
 - Integration, if it ever happens, is a documented process boundary
   (a local endpoint or an export file), never a shared library. See
-  [ADR-0006](0006-no-shared-package-yet.md).
+  [ADR-0006](ADR-0006-no-shared-package-yet.md).
 
 ## Consequences
 
