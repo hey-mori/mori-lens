@@ -34,6 +34,7 @@ use lens_core::translate::{QuickRequest, Translator};
 use lens_platform_windows::{declare_dpi_awareness, Overlay, UiaTextAcquirer};
 use lens_translate::OllamaTranslator;
 
+mod pause;
 mod pointer;
 
 /// What the worker is asked to translate.
@@ -174,6 +175,15 @@ fn main() -> std::process::ExitCode {
             "per-monitor aware v2"
         } else {
             "NOT declared: rectangles above 100% scaling are unreliable"
+        }
+    );
+    let mut pause = pause::PauseKey::register();
+    println!(
+        "  pause     {}",
+        if pause.is_registered() {
+            "Ctrl+Alt+L stops the pointer being sampled"
+        } else {
+            "UNAVAILABLE: Ctrl+Alt+L is taken by another application"
         }
     );
     println!("\nRest the pointer on a sentence. Ctrl+C to quit.\n");
@@ -324,6 +334,23 @@ fn main() -> std::process::ExitCode {
     let mut last_point = None;
 
     while !pointer::stopping() {
+        if pause.poll() {
+            if pause.is_paused() {
+                overlay.hide();
+                shown = false;
+                println!("paused · the pointer is not being sampled");
+            } else {
+                println!("resumed");
+            }
+        }
+        if pause.is_paused() {
+            // Nothing is read while paused. Not a suppressed result, not a
+            // hidden card: no accessibility call is made at all, which is what
+            // docs/privacy-model.md §5 promises and what a process monitor can
+            // confirm.
+            std::thread::sleep(Duration::from_millis(50));
+            continue;
+        }
         let Some(position) = pointer::position() else {
             std::thread::sleep(Duration::from_millis(25));
             continue;
