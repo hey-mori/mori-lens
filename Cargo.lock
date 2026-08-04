@@ -27,6 +27,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lens-translate"
+version = "0.1.0"
+dependencies = [
+ "lens-core",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
