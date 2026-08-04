@@ -107,6 +107,26 @@ impl Card {
     }
 }
 
+/// How far the pointer may stray from the text a card explains before the card
+/// is retired.
+///
+/// Generous on purpose. A reader looks between the original and the
+/// translation, and a card that vanishes when the eye moves is a card nobody
+/// finishes reading.
+pub const KEEP_CARD_WITHIN_PX: f64 = 72.0;
+
+/// Whether the pointer has left the text a card explains.
+///
+/// Measured against the **anchor rectangle**, not its centre. The first version
+/// compared the pointer to the centre with the hover machine's 6px movement
+/// radius, which retired the card on the next 25ms tick: a pointer resting on a
+/// word is rarely within 6px of that word's centre. With streaming, each
+/// partial answer then re-showed a card that was hidden again immediately,
+/// which is what the flicker was.
+pub fn pointer_left_the_card(anchor: ScreenRect, pointer: ScreenPoint) -> bool {
+    anchor.distance_to(pointer) > KEEP_CARD_WITHIN_PX
+}
+
 /// Where a card should sit, given what it is explaining.
 ///
 /// Below the text and slightly right, which is where a reader's eye already is
@@ -192,6 +212,40 @@ mod tests {
         answer.engine = EngineId::External;
         let card = Card::translated("something", &answer);
         assert!(card.footer.contains("외부"), "{}", card.footer);
+    }
+
+    /// The regression this whole rule exists for.
+    #[test]
+    fn a_pointer_resting_on_the_word_does_not_retire_its_card() {
+        // A word rectangle, and a pointer on it but not at its centre. The
+        // centre-plus-6px rule dismissed this immediately, which made the card
+        // flicker on every streamed partial.
+        let word = ScreenRect::new(400, 300, 120, 22);
+        for pointer in [
+            ScreenPoint::new(405, 305),
+            ScreenPoint::new(515, 320),
+            ScreenPoint::new(460, 311),
+        ] {
+            assert!(
+                !pointer_left_the_card(word, pointer),
+                "{pointer:?} is on the word and would have retired the card",
+            );
+        }
+    }
+
+    #[test]
+    fn reading_across_to_the_card_does_not_retire_it() {
+        // The card sits below the text and the reader looks at it. That must
+        // not dismiss what they are reading.
+        let word = ScreenRect::new(400, 300, 120, 22);
+        assert!(!pointer_left_the_card(word, ScreenPoint::new(430, 380)));
+    }
+
+    #[test]
+    fn a_pointer_on_another_paragraph_retires_the_card() {
+        let word = ScreenRect::new(400, 300, 120, 22);
+        assert!(pointer_left_the_card(word, ScreenPoint::new(400, 700)));
+        assert!(pointer_left_the_card(word, ScreenPoint::new(1200, 300)));
     }
 
     #[test]

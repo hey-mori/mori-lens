@@ -33,10 +33,11 @@ use lens_core::geometry::ScreenRect;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect,
-    FrameRect, InvalidateRect, SelectObject, SetBkMode, SetTextColor, DEFAULT_CHARSET,
-    DEFAULT_PITCH, DT_CALCRECT, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_WORDBREAK, FF_DONTCARE,
-    FW_NORMAL, FW_SEMIBOLD, HBRUSH, HFONT, PAINTSTRUCT, TRANSPARENT,
+    BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreateSolidBrush,
+    DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, FrameRect, GetDC, InvalidateRect,
+    ReleaseDC, SelectObject, SetBkMode, SetTextColor, DEFAULT_CHARSET, DEFAULT_PITCH, DT_CALCRECT,
+    DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_WORDBREAK, FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD,
+    HBRUSH, HFONT, PAINTSTRUCT, SRCCOPY, TRANSPARENT,
 };
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -241,19 +242,34 @@ unsafe fn show_card(window: HWND, card: Card, anchor: ScreenRect) {
         unsafe { work_area() },
     );
 
-    // SAFETY: NOACTIVATE on both calls is what keeps focus where it was.
+    // SAFETY: NOACTIVATE on every call is what keeps focus where it was.
     unsafe {
-        let _ = SetWindowPos(
-            window,
-            Some(HWND_TOPMOST),
-            placed.x,
-            placed.y,
-            placed.width,
-            placed.height,
-            SWP_NOACTIVATE,
-        );
+        // Only move the window when it actually needs moving. A streaming
+        // answer redraws several times, and repositioning a layered window on
+        // every redraw is visible as a jump even when the numbers are equal.
+        let mut current = RECT::default();
+        let same = windows::Win32::UI::WindowsAndMessaging::GetWindowRect(window, &mut current)
+            .is_ok()
+            && current.left == placed.x
+            && current.top == placed.y
+            && current.right - current.left == placed.width
+            && current.bottom - current.top == placed.height;
+
+        if !same {
+            let _ = SetWindowPos(
+                window,
+                Some(HWND_TOPMOST),
+                placed.x,
+                placed.y,
+                placed.width,
+                placed.height,
+                SWP_NOACTIVATE,
+            );
+        }
         let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
-        let _ = InvalidateRect(Some(window), None, true);
+        // `false`: the whole client area is painted every time, so letting
+        // Windows erase it first only guarantees a frame of blank card.
+        let _ = InvalidateRect(Some(window), None, false);
     }
 }
 
@@ -287,8 +303,7 @@ unsafe fn work_area() -> ScreenRect {
 unsafe fn measure(window: HWND, card: &Card) -> i32 {
     // SAFETY: a paint cycle purely to obtain a device context for measurement.
     unsafe {
-        let mut paint = PAINTSTRUCT::default();
-        let dc = BeginPaint(window, &mut paint);
+        let dc = GetDC(Some(window));
         if dc.is_invalid() {
             return 160;
         }
@@ -299,7 +314,7 @@ unsafe fn measure(window: HWND, card: &Card) -> i32 {
         let original = text_height(dc, &card.original, inner, false);
         let translated = text_height(dc, body, inner, true);
         let footer = 18;
-        let _ = EndPaint(window, &paint);
+        ReleaseDC(Some(window), dc);
         PADDING * 2 + original + 8 + translated + 10 + footer
     }
 }
@@ -384,6 +399,15 @@ unsafe extern "system" fn window_proc(
     unsafe { DefWindowProcW(window, message, wparam, lparam) }
 }
 
+/// Paint the card, through a memory bitmap.
+///
+/// **Double-buffered, and that is the point.** Drawing straight to the window
+/// means filling the background and then drawing text onto it, and the window
+/// is on screen throughout: a reader sees an empty card for the time it takes
+/// to lay out three runs of text. Repeat that for every streamed partial and
+/// the card flickers. Composing into a bitmap and copying it once means the
+/// screen only ever shows a finished frame.
+///
 /// # Safety
 /// `window` must be owned by this thread.
 unsafe fn paint(window: HWND) {
@@ -397,40 +421,50 @@ unsafe fn paint(window: HWND) {
 
         let mut rect = RECT::default();
         let _ = windows::Win32::UI::WindowsAndMessaging::GetClientRect(window, &mut rect);
+        let (width, height) = (rect.right, rect.bottom);
+
+        let memory = CreateCompatibleDC(Some(dc));
+        let bitmap = CreateCompatibleBitmap(dc, width.max(1), height.max(1));
+        let previous = SelectObject(memory, bitmap.into());
+        let target = if memory.is_invalid() { dc } else { memory };
 
         let background: HBRUSH = CreateSolidBrush(COLORREF(0x00201c1a));
         let border: HBRUSH = CreateSolidBrush(COLORREF(0x00453e3a));
-        FillRect(dc, &rect, background);
-        FrameRect(dc, &rect, border);
+        FillRect(target, &rect, background);
+        FrameRect(target, &rect, border);
         let _ = DeleteObject(background.into());
         let _ = DeleteObject(border.into());
 
-        SetBkMode(dc, TRANSPARENT);
+        SetBkMode(target, TRANSPARENT);
 
-        let card = CONTENT.lock().ok().and_then(|slot| slot.clone());
-        let Some(card) = card else {
-            let _ = EndPaint(window, &ps);
-            return;
-        };
+        if let Some(card) = CONTENT.lock().ok().and_then(|slot| slot.clone()) {
+            let inner = width - PADDING * 2;
+            let mut y = PADDING;
 
-        let inner = rect.right - PADDING * 2;
-        let mut y = PADDING;
+            // The original first and dimmer. It is above the answer because
+            // the reader's eye is already on it, and it is present at all
+            // because it is the only way to notice an answer that is not a
+            // translation (docs/privacy-model.md §1).
+            if !card.original.trim().is_empty() {
+                y += draw(target, &card.original, PADDING, y, inner, false, 0x00908880) + 8;
+            }
 
-        // The original first and dimmer. It is above the answer because the
-        // reader's eye is already on it, and it is present at all because it is
-        // the only way to notice an answer that is not a translation
-        // (docs/privacy-model.md §1).
-        if !card.original.trim().is_empty() {
-            y += draw(dc, &card.original, PADDING, y, inner, false, 0x00908880) + 8;
+            let (body, colour) = match &card.body {
+                CardBody::Translation(text) => (text, 0x00f2ece8),
+                CardBody::Problem(text) => (text, 0x008fb8e8),
+            };
+            y += draw(target, body, PADDING, y, inner, true, colour) + 10;
+
+            draw(target, &card.footer, PADDING, y, inner, false, 0x00706a66);
         }
 
-        let (body, colour) = match &card.body {
-            CardBody::Translation(text) => (text, 0x00f2ece8),
-            CardBody::Problem(text) => (text, 0x008fb8e8),
-        };
-        y += draw(dc, body, PADDING, y, inner, true, colour) + 10;
-
-        draw(dc, &card.footer, PADDING, y, inner, false, 0x00706a66);
+        // One copy, so the screen never shows a half-drawn card.
+        if !memory.is_invalid() {
+            let _ = BitBlt(dc, 0, 0, width, height, Some(memory), 0, 0, SRCCOPY);
+            SelectObject(memory, previous);
+            let _ = DeleteObject(bitmap.into());
+            let _ = DeleteDC(memory);
+        }
 
         let _ = EndPaint(window, &ps);
     }
