@@ -7,7 +7,7 @@
 //!
 //! What they deliberately do **not** prove: that UI Automation works. Nothing
 //! here touches it. That is the probe's job
-//! (`docs/adr/0008-probe-before-product.md`).
+//! (`docs/decisions/ADR-0008-probe-before-product.md`).
 
 use crate::acquire::{
     AcquireContext, AcquireError, AcquisitionSource, AppIdentity, ProtectedReason, ProviderInfo,

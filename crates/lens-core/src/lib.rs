@@ -11,7 +11,7 @@
 //! No OS crates. Not `windows`, not `objc`, not `tauri`. If a type needs an
 //! operating system concept, the concept gets a plain Rust representation here
 //! and the adapter converts at the boundary. See
-//! `docs/adr/0003-rust-core-platform-adapters.md`.
+//! `docs/decisions/ADR-0003-rust-core-platform-adapters.md`.
 //!
 //! # Reading order
 //!

@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         This type exists so a decision is never disguised as a task.
-        If the answer belongs in `docs/adr/`, say so: the outcome of this issue
+        If the answer belongs in `docs/decisions/`, say so: the outcome of this issue
         is then an ADR, not a code change.
   - type: textarea
     id: question

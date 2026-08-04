@@ -79,5 +79,5 @@ Concretely:
   recording only on first OCR use.
 - The adapter is where the difficulty lives, and it cannot be unit
   tested. That is the price, and it is why
-  [ADR-0008](0008-probe-before-product.md) puts a measurement instrument
+  [ADR-0008](ADR-0008-probe-before-product.md) puts a measurement instrument
   before the product.

@@ -4,7 +4,7 @@
 //! It follows the pointer, resolves what is under it, and records what
 //! happened: how far the chain got, how long each stage took, and how the
 //! failures are distributed per application
-//! (`docs/adr/0008-probe-before-product.md`).
+//! (`docs/decisions/ADR-0008-probe-before-product.md`).
 //!
 //! It translates nothing and draws nothing. That is on purpose: the gate to
 //! building an overlay is a filled-in compatibility matrix, and this is what

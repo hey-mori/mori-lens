@@ -1,6 +1,6 @@
 # Architecture
 
-The constraints come from [`adr/`](adr/); this file describes the shape
+The constraints come from [`decisions/`](decisions/); this file describes the shape
 they produce. It is descriptive, not aspirational: where something is
 not built, it says so.
 
@@ -37,7 +37,7 @@ Overlay               (M2)                    planned
 
 Everything above the acquisition boundary is platform-neutral and unit
 tested. Everything at it is platform-specific and can only be verified by
-running ([ADR-0003](adr/0003-rust-core-platform-adapters.md)).
+running ([ADR-0003](decisions/ADR-0003-rust-core-platform-adapters.md)).
 
 ## 2. Crates
 
@@ -85,7 +85,7 @@ product's failure taxonomy rather than an error-handling detail:
 | `Unavailable` | the accessibility layer itself is unreachable | no |
 
 Collapsing these into one error would destroy the only data Milestone 1
-produces ([ADR-0008](adr/0008-probe-before-product.md)).
+produces ([ADR-0008](decisions/ADR-0008-probe-before-product.md)).
 
 ## 4. Generations and staleness
 

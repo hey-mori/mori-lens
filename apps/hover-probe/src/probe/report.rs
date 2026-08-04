@@ -5,7 +5,7 @@
 //! **Failures are counted separately.** `unsupported`, `empty`, `timeout`,
 //! `element-gone`, `protected`, and `stale` are different facts about a
 //! provider, and collapsing them into "did not work" would destroy the only
-//! data Milestone 1 produces (`docs/adr/0008-probe-before-product.md`).
+//! data Milestone 1 produces (`docs/decisions/ADR-0008-probe-before-product.md`).
 //!
 //! **Nothing the user was reading is printed.** Lengths, counts, control ids,
 //! and latencies, never the sentence or the paragraph. The one exception is the

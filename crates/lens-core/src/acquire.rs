@@ -2,7 +2,7 @@
 //!
 //! One trait, one result type, one closed error enum. A macOS adapter
 //! implements this and nothing above it changes
-//! (`docs/adr/0003-rust-core-platform-adapters.md`).
+//! (`docs/decisions/ADR-0003-rust-core-platform-adapters.md`).
 //!
 //! The error enum is the part worth reading twice. Its variants are the
 //! product's failure taxonomy, not an error-handling detail: Milestone 1 exists
@@ -17,7 +17,7 @@ use crate::text::SegmentedText;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcquisitionSource {
     /// The operating system's accessibility tree. The primary path, always
-    /// tried first (`docs/adr/0002-accessibility-first-acquisition.md`).
+    /// tried first (`docs/decisions/ADR-0002-accessibility-first-acquisition.md`).
     Accessibility,
     /// Optical recognition of a small crop. The fallback, never automatic in
     /// v1. Not implemented yet; the variant exists so the router's match is
@@ -141,7 +141,7 @@ impl AppIdentity {
 ///
 /// `control_id` is opaque on purpose: on Windows it is the UI Automation
 /// control type, and the core must not learn what those numbers mean
-/// (`docs/adr/0003-rust-core-platform-adapters.md`).
+/// (`docs/decisions/ADR-0003-rust-core-platform-adapters.md`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProviderInfo {
     pub control_id: Option<i32>,

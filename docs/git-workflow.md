@@ -29,14 +29,16 @@ honest, not more. See §6.
 ```
 
 `<type>` matches the commit-message type vocabulary, so a branch and its
-commits agree: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`. Add
-`spike/` for throwaway investigation branches that are never merged.
+commits agree: `feat`, `fix`, `perf`, `refactor`, `test`, `docs`,
+`chore`. Add `spike/` for throwaway investigation branches that are
+never merged.
 
 ```
 feat/hover-uia-word-resolution
 fix/hover-stale-generation-render
+perf/acquire-wake-once-per-window
 refactor/segmentation-boundary-split
-docs/adr-accessibility-first
+docs/decisions-accessibility-first
 chore/workspace-and-ci-setup
 ```
 
@@ -84,6 +86,14 @@ of reasons:
    statement of one change; collapsing a reviewed series into one blob
    throws that away.
 
+**The organisation is split on this, and the split is deliberate.**
+`swarea/areabase` merges with rebase for a linear history, and says so
+in its `CONTRIBUTING.md`. Lens follows Mori instead, because reason 1
+above is specific to how this pair of repositories is worked: sessions
+hand each other commit SHAs, and rebase-merge invalidates every one of
+them. Areabase does not work that way. Two answers to one question is
+fine when both are written down; an unwritten answer is not.
+
 What this policy does **not** claim: merge commits are not a concurrency
 control. When `main` moves under a branch, both rebase and merge have to
 integrate and both can conflict. Parallel work is isolated by
@@ -98,9 +108,20 @@ pulled. Never rewrite `main`.
 
 ## 5. Pull requests
 
+**The title is a commit subject**: `<type>: <lower-case imperative
+summary>`, per [`commit-format.md`](commit-format.md). Not a headline,
+not sentence case. Both sibling repositories hold this without
+exception.
+
 A pull request body states what changed, why, and **how it was
 verified**. That last part is not optional, because a green `cargo test`
 is not evidence that a hover works against a real desktop.
+
+The template is a checklist, not a cage. Mori's own pull requests use
+their own headings and narrate the finding, keeping only a verification
+section that names the gate and the numbers. Follow that: what a
+reviewer needs is the evidence and the surprises, not five empty
+headings.
 
 For this repository specifically: a change to the platform acquisition
 path is only verified by a **probe run against named applications**,
@@ -167,6 +188,20 @@ fix/hover-stale-render   not  fix/호버-stale
 The description field is prose, and follows the prose rule.
 
 ## 8. Issues
+
+**An issue title states the problem, not the task.** "Empty states are
+split across 3 primitives" reads better in a backlog a month later than
+"Fix empty states", because it says what is wrong rather than assuming
+the fix. A `type:decision` issue is prefixed `Decide:` and phrased as a
+question, so a decision is visibly not a task. Both conventions come
+from `swarea/mori`'s backlog.
+
+An issue title carries **no `type:` prefix**, even though Mori's newest
+issues have drifted into using one (`perf: pre-warm too late to help the
+first request`). The `type:*` label already says which kind it is, and a
+backlog where some titles are prefixed and some are not sorts and scans
+worse than either convention held consistently. Commit subjects and pull
+request titles do carry the prefix, because there is no label there.
 
 Issues carry labels along three axes so the backlog can be sliced by
 surface, kind, and urgency:
