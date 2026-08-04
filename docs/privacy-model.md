@@ -16,8 +16,10 @@ Ollama address is a cloud provider because the text leaves the machine
 
 **Nothing is recorded.** There is no screen recording, no keylogging, no
 clipboard history, and no automatic transcript of what was hovered. The
-translation cache, when it exists, is opt-in and holds text the user
-looked at, never an image.
+translation cache is in memory only and dies with the process: it holds
+text the user looked at, never an image, and never reaches a file. A
+durable cache would be a record of what was read, so it is a separate
+opt-in and does not exist.
 
 **No screen image is ever written to disk.** Including for debugging.
 Including in a debug build. An OCR crop lives in memory for the duration
@@ -97,10 +99,16 @@ Three tiers, per application:
 | Modifier | only while a modifier key is held |
 | Deny | never, including with the modifier |
 
-Deny is the default for password managers, banking and payment
-applications, and Lens itself. Lens excluding itself is not politeness;
-without it the overlay reads its own translation and translates the
-translation.
+Deny is the default for password managers, by name, and for Lens itself.
+Lens excluding itself is not politeness; without it the overlay reads
+its own translation and translates the translation.
+
+**Banking and payment applications are not denied by name**, and this
+sentence used to claim they were. Naming them would be a guess that
+varies by country and goes stale. What protects an application nobody
+listed is the `Modifier` default: Lens reads nothing anywhere it was not
+told about unless a key is held. The deny list is a floor under that,
+not the thing doing the work.
 
 The first version defaults to **allow-list plus modifier elsewhere**
 rather than global automatic hover. A tool that reads everything from
@@ -164,18 +172,38 @@ wrong trade.
 
 Claims are worth what a user can check.
 
-- The tray shows the current engine and whether it is local.
-- A pause control stops all acquisition, and pause means the pointer is
-  not sampled, not that results are hidden.
-- The per-application tier list is visible and editable.
+- The engine is named at startup and in every card's footer. **There is no tray yet**, so this is the printed form of that claim, not the intended one.
+- **Ctrl+Alt+L** pauses and resumes. Pause means the pointer is not
+  sampled, so no accessibility call is made at all, which a process
+  monitor can confirm. It is not a hidden card.
+- The per-application tier list is **compiled in and not yet editable**. §6 tracks it as open.
 - Network calls to anything other than a granted provider are a defect,
   and the local-only case makes zero of them.
 
 ## 6. Current state
 
-The probe today: refuses protected fields, logs no content, takes no
-screen capture, makes no network call, writes no file. Those are
-properties of the code as written, not aspirations.
+Updated 2026-08-04, when `apps/lens` began to exist. The previous
+version of this section described the probe and said "makes no network
+call", which stopped being true the moment the app called Ollama. A
+privacy document that has gone stale is worse than none, because it is
+believed.
 
-Everything else on this page describes components that do not exist
-yet. This section is updated when they do.
+Every claim on this page, and whether the code keeps it:
+
+| Claim | State |
+|---|---|
+| Nothing leaves the machine by default | **kept.** The only endpoint is `127.0.0.1:11434`. There is no code path to any other host, and the HTTP client has no TLS, so it could not reach one safely even by mistake. |
+| Nothing is recorded | **kept.** No file is written. The translation cache is in memory and dies with the process. |
+| No screen image written to disk | **kept**, and trivially: no capture path exists at all yet. |
+| Protected fields refused before they are read | **kept and executed**, against a real `ES_PASSWORD` control. See §1. |
+| The engine in use is visible | **kept.** Every card's footer names the model and says 로컬 or 외부. |
+| Model output is untrusted | **kept structurally, weaker than it reads.** See §1: two of three local models obeyed an instruction in screen text. Nothing is executed; the mitigation is that the original is always shown beside the answer. |
+| Password managers denied by default | **kept.** Nine are denied by name in `AppPolicy`. |
+| Banking and payment applications denied by default | **not kept.** No banking application is denied by name, and naming them would be a guess that varies by country. What actually protects an unnamed application is the `Modifier` default, which is why the default tier is not `Allow`. This row is the honest version of a sentence in §2 that promised more than the code does. |
+| A pause control stops all acquisition | **kept**, as Ctrl+Alt+L. Paused means no accessibility call is made, not that a card is hidden, so a process monitor can confirm it. |
+| The tray shows the current engine | **not kept.** There is no tray. The engine is printed at startup and on every card footer. |
+| The per-application tier list is visible and editable | **not kept.** The list is compiled in; there is no settings surface. |
+
+Three rows are open. They are listed rather than quietly dropped
+because the point of this page is that a reader can tell which promises
+the code keeps.
