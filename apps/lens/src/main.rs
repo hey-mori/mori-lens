@@ -24,6 +24,7 @@
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use lens_core::cache::{CacheKey, TranslationCache};
 use lens_core::card::Card;
 use lens_core::geometry::ScreenRect;
 use lens_core::hover::{Generation, HoverConfig, HoverEvent};
@@ -48,7 +49,17 @@ struct Answer {
     generation: Generation,
     card: Card,
     anchor: ScreenRect,
+    /// Whether this is the finished answer or a piece of one still arriving.
+    final_answer: bool,
 }
+
+/// Bumped whenever the prompt changes, so a cache filled by the old wording is
+/// not served under the new one.
+const PROMPT_VERSION: u32 = 1;
+
+/// How many sentences to remember. A reader revisits a paragraph, not a book,
+/// and every entry is text the user read, so the bound is small on purpose.
+const CACHE_ENTRIES: usize = 256;
 
 const USAGE: &str = "\
 lens · Mori Lens
@@ -195,6 +206,7 @@ fn main() -> std::process::ExitCode {
     let (answers_tx, answers_rx) = mpsc::channel::<Answer>();
 
     let language = options.language.clone();
+    let mut cache = TranslationCache::new(CACHE_ENTRIES);
     let warm_translator = translator.clone();
     // Off the main thread so the window and the pointer loop come up
     // immediately; a user should not wait on a model to see the app start.
@@ -211,12 +223,59 @@ fn main() -> std::process::ExitCode {
         // The translator lives on the worker, not shared: it holds no state
         // worth sharing and this keeps the loop free of a lock.
         while let Ok(job) = jobs_rx.recv() {
+            // Take only the newest queued job. A pointer crossing three
+            // sentences queues three translations, and finishing them all
+            // spends six seconds to show one card. The stale ones are dropped
+            // here rather than after the model has already answered them.
+            let mut job = job;
+            let mut skipped = 0usize;
+            while let Ok(newer) = jobs_rx.try_recv() {
+                job = newer;
+                skipped += 1;
+            }
+            if skipped > 0 {
+                println!("worker  skipped {skipped} stale job(s)");
+            }
+
             let mut request = QuickRequest::new(&job.original, &language);
             if let Some(word) = &job.focused_word {
                 request = request.with_focus(word);
             }
-            let card = match translator.quick(&request) {
-                Ok(translation) => Card::translated(&job.original, &translation),
+
+            let key = CacheKey::of(&request, translator.model(), PROMPT_VERSION);
+            if let Some(hit) = cache.get(&key) {
+                let card = Card::translated(&job.original, &hit);
+                let _ = answers_tx.send(Answer {
+                    generation: job.generation,
+                    card,
+                    anchor: job.anchor,
+                    final_answer: true,
+                });
+                continue;
+            }
+
+            // Report the answer as it forms. Each partial is a complete card
+            // carrying the original, so the rule that a translation never
+            // appears without it holds for a half-finished one too.
+            let partial_tx = answers_tx.clone();
+            let generation = job.generation;
+            let anchor = job.anchor;
+            let original = job.original.clone();
+            let mut on_partial = move |text: &str| {
+                let card = Card::partial(&original, text);
+                let _ = partial_tx.send(Answer {
+                    generation,
+                    card,
+                    anchor,
+                    final_answer: false,
+                });
+            };
+
+            let card = match translator.quick_streaming(&request, &mut on_partial) {
+                Ok(translation) => {
+                    cache.insert(key, translation.clone());
+                    Card::translated(&job.original, &translation)
+                }
                 Err(error) => Card::not_translated(&job.original, &error),
             };
             if answers_tx
@@ -224,6 +283,7 @@ fn main() -> std::process::ExitCode {
                     generation: job.generation,
                     card,
                     anchor: job.anchor,
+                    final_answer: true,
                 })
                 .is_err()
             {
@@ -324,7 +384,9 @@ fn main() -> std::process::ExitCode {
                 // The pointer moved on. Never draw this.
                 continue;
             }
-            log_card(&answer.card);
+            if answer.final_answer {
+                log_card(&answer.card);
+            }
             if overlay.show(answer.card, answer.anchor) {
                 shown = true;
             }
@@ -445,7 +507,21 @@ fn selftest(
         request = request.with_focus(word);
     }
     let began = Instant::now();
-    let card = match translator.quick(&request) {
+    let mut first_text = None;
+    let mut redraws = 0usize;
+    let mut on_partial = |text: &str| {
+        redraws += 1;
+        if first_text.is_none() {
+            first_text = Some(began.elapsed());
+        }
+        // Draw the partial, so the selftest exercises the same path a hover
+        // takes rather than a quieter one.
+        overlay.show(Card::partial(&sentence, text), anchor);
+    };
+
+    let mut cache = TranslationCache::new(CACHE_ENTRIES);
+    let key = CacheKey::of(&request, translator.model(), PROMPT_VERSION);
+    let card = match translator.quick_streaming(&request, &mut on_partial) {
         Ok(translation) => {
             println!(
                 "2. translated {} chars in {}ms via {}",
@@ -453,6 +529,14 @@ fn selftest(
                 translation.latency_ms,
                 translation.model,
             );
+            match first_text {
+                Some(at) => println!(
+                    "   streaming  first text at {}ms, {redraws} redraws",
+                    at.as_millis(),
+                ),
+                None => println!("   streaming  no partial arrived"),
+            }
+            cache.insert(key.clone(), translation.clone());
             Card::translated(&sentence, &translation)
         }
         Err(error) => {
@@ -464,6 +548,18 @@ fn selftest(
             Card::not_translated(&sentence, &error)
         }
     };
+
+    // The same sentence again, which is what a reader moving back along a line
+    // produces several times a minute.
+    let again = Instant::now();
+    match cache.get(&key) {
+        Some(hit) => println!(
+            "   cache      the same sentence again in {}us, {} chars",
+            again.elapsed().as_micros(),
+            hit.text.chars().count(),
+        ),
+        None => println!("   cache      MISS on a sentence just inserted"),
+    }
 
     if !overlay.show(card, anchor) {
         println!("3. REFUSED    the card was not showable");

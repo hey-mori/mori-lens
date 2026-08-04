@@ -150,7 +150,31 @@ pub trait Translator {
     /// The path a hover takes. Must respect a budget: a reader waiting on this
     /// has already stopped reading.
     fn quick(&self, request: &QuickRequest) -> Result<QuickTranslation, TranslateError>;
+
+    /// The same, reporting the answer as it arrives.
+    ///
+    /// `on_partial` is called with the text so far. It is **throttled by the
+    /// implementation**, not called per token: a short translation redrawn on
+    /// every token shimmers, which reads as instability rather than as speed.
+    ///
+    /// The default forwards to [`Self::quick`] and reports once, so an engine
+    /// that cannot stream is a slower engine rather than a broken one.
+    fn quick_streaming(
+        &self,
+        request: &QuickRequest,
+        on_partial: &mut dyn FnMut(&str),
+    ) -> Result<QuickTranslation, TranslateError> {
+        let answer = self.quick(request)?;
+        on_partial(&answer.text);
+        Ok(answer)
+    }
 }
+
+/// How often a partial answer may redraw the card.
+///
+/// Slow enough that text does not shimmer, fast enough that it reads as
+/// arriving rather than as three discrete jumps.
+pub const PARTIAL_REDRAW_INTERVAL: Duration = Duration::from_millis(120);
 
 /// How long a hover may wait before the answer is worthless.
 ///
