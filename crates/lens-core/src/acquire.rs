@@ -147,6 +147,59 @@ impl AppIdentity {
     }
 }
 
+/// What a request to expand a range to one word actually came back as.
+///
+/// Every platform offers "grow this range to the enclosing word", and every
+/// platform is allowed to answer with something **larger** when the provider
+/// does not implement that unit. Windows says so explicitly for
+/// `ExpandToEnclosingUnit`. The result therefore has to be measured, never
+/// assumed to match the request.
+///
+/// It matters beyond tidiness: the expanded range supplies the anchor
+/// rectangle, so an over-expanded one anchors an overlay to a whole line or
+/// paragraph instead of to a word.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ExpandedUnit {
+    /// The provider gave back one word, which is what was asked for.
+    Word,
+    /// Several words on one line: the request normalised up to a line or a
+    /// similar unit.
+    MultiWord,
+    /// More than one line: normalised to a paragraph or larger.
+    MultiLine,
+    /// Nothing came back, or the classification was not attempted.
+    #[default]
+    Unknown,
+}
+
+impl ExpandedUnit {
+    /// Classify what a provider returned for a word-unit request.
+    pub fn classify(text: &str) -> Self {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Self::Unknown;
+        }
+        if trimmed.contains(['\n', '\r']) {
+            return Self::MultiLine;
+        }
+        // Split on any whitespace: a provider that answers with "the word"
+        // often includes its trailing space, which is still one word.
+        if trimmed.split_whitespace().count() > 1 {
+            return Self::MultiWord;
+        }
+        Self::Word
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Word => "word",
+            Self::MultiWord => "multi-word",
+            Self::MultiLine => "multi-line",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 /// Adapter-defined detail about the provider that answered, for attributing a
 /// failure to the provider rather than to our code.
 ///
@@ -160,6 +213,8 @@ pub struct ProviderInfo {
     /// worked. Chromium and Electron build no tree until an assistive client
     /// asks (`docs/research/inherited-from-mori.md` §2).
     pub woke_accessibility: bool,
+    /// What the provider actually returned when asked to expand to one word.
+    pub expanded_unit: ExpandedUnit,
 }
 
 /// What was read, where it was, and how it was obtained.
@@ -328,6 +383,33 @@ mod tests {
             word_bounds: bounds,
             context_bounds: Vec::new(),
         }
+    }
+
+    #[test]
+    fn one_word_is_recognised_as_one_word() {
+        assert_eq!(ExpandedUnit::classify("produce"), ExpandedUnit::Word);
+        // A provider that includes the trailing space still answered with one
+        // word, and treating that as an over-expansion would condemn a correct
+        // provider.
+        assert_eq!(ExpandedUnit::classify("produce "), ExpandedUnit::Word);
+        assert_eq!(ExpandedUnit::classify("didn't"), ExpandedUnit::Word);
+        assert_eq!(ExpandedUnit::classify("출력"), ExpandedUnit::Word);
+    }
+
+    #[test]
+    fn an_over_expanded_range_is_recognised_as_such() {
+        // The case that matters: a provider without a word unit answers with
+        // the whole line, and the anchor rectangle then covers the line.
+        assert_eq!(
+            ExpandedUnit::classify("the full test suite"),
+            ExpandedUnit::MultiWord,
+        );
+        assert_eq!(
+            ExpandedUnit::classify("first line\nsecond line"),
+            ExpandedUnit::MultiLine,
+        );
+        assert_eq!(ExpandedUnit::classify("  \n  "), ExpandedUnit::Unknown);
+        assert_eq!(ExpandedUnit::classify(""), ExpandedUnit::Unknown);
     }
 
     #[test]
