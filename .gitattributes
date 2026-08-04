@@ -1,0 +1,8 @@
+# Shell scripts must keep LF endings. `scripts/check.sh` is the verification
+# gate and is run through bash on Windows, macOS, and the CI runner; a CRLF
+# checkout makes it fail with a shebang error that reads like a missing
+# interpreter.
+*.sh text eol=lf
+
+# Rust and Markdown are normalised in the repository and checked out native.
+* text=auto
