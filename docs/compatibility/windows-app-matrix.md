@@ -152,6 +152,31 @@ between the product and confidently explaining a sentence the user is
 not looking at. That is issue #5, answered: the threshold is required,
 not a refinement.
 
+### Win32 `EDIT`, measured against a control we built
+
+The matrix had no genuine Win32 application, and the one row that seemed
+to speak to it turned out to be another window's numbers (below). So the
+control is now built rather than waited for:
+`crates/platform-windows/src/live_tests.rs` creates a real window with
+two `EDIT` controls and reads each.
+
+| Control | Result |
+|---|---|
+| plain `EDIT` | `unsupported`, reproducibly |
+| `EDIT` with `ES_PASSWORD` | `protected`, declared by the provider |
+
+**Mori's finding is confirmed.** A plain Win32 `EDIT` exposes no text
+pattern at all. That is not a defect to fix, it is the reason the OCR
+fallback exists rather than being a defensive nicety
+([ADR-0002](../decisions/ADR-0002-accessibility-first-acquisition.md)),
+and it now rests on this project's own measurement rather than on a
+finding carried across from another repository.
+
+Note what this does **not** say: modern applications rarely use a raw
+`EDIT`. Windows 11's Notepad, WinUI apps, and every browser use
+something else. This is the floor for a specific legacy control family,
+not a prediction about any application a user runs.
+
 ### A retracted claim, kept as a worked example
 
 The two runs before the occlusion check reported Notepad at 80%
