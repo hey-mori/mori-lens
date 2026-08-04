@@ -304,3 +304,216 @@ fn a_shown_card_has_text_painted_on_it() {
 
     assert!(overlay.hide());
 }
+
+/// What a sampler saw while watching the card window.
+#[derive(Debug)]
+struct Watched {
+    samples: usize,
+    hidden: usize,
+    blank: usize,
+    thinnest: usize,
+}
+
+/// Sample the card window until told to stop.
+///
+/// Coarse spatially and fine temporally on purpose: the flicker being looked
+/// for lasts a single 25ms loop tick, so time resolution matters and a finer
+/// pixel grid would cost more per sample than the event lasts.
+fn watch_card(
+    window_id: i64,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> std::thread::JoinHandle<Watched> {
+    use std::collections::HashSet;
+    use std::sync::atomic::Ordering;
+
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Gdi::{
+        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
+        GetPixel, ReleaseDC, SelectObject, SRCCOPY,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, IsWindowVisible};
+
+    std::thread::spawn(move || {
+        let window = HWND(window_id as *mut _);
+        let mut watched = Watched {
+            samples: 0,
+            hidden: 0,
+            blank: 0,
+            thinnest: usize::MAX,
+        };
+
+        while !stop.load(Ordering::Relaxed) {
+            watched.samples += 1;
+            // SAFETY: read-only queries; every GDI object is released below.
+            unsafe {
+                if !IsWindowVisible(window).as_bool() {
+                    watched.hidden += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(3));
+                    continue;
+                }
+                let mut rect = windows::Win32::Foundation::RECT::default();
+                if GetClientRect(window, &mut rect).is_err() {
+                    continue;
+                }
+                let (w, h) = (rect.right, rect.bottom);
+                let source = GetDC(Some(window));
+                let memory = CreateCompatibleDC(Some(source));
+                let bitmap = CreateCompatibleBitmap(source, w, h);
+                let previous = SelectObject(memory, bitmap.into());
+                let copied = BitBlt(memory, 0, 0, w, h, Some(source), 0, 0, SRCCOPY).is_ok();
+
+                let mut seen = HashSet::new();
+                if copied {
+                    for y in (0..h).step_by(9) {
+                        for x in (0..w).step_by(9) {
+                            seen.insert(GetPixel(memory, x, y).0);
+                        }
+                    }
+                }
+                SelectObject(memory, previous);
+                let _ = DeleteObject(bitmap.into());
+                let _ = DeleteDC(memory);
+                ReleaseDC(Some(window), source);
+
+                if copied {
+                    watched.thinnest = watched.thinnest.min(seen.len());
+                    // Background plus border is two or three colours. At or
+                    // below that is a card with no text on it.
+                    if seen.len() <= 4 {
+                        watched.blank += 1;
+                    }
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(3));
+        }
+        watched
+    })
+}
+
+/// Sample the card's own window while a streamed answer redraws it.
+///
+/// This is the check I said could not be made mechanically, and I was wrong:
+/// flicker has two observable causes and both are measurable from inside the
+/// process.
+///
+/// - **The card disappearing between redraws.** Sampling `IsWindowVisible`
+///   while partials arrive catches a show/hide cycle directly. That was the
+///   real bug: a card retired 25ms after appearing, re-shown by the next
+///   partial, retired again.
+/// - **A blank frame mid-paint.** Without double buffering the window shows a
+///   filled background with no text on it for the length of the layout.
+///   Counting distinct colours in a sampled frame catches that: a painted card
+///   has dozens, a blank one has two or three.
+///
+/// What it still cannot see is a flash shorter than the sampling period, or
+/// anything about how it *feels*. It proves the two known causes are gone, not
+/// that a human sees a steady card.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn a_streamed_answer_does_not_blank_or_disappear_between_redraws() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    use lens_core::card::Card;
+    use lens_core::geometry::ScreenRect;
+
+    let overlay = crate::Overlay::start().expect("overlay");
+    let anchor = ScreenRect::new(500, 400, 300, 22);
+    let original = "The output files came back empty, so the full test suite produced nothing.";
+
+    assert!(overlay.show(Card::partial(original, "출력"), anchor));
+    std::thread::sleep(std::time::Duration::from_millis(400));
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let watcher = watch_card(overlay.window_id(), Arc::clone(&stop));
+
+    // What a streamed answer does: the same card, growing, on the throttle.
+    for piece in [
+        "출력 파일이",
+        "출력 파일이 비어 있었기",
+        "출력 파일이 비어 있었기 때문에 전체",
+        "출력 파일이 비어 있었기 때문에 전체 테스트 스위트는",
+        "출력 파일이 비어 있었기 때문에 전체 테스트 스위트는 아무것도 생성하지 않았습니다.",
+    ] {
+        assert!(overlay.show(Card::partial(original, piece), anchor));
+        std::thread::sleep(std::time::Duration::from_millis(120));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    stop.store(true, Ordering::Relaxed);
+    let seen = watcher.join().expect("watcher");
+    let period_ms = 800.0 / seen.samples as f64;
+    println!(
+        "{} samples every {period_ms:.1}ms · {} hidden · {} blank · thinnest {} colours",
+        seen.samples, seen.hidden, seen.blank, seen.thinnest,
+    );
+
+    // The bug hid the card for one 25ms loop tick, so the sampler has to be
+    // well inside that or a pass means nothing.
+    assert!(
+        seen.samples > 60 && period_ms < 20.0,
+        "{} samples, one every {period_ms:.1}ms: too coarse to see a 25ms flicker",
+        seen.samples,
+    );
+    assert_eq!(
+        seen.hidden, 0,
+        "the card disappeared while a streamed answer was arriving",
+    );
+    assert_eq!(
+        seen.blank, 0,
+        "{} frames showed a card with no text on it, which is the paint flickering",
+        seen.blank,
+    );
+
+    assert!(overlay.hide());
+}
+
+/// The detector's own control: it must fail on the behaviour it exists to
+/// catch.
+///
+/// A flicker detector that passes on both the broken and the fixed code is
+/// worthless, and there is no way to tell which one it is without making it
+/// fail on purpose. This reproduces the old bug, a card retired between
+/// partials, and asserts the sampler notices.
+///
+/// If this ever stops seeing hidden frames, the detector above has gone blind
+/// and its passes mean nothing.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn the_flicker_detector_catches_a_card_that_disappears() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    use lens_core::card::Card;
+    use lens_core::geometry::ScreenRect;
+
+    let overlay = crate::Overlay::start().expect("overlay");
+    let anchor = ScreenRect::new(500, 400, 300, 22);
+
+    assert!(overlay.show(Card::partial("original text", "번역"), anchor));
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let watcher = watch_card(overlay.window_id(), Arc::clone(&stop));
+
+    // Exactly what the old dismissal rule did: hide almost immediately after
+    // each partial, then let the next one show it again.
+    for piece in ["번역이", "번역이 도착", "번역이 도착하는 중"] {
+        assert!(overlay.show(Card::partial("original text", piece), anchor));
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        assert!(overlay.hide());
+        std::thread::sleep(std::time::Duration::from_millis(60));
+    }
+
+    stop.store(true, Ordering::Relaxed);
+    let seen = watcher.join().expect("watcher");
+    println!(
+        "control: {} samples · {} hidden · {} blank",
+        seen.samples, seen.hidden, seen.blank,
+    );
+
+    assert!(
+        seen.hidden > 0,
+        "the detector did not notice a card that was hidden three times;          it is blind and the test above proves nothing",
+    );
+}
