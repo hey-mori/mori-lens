@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = ["crates/lens-core", "crates/platform-windows", "apps/hover-probe"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "UNLICENSED"
+repository = "https://github.com/swarea/mori-lens"
+
+[workspace.dependencies]
+lens-core = { path = "crates/lens-core" }
+lens-platform-windows = { path = "crates/platform-windows" }
+unicode-segmentation = "1.13"
+
+[workspace.lints.rust]
+# An unsafe block without a stated invariant does not merge (CLAUDE.md).
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "warn"
