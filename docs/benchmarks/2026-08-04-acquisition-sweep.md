@@ -140,6 +140,30 @@ The two clusters are separated by an enormous gap: roughly 14px against
 not delicate. Something on the order of one line height is defensible
 and scales with DPI and font size.
 
+## Third run: the gate, checked against live data
+
+[ADR-0009](../decisions/ADR-0009-pointer-distance-gate.md) sets the
+tolerance at one line height. A third run reports what that gate would
+do to each miss, so the threshold is re-tested on every later run rather
+than justified only by the run that chose it.
+
+| Misses | Distance p50 / max | Gate accepts | Reading |
+|---:|---:|---:|---|
+| 1 | 1px / 1px | **1 of 1** | slack, correctly kept |
+| 3 | 12px / 287px | **2 of 3** | two slack kept, one empty-space miss dropped |
+| 10 | 110px / 572px | **1 of 10** | one slack kept, nine dropped |
+| 20 | 520px / 935px | **0 of 20** | all empty space, all dropped |
+
+The gate turns strict-containment rates of 80%, 50%, 38%, and 0% into
+effective rates of 100%, 83%, 44%, and 0%. It keeps what a strict rule
+would have thrown away and drops what a permissive one would have shown
+on the wrong sentence.
+
+This is a check, not a proof. It confirms the threshold separates the
+two populations on this data; it says nothing about a font size or a
+display scaling that has not been measured. The sweep now prints the
+line on every run, which is the point.
+
 ## What this does not establish
 
 - **That "empty space" is proven rather than strongly indicated.** Three

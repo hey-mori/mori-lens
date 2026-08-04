@@ -65,6 +65,26 @@ impl Outcome {
                     pointer_distance: target.pointer_distance(point),
                 }
             }
+            // Not a failure: the read worked and the pointer was over empty
+            // space. Given its own reason so a run can tell "nothing there"
+            // apart from "could not read"
+            // (docs/decisions/ADR-0009-pointer-distance-gate.md).
+            Resolution::OffTarget(target) => Self {
+                app: target.app.process_name.clone(),
+                reason: "off-target",
+                succeeded: false,
+                duplicate: false,
+                elapsed,
+                control_id: target.provider.control_id,
+                woke: target.provider.woke_accessibility,
+                word: None,
+                word_chars: 0,
+                sentence_chars: 0,
+                paragraph_chars: 0,
+                word_rects: target.word_bounds.len(),
+                context_rects: target.context_bounds.len(),
+                pointer_distance: target.pointer_distance(point),
+            },
             Resolution::Stale => Self::failed(AcquireError::Stale, elapsed),
             Resolution::Failed(error) => Self::failed(*error, elapsed),
         }

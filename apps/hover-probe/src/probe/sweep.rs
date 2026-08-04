@@ -102,7 +102,7 @@ impl PassStats {
                     if distance == 0.0 {
                         self.on_target += 1;
                     } else if let (Some(rect), Some(sample)) = (point.rect, point.sample) {
-                        self.off_target.record(sample, rect);
+                        self.off_target.record(sample, rect, point.within_gate);
                     }
                 }
             }
@@ -130,6 +130,8 @@ struct PointOutcome {
     /// The point that was sampled, carried so the miss's direction can be
     /// worked out where the outcome is recorded.
     sample: Option<ScreenPoint>,
+    /// Whether the product gate would treat this as pointing at the word.
+    within_gate: bool,
 }
 
 /// Which side of the resolved rectangle the sample point fell on.
@@ -157,10 +159,18 @@ pub struct OffTargetShape {
     /// How many samples resolved to each distinct rectangle. A small map
     /// against a large sample count is the attractor signature.
     pub rects: std::collections::BTreeMap<(i32, i32, i32, i32), usize>,
+    /// Misses the product gate would nonetheless accept as slack.
+    ///
+    /// Tracked so every later run re-tests ADR-0009's threshold rather than
+    /// leaving it justified only by the run that set it.
+    pub within_gate: usize,
 }
 
 impl OffTargetShape {
-    fn record(&mut self, point: ScreenPoint, rect: ScreenRect) {
+    fn record(&mut self, point: ScreenPoint, rect: ScreenRect, within_gate: bool) {
+        if within_gate {
+            self.within_gate += 1;
+        }
         // Vertical first: a text line is wide and short, so "below the last
         // line" is the signature worth reading, and a point below a line is
         // usually also within its horizontal span.
@@ -267,6 +277,7 @@ fn sample(
             distance: target.pointer_distance(*point),
             rect: target.nearest_rect_to(*point),
             sample: Some(*point),
+            within_gate: target.is_on_target(*point),
         });
         stats.record(outcome, elapsed);
     }
@@ -459,6 +470,15 @@ fn print_pass(label: &str, stats: &PassStats) {
             shape.left,
             shape.right,
         );
+        // The product gate is more lenient than the strict containment this
+        // report measures, because slack on a label is not a wrong target.
+        // Printing what the gate would do keeps ADR-0009 falsifiable on every
+        // later run instead of frozen at the numbers that justified it.
+        println!(
+            "           gate would accept {}/{} of those as slack, at one line height",
+            shape.within_gate,
+            shape.total(),
+        );
     }
     if stats.acquired > stats.with_bounds {
         println!(
@@ -549,6 +569,7 @@ mod tests {
                 distance: Some(0.0),
                 rect: None,
                 sample: None,
+                within_gate: true,
             }),
             Duration::from_millis(4),
         );
@@ -558,6 +579,7 @@ mod tests {
                 distance: Some(37.0),
                 rect: Some(ScreenRect::new(0, 0, 10, 10)),
                 sample: Some(ScreenPoint::new(50, 50)),
+                within_gate: false,
             }),
             Duration::from_millis(4),
         );
@@ -578,6 +600,7 @@ mod tests {
                 distance: None,
                 rect: None,
                 sample: None,
+                within_gate: true,
             }),
             Duration::from_millis(2),
         );
@@ -601,6 +624,7 @@ mod tests {
                 distance: Some(0.0),
                 rect: Some(ScreenRect::new(0, 0, 10, 10)),
                 sample: Some(ScreenPoint::new(5, 5)),
+                within_gate: true,
             }),
             Duration::from_millis(3),
         );
@@ -620,6 +644,7 @@ mod tests {
             shape.record(
                 ScreenPoint::new(120 + step * 15, 300 + step * 10),
                 last_line,
+                false,
             );
         }
 
@@ -627,6 +652,7 @@ mod tests {
         assert_eq!(shape.rects.len(), 1, "one line should catch them all");
         assert_eq!(shape.concentration(), 20.0);
         assert_eq!(shape.below, 20, "every point was below the line");
+        assert_eq!(shape.within_gate, 0, "82px and up is not slack");
     }
 
     /// Each point resolving to its own rectangle, in every direction, which is
@@ -638,6 +664,7 @@ mod tests {
             shape.record(
                 ScreenPoint::new(500, 500),
                 ScreenRect::new(100 + step * 40, 100 + step * 37, 30, 18),
+                false,
             );
         }
 
@@ -660,6 +687,7 @@ mod tests {
                 distance: Some(0.0),
                 rect: Some(ScreenRect::new(0, 0, 10, 10)),
                 sample: Some(ScreenPoint::new(5, 5)),
+                within_gate: true,
             }),
             Duration::from_millis(1),
         );
