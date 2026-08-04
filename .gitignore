@@ -1,0 +1,12 @@
+target/
+node_modules/
+dist/
+.DS_Store
+.env
+.env.*
+!.env.example
+.claude/
+*.log
+# Probe output is a local measurement artifact, not a repository record. A run
+# worth keeping is transcribed into docs/compatibility/ by hand.
+/probe-runs/

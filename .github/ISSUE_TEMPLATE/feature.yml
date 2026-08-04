@@ -1,0 +1,39 @@
+name: Feature
+description: Build something new, or connect something already built that a user cannot reach
+labels: ["type:feature"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: What the user can do afterwards
+      description: State the outcome from the user's side, not the implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: state
+    attributes:
+      label: What already exists
+      description: >
+        Code that is already there and can be reused, with `file:line`. Often
+        the only thing missing is the wiring.
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: >
+        What must be observable for this to be finished. For anything touching
+        acquisition, that includes a probe run against named applications.
+    validations:
+      required: true
+  - type: input
+    id: milestone
+    attributes:
+      label: Milestone
+      placeholder: M1 Hover probe
+  - type: textarea
+    id: adr
+    attributes:
+      label: Decisions it depends on or contradicts
+      description: >
+        Cite the ADRs. If this needs one reversed, the superseding ADR is a
+        separate issue and lands first.

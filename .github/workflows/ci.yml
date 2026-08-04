@@ -1,0 +1,57 @@
+# Continuous integration.
+#
+# This workflow deliberately runs `scripts/check.sh` rather than listing the
+# verification commands itself. That script is also what a contributor runs
+# locally, so there is exactly one definition of "verified" and local and CI
+# cannot drift apart.
+#
+# TRIGGER STATE: manual only, on purpose.
+#
+# The repository is private, and Actions on a private repository is metered.
+# In the sibling repository (swarea/mori) runs were being rejected before they
+# started, which put a red X on every commit and taught us to ignore the
+# signal. A permanently failing check is worse than an honestly disabled one,
+# because it hides the real failures among the noise.
+#
+# So the automatic triggers are commented out rather than deleted, and the real
+# gate is `scripts/check.sh`, recorded in each pull request under "How it was
+# verified" (docs/git-workflow.md §9).
+#
+# TO RESTORE: once billing is configured, or the repository becomes public and
+# standard runners are free, uncomment the `push` and `pull_request` triggers
+# below. Nothing else needs to change.
+#
+# WHAT CI CANNOT DO HERE: the acquisition adapter needs a live desktop with a
+# focused window, so no runner can verify it. Windows-hosted jobs compile it and
+# nothing more. That gap is covered by the probe run required in the pull
+# request template, not by pretending a green build is evidence.
+name: ci
+
+on:
+  workflow_dispatch:
+  # push:
+  #   branches: [main]
+  # pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    # windows-latest on purpose: crates/platform-windows only compiles on
+    # Windows, so a Linux runner would silently skip the half of the workspace
+    # most likely to break.
+    name: scripts/check.sh --full
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: bash scripts/check.sh --full
+        shell: bash

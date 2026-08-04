@@ -1,0 +1,42 @@
+name: Bug
+description: Lens misbehaves, resolves the wrong text, or crashes
+labels: ["type:bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        An application that exposes no text through the accessibility tree is
+        **not** a bug. That is a recorded fact about the application: file it
+        as Compatibility instead, so the defect count stays meaningful.
+  - type: textarea
+    id: what
+    attributes:
+      label: What is wrong
+      description: What actually happens, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: >
+        Which application, what you hovered over, and where in the text. Say so
+        if it only reproduces at a particular DPI scale or on a second monitor.
+      placeholder: |
+        1. Open Chrome on a page of English prose
+        2. Rest the pointer mid-word on a body paragraph
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: >
+        Probe output, `file:line`, the failure reason. Never paste captured
+        text. If it is a guess, say it is a guess.
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: Windows 11 26200 · 150% scaling · 2 monitors · build <sha>

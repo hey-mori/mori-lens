@@ -1,0 +1,46 @@
+name: Product decision
+description: Blocked on a product or architecture judgement rather than on engineering
+labels: ["type:decision", "priority:high"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This type exists so a decision is never disguised as a task.
+        If the answer belongs in `docs/adr/`, say so: the outcome of this issue
+        is then an ADR, not a code change.
+  - type: textarea
+    id: question
+    attributes:
+      label: What has to be decided
+      description: One sentence.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Where things stand
+      description: What the code actually does today, with evidence.
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: Options
+      description: >
+        Each with its consequence. If you have a recommendation, mark it as the
+        recommendation.
+    validations:
+      required: true
+  - type: textarea
+    id: blocks
+    attributes:
+      label: What this blocks
+      description: The work that cannot start until this is answered.
+  - type: dropdown
+    id: adr
+    attributes:
+      label: Does this produce an ADR
+      options:
+        - "Yes, a new ADR"
+        - "Yes, superseding an existing ADR"
+        - "No, it is smaller than that"

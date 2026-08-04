@@ -1,0 +1,62 @@
+name: Compatibility
+description: An application returns nothing, or the wrong thing, through the accessibility tree
+labels: ["type:compatibility"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This type exists so a fact about someone else's application is never
+        counted as a defect in ours. Some applications expose no text and never
+        will; that is what the OCR fallback is for.
+  - type: input
+    id: app
+    attributes:
+      label: Application and version
+      placeholder: Slack 4.x
+    validations:
+      required: true
+  - type: dropdown
+    id: framework
+    attributes:
+      label: Framework
+      options:
+        - Win32
+        - WPF
+        - WinForms
+        - WinUI
+        - Chromium
+        - Electron
+        - Java
+        - Qt
+        - Unknown
+    validations:
+      required: true
+  - type: dropdown
+    id: reason
+    attributes:
+      label: Failure reason reported by the probe
+      options:
+        - unsupported
+        - empty
+        - timeout
+        - element-gone
+        - protected
+        - wrong word resolved
+        - bounds do not match the text
+    validations:
+      required: true
+  - type: textarea
+    id: probe
+    attributes:
+      label: Probe output
+      description: Paste the run. Never paste captured text.
+    validations:
+      required: true
+  - type: textarea
+    id: repair
+    attributes:
+      label: Is there a known repair
+      description: >
+        A wake message, a different pattern, a different element in the tree, or
+        nothing short of OCR. "Nothing" is a complete answer and is worth
+        recording.
