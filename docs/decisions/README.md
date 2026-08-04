@@ -58,5 +58,6 @@ Each file is `ADR-NNNN-kebab-slug.md` and holds:
 | [ADR-0005](ADR-0005-two-speed-ai.md) | Quick translation and deep analysis are separate paths | Accepted |
 | [ADR-0006](ADR-0006-no-shared-package-yet.md) | No shared package with Mori yet | Accepted |
 | [ADR-0007](ADR-0007-local-first-inference.md) | Local-first inference over an external Ollama | Accepted |
-| [ADR-0008](ADR-0008-probe-before-product.md) | Measure the acquisition rate before building the product | Accepted |
+| [ADR-0008](ADR-0008-probe-before-product.md) | Measure the acquisition rate before building the product | Partly superseded by ADR-0010 |
 | [ADR-0009](ADR-0009-pointer-distance-gate.md) | A resolution too far from the pointer is suppressed | Accepted |
+| [ADR-0010](ADR-0010-acquisition-is-proven-enough.md) | Acquisition is proven enough to build on | Accepted |
