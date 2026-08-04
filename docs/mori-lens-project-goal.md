@@ -51,7 +51,7 @@ not written), **out of v1** (deliberately excluded).
 | Hover intent state machine (dwell, radius, cooldown, stale discard) | built, unverified · covered by unit tests, never driven through a real reading session |
 | Windows UI Automation text acquisition under the pointer | **shipped** · measured on 3 windows, 2026-08-04 |
 | Word / sentence / paragraph segmentation | built, unverified · unit tested, no human has confirmed a resolved word is the intended one |
-| Secure-field refusal | built, unverified · the refusal path has never been triggered by a real password field |
+| Secure-field refusal | **shipped** · fires as `Protected(Declared)` against a real `ES_PASSWORD` control, and discriminates from a plain one |
 | Hover probe, follow mode | built, unverified |
 | Hover probe, sweep mode | **shipped** · produced the 2026-08-04 measurements |
 | Per-application compatibility matrix | in progress · 3 of 8 target applications |
