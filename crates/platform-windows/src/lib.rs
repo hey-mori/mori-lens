@@ -21,4 +21,6 @@ mod uia;
 mod window;
 
 pub use uia::UiaTextAcquirer;
-pub use window::{declare_dpi_awareness, process_name_at};
+pub use window::{
+    declare_dpi_awareness, process_name_at, root_window_at, top_level_windows, WindowInfo,
+};

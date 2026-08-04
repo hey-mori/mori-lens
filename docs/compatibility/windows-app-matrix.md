@@ -1,21 +1,52 @@
 # Windows application compatibility
 
-**Status · empty. No application has been measured yet.**
+**Status · started. Three windows measured, five of the eight target
+applications still unmeasured.**
 
-That sentence is the gate on Milestone 2
+The full set is the gate on Milestone 2
 ([ADR-0008](../decisions/ADR-0008-probe-before-product.md)). Nothing here is filled
 in from documentation or from expectation. A row exists only after a
 probe run produced it.
 
 ## How to produce a row
 
+Two instruments, and the sweep is the one to reach for first.
+
+```bash
+cargo run -p hover-probe -- sweep --only chrome
+```
+
+Samples a grid across the window without moving the pointer, and reports
+acquisition rate, on-target rate, latency, and the wake's effect.
+**The target window must be in front**: see the occlusion limit below.
+
 ```bash
 cargo run -p hover-probe -- --auto --expect <word>
 ```
 
-Then hover over ordinary body text in the target application for a few
-seconds, over a heading, over a single word, and near the edge of a
-line. Press Ctrl+C. The probe prints a summary; transcribe it here.
+The follow instrument, for spot-checking that a specific word resolves
+to the word you meant. The sweep cannot judge that, because it does not
+know which pixels carry prose.
+
+**Check the build sha the probe prints against
+`git rev-parse --short HEAD` before trusting a run.** `cargo test` does
+not rebuild the binary target, so a check-then-run sequence can measure
+code that is minutes out of date and say nothing about it. That cost a
+full run on 2026-08-04.
+
+## The occlusion limit
+
+A sweep can only measure a window that is **actually visible**.
+`ElementFromPoint` answers with whatever is topmost at a coordinate, so
+sampling a covered window measures the window on top of it. The probe
+now checks the owner of every point and skips the covered ones, which
+means a background window reports `0/0 (N occluded)` rather than
+someone else's numbers.
+
+The consequence for a compatibility session: bring one application
+forward, sweep it, then the next. The probe deliberately does **not**
+activate windows itself. A measurement tool that rearranged the desktop
+it was measuring would change the thing it is trying to observe.
 
 Record the environment with the run, because these results are not
 portable across machines:
@@ -59,7 +90,7 @@ between them they cover where a user actually meets a second language.
 
 | Application | Framework | Why it is in the set |
 |-------------|-----------|---------------------|
-| Notepad | Win32 / RichEdit | the simplest possible case, and Mori found Win32 `EDIT` exposes no text pattern at all |
+| Notepad | Win32 or WinUI, unverified | the simplest text case, and the closest thing to Mori's Win32 `EDIT` finding |
 | Chrome | Chromium | where most reading happens; needs the accessibility wake |
 | Edge | Chromium | same engine, different shell and PDF viewer |
 | VS Code | Electron | code and documentation, a heavy renderer |
@@ -71,11 +102,77 @@ between them they cover where a user actually meets a second language.
 ## Results
 
 <!--
-One table per application. Do not pre-create empty rows: an empty row
-reads as a result, and there are none yet.
+Do not pre-create empty rows: an empty row reads as a result. Only add a row a
+run actually produced, and say which run.
 -->
 
-_No gate runs recorded._
+### Sweep, 2026-08-04
+
+```
+build         d1e236b-dirty
+os            Windows 11 Home 26200
+monitors      2 side by side
+  primary     1920x1200 physical at 125%, origin (0, 0)
+  secondary   1920x1080 physical at 100%, origin (1920, 0)
+command       hover-probe sweep --points 120 --budget 10
+```
+
+Full numbers and the latency analysis:
+[`../benchmarks/2026-08-04-acquisition-sweep.md`](../benchmarks/2026-08-04-acquisition-sweep.md).
+
+| Window | Framework | Element | TextPattern | Controls | On-target | Distance p50 / max | Latency p50 / p95 | Wake |
+|---|---|---|---|---|---:|---:|---:|---|
+| Chrome, 956x925, @100% | Chromium | yes | yes | `50020` | **86 to 100%** | 0px / 3px | 7.9 / 12.4ms | +2 acquisitions |
+| Chrome, 1777x1072, @100% | Chromium | yes | yes | `50030`, `50004` | **5%** | 322px / 935px | 10.4 / 19.3ms | already warm |
+| Claude desktop, 1884x1112, @125% | Electron | yes | yes | `50020` | **69 to 75%** | 0px / 14px | 9.3 / 20.2ms | already warm |
+
+**Still unmeasured**, because each was fully occluded during the run and
+the probe correctly refused to report someone else's numbers for them:
+Edge, VS Code, Word, the Edge PDF viewer, Windows Settings, Notepad, and
+an Electron messenger. Bringing each forward and sweeping it is the
+remaining work on issue #3.
+
+### The finding that changes the design
+
+On-target rate splits by control type, and the split held across all
+three runs and every application seen:
+
+| Control type | On-target | Distance p50 |
+|---|---:|---:|
+| `50020` Text, a label | 86 to 100% | 0px |
+| `50030` Document, `50004` Edit | 3 to 18% | 82 to 322px |
+
+`RangeFromPoint` on a label returns the label. On a document or edit
+control it returns the nearest text anywhere in that scrollable region,
+which for a point below the last line is hundreds of pixels away, and it
+**reports success**. There is no error to catch.
+
+So inside a document the distance check is the only thing standing
+between the product and confidently explaining a sentence the user is
+not looking at. That is issue #5, answered: the threshold is required,
+not a refinement.
+
+### A retracted claim, kept as a worked example
+
+The two runs before the occlusion check reported Notepad at 80%
+acquired with control types `50004` and `50030`, which looked like a
+clean correction to Mori's finding that Win32 `EDIT` exposes no text
+pattern.
+
+**It was not Notepad.** Notepad sat at (2974, 288) 761x583, entirely
+inside a Chrome window at (2043, 0) 1777x1072. The occluding Chrome
+window reports exactly the profile those rows carried, `50030` plus
+`50004`. The numbers were Chrome's, filed under Notepad's name.
+
+Notepad is unmeasured, and Mori's `EDIT` finding is neither confirmed
+nor corrected here. Testing it also needs a genuine WinForms or
+old-Win32 application, which Windows 11's Notepad may or may not still
+be; that is itself unverified.
+
+This is left in the document rather than deleted because it is the
+cleanest illustration of why the occlusion check exists: the wrong
+numbers were entirely plausible, internally consistent, and would have
+been believed.
 
 ### Smoke check, 2026-08-04
 
