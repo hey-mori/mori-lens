@@ -29,7 +29,8 @@
 use std::time::{Duration, Instant};
 
 use lens_core::translate::{
-    EngineId, QuickRequest, QuickTranslation, TranslateError, Translator, QUICK_TIMEOUT,
+    EngineId, QuickRequest, QuickTranslation, TranslateError, Translator, PARTIAL_REDRAW_INTERVAL,
+    QUICK_TIMEOUT,
 };
 
 mod http;
@@ -201,26 +202,24 @@ fn fence_for(text: &str) -> String {
     format!("#LENS-{:016x}#", hasher.finish())
 }
 
-impl Translator for OllamaTranslator {
-    fn quick(&self, request: &QuickRequest) -> Result<QuickTranslation, TranslateError> {
-        if !request.is_worth_translating() {
-            return Err(TranslateError::NotWorthTranslating);
-        }
-
+impl OllamaTranslator {
+    /// The request body, identical on both paths except for `stream`.
+    ///
+    /// Shared so the streaming and buffered answers are the same answer. Two
+    /// separately maintained prompts would drift, and the one that drifted
+    /// would be the one carrying the injection defence.
+    fn body_for(&self, request: &QuickRequest, streaming: bool) -> String {
         let fence = fence_for(&request.source_text);
         // The fence is concatenated with the text on purpose, which is the one
         // place instructions and screen text meet. It is safe only because the
         // marker is unguessable: the text cannot close a fence it cannot name.
         let fenced = format!(
-            "{fence}
-{}
-{fence}
-
-Translate the material between the markers              into {}. Output only the translation.",
+            "{fence}\n{}\n{fence}\n\nTranslate the material between the markers \
+             into {}. Output only the translation.",
             request.source_text, request.target_language,
         );
 
-        let body = json::object(&[
+        json::object(&[
             ("model", json::Value::Str(&self.model)),
             (
                 "system",
@@ -231,10 +230,10 @@ Translate the material between the markers              into {}. Output only the
                 )),
             ),
             ("prompt", json::Value::Str(&fenced)),
-            // A short translation redrawn token by token makes the card
-            // shimmer. The whole answer at once is calmer and, at this length,
-            // no slower to finish.
-            ("stream", json::Value::Raw("false")),
+            (
+                "stream",
+                json::Value::Raw(if streaming { "true" } else { "false" }),
+            ),
             (
                 "options",
                 // Deterministic and short. A translation is not a place for the
@@ -242,20 +241,37 @@ Translate the material between the markers              into {}. Output only the
                 // turns into a four-second wait.
                 json::Value::Raw("{\"temperature\":0,\"num_predict\":256}"),
             ),
-        ]);
+        ])
+    }
 
+    /// Map an Ollama error body onto the taxonomy.
+    fn error_in(&self, response: &str) -> Option<TranslateError> {
+        if !response.contains("\"error\"") {
+            return None;
+        }
+        // Ollama answers with a message naming the model when it is not
+        // pulled. Distinguishing that from "no engine" is the difference
+        // between two very different sentences on screen.
+        if response.contains("not found") || response.contains("try pulling") {
+            return Some(TranslateError::ModelMissing(self.model.clone()));
+        }
+        Some(TranslateError::Malformed)
+    }
+}
+
+impl Translator for OllamaTranslator {
+    fn quick(&self, request: &QuickRequest) -> Result<QuickTranslation, TranslateError> {
+        if !request.is_worth_translating() {
+            return Err(TranslateError::NotWorthTranslating);
+        }
+
+        let body = self.body_for(request, false);
         let started = Instant::now();
         let response = http::post(&self.endpoint, "/api/generate", &body, self.timeout)?;
         let latency_ms = started.elapsed().as_millis();
 
-        // Ollama answers 404 with a message naming the model when it is not
-        // pulled. Distinguishing that from "no engine" is the difference
-        // between two very different sentences on screen.
-        if response.contains("\"error\"") {
-            if response.contains("not found") || response.contains("try pulling") {
-                return Err(TranslateError::ModelMissing(self.model.clone()));
-            }
-            return Err(TranslateError::Malformed);
+        if let Some(error) = self.error_in(&response) {
+            return Err(error);
         }
 
         let text = json::string_value_of_key(&response, "response")
@@ -272,6 +288,73 @@ Translate the material between the markers              into {}. Output only the
             engine: EngineId::LocalOllama,
             model: self.model.clone(),
             latency_ms,
+        })
+    }
+
+    /// The same answer, reported as it arrives.
+    ///
+    /// Ollama returns newline-delimited JSON, one object per token batch. The
+    /// pieces are accumulated and `on_partial` is called **on a throttle**,
+    /// never per token: a short translation redrawn every few milliseconds
+    /// shimmers, and shimmer reads as instability rather than as speed.
+    ///
+    /// The throttle is why this is worth doing at all. First text lands at a
+    /// fraction of the total, so a reader sees an answer forming instead of a
+    /// second and a half of nothing.
+    fn quick_streaming(
+        &self,
+        request: &QuickRequest,
+        on_partial: &mut dyn FnMut(&str),
+    ) -> Result<QuickTranslation, TranslateError> {
+        if !request.is_worth_translating() {
+            return Err(TranslateError::NotWorthTranslating);
+        }
+
+        let body = self.body_for(request, true);
+        let started = Instant::now();
+        let mut accumulated = String::new();
+        let mut last_report = Instant::now();
+        let mut failure = None;
+
+        http::post_streaming(
+            &self.endpoint,
+            "/api/generate",
+            &body,
+            self.timeout,
+            &mut |line| {
+                if let Some(error) = self.error_in(line) {
+                    failure = Some(error);
+                    return false;
+                }
+                // A chunk-size line from the chunked framing is not JSON and
+                // yields nothing here, which is exactly the intended handling.
+                if let Some(piece) = json::string_value_of_key(line, "response") {
+                    accumulated.push_str(&piece);
+                    if last_report.elapsed() >= PARTIAL_REDRAW_INTERVAL
+                        && !accumulated.trim().is_empty()
+                    {
+                        last_report = Instant::now();
+                        on_partial(accumulated.trim());
+                    }
+                }
+                true
+            },
+        )?;
+
+        if let Some(error) = failure {
+            return Err(error);
+        }
+
+        let text = accumulated.trim().to_owned();
+        if text.is_empty() {
+            return Err(TranslateError::Malformed);
+        }
+
+        Ok(QuickTranslation {
+            text,
+            engine: EngineId::LocalOllama,
+            model: self.model.clone(),
+            latency_ms: started.elapsed().as_millis(),
         })
     }
 }
