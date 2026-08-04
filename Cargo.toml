@@ -5,6 +5,7 @@ members = [
   "crates/lens-translate",
   "crates/platform-windows",
   "apps/hover-probe",
+  "apps/lens",
 ]
 
 [workspace.package]
