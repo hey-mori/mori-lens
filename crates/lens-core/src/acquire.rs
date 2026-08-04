@@ -13,6 +13,17 @@ use crate::geometry::{bounding_box, ScreenPoint, ScreenRect};
 use crate::hover::{Generation, TargetFingerprint};
 use crate::text::SegmentedText;
 
+/// How far, in multiples of the resolved line's height, the pointer may sit
+/// from the text and still be treated as pointing at it.
+///
+/// One line height, from the measurement in
+/// `docs/benchmarks/2026-08-04-acquisition-sweep.md`: slack on label controls
+/// reached 14px against a line height of roughly 18px, and the nearest empty
+/// space cluster began at 82px. The gap is wide enough that this value is not
+/// delicate, and it stays open to tuning once there is an overlay to judge it
+/// against.
+const ON_TARGET_LINE_HEIGHTS: f64 = 1.0;
+
 /// Where the characters came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcquisitionSource {
@@ -191,6 +202,29 @@ impl TextTarget {
             .map(|rect| rect.distance_to(point))
     }
 
+    /// Whether the resolved text is close enough to the pointer to be what the
+    /// user meant.
+    ///
+    /// `RangeFromPoint` answers with the *nearest* text and never fails inside
+    /// a document, so this is the only signal that the pointer was over empty
+    /// space rather than over a word
+    /// (`docs/decisions/ADR-0009-pointer-distance-gate.md`).
+    ///
+    /// The tolerance is a multiple of the resolved line's height rather than a
+    /// pixel constant. The slack being tolerated is glyph-box and line-height
+    /// slack, which scales with font size and display scaling, so a constant
+    /// tuned on one machine is wrong on the next. Measured, the two populations
+    /// sit at roughly 14px and 322px, so the multiple is not delicate.
+    ///
+    /// A target with no visible rectangle is **on target**: the text exists and
+    /// is scrolled out of view, which is not the same as pointing at nothing.
+    pub fn is_on_target(&self, point: ScreenPoint) -> bool {
+        let Some(rect) = self.nearest_rect_to(point) else {
+            return true;
+        };
+        rect.distance_to(point) <= f64::from(rect.height.max(1)) * ON_TARGET_LINE_HEIGHTS
+    }
+
     /// The resolved rectangle nearest a point, or `None` when nothing this
     /// target resolved is currently visible.
     ///
@@ -283,6 +317,63 @@ mod tests {
 
         let unique: std::collections::HashSet<_> = reasons.iter().collect();
         assert_eq!(unique.len(), reasons.len(), "two failures share a reason");
+    }
+
+    fn target_with_word_bounds(bounds: Vec<ScreenRect>) -> TextTarget {
+        TextTarget {
+            app: AppIdentity::default(),
+            source: AcquisitionSource::Accessibility,
+            provider: ProviderInfo::default(),
+            segmented: crate::text::segment("a resolved sentence", 0),
+            word_bounds: bounds,
+            context_bounds: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn glyph_box_slack_still_counts_as_pointing_at_the_word() {
+        // Measured: misses on label controls reached 14px against a line
+        // height near 18px. A strict containment rule would have discarded
+        // about a fifth of good hits over this.
+        let target = target_with_word_bounds(vec![ScreenRect::new(100, 100, 60, 18)]);
+        assert!(target.is_on_target(ScreenPoint::new(130, 109)), "inside");
+        assert!(target.is_on_target(ScreenPoint::new(130, 112)), "6px below");
+        assert!(
+            target.is_on_target(ScreenPoint::new(130, 130)),
+            "13px below"
+        );
+    }
+
+    #[test]
+    fn text_a_screen_away_is_not_what_the_pointer_meant() {
+        // The empty-space cluster began at 82px and reached 1,465px.
+        let target = target_with_word_bounds(vec![ScreenRect::new(100, 100, 60, 18)]);
+        assert!(!target.is_on_target(ScreenPoint::new(130, 200)));
+        assert!(!target.is_on_target(ScreenPoint::new(1500, 109)));
+    }
+
+    #[test]
+    fn the_gate_scales_with_the_line_rather_than_a_pixel_constant() {
+        // The same 30px offset is slack on a large line and empty space on a
+        // small one. A fixed threshold cannot express that, which is why the
+        // tolerance is a multiple of the line height.
+        let small = target_with_word_bounds(vec![ScreenRect::new(0, 0, 40, 10)]);
+        let large = target_with_word_bounds(vec![ScreenRect::new(0, 0, 40, 40)]);
+        let point = ScreenPoint::new(20, 40);
+
+        assert!(
+            !small.is_on_target(point),
+            "30px off a 10px line is not slack"
+        );
+        assert!(large.is_on_target(point), "30px off a 40px line is slack");
+    }
+
+    #[test]
+    fn text_scrolled_out_of_view_is_on_target_not_a_miss() {
+        // No rectangle means the text exists and is not being shown, which is
+        // a different thing from the pointer being over nothing.
+        let target = target_with_word_bounds(vec![ScreenRect::new(0, 0, 0, 0)]);
+        assert!(target.is_on_target(ScreenPoint::new(500, 500)));
     }
 
     #[test]

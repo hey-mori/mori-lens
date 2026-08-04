@@ -54,6 +54,15 @@ pub enum Resolution {
     Presented(Box<TextTarget>),
     /// Current, but the same target is already answered. Nothing to do.
     Duplicate(Box<TextTarget>),
+    /// Text was read, and it is too far from the pointer to be what the user
+    /// meant. The pointer is over empty space and the nearest text is
+    /// elsewhere on the page.
+    ///
+    /// Not a failure. `RangeFromPoint` did exactly what it promises, and this
+    /// is the only place the difference is caught, because inside a document
+    /// that call never fails
+    /// (`docs/decisions/ADR-0009-pointer-distance-gate.md`).
+    OffTarget(Box<TextTarget>),
     /// The pointer moved first. Dropped silently, by design.
     Stale,
     /// Nothing could be read. The variant carries why, which is the datum
@@ -168,6 +177,14 @@ impl HoverSession {
                 None => return Resolution::Failed(error),
             },
         };
+
+        // Before deduplication, because an off-target resolution must not
+        // occupy the "last presented" slot: the user has not been shown
+        // anything, so the next real hover on that sentence would otherwise be
+        // suppressed as a duplicate of something they never saw.
+        if !target.is_on_target(point) {
+            return Resolution::OffTarget(Box::new(target));
+        }
 
         match self
             .machine

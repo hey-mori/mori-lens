@@ -304,6 +304,59 @@ fn the_same_sentence_twice_is_a_duplicate_not_a_second_answer() {
 }
 
 #[test]
+fn text_a_screen_away_is_suppressed_rather_than_shown() {
+    // The fake resolves a word rectangle at (100, 100, 60, 18). A pointer far
+    // from it is over empty space, and inside a document RangeFromPoint would
+    // still have answered successfully, so this gate is the only thing that
+    // catches it (ADR-0009).
+    let (accessibility, _) =
+        FakeAcquirer::reading(AcquisitionSource::Accessibility, "A distant sentence.");
+    let mut session = session(accessibility);
+
+    let far = ScreenPoint::new(900, 700);
+    session.observe(PointerSample::moved(far, ms(0)));
+    let Some(HoverEvent::Settled { generation, point }) =
+        session.observe(PointerSample::moved(far, ms(400)))
+    else {
+        panic!("expected the pointer to settle");
+    };
+
+    assert!(matches!(
+        session.resolve(generation, point, ms(400), InputState::default()),
+        Resolution::OffTarget(_)
+    ));
+}
+
+#[test]
+fn a_suppressed_target_does_not_block_the_next_real_hover() {
+    // An off-target resolution must not take the "last presented" slot. The
+    // user was shown nothing, so the same sentence resolved properly a moment
+    // later has to be presented, not dismissed as a duplicate of something
+    // they never saw.
+    let (accessibility, _) =
+        FakeAcquirer::reading(AcquisitionSource::Accessibility, "The same sentence.");
+    let mut session = session(accessibility);
+
+    let far = ScreenPoint::new(900, 700);
+    session.observe(PointerSample::moved(far, ms(0)));
+    let Some(HoverEvent::Settled { generation, point }) =
+        session.observe(PointerSample::moved(far, ms(400)))
+    else {
+        panic!("expected the pointer to settle");
+    };
+    assert!(matches!(
+        session.resolve(generation, point, ms(400), InputState::default()),
+        Resolution::OffTarget(_)
+    ));
+
+    // Now a hover that lands on the word.
+    assert!(matches!(
+        session.resolve(generation, POINT, ms(500), InputState::default()),
+        Resolution::Presented(_)
+    ));
+}
+
+#[test]
 fn a_target_carries_its_anchor_and_its_distance_from_the_pointer() {
     let (accessibility, _) =
         FakeAcquirer::reading(AcquisitionSource::Accessibility, "Anchored text.");
