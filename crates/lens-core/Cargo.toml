@@ -1,0 +1,17 @@
+[package]
+name = "lens-core"
+description = "Platform-neutral domain for Mori Lens: hover intent, text segmentation, acquisition contract."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# No OS crates. Ever. See docs/adr/0003-rust-core-platform-adapters.md: a
+# dependency on `windows` or `objc` here is what makes the macOS adapter a
+# rewrite instead of a new file.
+[dependencies]
+unicode-segmentation.workspace = true
+
+[lints]
+workspace = true
