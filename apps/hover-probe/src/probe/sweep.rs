@@ -72,6 +72,11 @@ pub struct PassStats {
     pub latencies_us: Vec<u128>,
     pub failures: std::collections::BTreeMap<&'static str, usize>,
     pub control_ids: std::collections::BTreeMap<i32, usize>,
+    /// What the provider gave back for a word-unit expansion request.
+    ///
+    /// An over-expanded answer anchors an overlay to a whole line, so the
+    /// distribution is a product fact rather than a curiosity.
+    pub expanded_units: std::collections::BTreeMap<&'static str, usize>,
     pub truncated: bool,
     /// The shape of the misses, which is what settles question 8 in the
     /// research brief.
@@ -96,6 +101,7 @@ impl PassStats {
                 if let Some(control) = point.control_id {
                     *self.control_ids.entry(control).or_default() += 1;
                 }
+                *self.expanded_units.entry(point.expanded_unit).or_default() += 1;
                 if let Some(distance) = point.distance {
                     self.with_bounds += 1;
                     self.distances.push(distance);
@@ -132,6 +138,8 @@ struct PointOutcome {
     sample: Option<ScreenPoint>,
     /// Whether the product gate would treat this as pointing at the word.
     within_gate: bool,
+    /// What a word-unit expansion actually returned.
+    expanded_unit: &'static str,
 }
 
 /// Which side of the resolved rectangle the sample point fell on.
@@ -278,6 +286,7 @@ fn sample(
             rect: target.nearest_rect_to(*point),
             sample: Some(*point),
             within_gate: target.is_on_target(*point),
+            expanded_unit: target.provider.expanded_unit.as_str(),
         });
         stats.record(outcome, elapsed);
     }
@@ -486,6 +495,14 @@ fn print_pass(label: &str, stats: &PassStats) {
             stats.acquired - stats.with_bounds,
         );
     }
+    if !stats.expanded_units.is_empty() {
+        let rendered: Vec<String> = stats
+            .expanded_units
+            .iter()
+            .map(|(unit, count)| format!("{unit} {count}"))
+            .collect();
+        println!("           word unit {}", rendered.join(" · "));
+    }
     if !stats.control_ids.is_empty() {
         let mut ids: Vec<_> = stats.control_ids.iter().collect();
         ids.sort_by_key(|(_, count)| std::cmp::Reverse(**count));
@@ -570,6 +587,7 @@ mod tests {
                 rect: None,
                 sample: None,
                 within_gate: true,
+                expanded_unit: "word",
             }),
             Duration::from_millis(4),
         );
@@ -580,6 +598,7 @@ mod tests {
                 rect: Some(ScreenRect::new(0, 0, 10, 10)),
                 sample: Some(ScreenPoint::new(50, 50)),
                 within_gate: false,
+                expanded_unit: "word",
             }),
             Duration::from_millis(4),
         );
@@ -601,6 +620,7 @@ mod tests {
                 rect: None,
                 sample: None,
                 within_gate: true,
+                expanded_unit: "word",
             }),
             Duration::from_millis(2),
         );
@@ -625,6 +645,7 @@ mod tests {
                 rect: Some(ScreenRect::new(0, 0, 10, 10)),
                 sample: Some(ScreenPoint::new(5, 5)),
                 within_gate: true,
+                expanded_unit: "word",
             }),
             Duration::from_millis(3),
         );
@@ -688,6 +709,7 @@ mod tests {
                 rect: Some(ScreenRect::new(0, 0, 10, 10)),
                 sample: Some(ScreenPoint::new(5, 5)),
                 within_gate: true,
+                expanded_unit: "word",
             }),
             Duration::from_millis(1),
         );
