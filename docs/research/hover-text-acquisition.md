@@ -153,7 +153,7 @@ M1 concern.
 ## 6. OCR, and why it is second
 
 Only reached after a typed accessibility failure that OCR could repair,
-or on an explicit request ([ADR-0002](../adr/0002-accessibility-first-acquisition.md)).
+or on an explicit request ([ADR-0002](../decisions/ADR-0002-accessibility-first-acquisition.md)).
 
 Capture is a crop around the pointer, starting near 500x260 logical
 pixels and capped near 900x500, never a full screen and never a

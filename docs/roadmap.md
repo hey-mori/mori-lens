@@ -7,7 +7,7 @@ is probably fine.
 The ordering principle: **the riskiest unknown goes first.** Text
 acquisition is the only part of Lens that could turn out to be
 impossible, so it is measured before anything is built on top of it
-([ADR-0008](adr/0008-probe-before-product.md)).
+([ADR-0008](decisions/ADR-0008-probe-before-product.md)).
 
 ## M0 · Repository and decision baseline
 
@@ -85,7 +85,7 @@ Retina and Spaces coordinate handling.
 
 **Gate** · a macOS compatibility matrix comparable to M1's; `lens-core`
 unchanged by the addition, which is the test of whether
-[ADR-0003](adr/0003-rust-core-platform-adapters.md) held.
+[ADR-0003](decisions/ADR-0003-rust-core-platform-adapters.md) held.
 
 ## M7 · macOS overlay and Vision OCR
 
@@ -107,7 +107,7 @@ deletion is real.
 
 A process boundary carrying learning items on an explicit user action.
 Never a shared library, never a read of Mori's database
-([ADR-0006](adr/0006-no-shared-package-yet.md)).
+([ADR-0006](decisions/ADR-0006-no-shared-package-yet.md)).
 
 ## Not on this roadmap
 

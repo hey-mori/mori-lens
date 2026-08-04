@@ -2,7 +2,7 @@
 //!
 //! One implementation of [`lens_core::acquire::TextAcquirer`], over UI
 //! Automation. Nothing above this crate knows it exists
-//! (`docs/adr/0003-rust-core-platform-adapters.md`).
+//! (`docs/decisions/ADR-0003-rust-core-platform-adapters.md`).
 //!
 //! # This crate cannot be unit tested
 //!

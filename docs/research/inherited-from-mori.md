@@ -2,8 +2,8 @@
 
 Mori ships a language capability that reads another application's
 *selection* through UI Automation on Windows. Lens does not import that
-code ([ADR-0001](../adr/0001-independent-repository.md),
-[ADR-0006](../adr/0006-no-shared-package-yet.md)), but the facts Mori
+code ([ADR-0001](../decisions/ADR-0001-independent-repository.md),
+[ADR-0006](../decisions/ADR-0006-no-shared-package-yet.md)), but the facts Mori
 measured on a live desktop are portable in a way a Rust module is not,
 and re-discovering them would cost days.
 
@@ -100,7 +100,7 @@ Mori's `CaptureProbe` reports how far the chain got, the control type,
 and a character *count*. It cannot carry a selection, by construction.
 A diagnostic that echoed whatever the user had highlighted would be a
 worse privacy problem than the feature it checks. Lens's probe holds
-the same line ([ADR-0008](../adr/0008-probe-before-product.md)).
+the same line ([ADR-0008](../decisions/ADR-0008-probe-before-product.md)).
 
 ## 7. Placement is a pure function and should be tested as one
 
@@ -109,7 +109,7 @@ preference, edge flipping, negative-origin secondary monitors, and an
 overlay larger than its screen. It is the part of that feature that
 never needed debugging against a live desktop. Lens puts placement in
 `lens-core` for the same reason
-([ADR-0004](../adr/0004-native-overlay.md)).
+([ADR-0004](../decisions/ADR-0004-native-overlay.md)).
 
 ## 8. Answer latency, measured on this hardware
 
@@ -122,7 +122,7 @@ From `language-loop.md` §6, with `qwen2.5:3b`:
 | follow-up 문법 | 1,142ms | | 29 |
 | everything at once | 4,372ms | | |
 
-This is the evidence behind [ADR-0005](../adr/0005-two-speed-ai.md). It
+This is the evidence behind [ADR-0005](../decisions/ADR-0005-two-speed-ai.md). It
 also sets a realistic expectation: on this machine, a first token in
 under a second is roughly the floor, so the overlay must draw its frame
 before the translation arrives rather than waiting for it.

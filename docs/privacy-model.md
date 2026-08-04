@@ -12,7 +12,7 @@ it is also the reason the rules below are not adjustable defaults.
 local Ollama on `127.0.0.1`. A cloud provider requires an explicit
 per-provider grant, an unknown endpoint counts as external, and a remote
 Ollama address is a cloud provider because the text leaves the machine
-([ADR-0007](adr/0007-local-first-inference.md)).
+([ADR-0007](decisions/ADR-0007-local-first-inference.md)).
 
 **Nothing is recorded.** There is no screen recording, no keylogging, no
 clipboard history, and no automatic transcript of what was hovered. The

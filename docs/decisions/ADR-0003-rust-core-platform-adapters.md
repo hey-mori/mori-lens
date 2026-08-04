@@ -15,7 +15,7 @@ and the request lifecycle, which is where the product's actual logic
 lives and where its bugs will be.
 
 The opposite naive structure is one cross-platform toolkit doing
-everything. That fails at the overlay ([ADR-0004](0004-native-overlay.md))
+everything. That fails at the overlay ([ADR-0004](ADR-0004-native-overlay.md))
 and at the accessibility layer, both of which need precise native
 behaviour that a portable abstraction erases.
 
@@ -59,7 +59,7 @@ found.
   and the segmentation all have real coverage without a desktop.
 - The adapters have almost no coverage, because they cannot have any.
   This is accepted and compensated for by the probe
-  ([ADR-0008](0008-probe-before-product.md)) and by the rule in
+  ([ADR-0008](ADR-0008-probe-before-product.md)) and by the rule in
   `CLAUDE.md` that an adapter change is not verified by `cargo test`.
 - macOS will need a small Swift bridge for AppKit and ScreenCaptureKit
   rather than raw Rust FFI. Wrapping AppKit lifetimes by hand at an

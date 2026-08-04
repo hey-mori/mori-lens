@@ -21,7 +21,7 @@ understand a sentence.
 
 - **Not a screen translator.** It does not capture the screen and OCR
   it. OCR is a fallback for surfaces that expose no text, and in the
-  first version it is manual only ([ADR-0002](adr/0002-accessibility-first-acquisition.md)).
+  first version it is manual only ([ADR-0002](decisions/ADR-0002-accessibility-first-acquisition.md)).
 - **Not a browser extension.** It works in editors, PDF viewers,
   messengers, and settings screens, not only in a browser.
 - **Not a chat interface.** There is no prompt box. The pointer is the
@@ -30,7 +30,7 @@ understand a sentence.
   captured image is ever written to disk.
 - **Not a Mori feature.** It is a separate product with a separate
   binary that runs with Mori not installed
-  ([ADR-0001](adr/0001-independent-repository.md)).
+  ([ADR-0001](decisions/ADR-0001-independent-repository.md)).
 
 ## 3. Who it is for
 
@@ -65,12 +65,12 @@ not written), **out of v1** (deliberately excluded).
 | Automatic full-screen OCR | out of v1 |
 | Browser extension | out of v1 |
 | Cloud sync, accounts, teams | out of v1 |
-| Bundled models | out of v1 ([ADR-0007](adr/0007-local-first-inference.md)) |
+| Bundled models | out of v1 ([ADR-0007](decisions/ADR-0007-local-first-inference.md)) |
 
 **Nothing is "shipped" yet.** Everything in the built column becomes
 shipped when a probe run against named applications is recorded in
 [`compatibility/windows-app-matrix.md`](compatibility/windows-app-matrix.md).
-That gate is [ADR-0008](adr/0008-probe-before-product.md).
+That gate is [ADR-0008](decisions/ADR-0008-probe-before-product.md).
 
 ## 5. The three properties that define the product
 
@@ -82,7 +82,7 @@ boundaries, cheap at idle, and able to explain a word *in its sentence*.
 
 **Two-speed AI.** Translation is immediate. Grammar, structure, and
 vocabulary explanation happen only when asked. A hover never costs a
-four-second generation ([ADR-0005](adr/0005-two-speed-ai.md)).
+four-second generation ([ADR-0005](decisions/ADR-0005-two-speed-ai.md)).
 
 **Local-first privacy.** What the user is reading does not leave the
 machine by default, nothing is recorded, and the engine in use is
