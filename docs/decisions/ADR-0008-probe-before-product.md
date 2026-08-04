@@ -1,6 +1,6 @@
 # ADR-0008 · Measure the acquisition rate before building the product
 
-**Status** · Accepted, 2026-08-04
+**Status** · Accepted; the Milestone 2 gate is superseded by [ADR-0010](ADR-0010-acquisition-is-proven-enough.md), 2026-08-04. Everything else here stands., 2026-08-04
 
 ## Context
 
