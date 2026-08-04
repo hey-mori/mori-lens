@@ -157,6 +157,25 @@ impl UiaTextAcquirer {
         matches!(error, AcquireError::Unsupported | AcquireError::Empty)
     }
 
+    /// Wake a window's accessibility tree by its opaque id, ahead of any read.
+    ///
+    /// The sweep uses this to separate two questions that the per-hover retry
+    /// mixes together: how much a cold window returns, and how much the same
+    /// window returns once its tree exists. Returns whether a message was
+    /// actually sent, which is `false` for a window already woken.
+    pub fn wake_window(&self, window_id: i64) -> bool {
+        self.wake_once(windows::Win32::Foundation::HWND(window_id as *mut _))
+    }
+
+    /// Forget which windows have been woken.
+    ///
+    /// Only for measurement: it lets a sweep re-wake the same window in a
+    /// later pass. Nothing in the hover path should call it, because paying
+    /// the wake again per hover is the cost the memo exists to avoid.
+    pub fn forget_woken(&self) {
+        self.woken.borrow_mut().clear();
+    }
+
     /// Send the wake message if this window has not had one. Returns whether it
     /// was sent, so a retry only happens when something actually changed.
     fn wake_once(&self, hwnd: windows::Win32::Foundation::HWND) -> bool {
