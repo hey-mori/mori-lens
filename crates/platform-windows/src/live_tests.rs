@@ -517,3 +517,301 @@ fn the_flicker_detector_catches_a_card_that_disappears() {
         "the detector did not notice a card that was hidden three times;          it is blind and the test above proves nothing",
     );
 }
+
+/// Does this machine actually give a Win32 window a glass backdrop?
+///
+/// Measured rather than read off a documentation page, because the answer
+/// decides how the card is painted. The documented minimum is Windows 11 build
+/// 22621 and this machine is 26200, but "the API exists" and "the API does
+/// something to a window shaped like ours" are different claims.
+///
+/// Three questions, in order of how much they cost to be wrong about:
+///
+/// 1. Do the calls succeed at all on this build?
+/// 2. Do they succeed on a window that is `WS_EX_LAYERED` with a uniform
+///    alpha, which is what the card is today?
+/// 3. Does the attribute read back as the value that was set, or does DWM
+///    quietly ignore it?
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn what_this_machine_does_with_a_glass_backdrop() {
+    use windows::Win32::Foundation::{COLORREF, HWND};
+    use windows::Win32::Graphics::Dwm::{
+        DwmExtendFrameIntoClientArea, DwmGetWindowAttribute, DwmSetWindowAttribute,
+        DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWINDOWATTRIBUTE,
+    };
+    use windows::Win32::UI::Controls::MARGINS;
+
+    /// `DWMSBT_TRANSIENTWINDOW`: Desktop Acrylic, the transient-window
+    /// material, which is what a card that appears for a few seconds wants.
+    const DWMSBT_TRANSIENTWINDOW: i32 = 3;
+    /// `DWMWCP_ROUND`.
+    const DWMWCP_ROUND: i32 = 2;
+
+    let overlay = crate::Overlay::start().expect("overlay");
+    let window = HWND(overlay.window_id() as *mut _);
+
+    // SAFETY: documented DWM attribute calls on this process's own window.
+    unsafe {
+        let backdrop = DWMSBT_TRANSIENTWINDOW;
+        let set_backdrop = DwmSetWindowAttribute(
+            window,
+            DWMWA_SYSTEMBACKDROP_TYPE,
+            std::ptr::addr_of!(backdrop).cast(),
+            std::mem::size_of::<i32>() as u32,
+        );
+        println!("DWMWA_SYSTEMBACKDROP_TYPE = TRANSIENTWINDOW  -> {set_backdrop:?}");
+
+        let mut read_back = 0i32;
+        let get_backdrop = DwmGetWindowAttribute(
+            window,
+            DWMWA_SYSTEMBACKDROP_TYPE,
+            std::ptr::addr_of_mut!(read_back).cast(),
+            std::mem::size_of::<i32>() as u32,
+        );
+        println!("  reads back as {read_back} ({get_backdrop:?})");
+
+        let corner = DWMWCP_ROUND;
+        let set_corner = DwmSetWindowAttribute(
+            window,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            std::ptr::addr_of!(corner).cast(),
+            std::mem::size_of::<i32>() as u32,
+        );
+        println!("DWMWA_WINDOW_CORNER_PREFERENCE = ROUND      -> {set_corner:?}");
+
+        // Extending the frame into the whole client area is what lets the
+        // backdrop show through a client area at all.
+        let margins = MARGINS {
+            cxLeftWidth: -1,
+            cxRightWidth: -1,
+            cyTopHeight: -1,
+            cyBottomHeight: -1,
+        };
+        let extended = DwmExtendFrameIntoClientArea(window, &margins);
+        println!("DwmExtendFrameIntoClientArea(-1)            -> {extended:?}");
+
+        // Whether the composition attributes survive alongside the uniform
+        // alpha the card sets today.
+        let layered = windows::Win32::UI::WindowsAndMessaging::SetLayeredWindowAttributes(
+            window,
+            COLORREF(0),
+            244,
+            windows::Win32::UI::WindowsAndMessaging::LWA_ALPHA,
+        );
+        println!("SetLayeredWindowAttributes(alpha 244)       -> {layered:?}");
+
+        let mut after = 0i32;
+        let _ = DwmGetWindowAttribute(
+            window,
+            DWMWA_SYSTEMBACKDROP_TYPE,
+            std::ptr::addr_of_mut!(after).cast(),
+            std::mem::size_of::<i32>() as u32,
+        );
+        println!("  backdrop after layered alpha: {after}");
+    }
+
+    println!(
+        "\nDWMWINDOWATTRIBUTE ids in this binding: backdrop={:?} corner={:?}",
+        DWMWA_SYSTEMBACKDROP_TYPE.0, DWMWA_WINDOW_CORNER_PREFERENCE.0,
+    );
+    let _ = DWMWINDOWATTRIBUTE::default();
+}
+
+/// A card anchored on a second monitor must be placed on that monitor.
+///
+/// `place_card` has unit tests for a monitor with a negative origin and they
+/// pass, because they are handed a correct work area. The runtime used to hand
+/// them `SPI_GETWORKAREA`, which answers for the **primary** monitor only, and
+/// `place_card` clamps into whatever it is given. Measured before the fix on a
+/// two-monitor desk: an anchor at x=2500 was placed at x=1116, about 1,400px
+/// away on the wrong display.
+///
+/// Green unit tests, wrong product. This one drives the real window so the two
+/// cannot drift apart again.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn a_card_anchored_on_a_second_monitor_stays_on_it() {
+    use lens_core::card::Card;
+    use lens_core::geometry::{ScreenPoint, ScreenRect};
+    use lens_core::translate::{EngineId, QuickTranslation};
+    use windows::Win32::Foundation::{HWND, POINT, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        EnumDisplayMonitors, GetMonitorInfoW, MonitorFromPoint, HDC, HMONITOR, MONITORINFO,
+        MONITOR_DEFAULTTONEAREST,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+
+    // Every monitor on this desk, so the check adapts rather than assuming a
+    // layout.
+    unsafe extern "system" fn collect(
+        monitor: HMONITOR,
+        _: HDC,
+        _: *mut RECT,
+        lparam: windows::Win32::Foundation::LPARAM,
+    ) -> windows::core::BOOL {
+        // SAFETY: the pointer was supplied by the call below and outlives it.
+        let found = unsafe { &mut *(lparam.0 as *mut Vec<ScreenRect>) };
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        // SAFETY: writes into `info`, whose `cbSize` states its size.
+        if unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
+            found.push(ScreenRect::from_ltrb(
+                info.rcWork.left,
+                info.rcWork.top,
+                info.rcWork.right,
+                info.rcWork.bottom,
+            ));
+        }
+        windows::core::BOOL(1)
+    }
+
+    let mut monitors: Vec<ScreenRect> = Vec::new();
+    // SAFETY: synchronous enumeration; `monitors` outlives it.
+    unsafe {
+        let _ = EnumDisplayMonitors(
+            None,
+            None,
+            Some(collect),
+            windows::Win32::Foundation::LPARAM(&mut monitors as *mut Vec<ScreenRect> as isize),
+        );
+    }
+    println!("monitors: {monitors:?}");
+
+    if monitors.len() < 2 {
+        println!("SKIPPED: one monitor, so there is nothing for a card to be dragged off");
+        return;
+    }
+
+    let overlay = crate::Overlay::start().expect("overlay");
+    let mut wrong = 0usize;
+
+    for area in &monitors {
+        // A line of text near the middle of this monitor.
+        let anchor = ScreenRect::new(area.x + area.width / 2, area.y + area.height / 2, 240, 22);
+        let card = Card::translated(
+            "The output files came back empty.",
+            &QuickTranslation {
+                text: "출력 파일이 비어 있었습니다.".to_owned(),
+                engine: EngineId::LocalOllama,
+                model: "qwen2.5:3b".to_owned(),
+                latency_ms: 900,
+            },
+        );
+        assert!(overlay.show(card, anchor));
+        std::thread::sleep(std::time::Duration::from_millis(350));
+
+        let window = HWND(overlay.window_id() as *mut _);
+        // SAFETY: read-only queries.
+        let (placed, landed_on) = unsafe {
+            let mut rect = RECT::default();
+            GetWindowRect(window, &mut rect).expect("window rect");
+            let centre =
+                ScreenPoint::new((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2);
+            let monitor = MonitorFromPoint(
+                POINT {
+                    x: centre.x,
+                    y: centre.y,
+                },
+                MONITOR_DEFAULTTONEAREST,
+            );
+            let mut info = MONITORINFO {
+                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                ..Default::default()
+            };
+            let _ = GetMonitorInfoW(monitor, &mut info);
+            (
+                ScreenRect::from_ltrb(rect.left, rect.top, rect.right, rect.bottom),
+                ScreenRect::from_ltrb(
+                    info.rcWork.left,
+                    info.rcWork.top,
+                    info.rcWork.right,
+                    info.rcWork.bottom,
+                ),
+            )
+        };
+
+        let correct = landed_on == *area;
+        if !correct {
+            wrong += 1;
+        }
+        println!(
+            "anchor on {:?}
+    card placed {:?} -> monitor {:?}   {}",
+            area,
+            placed,
+            landed_on,
+            if correct {
+                "same monitor"
+            } else {
+                "WRONG MONITOR"
+            },
+        );
+    }
+
+    assert!(overlay.hide());
+    assert_eq!(
+        wrong, 0,
+        "{wrong} card(s) were placed on a different monitor from the text they explain",
+    );
+}
+
+/// A click on the card must reach the application underneath.
+///
+/// ADR-0004 says the passive tooltip ignores mouse events. The card never did:
+/// it had no `WS_EX_TRANSPARENT` and no hit-test handling, so it silently
+/// swallowed every click on the text it was explaining.
+///
+/// Measured without injecting any input. `WindowFromPoint` performs the same
+/// hit test the mouse does, so if it returns anything other than the card for
+/// a point inside the card, a click at that point goes elsewhere.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn a_click_on_the_card_passes_through_to_what_is_underneath() {
+    use lens_core::card::Card;
+    use lens_core::geometry::{ScreenPoint, ScreenRect};
+    use lens_core::translate::{EngineId, QuickTranslation};
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, WindowFromPoint};
+
+    let overlay = crate::Overlay::start().expect("overlay");
+    let card = Card::translated(
+        "The output files came back empty.",
+        &QuickTranslation {
+            text: "출력 파일이 비어 있었습니다.".to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "qwen2.5:3b".to_owned(),
+            latency_ms: 900,
+        },
+    );
+    assert!(overlay.show(card, ScreenRect::new(500, 400, 300, 22)));
+    std::thread::sleep(std::time::Duration::from_millis(600));
+
+    let window = windows::Win32::Foundation::HWND(overlay.window_id() as *mut _);
+    // SAFETY: read-only queries.
+    let (centre, hit) = unsafe {
+        let mut rect = windows::Win32::Foundation::RECT::default();
+        GetWindowRect(window, &mut rect).expect("window rect");
+        let centre = ScreenPoint::new((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2);
+        let hit = WindowFromPoint(POINT {
+            x: centre.x,
+            y: centre.y,
+        });
+        (centre, hit)
+    };
+
+    println!(
+        "card {:?} · hit test at its centre returns {:?} (card is {:?})",
+        centre, hit.0, window.0,
+    );
+
+    assert_ne!(
+        hit.0 as isize, window.0 as isize,
+        "the card is hit-testable, so it swallows clicks meant for the text \
+         underneath, which ADR-0004 forbids",
+    );
+
+    assert!(overlay.hide());
+}

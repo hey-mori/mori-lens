@@ -30,6 +30,7 @@ pub mod hover;
 pub mod policy;
 pub mod session;
 pub mod text;
+pub mod theme;
 pub mod translate;
 
 pub use acquire::{
