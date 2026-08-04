@@ -291,7 +291,7 @@ impl Report {
 
 /// Nearest-rank percentile. `None` for an empty sample rather than a zero,
 /// because a zero here would read as "instant" instead of "never measured".
-fn percentile(samples: &[u128], percent: f64) -> Option<u128> {
+pub fn percentile(samples: &[u128], percent: f64) -> Option<u128> {
     if samples.is_empty() {
         return None;
     }
@@ -301,7 +301,7 @@ fn percentile(samples: &[u128], percent: f64) -> Option<u128> {
     sorted.get(rank.saturating_sub(1)).copied()
 }
 
-fn format_us(value: Option<u128>) -> String {
+pub fn format_us(value: Option<u128>) -> String {
     match value {
         Some(micros) => format!("{:.1}ms", micros as f64 / 1000.0),
         None => "-".to_owned(),
