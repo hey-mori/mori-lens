@@ -54,7 +54,7 @@ not written), **out of v1** (deliberately excluded).
 | Secure-field refusal | **shipped** · fires as `Protected(Declared)` against a real `ES_PASSWORD` control, and discriminates from a plain one |
 | Hover probe, follow mode | built, unverified |
 | Hover probe, sweep mode | **shipped** · produced the 2026-08-04 measurements |
-| Per-application compatibility matrix | in progress · 3 of 8 target applications |
+| Per-application compatibility matrix | in progress · 4 of 8 target applications |
 | Native overlay (Windows) | planned · M2 |
 | Quick translation via Ollama | planned · M3 |
 | Deep analysis (grammar, structure) | planned · M4 |
@@ -85,6 +85,14 @@ therefore solved and *targeting* is not
 ([`benchmarks/2026-08-04-acquisition-sweep.md`](benchmarks/2026-08-04-acquisition-sweep.md)).
 No overlay should be built until that has an answer, because a card
 placed on the wrong sentence is worse than no card.
+
+**The second measurement session found a harder problem than targeting.**
+VS Code returned 7 acquisitions across 247 sampled points, all of them
+label controls, which indicates its editor exposes no text to read at
+all. A developer reading documentation and error messages is the first
+user named in §3, and an editor is where they do it. Tracked as issue
+#14; it is a question about reach rather than about accuracy, and no
+amount of getting targeting right answers it.
 
 ## 5. The three properties that define the product
 
