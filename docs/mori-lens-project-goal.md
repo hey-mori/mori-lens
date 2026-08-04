@@ -48,12 +48,13 @@ not written), **out of v1** (deliberately excluded).
 
 | Capability | Status |
 |------------|--------|
-| Hover intent state machine (dwell, radius, cooldown, stale discard) | built, unverified |
-| Windows UI Automation text acquisition under the pointer | built, unverified |
-| Word / sentence / paragraph segmentation | built, unverified |
-| Secure-field refusal | built, unverified |
-| Hover probe console instrument | built, unverified |
-| Per-application compatibility matrix | planned · the matrix file exists and is empty |
+| Hover intent state machine (dwell, radius, cooldown, stale discard) | built, unverified · covered by unit tests, never driven through a real reading session |
+| Windows UI Automation text acquisition under the pointer | **shipped** · measured on 3 windows, 2026-08-04 |
+| Word / sentence / paragraph segmentation | built, unverified · unit tested, no human has confirmed a resolved word is the intended one |
+| Secure-field refusal | built, unverified · the refusal path has never been triggered by a real password field |
+| Hover probe, follow mode | built, unverified |
+| Hover probe, sweep mode | **shipped** · produced the 2026-08-04 measurements |
+| Per-application compatibility matrix | in progress · 3 of 8 target applications |
 | Native overlay (Windows) | planned · M2 |
 | Quick translation via Ollama | planned · M3 |
 | Deep analysis (grammar, structure) | planned · M4 |
@@ -67,10 +68,23 @@ not written), **out of v1** (deliberately excluded).
 | Cloud sync, accounts, teams | out of v1 |
 | Bundled models | out of v1 ([ADR-0007](decisions/ADR-0007-local-first-inference.md)) |
 
-**Nothing is "shipped" yet.** Everything in the built column becomes
-shipped when a probe run against named applications is recorded in
+A capability becomes **shipped** when a run against named applications is
+recorded in
 [`compatibility/windows-app-matrix.md`](compatibility/windows-app-matrix.md).
 That gate is [ADR-0008](decisions/ADR-0008-probe-before-product.md).
+
+Two capabilities passed it on 2026-08-04. The rest have unit tests,
+which prove the logic and prove nothing about a desktop.
+
+**What the measurement found, since it changes what "works" means
+here:** acquisition succeeds, at p50 10ms, and returns the *right* text
+86 to 100% of the time on label controls. Inside a document or an edit
+control it returns the nearest text in the whole scrollable region, up
+to 1,465px from the pointer, and reports success. Acquisition is
+therefore solved and *targeting* is not
+([`benchmarks/2026-08-04-acquisition-sweep.md`](benchmarks/2026-08-04-acquisition-sweep.md)).
+No overlay should be built until that has an answer, because a card
+placed on the wrong sentence is worse than no card.
 
 ## 5. The three properties that define the product
 
