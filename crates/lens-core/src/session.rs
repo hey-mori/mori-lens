@@ -10,7 +10,7 @@
 //! - a protected field never reaches OCR
 //! - a result from a superseded generation is never returned as presentable
 //!
-//! Every one of those is a line from `docs/adr/0002-accessibility-first-acquisition.md`
+//! Every one of those is a line from `docs/decisions/ADR-0002-accessibility-first-acquisition.md`
 //! or `docs/privacy-model.md`, and every one has a test in `contract_tests.rs`
 //! driven by fake acquirers.
 

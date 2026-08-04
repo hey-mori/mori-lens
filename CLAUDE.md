@@ -7,7 +7,7 @@ Read these before changing code or committing.
 - Read [`docs/mori-lens-project-goal.md`](docs/mori-lens-project-goal.md)
   for product identity and what is implemented versus planned. It is the
   only place allowed to claim a capability exists.
-- Read [`docs/adr/`](docs/adr/) before proposing an architecture change.
+- Read [`docs/decisions/`](docs/decisions/) before proposing an architecture change.
   The ADRs are constraints, not suggestions. If a change needs one
   reversed, the change is a new ADR that supersedes it, submitted on its
   own, before the code.
@@ -27,7 +27,7 @@ Every performance and privacy property of Lens follows from those two
 clauses. A change that reads the screen on a timer, that runs OCR
 before the accessibility path has failed, or that calls a language model
 on pointer movement rather than on a settled hover, is wrong even if it
-works. See [ADR-0002](docs/adr/0002-accessibility-first-acquisition.md).
+works. See [ADR-0002](docs/decisions/ADR-0002-accessibility-first-acquisition.md).
 
 ## Branches, pull requests, issues
 
@@ -125,7 +125,7 @@ State which of code, test, or a live run is the basis for each claim.
   build may not.
 - Write a screen capture to disk. Ever, including for debugging.
 - Extract a shared package with Mori. See
-  [ADR-0006](docs/adr/0006-no-shared-package-yet.md).
+  [ADR-0006](docs/decisions/ADR-0006-no-shared-package-yet.md).
 - Skip hooks (`--no-verify`) or bypass signing.
 - Use `git rebase -i` or other interactive git commands; the harness has
   no terminal.

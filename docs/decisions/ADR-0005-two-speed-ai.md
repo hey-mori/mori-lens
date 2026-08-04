@@ -73,6 +73,6 @@ Rules that follow:
   maintain. Accepted.
 - The quick path can use a translation-specialised model while the deep
   path uses a general instruct model, since they are separate calls
-  ([ADR-0007](0007-local-first-inference.md)).
+  ([ADR-0007](ADR-0007-local-first-inference.md)).
 - Users who want everything must click for it. That is the correct
   default for a tool that fires on hover, and the click is one press.

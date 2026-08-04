@@ -6,7 +6,7 @@
 //! this code created.
 //!
 //! Re-derived from `swarea/mori`'s `src-tauri/src/language/capture_windows.rs`.
-//! Copied rather than shared, per `docs/adr/0006-no-shared-package-yet.md`; the
+//! Copied rather than shared, per `docs/decisions/ADR-0006-no-shared-package-yet.md`; the
 //! origin is named here so a later extraction can find both sites.
 
 use windows::Win32::Foundation::S_FALSE;

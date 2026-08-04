@@ -21,7 +21,7 @@ until the user actually needs it.
 [Mori](https://github.com/swarea/mori) is a local-first AI work memory
 app. Mori Lens is a separate product with a separate binary, and it
 runs with Mori not installed. The split is deliberate and recorded in
-[ADR-0001](docs/adr/0001-independent-repository.md).
+[ADR-0001](docs/decisions/ADR-0001-independent-repository.md).
 
 - **Mori Lens** discovers and explains language on the screen.
 - **Mori** accumulates and reviews what was learned.
@@ -29,7 +29,7 @@ runs with Mori not installed. The split is deliberate and recorded in
 There is no shared package, no shared database, and no runtime
 dependency in either direction. If the two are ever connected it will
 be through a small documented process boundary, not by merging the code
-([ADR-0006](docs/adr/0006-no-shared-package-yet.md)).
+([ADR-0006](docs/decisions/ADR-0006-no-shared-package-yet.md)).
 
 ## Current state
 
@@ -69,8 +69,8 @@ OCR runs only when the accessibility path returns nothing, or when the
 user explicitly asks for it. A deeper grammar and vocabulary
 explanation runs only when the user opens it. Both rules exist so the
 common case stays fast: see
-[ADR-0002](docs/adr/0002-accessibility-first-acquisition.md) and
-[ADR-0005](docs/adr/0005-two-speed-ai.md).
+[ADR-0002](docs/decisions/ADR-0002-accessibility-first-acquisition.md) and
+[ADR-0005](docs/decisions/ADR-0005-two-speed-ai.md).
 
 ## Tech stack
 
@@ -87,7 +87,7 @@ common case stays fast: see
 crates/lens-core/          domain types, hover state machine, segmentation
 crates/platform-windows/   UI Automation text acquisition
 apps/hover-probe/          the Milestone 1 measurement instrument
-docs/adr/                  the decisions that constrain everything else
+docs/decisions/                  the decisions that constrain everything else
 docs/research/             what was verified, and where the evidence is
 docs/compatibility/        per-application results, filled in by running
 ```

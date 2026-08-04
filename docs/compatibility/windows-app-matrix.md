@@ -3,14 +3,14 @@
 **Status · empty. No application has been measured yet.**
 
 That sentence is the gate on Milestone 2
-([ADR-0008](../adr/0008-probe-before-product.md)). Nothing here is filled
+([ADR-0008](../decisions/ADR-0008-probe-before-product.md)). Nothing here is filled
 in from documentation or from expectation. A row exists only after a
 probe run produced it.
 
 ## How to produce a row
 
 ```bash
-cargo run -p hover-probe -- --record
+cargo run -p hover-probe -- --auto --expect <word>
 ```
 
 Then hover over ordinary body text in the target application for a few
