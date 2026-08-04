@@ -25,7 +25,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use lens_core::cache::{CacheKey, TranslationCache};
-use lens_core::card::Card;
+use lens_core::card::{pointer_left_the_card, Card};
 use lens_core::geometry::ScreenRect;
 use lens_core::hover::{Generation, HoverConfig, HoverEvent};
 use lens_core::policy::{AppPolicy, AppTier};
@@ -330,14 +330,15 @@ fn main() -> std::process::ExitCode {
     pointer::install_stop_handler();
     let started = Instant::now();
     let mut current = Generation(0);
-    let mut shown = false;
-    let mut last_point = None;
+    // The rectangle the visible card explains, and when the pointer left it.
+    let mut card_anchor: Option<ScreenRect> = None;
+    let mut left_anchor_at: Option<Duration> = None;
 
     while !pointer::stopping() {
         if pause.poll() {
             if pause.is_paused() {
                 overlay.hide();
-                shown = false;
+                card_anchor = None;
                 println!("paused · the pointer is not being sampled");
             } else {
                 println!("resumed");
@@ -393,16 +394,35 @@ fn main() -> std::process::ExitCode {
             }
         }
 
-        // Real movement retires the card. A card that outlives the sentence it
-        // explains is worse than none, because the reader has to work out which
-        // sentence it belongs to. The radius matches the hover machine's, so a
-        // hand resting unsteadily does not dismiss what it just asked for.
-        if shown {
-            if let Some(previous) = last_point {
-                if position.distance_to(previous) > HoverConfig::default().movement_radius_px {
-                    overlay.hide();
-                    shown = false;
+        // A card is retired when the pointer leaves the text it explains, not
+        // when the pointer moves.
+        //
+        // The first version compared the pointer against the anchor's centre
+        // with the hover machine's 6px radius, which dismissed the card on the
+        // very next 25ms tick: a pointer resting on a word is rarely within
+        // 6px of that word's centre. Combined with streaming, every partial
+        // answer re-showed a card that was hidden again immediately, which is
+        // what the flicker was.
+        //
+        // The rule now: stay while the pointer is anywhere near the anchor
+        // rectangle, and give a grace period after it leaves so that crossing
+        // a gap between two words does not dismiss anything.
+        if let Some(anchor) = card_anchor {
+            if pointer_left_the_card(anchor, position) {
+                match left_anchor_at {
+                    None => left_anchor_at = Some(now),
+                    Some(since)
+                        if now.saturating_sub(since) >= HoverConfig::default().hide_grace =>
+                    {
+                        overlay.hide();
+                        card_anchor = None;
+                        left_anchor_at = None;
+                    }
+                    Some(_) => {}
                 }
+            } else {
+                // Back inside before the grace ran out.
+                left_anchor_at = None;
             }
         }
 
@@ -415,10 +435,9 @@ fn main() -> std::process::ExitCode {
                 log_card(&answer.card);
             }
             if overlay.show(answer.card, answer.anchor) {
-                shown = true;
+                card_anchor = Some(answer.anchor);
+                left_anchor_at = None;
             }
-
-            last_point = Some(answer.anchor.center());
         }
 
         std::thread::sleep(Duration::from_millis(25));
