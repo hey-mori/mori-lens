@@ -22,8 +22,8 @@ use std::ffi::c_void;
 use std::ptr;
 
 use lens_core::acquire::{
-    AcquireContext, AcquireError, AcquisitionSource, ProtectedReason, ProviderInfo, TextAcquirer,
-    TextTarget,
+    AcquireContext, AcquireError, AcquisitionSource, ExpandedUnit, ProtectedReason, ProviderInfo,
+    TextAcquirer, TextTarget,
 };
 use lens_core::geometry::{ScreenPoint, ScreenRect};
 use lens_core::text::{self, SegmentedText};
@@ -136,16 +136,23 @@ impl UiaTextAcquirer {
             return Err(AcquireError::Empty);
         }
 
-        // The pointer's offset inside the context, computed by the provider
-        // rather than by searching for the word in the string: a repeated word
-        // would make a string search resolve to the wrong occurrence.
-        let focus = focus_offset(&context_range, &word_range, &context_text);
+        // The pointer's offset inside the context, measured to the degenerate
+        // hit range rather than to the expanded word: expansion is allowed to
+        // normalise up to a line, and measuring to that start would resolve
+        // the line's first word instead of the pointer's.
+        let focus = focus_offset(&context_range, &hit, &context_text);
+
+        // What the expansion actually produced, so an over-expanded anchor is
+        // a recorded fact rather than an invisible one.
+        let expanded_unit =
+            ExpandedUnit::classify(&range_text(&word_range, 256).unwrap_or_default());
 
         Ok(Reading {
             segmented: text::segment(&context_text, focus),
             word_bounds: bounding_rectangles(&word_range),
             context_bounds: bounding_rectangles(&context_range),
             control_id,
+            expanded_unit,
         })
     }
 
@@ -195,6 +202,7 @@ struct Reading {
     word_bounds: Vec<ScreenRect>,
     context_bounds: Vec<ScreenRect>,
     control_id: Option<i32>,
+    expanded_unit: ExpandedUnit,
 }
 
 impl TextAcquirer for UiaTextAcquirer {
@@ -235,6 +243,7 @@ impl TextAcquirer for UiaTextAcquirer {
             provider: ProviderInfo {
                 control_id: reading.control_id,
                 woke_accessibility: woke,
+                expanded_unit: reading.expanded_unit,
             },
             segmented: reading.segmented,
             word_bounds: reading.word_bounds,
@@ -304,15 +313,24 @@ fn range_text(range: &IUIAutomationTextRange, max_chars: usize) -> Result<String
     Ok(text.to_string())
 }
 
-/// The byte offset of the word's start within the context text.
+/// The byte offset of the **pointer** within the context text.
 ///
 /// Computed by asking the provider for the text between the context's start and
-/// the word's start, then measuring it. Searching for the word in the context
-/// string would resolve to the wrong occurrence whenever a word repeats, which
-/// in ordinary prose is most sentences.
+/// the given range's start, then measuring it. Searching for the word in the
+/// context string would resolve to the wrong occurrence whenever a word
+/// repeats, which in ordinary prose is most sentences.
+///
+/// The range passed in must be the **degenerate range from `RangeFromPoint`**,
+/// not the expanded word. `ExpandToEnclosingUnit` is allowed to normalise up to
+/// a line or a paragraph when a provider does not implement the word unit, and
+/// measuring to the expanded range's start then lands the focus at the start of
+/// that line. Segmentation would go on to return the line's *first* word rather
+/// than the word under the pointer, silently and plausibly. The degenerate
+/// range's start is the pointer's own character position, so it is immune to
+/// however the expansion behaved.
 fn focus_offset(
     context_range: &IUIAutomationTextRange,
-    word_range: &IUIAutomationTextRange,
+    hit_range: &IUIAutomationTextRange,
     context_text: &str,
 ) -> usize {
     let prefix_chars = (|| {
@@ -324,7 +342,7 @@ fn focus_offset(
             prefix
                 .MoveEndpointByRange(
                     windows::Win32::UI::Accessibility::TextPatternRangeEndpoint_End,
-                    word_range,
+                    hit_range,
                     TextPatternRangeEndpoint_Start,
                 )
                 .ok()?;
