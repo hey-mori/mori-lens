@@ -212,3 +212,51 @@ fn measure_quick_translation_latency() {
         measurements.len(),
     );
 }
+
+/// What streaming actually buys, measured rather than assumed.
+///
+/// The claim is that a reader sees an answer forming instead of a second of
+/// nothing. That is only true if the first partial lands well before the whole
+/// answer does, so the gap is what gets measured.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn measure_time_to_first_visible_text() {
+    let Some(translator) = live() else { return };
+    let sentence =
+        "The output files came back empty, so the full test suite didn't produce anything.";
+
+    // Warm, so this measures streaming rather than a model load.
+    let _ = translator.quick(&QuickRequest::new(sentence, "Korean"));
+
+    let started = std::time::Instant::now();
+    let mut first_partial = None;
+    let mut partials = 0usize;
+    let mut on_partial = |text: &str| {
+        partials += 1;
+        if first_partial.is_none() {
+            first_partial = Some((started.elapsed(), text.chars().count()));
+        }
+    };
+
+    let answer = translator
+        .quick_streaming(&QuickRequest::new(sentence, "Korean"), &mut on_partial)
+        .expect("streaming translation failed");
+
+    match first_partial {
+        Some((at, chars)) => println!(
+            "first text at {}ms ({chars} chars) · complete at {}ms · {partials} redraws",
+            at.as_millis(),
+            answer.latency_ms,
+        ),
+        None => println!("no partial arrived; complete at {}ms", answer.latency_ms),
+    }
+    println!("answer: {}", answer.text);
+
+    assert!(!answer.text.is_empty());
+    // The throttle is the whole reason this is usable. A redraw per token on a
+    // 40-token answer would shimmer.
+    assert!(
+        partials <= 30,
+        "{partials} redraws is shimmer, not streaming",
+    );
+}
