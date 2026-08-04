@@ -231,22 +231,59 @@ protected fields, denied applications.
 
 ## 10. Open questions M1 must answer
 
-1. What fraction of hovers over real text return a correct word, per
-   application?
-2. Does `RangeFromPoint` resolve accurately enough near line and word
-   edges, or is a distance check against the bounding rectangles
-   required?
-3. How often does `ExpandToEnclosingUnit(Word)` normalise to something
-   larger, and in which providers?
-4. What does the Chromium accessibility wake actually cost on a hover
-   path, and does a per-window once-only wake hold for the lifetime of
-   the window?
-5. Do bounding rectangles line up with what the user sees at 125 and 150
-   percent scaling, and on a negative-origin monitor?
-6. What is the real element-resolution latency in a heavy Electron
-   application under load?
-7. How often is a stale result produced, meaning the pointer moved
-   before the answer arrived?
+Updated 2026-08-04 against the first sweep
+([`../benchmarks/2026-08-04-acquisition-sweep.md`](../benchmarks/2026-08-04-acquisition-sweep.md)).
 
-Every one of these is a row the probe fills in. None of them can be
-answered by reading more documentation.
+1. **What fraction of hovers over real text return a correct word, per
+   application?** · *partly answered.* A machine-checkable proxy exists:
+   whether the resolved word's rectangle contains the sample point. On
+   `50020` Text controls it is 86 to 100%. On `50030` Document and
+   `50004` Edit controls it is 3 to 18%. Three windows measured; the
+   remaining five target applications are still open, and no human has
+   yet confirmed that a resolved word is the intended one.
+
+2. **Is a distance check required?** · **answered: yes.** Inside a
+   document or edit control `RangeFromPoint` never fails. It returns the
+   nearest text in the whole scrollable region, up to 1,465px from the
+   sample point, and reports success. There is no error to catch, so the
+   distance is the only signal. Where the threshold belongs is issue #5.
+
+3. **How often does `ExpandToEnclosingUnit(Word)` normalise to something
+   larger, and in which providers?** · *open.* The sweep does not
+   compare the requested unit against what came back. It needs the
+   returned range length measured against the word it was expanded from.
+
+4. **What does the Chromium wake cost, and does once-per-window hold?**
+   · *partly answered.* It helps where the tree is genuinely cold: +2
+   acquisitions on one Chrome window, and larger gains on Electron in an
+   earlier run. Most windows reported "no change", which is consistent
+   with Chromium enabling accessibility **process-wide** rather than per
+   window, so waking one window warms its siblings. That would make the
+   per-window memo over-eager but harmless. Not yet proven, and the
+   140ms settle is still unmeasured on a hover budget. Issue #4.
+
+5. **Do rectangles line up at 125% and on a second monitor?** ·
+   *provisionally yes.* Measured across a 125% primary and a 100%
+   secondary: on-target rates of 69 to 75% and 86 to 100% on Text
+   controls, with a maximum distance of 14px on the 125% display. A DPI
+   bug would put rectangles off by a factor of 1.25 and show as
+   hundreds of pixels. Not a controlled DPI test, and no negative-origin
+   monitor was available.
+
+6. **Element-resolution latency in a heavy Electron application?** ·
+   **answered: not a problem.** The whole chain runs at p50 7.9 to
+   11.2ms and p95 12.4 to 23.7ms, against a combined budget of 35ms and
+   130ms. First-call COM warm-up is the only outlier, at p95 53.8ms.
+
+7. **How often is a stale result produced?** · *open, and the sweep
+   cannot answer it.* Staleness is a property of the pointer moving
+   during a hover, so it needs the follow instrument during real
+   reading.
+
+### A question the sweep added
+
+8. **Is the low on-target rate inside documents empty space, or
+   inaccurate resolution?** The distances are consistent with "the
+   nearest line above an empty region", but that has not been separated
+   from the alternative. It needs points known to carry glyphs, which
+   this harness cannot identify.
