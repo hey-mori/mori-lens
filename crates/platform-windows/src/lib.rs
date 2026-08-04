@@ -16,6 +16,7 @@
 
 #![cfg(windows)]
 
+mod appearance;
 mod com;
 pub mod overlay;
 mod uia;
@@ -26,6 +27,7 @@ mod live_tests;
 #[cfg(test)]
 mod protected_harness;
 
+pub use appearance::system_preferences;
 pub use overlay::Overlay;
 pub use uia::UiaTextAcquirer;
 pub use window::{
