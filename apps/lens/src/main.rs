@@ -30,8 +30,9 @@ use lens_core::geometry::ScreenRect;
 use lens_core::hover::{Generation, HoverConfig, HoverEvent};
 use lens_core::policy::{AppPolicy, AppTier};
 use lens_core::session::{HoverSession, InputState, Resolution};
+use lens_core::theme::{Preset, TextScale, Theme, Translucency};
 use lens_core::translate::{QuickRequest, Translator};
-use lens_platform_windows::{declare_dpi_awareness, Overlay, UiaTextAcquirer};
+use lens_platform_windows::{declare_dpi_awareness, system_preferences, Overlay, UiaTextAcquirer};
 use lens_translate::OllamaTranslator;
 
 mod pause;
@@ -79,6 +80,9 @@ OPTIONS
     --model <name>      Ollama model. Default: whichever suitable one is
                         installed.
     --dwell <ms>        How long the pointer must rest. Default 320.
+    --theme <name>      system, forest, night-lake, or paper. Default system.
+    --translucency <t>  clear, balanced, or solid. Default balanced.
+    --text <size>       small, normal, large, or larger. Default normal.
     --selftest          Run the whole chain once against text already on
                         screen, without moving the pointer, and report each
                         stage. Proves the product works end to end.
@@ -87,6 +91,9 @@ OPTIONS
 
 struct Options {
     selftest: bool,
+    preset: Preset,
+    translucency: Translucency,
+    text: TextScale,
     automatic: bool,
     language: String,
     model: Option<String>,
@@ -97,6 +104,9 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             selftest: false,
+            preset: Preset::System,
+            translucency: Translucency::Balanced,
+            text: TextScale::Normal,
             automatic: false,
             language: "Korean".to_owned(),
             model: None,
@@ -116,6 +126,35 @@ fn parse() -> Result<Options, String> {
             }
             "--auto" => options.automatic = true,
             "--selftest" => options.selftest = true,
+            "--theme" => {
+                let name = args.next().ok_or("--theme needs a name")?;
+                options.preset = match name.as_str() {
+                    "system" => Preset::System,
+                    "forest" => Preset::Forest,
+                    "night-lake" => Preset::NightLake,
+                    "paper" => Preset::Paper,
+                    other => return Err(format!("unknown theme: {other}")),
+                };
+            }
+            "--translucency" => {
+                let name = args.next().ok_or("--translucency needs a value")?;
+                options.translucency = match name.as_str() {
+                    "clear" => Translucency::Clear,
+                    "balanced" => Translucency::Balanced,
+                    "solid" => Translucency::Solid,
+                    other => return Err(format!("unknown translucency: {other}")),
+                };
+            }
+            "--text" => {
+                let name = args.next().ok_or("--text needs a size")?;
+                options.text = match name.as_str() {
+                    "small" => TextScale::Small,
+                    "normal" => TextScale::Normal,
+                    "large" => TextScale::Large,
+                    "larger" => TextScale::Larger,
+                    other => return Err(format!("unknown text size: {other}")),
+                };
+            }
             "--language" => options.language = args.next().ok_or("--language needs a name")?,
             "--model" => options.model = Some(args.next().ok_or("--model needs a name")?),
             "--dwell" => {
@@ -188,7 +227,23 @@ fn main() -> std::process::ExitCode {
     );
     println!("\nRest the pointer on a sentence. Ctrl+C to quit.\n");
 
-    let Some(overlay) = Overlay::start() else {
+    let system = system_preferences();
+    let theme = Theme::resolve(options.preset, options.translucency, options.text, system);
+    println!(
+        "  theme     {} · {}pt body · surface alpha {}",
+        options.preset.as_str(),
+        theme.body_pt,
+        theme.surface_alpha,
+    );
+    // Printed because these override the chosen preset. A user whose card came
+    // out solid when they asked for clear should be able to see why here
+    // rather than think the flag was ignored.
+    println!(
+        "  system    dark={} reduced-transparency={} high-contrast={} reduced-motion={}",
+        system.dark, system.reduced_transparency, system.high_contrast, system.reduced_motion,
+    );
+
+    let Some(overlay) = Overlay::start_with(theme) else {
         eprintln!("could not create the overlay window");
         return std::process::ExitCode::from(1);
     };
