@@ -12,6 +12,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lens"
+version = "0.1.0"
+dependencies = [
+ "lens-core",
+ "lens-platform-windows",
+ "lens-translate",
+ "windows",
+]
+
+[[package]]
 name = "lens-core"
 version = "0.1.0"
 dependencies = [

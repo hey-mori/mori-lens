@@ -17,6 +17,7 @@
 #![cfg(windows)]
 
 mod com;
+pub mod overlay;
 mod uia;
 mod window;
 
@@ -25,6 +26,7 @@ mod live_tests;
 #[cfg(test)]
 mod protected_harness;
 
+pub use overlay::Overlay;
 pub use uia::UiaTextAcquirer;
 pub use window::{
     declare_dpi_awareness, process_name_at, root_window_at, top_level_windows, WindowInfo,
