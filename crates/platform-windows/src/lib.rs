@@ -20,6 +20,11 @@ mod com;
 mod uia;
 mod window;
 
+#[cfg(test)]
+mod live_tests;
+#[cfg(test)]
+mod protected_harness;
+
 pub use uia::UiaTextAcquirer;
 pub use window::{
     declare_dpi_awareness, process_name_at, root_window_at, top_level_windows, WindowInfo,

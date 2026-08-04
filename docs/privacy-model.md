@@ -28,6 +28,22 @@ checked before any text is materialised into a string. If the check
 itself fails, the field is treated as protected: unreadable means
 unprovable, and unprovable is treated as secure.
 
+**Verified, 2026-08-04.** This was the strongest promise here and the
+one that had never executed. `crates/platform-windows/src/live_tests.rs`
+builds a real Win32 window with two `EDIT` controls, identical except
+that one carries `ES_PASSWORD`, and points the acquirer at each. The
+password field returns `Protected(Declared)`, meaning the provider
+affirmatively said so rather than the check falling through to the
+unprovable branch.
+
+A second check exists because the first is not enough on its own: a
+build that refused *everything* would pass it and look like a working
+guarantee while the product read nothing at all. The plain field must
+reach a different outcome, and it does.
+
+Run them with
+`cargo test -p lens-platform-windows -- --ignored --nocapture`.
+
 **The engine in use is visible.** The card shows what produced the
 answer, so the user can always tell whether that text left the machine.
 
