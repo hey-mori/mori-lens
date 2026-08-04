@@ -29,31 +29,37 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::Mutex;
 
 use lens_core::card::{Card, CardBody};
+use lens_core::geometry::ScreenPoint;
 use lens_core::geometry::ScreenRect;
+use lens_core::theme::Theme;
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreateSolidBrush,
-    DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, FrameRect, GetDC, InvalidateRect,
-    ReleaseDC, SelectObject, SetBkMode, SetTextColor, DEFAULT_CHARSET, DEFAULT_PITCH, DT_CALCRECT,
-    DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_WORDBREAK, FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD,
-    HBRUSH, HFONT, PAINTSTRUCT, SRCCOPY, TRANSPARENT,
+    DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, FrameRect, GetDC, GetMonitorInfoW,
+    InvalidateRect, MonitorFromPoint, ReleaseDC, SelectObject, SetBkMode, SetTextColor,
+    DEFAULT_CHARSET, DEFAULT_PITCH, DT_CALCRECT, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX,
+    DT_WORDBREAK, FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD, HBRUSH, HFONT, MONITORINFO,
+    MONITOR_DEFAULTTONEAREST, PAINTSTRUCT, SRCCOPY, TRANSPARENT,
 };
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
     PostThreadMessageW, RegisterClassW, SetLayeredWindowAttributes, SetWindowPos, ShowWindow,
-    SystemParametersInfoW, HWND_TOPMOST, LWA_ALPHA, MSG, SPI_GETWORKAREA, SWP_NOACTIVATE, SW_HIDE,
-    SW_SHOWNOACTIVATE, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_PAINT, WM_QUIT, WM_USER, WNDCLASSW,
-    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    HWND_TOPMOST, LWA_ALPHA, MSG, SWP_NOACTIVATE, SW_HIDE, SW_SHOWNOACTIVATE, WM_PAINT, WM_QUIT,
+    WM_USER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_EX_TRANSPARENT, WS_POPUP,
 };
 
 /// Card geometry, in physical pixels at 100%. Deliberately fixed for now: a
 /// card that resizes to its content on every hover flickers, and the sizing
 /// rules are a design question rather than a plumbing one.
 const CARD_WIDTH: i32 = 420;
-const PADDING: i32 = 14;
 const MAX_HEIGHT: i32 = 420;
+
+/// `DWMWCP_ROUND`. Windows 11 rounded corners.
+const DWMWCP_ROUND: i32 = 2;
 
 /// Posted to the overlay thread when the content has changed.
 const WM_LENS_REFRESH: u32 = WM_USER + 1;
@@ -64,6 +70,35 @@ const WM_LENS_REFRESH: u32 = WM_USER + 1;
 /// overlay thread at times nobody chose, and the paint handler needs whatever
 /// is current then.
 static CONTENT: Mutex<Option<Card>> = Mutex::new(None);
+
+/// The theme the painter reads. Set before the window exists so the first
+/// frame is already correct rather than a default that flashes.
+static THEME: Mutex<Option<Theme>> = Mutex::new(None);
+
+/// The theme to paint with, or a readable fallback.
+///
+/// A fallback rather than a panic: a card that renders in the wrong colours is
+/// a cosmetic fault, and a translation that never appears because a lock was
+/// poisoned is a product one.
+fn current_theme() -> Theme {
+    THEME.lock().ok().and_then(|slot| *slot).unwrap_or_else(|| {
+        Theme::resolve(
+            lens_core::theme::Preset::System,
+            lens_core::theme::Translucency::Balanced,
+            lens_core::theme::TextScale::Normal,
+            lens_core::theme::SystemPreferences::default(),
+        )
+    })
+}
+
+/// Pack an `Rgb` into the `COLORREF` byte order, which is BGR rather than RGB.
+///
+/// Named rather than inlined because getting it backwards produces colours
+/// that look deliberate: a warm sage theme renders as cold blue and reads as a
+/// design choice somebody made.
+fn colorref(colour: lens_core::theme::Rgb) -> COLORREF {
+    COLORREF(u32::from(colour.r) | (u32::from(colour.g) << 8) | (u32::from(colour.b) << 16))
+}
 
 /// What the hover loop asks the overlay to do.
 #[derive(Debug)]
@@ -84,6 +119,14 @@ pub struct Overlay {
 impl Overlay {
     /// Create the window and start pumping its messages.
     pub fn start() -> Option<Self> {
+        Self::start_with(current_theme())
+    }
+
+    /// Create the window with a chosen theme.
+    pub fn start_with(theme: Theme) -> Option<Self> {
+        if let Ok(mut slot) = THEME.lock() {
+            *slot = Some(theme);
+        }
         let (commands, rx) = mpsc::channel::<Command>();
         let (ready, ready_rx) = mpsc::channel::<Option<(u32, i64)>>();
 
@@ -173,11 +216,19 @@ unsafe fn create_window() -> Option<HWND> {
 
         let window = CreateWindowExW(
             // Every flag here is load-bearing:
-            //   NOACTIVATE  the card never takes focus from what is being typed
-            //   TOOLWINDOW  it is not a task-switcher entry
-            //   TOPMOST     it sits above the application it is explaining
-            //   LAYERED     it can be drawn with alpha
-            WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED,
+            //   NOACTIVATE   the card never takes focus from what is being typed
+            //   TOOLWINDOW   it is not a task-switcher entry
+            //   TOPMOST      it sits above the application it is explaining
+            //   LAYERED      it can be drawn with alpha
+            //   TRANSPARENT  clicks reach the application underneath
+            //
+            // TRANSPARENT is what ADR-0004 calls the passive tooltip ignoring
+            // mouse events, and it was missing: the card silently swallowed
+            // every click on the text it was explaining. It is correct only
+            // while the card is passive. The interactive card that ADR-0004
+            // also describes needs its own window without this flag, because a
+            // button inside a click-through window cannot be clicked.
+            WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT,
             w!("MoriLensOverlay"),
             PCWSTR::null(),
             // POPUP, so there is no caption, no border, and no system menu.
@@ -193,7 +244,24 @@ unsafe fn create_window() -> Option<HWND> {
         )
         .ok()?;
 
-        let _ = SetLayeredWindowAttributes(window, COLORREF(0), 244, LWA_ALPHA);
+        let theme = current_theme();
+        let _ = SetLayeredWindowAttributes(window, COLORREF(0), theme.surface_alpha, LWA_ALPHA);
+
+        // Rounded corners cost nothing and are the one piece of the Windows 11
+        // material language a GDI window can have today. The full backdrop
+        // needs a renderer that can paint with alpha
+        // (docs/decisions/ADR-0011-glass-needs-direct2d.md).
+        //
+        // Failure is ignored on purpose: this is Windows 11 build 22000 and
+        // later, and a square card on an older build is not worth a branch.
+        let corner = DWMWCP_ROUND;
+        let _ = DwmSetWindowAttribute(
+            window,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            std::ptr::addr_of!(corner).cast(),
+            std::mem::size_of::<i32>() as u32,
+        );
+
         Some(window)
     }
 }
@@ -238,8 +306,9 @@ unsafe fn show_card(window: HWND, card: Card, anchor: ScreenRect) {
         anchor,
         anchor.center(),
         (CARD_WIDTH, height),
-        // SAFETY: reads the primary work area into a local rectangle.
-        unsafe { work_area() },
+        // The monitor the text is on, not the primary one.
+        // SAFETY: read-only monitor queries.
+        unsafe { work_area_for(anchor.center()) },
     );
 
     // SAFETY: NOACTIVATE on every call is what keeps focus where it was.
@@ -273,27 +342,44 @@ unsafe fn show_card(window: HWND, card: Card, anchor: ScreenRect) {
     }
 }
 
-/// The primary monitor's work area, excluding the taskbar.
+/// The work area of the monitor a point is on, excluding the taskbar.
+///
+/// **Per monitor, not `SPI_GETWORKAREA`.** That call answers for the primary
+/// monitor only, and `place_card` clamps into whatever it is given, so a card
+/// anchored on a second screen was pulled onto the first. Measured on a
+/// two-monitor desk: an anchor at x=2500 was placed at x=1116, about 1,400px
+/// away on the wrong display. The `place_card` unit tests never caught it
+/// because they are handed a correct work area; only the runtime was wrong.
 ///
 /// # Safety
-/// Writes only into a local rectangle.
-unsafe fn work_area() -> ScreenRect {
-    let mut rect = RECT::default();
-    // SAFETY: `SPI_GETWORKAREA` writes a RECT of the size given.
-    let ok = unsafe {
-        SystemParametersInfoW(
-            SPI_GETWORKAREA,
-            0,
-            Some(std::ptr::addr_of_mut!(rect).cast()),
-            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
-        )
-    };
-    if ok.is_err() {
-        // A plausible default is worse than none here, so fall back to
-        // something large enough not to clamp anything into the wrong place.
-        return ScreenRect::new(0, 0, 1920, 1080);
+/// Writes only into local structures.
+unsafe fn work_area_for(point: ScreenPoint) -> ScreenRect {
+    // SAFETY: read-only monitor queries; `MONITOR_DEFAULTTONEAREST` always
+    // yields a monitor, so the handle is valid.
+    unsafe {
+        let monitor = MonitorFromPoint(
+            POINT {
+                x: point.x,
+                y: point.y,
+            },
+            MONITOR_DEFAULTTONEAREST,
+        );
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if GetMonitorInfoW(monitor, &mut info).as_bool() {
+            return ScreenRect::from_ltrb(
+                info.rcWork.left,
+                info.rcWork.top,
+                info.rcWork.right,
+                info.rcWork.bottom,
+            );
+        }
     }
-    ScreenRect::from_ltrb(rect.left, rect.top, rect.right, rect.bottom)
+    // Nothing plausible to invent here, so give the card room rather than
+    // clamping it somewhere confidently wrong.
+    ScreenRect::new(point.x - 960, point.y - 540, 1920, 1080)
 }
 
 /// How tall the card needs to be for this content.
@@ -307,15 +393,16 @@ unsafe fn measure(window: HWND, card: &Card) -> i32 {
         if dc.is_invalid() {
             return 160;
         }
-        let inner = CARD_WIDTH - PADDING * 2;
+        let theme = current_theme();
+        let inner = CARD_WIDTH - theme.padding * 2;
         let body = match &card.body {
             CardBody::Translation(text) | CardBody::Problem(text) => text,
         };
-        let original = text_height(dc, &card.original, inner, false);
-        let translated = text_height(dc, body, inner, true);
-        let footer = 18;
+        let original = text_height(dc, &card.original, inner, theme.small_pt);
+        let translated = text_height(dc, body, inner, theme.body_pt);
+        let footer = theme.small_pt + 4;
         ReleaseDC(Some(window), dc);
-        PADDING * 2 + original + 8 + translated + 10 + footer
+        theme.padding * 2 + original + 8 + translated + 10 + footer
     }
 }
 
@@ -325,13 +412,13 @@ unsafe fn text_height(
     dc: windows::Win32::Graphics::Gdi::HDC,
     text: &str,
     width: i32,
-    large: bool,
+    point_size: i32,
 ) -> i32 {
     if text.trim().is_empty() {
         return 0;
     }
     // SAFETY: creates a font this function owns and deletes below.
-    let font = unsafe { font(large) };
+    let font = unsafe { font(point_size, false) };
     // SAFETY: the font is selected, used, and restored before deletion.
     unsafe {
         let previous = SelectObject(dc, font.into());
@@ -356,17 +443,17 @@ unsafe fn text_height(
 
 /// # Safety
 /// The returned font must be deleted by the caller.
-unsafe fn font(large: bool) -> HFONT {
+unsafe fn font(point_size: i32, semibold: bool) -> HFONT {
     // Malgun Gothic carries Hangul; Segoe UI does not. A card whose target
     // language is Korean rendered in a Latin-only face shows boxes.
     // SAFETY: a documented font creation with a static face name.
     unsafe {
         CreateFontW(
-            if large { -19 } else { -15 },
+            -point_size,
             0,
             0,
             0,
-            if large {
+            if semibold {
                 FW_SEMIBOLD.0 as i32
             } else {
                 FW_NORMAL.0 as i32
@@ -428,8 +515,9 @@ unsafe fn paint(window: HWND) {
         let previous = SelectObject(memory, bitmap.into());
         let target = if memory.is_invalid() { dc } else { memory };
 
-        let background: HBRUSH = CreateSolidBrush(COLORREF(0x00201c1a));
-        let border: HBRUSH = CreateSolidBrush(COLORREF(0x00453e3a));
+        let theme = current_theme();
+        let background: HBRUSH = CreateSolidBrush(colorref(theme.surface));
+        let border: HBRUSH = CreateSolidBrush(colorref(theme.border));
         FillRect(target, &rect, background);
         FrameRect(target, &rect, border);
         let _ = DeleteObject(background.into());
@@ -438,24 +526,52 @@ unsafe fn paint(window: HWND) {
         SetBkMode(target, TRANSPARENT);
 
         if let Some(card) = CONTENT.lock().ok().and_then(|slot| slot.clone()) {
-            let inner = width - PADDING * 2;
-            let mut y = PADDING;
+            let padding = theme.padding;
+            let inner = width - padding * 2;
+            let mut y = padding;
 
             // The original first and dimmer. It is above the answer because
             // the reader's eye is already on it, and it is present at all
             // because it is the only way to notice an answer that is not a
             // translation (docs/privacy-model.md §1).
             if !card.original.trim().is_empty() {
-                y += draw(target, &card.original, PADDING, y, inner, false, 0x00908880) + 8;
+                y += draw(
+                    target,
+                    &card.original,
+                    padding,
+                    y,
+                    inner,
+                    theme.small_pt,
+                    false,
+                    colorref(theme.original),
+                ) + 8;
             }
 
             let (body, colour) = match &card.body {
-                CardBody::Translation(text) => (text, 0x00f2ece8),
-                CardBody::Problem(text) => (text, 0x008fb8e8),
+                CardBody::Translation(text) => (text, theme.body),
+                CardBody::Problem(text) => (text, theme.problem),
             };
-            y += draw(target, body, PADDING, y, inner, true, colour) + 10;
+            y += draw(
+                target,
+                body,
+                padding,
+                y,
+                inner,
+                theme.body_pt,
+                true,
+                colorref(colour),
+            ) + 10;
 
-            draw(target, &card.footer, PADDING, y, inner, false, 0x00706a66);
+            draw(
+                target,
+                &card.footer,
+                padding,
+                y,
+                inner,
+                theme.small_pt,
+                false,
+                colorref(theme.footer),
+            );
         }
 
         // One copy, so the screen never shows a half-drawn card.
@@ -481,17 +597,18 @@ unsafe fn draw(
     x: i32,
     y: i32,
     width: i32,
-    large: bool,
-    colour: u32,
+    point_size: i32,
+    semibold: bool,
+    colour: COLORREF,
 ) -> i32 {
     if text.trim().is_empty() {
         return 0;
     }
     // SAFETY: the font is selected, used, restored, and deleted.
     unsafe {
-        let font = font(large);
+        let font = font(point_size, semibold);
         let previous = SelectObject(dc, font.into());
-        SetTextColor(dc, COLORREF(colour));
+        SetTextColor(dc, colour);
 
         let mut measure_rect = RECT {
             left: x,
