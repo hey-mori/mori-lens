@@ -249,9 +249,22 @@ Updated 2026-08-04 against the first sweep
    distance is the only signal. Where the threshold belongs is issue #5.
 
 3. **How often does `ExpandToEnclosingUnit(Word)` normalise to something
-   larger, and in which providers?** · *open.* The sweep does not
-   compare the requested unit against what came back. It needs the
-   returned range length measured against the word it was expanded from.
+   larger, and in which providers?** · **answered: it did not, on any
+   provider measured.** Classifying what came back gave `word` in 88 of
+   89 acquisitions, the remaining one being an empty range. Chromium,
+   Electron, and a Win32 application all returned a single word.
+
+   The reason to have asked: the expanded range supplies the anchor
+   rectangle, so a normalised answer would anchor an overlay to a whole
+   line. It also fed the pointer's character offset, where normalising
+   to a line would have resolved the line's **first word** instead of
+   the pointer's, silently and plausibly.
+
+   That second path was a **latent bug**, now fixed: the offset is
+   measured to the degenerate range from `RangeFromPoint`, which is the
+   pointer's own character position and is immune to however expansion
+   behaves. "Not observed on four windows" is not "does not happen", and
+   the documentation explicitly permits it.
 
 4. **What does the Chromium wake cost, and does once-per-window hold?**
    · *partly answered.* It helps where the tree is genuinely cold: +2

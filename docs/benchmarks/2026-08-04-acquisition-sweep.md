@@ -164,6 +164,47 @@ two populations on this data; it says nothing about a font size or a
 display scaling that has not been measured. The sweep now prints the
 line on every run, which is the point.
 
+## Fourth run: what a word-unit expansion actually returns
+
+`ExpandToEnclosingUnit` is allowed to answer with a **larger** unit when
+a provider does not implement the one requested. That is documented
+behaviour, and it matters twice over: the expanded range supplies the
+anchor rectangle, and it had been supplying the pointer's character
+offset.
+
+Classifying what came back:
+
+| Result | Count |
+|---|---:|
+| one word | **88** |
+| empty | 1 |
+| several words | 0 |
+| several lines | 0 |
+
+Chromium, Electron, and a Win32 window all returned a single word. No
+normalisation was observed anywhere.
+
+So the anchor rectangles are genuine word rectangles, and the earlier
+on-target figures were measured against words rather than against lines.
+
+**This also downgrades a bug from active to latent.** The pointer's
+character offset had been measured to the *expanded* range's start,
+which is correct exactly as long as expansion returns a word. Had any
+provider normalised to a line, the offset would have landed at the
+line's start and segmentation would have returned that line's **first
+word** rather than the word under the pointer. Plausible output, wrong
+answer, no error.
+
+It is fixed regardless: the offset is now measured to the degenerate
+range from `RangeFromPoint`, which is the pointer's own character
+position. Four windows not exhibiting a documented behaviour is not
+evidence that it does not happen.
+
+Also in this run: **Notepad appeared for the first time**, with 5
+acquisitions on `50020` Text controls at 0 to 1px. Five points is a weak
+sample and they are more likely to be window chrome than the document
+body, so this is a foothold rather than a row.
+
 ## What this does not establish
 
 - **That "empty space" is proven rather than strongly indicated.** Three
