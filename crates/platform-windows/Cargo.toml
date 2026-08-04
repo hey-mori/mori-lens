@@ -16,12 +16,15 @@ features = [
   "Win32_Foundation",
   # ClientToScreen lives under Gdi, not WindowsAndMessaging, despite operating
   # on a window handle.
+  "Win32_Graphics_Dwm",
   "Win32_Graphics_Gdi",
   "Win32_System_Com",
   "Win32_System_Ole",
+  "Win32_System_Registry",
   "Win32_System_Threading",
   "Win32_System_Variant",
   "Win32_UI_Accessibility",
+  "Win32_UI_Controls",
   "Win32_UI_HiDpi",
   "Win32_UI_WindowsAndMessaging",
 ]
