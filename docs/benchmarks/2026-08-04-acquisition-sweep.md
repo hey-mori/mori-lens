@@ -42,6 +42,14 @@ slower than the rest. One window showed p95 53.8ms against a p50 of
 11.0ms, and that spread is first-call COM and provider warm-up, not a
 tail in steady-state reads.
 
+A second caveat, from the second run: the same windows measured
+**p50 4.4 to 5.8ms and p95 7.0 to 12.1ms**, roughly half the first run's
+figures, on the same build and the same machine. The difference is
+machine load, not code. It is a concrete reason the rule in
+[`README.md`](README.md) holds: a regression is a change on the same
+machine between two builds measured close together, never a comparison
+across runs.
+
 ## On-target rate, and the finding that matters
 
 "On-target" is the share of acquisitions whose resolved word rectangle
@@ -84,14 +92,60 @@ surfaces it exists for: editors, documents, and browser page bodies.
 Recorded against issue #5, which asked whether a threshold is needed.
 It is.
 
+## Second run: the shape of the misses
+
+The first run left one question open, and it mattered because the two
+answers call for opposite products. If a far-away resolution is the
+nearest text to an **empty region**, suppressing the card is right,
+because there is nothing there to explain. If resolution inside a
+document is simply **inaccurate**, suppressing throws away text the user
+was pointing at.
+
+A second run recorded, for every miss, which side of the resolved
+rectangle the point fell on and which rectangle it landed on. The two
+hypotheses have different signatures: empty space is directional and
+concentrates on a few attractors, inaccuracy scatters evenly.
+
+| Window | Controls | Misses | Distinct rects | Per rect | below / above / left / right |
+|---|---|---:|---:|---:|---|
+| chrome 1777x1072 | `50030`, `50004` | 59 | 16 | 3.7 | 9 / **44** / 0 / 6 |
+| chrome 956x925 | `50004`, `50020` | 18 | 10 | 1.8 | 8 / 0 / 0 / **10** |
+| claude 1884x1112 | `50020` | 6 | 6 | 1.0 | 0 / 2 / 0 / 4 |
+
+**The misses are strongly directional, and that settles it.** Inaccurate
+resolution cannot produce `left 0, above 44` or `above 0, left 0,
+right 10`. Noise is symmetric. A layout is not.
+
+Note that the direction **differs per window**: one resolves mostly
+downward from the point, one mostly leftward. That is exactly what
+"nearest text to an empty region" predicts, because the direction is set
+by where the empty region sits relative to the text, which is a property
+of the page.
+
+So: the far cluster is empty space. Suppressing is correct.
+
+### The correction that came with it
+
+The same run overturned a simpler reading. **The misses on Text controls
+are not the same phenomenon at all.** On `claude`, six misses across six
+rectangles, at p95 7px and max 14px. That is glyph-box and line-height
+slack, not a wrong target.
+
+Which means a threshold of exactly zero, "the rectangle must contain the
+point", is **wrong**. It would discard 19 to 23% of perfectly good Text
+control hits over a few pixels.
+
+The two clusters are separated by an enormous gap: roughly 14px against
+322px. Almost any threshold in between separates them, so the value is
+not delicate. Something on the order of one line height is defensible
+and scales with DPI and font size.
+
 ## What this does not establish
 
-- **That the low on-target rate inside documents is empty space.** It is
-  the likely explanation, and the distances are consistent with "nearest
-  line above an empty region". It has not been separated from the
-  alternative, that resolution inside a document control is simply
-  inaccurate. Distinguishing them needs sampling only points known to
-  carry glyphs, which this harness cannot tell.
+- **That "empty space" is proven rather than strongly indicated.** Three
+  windows, and the argument is from directional asymmetry rather than
+  from knowing which pixels carry glyphs. It is enough to choose a
+  product behaviour; it is not a proof.
 - **A per-application coverage number.** `acquired / sampled` measures
   how much of a window is text, not how good the provider is. A uniform
   grid lands mostly on chrome, margins, and images, where `unsupported`
@@ -99,6 +153,12 @@ It is.
 - **Anything about a window that was not in front.** See the occlusion
   limit in
   [`../compatibility/windows-app-matrix.md`](../compatibility/windows-app-matrix.md).
+- **Anything durable about an application.** A row describes a window's
+  **content at that moment**. The 956x925 Chrome window read as `50020`
+  only at 100% on-target in the first run and as `50004` plus `50020` at
+  31% in the second, because the page in it changed. An application's
+  row is really a sample of the pages it was showing, and one row is a
+  weak sample.
 
 ## Rectangles across two DPI scales
 
