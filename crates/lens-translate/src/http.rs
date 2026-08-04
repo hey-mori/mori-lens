@@ -124,6 +124,88 @@ fn request(
     }
 }
 
+/// POST and hand each response line to a callback as it arrives.
+///
+/// Ollama's streaming form is newline-delimited JSON: one object per token
+/// batch, the last carrying `"done":true`. Reading it line by line is what
+/// makes a partial answer possible, and it is the reason this file exists
+/// rather than a buffered helper.
+///
+/// Chunk-size lines from `Transfer-Encoding: chunked` are passed through
+/// unchanged; they are not valid JSON and the caller skips them. Decoding the
+/// framing properly would buy nothing, because each JSON object still arrives
+/// whole on its own line either way.
+///
+/// Returning `false` from the callback stops the read and closes the socket,
+/// which is how a hover the user has moved on from stops costing anything.
+pub fn post_streaming(
+    endpoint: &str,
+    path: &str,
+    body: &str,
+    timeout: Duration,
+    on_line: &mut dyn FnMut(&str) -> bool,
+) -> Result<(), TranslateError> {
+    let address = endpoint
+        .to_socket_addrs()
+        .map_err(|_| TranslateError::Unavailable)?
+        .next()
+        .ok_or(TranslateError::Unavailable)?;
+
+    let stream =
+        TcpStream::connect_timeout(&address, timeout).map_err(|_| TranslateError::Unavailable)?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(|_| TranslateError::Unavailable)?;
+    let mut stream = stream;
+
+    let head = format!(
+        "POST {path} HTTP/1.1\r\nHost: {endpoint}\r\nConnection: close\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+        body.len(),
+    );
+    stream
+        .write_all(head.as_bytes())
+        .and_then(|()| stream.write_all(body.as_bytes()))
+        .and_then(|()| stream.flush())
+        .map_err(|error| classify(&error))?;
+
+    let mut reader = BufReader::new(stream);
+    // Status line and headers, discarded. Unlike the buffered path there is no
+    // need to know whether the body is chunked, per the note above.
+    loop {
+        let mut header = String::new();
+        let read = reader
+            .read_line(&mut header)
+            .map_err(|error| classify(&error))?;
+        if read == 0 || header.trim().is_empty() {
+            break;
+        }
+    }
+
+    let mut total = 0usize;
+    loop {
+        let mut line = String::new();
+        let read = reader
+            .read_line(&mut line)
+            .map_err(|error| classify(&error))?;
+        if read == 0 {
+            break;
+        }
+        total += read;
+        if total > MAX_BODY {
+            return Err(TranslateError::Malformed);
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !on_line(trimmed) {
+            break;
+        }
+    }
+    Ok(())
+}
+
 /// Decode `Transfer-Encoding: chunked`.
 fn read_chunked(reader: &mut BufReader<TcpStream>) -> Result<String, TranslateError> {
     let mut body = Vec::new();
