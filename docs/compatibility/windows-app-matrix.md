@@ -1,7 +1,7 @@
 # Windows application compatibility
 
-**Status · started. Three windows measured, five of the eight target
-applications still unmeasured.**
+**Status · started. Five windows measured across two sessions, four of
+the eight target applications still unmeasured.**
 
 The full set is the gate on Milestone 2
 ([ADR-0008](../decisions/ADR-0008-probe-before-product.md)). Nothing here is filled
@@ -49,14 +49,16 @@ activate windows itself. A measurement tool that rearranged the desktop
 it was measuring would change the thing it is trying to observe.
 
 Record the environment with the run, because these results are not
-portable across machines:
+portable across machines. The shape, filled in from the actual machine
+rather than an example:
 
 ```
 date          2026-08-04
-build         <git sha>
-os            Windows 11 26200
-scaling       150% primary, 100% secondary
-monitors      2, secondary left of primary (negative X)
+build         <the sha the probe prints, checked against HEAD>
+os            Windows 11 Home 26200
+monitors      2 side by side
+  primary     1920x1200 physical at 125%, origin (0, 0)
+  secondary   1920x1080 physical at 100%, origin (1920, 0)
 ```
 
 ## Columns
@@ -90,10 +92,10 @@ between them they cover where a user actually meets a second language.
 
 | Application | Framework | Why it is in the set |
 |-------------|-----------|---------------------|
-| Notepad | Win32 or WinUI, unverified | the simplest text case, and the closest thing to Mori's Win32 `EDIT` finding |
+| Notepad | Document provider, measured | the simplest text case; measured, and it is **not** the Win32 `EDIT` family |
 | Chrome | Chromium | where most reading happens; needs the accessibility wake |
 | Edge | Chromium | same engine, different shell and PDF viewer |
-| VS Code | Electron | code and documentation, a heavy renderer |
+| VS Code | Electron | code and documentation, a heavy renderer; measured, and the editor exposes nothing |
 | Word | Win32 / Office | the document case |
 | Edge PDF viewer | Chromium PDF | text PDFs, the boundary before OCR |
 | Windows Settings | WinUI | modern XAML controls |
@@ -126,11 +128,67 @@ Full numbers and the latency analysis:
 | Chrome, 1777x1072, @100% | Chromium | yes | yes | `50030`, `50004` | **5%** | 322px / 935px | 10.4 / 19.3ms | already warm |
 | Claude desktop, 1884x1112, @125% | Electron | yes | yes | `50020` | **69 to 75%** | 0px / 14px | 9.3 / 20.2ms | already warm |
 
-**Still unmeasured**, because each was fully occluded during the run and
-the probe correctly refused to report someone else's numbers for them:
-Edge, VS Code, Word, the Edge PDF viewer, Windows Settings, Notepad, and
-an Electron messenger. Bringing each forward and sweeping it is the
-remaining work on issue #3.
+### Sweep, 2026-08-04, second session
+
+Same machine and monitors. Build `480603f`, confirmed against
+`git rev-parse --short HEAD`. Each application brought to the front by
+hand before its run.
+
+| Window | Framework | Acquired | On-target | Distance p50 / max | Controls | Latency p50 / p95 |
+|---|---|---:|---:|---:|---|---:|
+| VS Code, 1200x800, @100% | Electron | 7/247 | **86%** | 0px / 7px | `50020` | 6.5 / 13.1ms |
+| Notepad, 761x583, @100% | Win32 era | 45/70 | **11%** | 588px / 696px | `50030` | 12.4 / 44.5ms |
+
+Notepad was 182 of 252 points occluded, so its row rests on the visible
+70. The probe verified ownership per point, so those 70 are genuinely
+Notepad's, but a fully visible run would be a stronger sample.
+
+#### VS Code exposes almost nothing, and it matters most
+
+**7 acquisitions out of 247 sampled points, every one of them a `50020`
+Text control.** Text is the control type of a label. No `50030` Document
+and no `50004` Edit appeared anywhere in the window.
+
+The strong reading, which the numbers indicate rather than prove: the 7
+are window chrome, tab titles and the status bar, and **the editor
+itself returned nothing**. Monaco builds an accessible representation of
+its text only when it believes an assistive client is present;
+`editor.accessibilitySupport` defaults to `auto`, which detects a screen
+reader and Lens is not one.
+
+That is a product problem rather than a curiosity. A developer reading
+English documentation and error messages is the first user in
+[`../mori-lens-project-goal.md`](../mori-lens-project-goal.md) §3, and a
+code editor is where they do it. Tracked as issue #14.
+
+Not established: what was on screen. The run was driven remotely, so
+whether that window showed a code file, a settings tab, or a welcome
+page is unknown. A repeat with a known code file open would firm this
+up, and the conclusion would not change unless the editor was never
+visible at all.
+
+#### Notepad is a Document provider, not the `EDIT` case
+
+`50030` Document on every one of its 45 acquisitions, and 64% of visible
+points acquired. Windows 11's Notepad is **not** the Win32 `EDIT` family
+that [ADR-0002](../decisions/ADR-0002-accessibility-first-acquisition.md)
+leans on; the genuine `EDIT` case is the harness control below, which
+returns `unsupported`.
+
+Its 11% on-target rate is the empty-space pattern again, in its purest
+form yet: **40 misses, all 40 with the point above the resolved
+rectangle**, over 8 distinct rectangles. Nothing scattered, nothing
+symmetric. The gate correctly accepts 0 of 40 at 588px.
+
+A new failure reason appeared here for the first time: `empty 15`,
+alongside `unsupported 10`. Worth watching, because `empty` is a
+provider answering with no text where `unsupported` is a provider with
+no text interface at all.
+
+**Still unmeasured**, because each was fully occluded during a run and
+the probe correctly refused to report someone else's numbers: Edge,
+Word, the Edge PDF viewer, Windows Settings, and an Electron messenger.
+Bringing each forward and sweeping it is the remaining work on issue #3.
 
 ### The finding that changes the design
 
