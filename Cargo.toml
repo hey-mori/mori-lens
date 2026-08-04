@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/lens-core", "crates/platform-windows", "apps/hover-probe"]
+members = [
+  "crates/lens-core",
+  "crates/lens-translate",
+  "crates/platform-windows",
+  "apps/hover-probe",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,6 +17,7 @@ repository = "https://github.com/swarea/mori-lens"
 [workspace.dependencies]
 lens-core = { path = "crates/lens-core" }
 lens-platform-windows = { path = "crates/platform-windows" }
+lens-translate = { path = "crates/lens-translate" }
 unicode-segmentation = "1.13"
 
 [workspace.lints.rust]

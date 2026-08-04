@@ -1,0 +1,208 @@
+//! The contract between the domain and a translation engine.
+//!
+//! Same shape as [`crate::acquire`]: one trait, one result, one closed error
+//! enum, and no knowledge of how the engine is reached. A cloud provider or a
+//! second local runtime implements this and nothing above it changes.
+//!
+//! Two speeds, and only the first is defined here. Quick translation runs on
+//! every settled hover and must stay inside a latency budget a reader will
+//! tolerate. Deep analysis is a separate path with a separate model, a separate
+//! cache, and no budget at all
+//! (`docs/decisions/ADR-0005-two-speed-ai.md`).
+
+use std::time::Duration;
+
+/// What to translate, and into what.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuickRequest {
+    /// The sentence around the pointer. Always sent, even when the user is
+    /// pointing at one word: a bare word makes a model guess, and it guesses
+    /// confidently. `gift` is a present in English and a poison in German.
+    pub source_text: String,
+    /// The word under the pointer, when there is one.
+    pub focused_word: Option<String>,
+    /// The language the user reads in.
+    pub target_language: String,
+}
+
+impl QuickRequest {
+    pub fn new(source_text: impl Into<String>, target_language: impl Into<String>) -> Self {
+        Self {
+            source_text: source_text.into(),
+            focused_word: None,
+            target_language: target_language.into(),
+        }
+    }
+
+    pub fn with_focus(mut self, word: impl Into<String>) -> Self {
+        self.focused_word = Some(word.into());
+        self
+    }
+
+    /// Whether this is worth sending to an engine at all.
+    ///
+    /// Cheap refusals, made here rather than in an adapter so every engine
+    /// inherits them: an empty string, and text with no letters in it. A
+    /// pointer resting on `{ }` or `42` should cost nothing.
+    pub fn is_worth_translating(&self) -> bool {
+        let trimmed = self.source_text.trim();
+        !trimmed.is_empty() && trimmed.chars().any(char::is_alphabetic)
+    }
+}
+
+/// A finished quick translation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuickTranslation {
+    pub text: String,
+    /// Which engine answered, so the card can show it. The user is always able
+    /// to tell whether what they are reading left the machine
+    /// (`docs/privacy-model.md` §1).
+    pub engine: EngineId,
+    pub model: String,
+    pub latency_ms: u128,
+}
+
+/// Which engine produced an answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngineId {
+    /// An Ollama on this machine. The default, and the only one that needs no
+    /// grant.
+    LocalOllama,
+    /// Anything reached over the network. Requires an explicit per-provider
+    /// grant, and the card says so.
+    External,
+}
+
+impl EngineId {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LocalOllama => "local",
+            Self::External => "external",
+        }
+    }
+
+    /// Whether text sent to this engine leaves the machine.
+    pub const fn leaves_the_machine(self) -> bool {
+        matches!(self, Self::External)
+    }
+}
+
+/// Every way a translation can fail to arrive.
+///
+/// Closed and typed for the same reason [`crate::acquire::AcquireError`] is:
+/// "it did not work" is not a measurement. A user with no Ollama installed and
+/// a user whose model is missing need different words on screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TranslateError {
+    /// No engine answered at all. Usually Ollama is not running.
+    Unavailable,
+    /// The engine is there and the model is not.
+    ModelMissing(String),
+    /// The engine did not finish inside the budget.
+    Timeout,
+    /// The engine answered with something that was not a translation.
+    Malformed,
+    /// The pointer moved before this finished.
+    Stale,
+    /// Nothing worth translating: empty, or no letters in it.
+    NotWorthTranslating,
+}
+
+impl TranslateError {
+    pub fn reason(&self) -> &'static str {
+        match self {
+            Self::Unavailable => "unavailable",
+            Self::ModelMissing(_) => "model-missing",
+            Self::Timeout => "timeout",
+            Self::Malformed => "malformed",
+            Self::Stale => "stale",
+            Self::NotWorthTranslating => "not-worth-translating",
+        }
+    }
+
+    /// What to put in front of a user, in Korean, as product copy.
+    ///
+    /// Here rather than in the overlay because the mapping from a failure to
+    /// an explanation is a product decision, and an adapter should not be able
+    /// to invent its own wording.
+    pub fn user_message(&self) -> String {
+        match self {
+            Self::Unavailable => "Ollama에 연결할 수 없습니다".to_owned(),
+            Self::ModelMissing(model) => format!("모델 {model}이(가) 설치되어 있지 않습니다"),
+            Self::Timeout => "번역이 시간 안에 끝나지 않았습니다".to_owned(),
+            Self::Malformed => "번역 결과를 이해할 수 없습니다".to_owned(),
+            Self::Stale => "취소되었습니다".to_owned(),
+            Self::NotWorthTranslating => "번역할 내용이 없습니다".to_owned(),
+        }
+    }
+}
+
+impl std::fmt::Display for TranslateError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.reason())
+    }
+}
+
+impl std::error::Error for TranslateError {}
+
+/// Turns text into the user's language.
+pub trait Translator {
+    /// The path a hover takes. Must respect a budget: a reader waiting on this
+    /// has already stopped reading.
+    fn quick(&self, request: &QuickRequest) -> Result<QuickTranslation, TranslateError>;
+}
+
+/// How long a hover may wait before the answer is worthless.
+///
+/// Generous against the 700ms target in the research brief, because the cost of
+/// exceeding it is a card that arrives late rather than a wrong answer, and a
+/// cold model on a slow machine is common. Mori measured a 9.6GB model taking
+/// 35 seconds to load cold; that case must fail rather than hang, and it must
+/// not be mistaken for the model being missing.
+pub const QUICK_TIMEOUT: Duration = Duration::from_secs(20);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_with_no_letters_is_not_worth_a_model_call() {
+        // A pointer resting on punctuation or a number should cost nothing.
+        for text in ["", "   ", "{ }", "42", "-->", "1.0.0"] {
+            assert!(
+                !QuickRequest::new(text, "ko").is_worth_translating(),
+                "{text:?} should not be translated",
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_text_is_worth_translating() {
+        for text in [
+            "produce",
+            "The suite did not produce anything.",
+            "출력",
+            "日本語",
+        ] {
+            assert!(
+                QuickRequest::new(text, "ko").is_worth_translating(),
+                "{text:?} should be translated",
+            );
+        }
+    }
+
+    #[test]
+    fn a_local_engine_does_not_send_text_off_the_machine() {
+        assert!(!EngineId::LocalOllama.leaves_the_machine());
+        assert!(EngineId::External.leaves_the_machine());
+    }
+
+    #[test]
+    fn a_missing_model_says_which_one() {
+        let error = TranslateError::ModelMissing("qwen2.5:3b".to_owned());
+        assert!(
+            error.user_message().contains("qwen2.5:3b"),
+            "the user cannot act on a message that does not name the model",
+        );
+    }
+}
