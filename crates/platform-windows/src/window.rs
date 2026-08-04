@@ -6,9 +6,12 @@
 //! source is exactly what a measurement instrument must not produce.
 
 use lens_core::acquire::AppIdentity;
-use lens_core::geometry::ScreenPoint;
-use windows::core::PWSTR;
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, MAX_PATH, POINT, WPARAM};
+use lens_core::geometry::{ScreenPoint, ScreenRect};
+use windows::core::{BOOL, PWSTR};
+use windows::Win32::Foundation::{
+    CloseHandle, HANDLE, HWND, LPARAM, MAX_PATH, POINT, RECT, WPARAM,
+};
+use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -16,8 +19,9 @@ use windows::Win32::UI::HiDpi::{
     SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, GetWindowTextW, GetWindowThreadProcessId, SendMessageTimeoutW, WindowFromPoint,
-    GA_ROOT, OBJID_CLIENT, SMTO_ABORTIFHUNG, WM_GETOBJECT,
+    EnumWindows, GetAncestor, GetClientRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
+    IsWindowVisible, SendMessageTimeoutW, WindowFromPoint, GA_ROOT, OBJID_CLIENT, SMTO_ABORTIFHUNG,
+    WM_GETOBJECT,
 };
 
 /// Opt into per-monitor DPI awareness v2.
@@ -132,6 +136,125 @@ pub fn process_name_at(point: ScreenPoint) -> Option<String> {
     let hwnd = window_at(point)?;
     // SAFETY: `hwnd` came from `WindowFromPoint` and was checked for validity.
     unsafe { executable_stem(hwnd) }
+}
+
+/// The id of the top-level window that actually owns a screen point.
+///
+/// `WindowFromPoint` answers with whatever is topmost, which is the only
+/// honest answer: a point over a window that another window covers belongs to
+/// the one on top. Anything sampling a specific window has to check this, or
+/// it silently measures the occluder and files the result under the occluded.
+pub fn root_window_at(point: ScreenPoint) -> Option<i64> {
+    let hwnd = window_at(point)?;
+    // SAFETY: `hwnd` came from `WindowFromPoint` and was checked for validity.
+    let root = unsafe { GetAncestor(hwnd, GA_ROOT) };
+    let owner = if root.is_invalid() { hwnd } else { root };
+    Some(owner.0 as i64)
+}
+
+/// A visible top-level window, and where its content is.
+///
+/// `id` is the window handle as a plain integer. It is deliberately opaque:
+/// the probe passes it back to ask for a wake and never interprets it, so
+/// nothing outside this crate learns what an `HWND` is.
+#[derive(Debug, Clone)]
+pub struct WindowInfo {
+    pub id: i64,
+    pub title: Option<String>,
+    pub process_name: Option<String>,
+    /// The client area in physical screen pixels: the content, without the
+    /// title bar or the resize border. Sampling the whole window rectangle
+    /// would spend a third of a sweep on chrome that holds no text.
+    pub client_bounds: ScreenRect,
+}
+
+/// Every visible, non-minimised top-level window with a client area.
+///
+/// Read-only enumeration. Nothing here activates, moves, or resizes a window:
+/// a measurement tool that rearranged the desktop it was measuring would
+/// change the thing it is trying to observe.
+pub fn top_level_windows() -> Vec<WindowInfo> {
+    let mut found: Vec<WindowInfo> = Vec::new();
+    // SAFETY: `collect_window` is a valid callback for the lifetime of this
+    // call, and `found` outlives the enumeration because `EnumWindows` is
+    // synchronous.
+    unsafe {
+        let _ = EnumWindows(
+            Some(collect_window),
+            LPARAM(&mut found as *mut Vec<WindowInfo> as isize),
+        );
+    }
+    found
+}
+
+/// # Safety
+/// `lparam` must carry a `*mut Vec<WindowInfo>` that outlives the enumeration.
+unsafe extern "system" fn collect_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    // SAFETY: the pointer was handed to `EnumWindows` by `top_level_windows`,
+    // which owns the vector for the duration of the synchronous call.
+    let found = unsafe { &mut *(lparam.0 as *mut Vec<WindowInfo>) };
+
+    // SAFETY: read-only queries on a handle the OS just gave us.
+    unsafe {
+        if !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
+            return BOOL(1);
+        }
+        let Some(bounds) = client_bounds(hwnd) else {
+            return BOOL(1);
+        };
+        // A window smaller than this holds no readable layout, and sweeping it
+        // would add noise rather than a row.
+        if bounds.width < 120 || bounds.height < 80 {
+            return BOOL(1);
+        }
+        found.push(WindowInfo {
+            id: hwnd.0 as i64,
+            title: window_title(hwnd),
+            process_name: executable_stem(hwnd),
+            client_bounds: bounds,
+        });
+    }
+    BOOL(1)
+}
+
+/// The client area in screen coordinates.
+///
+/// # Safety
+/// `hwnd` must be a window handle that was valid when obtained.
+unsafe fn client_bounds(hwnd: HWND) -> Option<ScreenRect> {
+    let mut rect = RECT::default();
+    // SAFETY: writes only into `rect`.
+    unsafe { GetClientRect(hwnd, &mut rect) }.ok()?;
+
+    // GetClientRect answers in client coordinates, so the origin is always
+    // (0, 0) and the rectangle says nothing about where the window is. Two
+    // corners have to be mapped to screen space before the numbers mean
+    // anything, and forgetting that yields a plausible rectangle at the top
+    // left of the primary monitor.
+    let mut corners = [
+        POINT {
+            x: rect.left,
+            y: rect.top,
+        },
+        POINT {
+            x: rect.right,
+            y: rect.bottom,
+        },
+    ];
+    for corner in &mut corners {
+        // SAFETY: maps one point in place; fails only on an invalid window.
+        if unsafe { ClientToScreen(hwnd, corner) }.as_bool() {
+            continue;
+        }
+        return None;
+    }
+
+    Some(ScreenRect::from_ltrb(
+        corners[0].x,
+        corners[0].y,
+        corners[1].x,
+        corners[1].y,
+    ))
 }
 
 /// How long to wait for a foreign window to answer the wake message.

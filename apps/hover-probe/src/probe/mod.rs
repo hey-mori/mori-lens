@@ -2,6 +2,7 @@
 
 mod pointer;
 mod report;
+mod sweep;
 
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -44,12 +45,13 @@ const USAGE: &str = "\
 hover-probe · Mori Lens Milestone 1 measurement instrument
 
 USAGE
-    hover-probe [OPTIONS]
+    hover-probe [OPTIONS]           follow the pointer
+    hover-probe sweep [OPTIONS]     measure whole windows, pointer untouched
 
+FOLLOW MODE
     Rest the pointer on text. One line is printed per resolved hover.
     Press Ctrl+C for the per-application summary.
 
-OPTIONS
     --auto              Hover in every application, not only while Alt is held.
                         The shipping default is the opposite; this exists so a
                         compatibility run does not need a third hand.
@@ -59,12 +61,43 @@ OPTIONS
                         match or mismatch without printing anything.
     --show-word         Print the resolved word. Never the sentence or the
                         paragraph. Off by default; prints a banner while on.
+
+SWEEP MODE
+    Samples a grid across every visible window's client area. The cursor is
+    never moved: the accessibility APIs take a coordinate as an argument.
+    Reports acquisition rate, on-target rate (the resolved word's rectangle
+    contains the sample point), latency, and the wake's before-and-after.
+
+    --only <text>       Only windows whose process or title contains this.
+    --points <n>        Roughly how many points per window. Default 240.
+    --budget <s>        Seconds allowed per window pass. Default 20.
+    --no-wake           Skip the second pass, measuring cold behaviour only.
+
     -h, --help          This text.
 ";
 
-fn parse_options() -> Result<Options, String> {
+/// Which of the two instruments to run.
+#[derive(Debug)]
+enum Mode {
+    Follow(Options),
+    Sweep {
+        options: sweep::SweepOptions,
+        only: Option<String>,
+    },
+}
+
+fn parse_args() -> Result<Mode, String> {
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|first| first == "sweep") {
+        args.remove(0);
+        return parse_sweep(args).map(|(options, only)| Mode::Sweep { options, only });
+    }
+    parse_options(args).map(Mode::Follow)
+}
+
+fn parse_options(args: Vec<String>) -> Result<Options, String> {
     let mut options = Options::default();
-    let mut args = std::env::args().skip(1);
+    let mut args = args.into_iter();
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -90,6 +123,52 @@ fn parse_options() -> Result<Options, String> {
     Ok(options)
 }
 
+fn parse_sweep(args: Vec<String>) -> Result<(sweep::SweepOptions, Option<String>), String> {
+    let mut options = sweep::SweepOptions::default();
+    let mut only = None;
+    let mut args = args.into_iter();
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-h" | "--help" => {
+                print!("{USAGE}");
+                std::process::exit(0);
+            }
+            "--no-wake" => options.measure_wake = false,
+            "--only" => only = Some(args.next().ok_or("--only needs some text to match")?),
+            "--points" => {
+                options.points_per_window = args
+                    .next()
+                    .ok_or("--points needs a number")?
+                    .parse()
+                    .map_err(|_| "--points needs a number")?;
+            }
+            "--budget" => {
+                let seconds: u64 = args
+                    .next()
+                    .ok_or("--budget needs a number of seconds")?
+                    .parse()
+                    .map_err(|_| "--budget needs a number of seconds")?;
+                options.window_budget = Duration::from_secs(seconds);
+            }
+            other => return Err(format!("unknown argument: {other}")),
+        }
+    }
+
+    Ok((options, only))
+}
+
+/// The commit this binary was built from, baked in by `build.rs`.
+///
+/// Printed on every run because a stale binary produces measurements that look
+/// entirely ordinary: `cargo test` does not rebuild the binary target, so a
+/// check-then-run sequence can measure code that is minutes old. Comparing
+/// this against `git rev-parse --short HEAD` is the whole defence, and it only
+/// works if the number is in front of the operator.
+pub fn build_stamp() -> &'static str {
+    env!("LENS_BUILD_SHA")
+}
+
 fn parse_millis(value: Option<String>, flag: &str) -> Result<u64, String> {
     value
         .ok_or_else(|| format!("{flag} needs a number of milliseconds"))?
@@ -98,8 +177,8 @@ fn parse_millis(value: Option<String>, flag: &str) -> Result<u64, String> {
 }
 
 pub fn run() -> ExitCode {
-    let options = match parse_options() {
-        Ok(options) => options,
+    let mode = match parse_args() {
+        Ok(mode) => mode,
         Err(message) => {
             eprintln!("{message}\n\n{USAGE}");
             return ExitCode::from(2);
@@ -119,6 +198,56 @@ pub fn run() -> ExitCode {
         }
     };
 
+    match mode {
+        Mode::Follow(options) => follow(acquirer, options, dpi_declared),
+        Mode::Sweep { options, only } => run_sweep(acquirer, options, only, dpi_declared),
+    }
+}
+
+fn run_sweep(
+    acquirer: UiaTextAcquirer,
+    options: sweep::SweepOptions,
+    only: Option<String>,
+    dpi_declared: bool,
+) -> ExitCode {
+    // A sweep reads every window it is allowed to, so the deny list is the
+    // only thing standing between it and a password manager. Allow is the
+    // default tier here because a sweep is a deliberate, one-shot act rather
+    // than something running in the background.
+    let mut policy = AppPolicy::new(AppTier::Allow);
+    policy.deny_self("hover-probe");
+
+    println!("hover-probe sweep · Mori Lens M1");
+    println!("  build     {}", build_stamp());
+    println!("  points    ~{} per window", options.points_per_window);
+    println!(
+        "  budget    {}s per window pass",
+        options.window_budget.as_secs()
+    );
+    println!(
+        "  wake      {}",
+        if options.measure_wake {
+            "measured, cold pass then woken pass"
+        } else {
+            "not measured, cold pass only"
+        }
+    );
+    println!(
+        "  dpi       {}",
+        if dpi_declared {
+            "per-monitor aware v2"
+        } else {
+            "NOT declared: rectangles above 100% scaling are unreliable"
+        }
+    );
+    println!("  cursor    not moved at all\n");
+
+    let rows = sweep::run(&acquirer, &policy, options, only.as_deref());
+    sweep::print_report(&rows);
+    ExitCode::SUCCESS
+}
+
+fn follow(acquirer: UiaTextAcquirer, options: Options, dpi_declared: bool) -> ExitCode {
     let mut policy = AppPolicy::new(if options.automatic {
         AppTier::Allow
     } else {
@@ -183,6 +312,7 @@ pub fn run() -> ExitCode {
 
 fn print_banner(options: &Options, dpi_declared: bool) {
     println!("hover-probe · Mori Lens M1");
+    println!("  build     {}", build_stamp());
     println!(
         "  mode      {}",
         if options.automatic {
