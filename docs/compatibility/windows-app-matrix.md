@@ -161,11 +161,24 @@ English documentation and error messages is the first user in
 [`../mori-lens-project-goal.md`](../mori-lens-project-goal.md) §3, and a
 code editor is where they do it. Tracked as issue #14.
 
-Not established: what was on screen. The run was driven remotely, so
-whether that window showed a code file, a settings tab, or a welcome
-page is unknown. A repeat with a known code file open would firm this
-up, and the conclusion would not change unless the editor was never
-visible at all.
+**Confirmed by a second run**, build `dfdebcb`, same window:
+
+```
+acquired 2/247 (1%)   on-target 2/2 (100%)   control 50020x2
+unsupported 245
+```
+
+Fewer acquisitions than the first run, not more, and again **not one**
+`50030` or `50004` anywhere. Two independent sweeps of the same window
+agree that nothing in it reports a text-editing surface. The handful of
+points that do resolve are labels, and they resolve perfectly, which is
+consistent with chrome rather than content.
+
+Still not established: exactly what was displayed during either run.
+Both were driven remotely. That ambiguity no longer changes the
+conclusion, because the two runs bracket different window contents and
+neither produced an editing control. It does still matter for the next
+step, which is whether `editor.accessibilitySupport` changes anything.
 
 #### Notepad is a Document provider, not the `EDIT` case
 
