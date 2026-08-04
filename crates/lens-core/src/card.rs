@@ -52,6 +52,20 @@ impl Card {
         }
     }
 
+    /// A card for an answer that is still arriving.
+    ///
+    /// Carries the original like any other, so the rule that a translation
+    /// never appears without it holds for a half-finished one too. The footer
+    /// says so rather than showing a latency, because a number that is still
+    /// counting is noise and a final-looking one would be a lie.
+    pub fn partial(original: impl Into<String>, so_far: impl Into<String>) -> Self {
+        Self {
+            original: original.into(),
+            body: CardBody::Translation(so_far.into()),
+            footer: "번역 중".to_owned(),
+        }
+    }
+
     /// A card for a translation that did not arrive.
     ///
     /// Still carries the original, because the user pointed at something and
