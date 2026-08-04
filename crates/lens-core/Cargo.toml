@@ -7,7 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# No OS crates. Ever. See docs/adr/0003-rust-core-platform-adapters.md: a
+# No OS crates. Ever. See docs/decisions/ADR-0003-rust-core-platform-adapters.md: a
 # dependency on `windows` or `objc` here is what makes the macOS adapter a
 # rewrite instead of a new file.
 [dependencies]

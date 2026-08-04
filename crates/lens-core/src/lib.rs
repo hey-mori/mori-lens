@@ -28,6 +28,7 @@ pub mod hover;
 pub mod policy;
 pub mod session;
 pub mod text;
+pub mod translate;
 
 pub use acquire::{
     AcquireContext, AcquireError, AcquisitionSource, AppIdentity, ProtectedReason, ProviderInfo,
