@@ -73,6 +73,9 @@ pub struct PassStats {
     pub failures: std::collections::BTreeMap<&'static str, usize>,
     pub control_ids: std::collections::BTreeMap<i32, usize>,
     pub truncated: bool,
+    /// The shape of the misses, which is what settles question 8 in the
+    /// research brief.
+    pub off_target: OffTargetShape,
     /// Points inside the window's rectangle that another window covers.
     ///
     /// Not sampled, and not counted as anything else. Without this check the
@@ -98,6 +101,8 @@ impl PassStats {
                     self.distances.push(distance);
                     if distance == 0.0 {
                         self.on_target += 1;
+                    } else if let (Some(rect), Some(sample)) = (point.rect, point.sample) {
+                        self.off_target.record(sample, rect);
                     }
                 }
             }
@@ -120,6 +125,72 @@ struct PointOutcome {
     control_id: Option<i32>,
     /// `None` when the resolved range has no visible rectangle.
     distance: Option<f64>,
+    /// Where the resolved text actually is, when it is anywhere.
+    rect: Option<ScreenRect>,
+    /// The point that was sampled, carried so the miss's direction can be
+    /// worked out where the outcome is recorded.
+    sample: Option<ScreenPoint>,
+}
+
+/// Which side of the resolved rectangle the sample point fell on.
+///
+/// This exists to settle one question: when acquisition resolves text far from
+/// the point, is that the *nearest line above an empty region*, or is
+/// resolution inside a document simply inaccurate? The two call for opposite
+/// products. Empty space means suppress the card, because there is nothing
+/// there to explain. Inaccurate resolution means the text the user pointed at
+/// exists and was missed, and suppressing would throw it away.
+///
+/// The signatures differ and are machine-checkable:
+///
+/// - **Empty space** concentrates. A handful of rectangles act as attractors,
+///   the last rendered line catching every point below it, so the points sit
+///   predominantly *below* what they resolved to.
+/// - **Inaccurate resolution** scatters. Offsets point every way and each
+///   sample lands on its own rectangle.
+#[derive(Debug, Default, Clone)]
+pub struct OffTargetShape {
+    pub below: usize,
+    pub above: usize,
+    pub left: usize,
+    pub right: usize,
+    /// How many samples resolved to each distinct rectangle. A small map
+    /// against a large sample count is the attractor signature.
+    pub rects: std::collections::BTreeMap<(i32, i32, i32, i32), usize>,
+}
+
+impl OffTargetShape {
+    fn record(&mut self, point: ScreenPoint, rect: ScreenRect) {
+        // Vertical first: a text line is wide and short, so "below the last
+        // line" is the signature worth reading, and a point below a line is
+        // usually also within its horizontal span.
+        if point.y >= rect.bottom() {
+            self.below += 1;
+        } else if point.y < rect.y {
+            self.above += 1;
+        } else if point.x < rect.x {
+            self.left += 1;
+        } else {
+            self.right += 1;
+        }
+        *self
+            .rects
+            .entry((rect.x, rect.y, rect.width, rect.height))
+            .or_default() += 1;
+    }
+
+    pub fn total(&self) -> usize {
+        self.below + self.above + self.left + self.right
+    }
+
+    /// Samples per distinct rectangle. High means a few attractors caught
+    /// everything, which is the empty-space signature.
+    pub fn concentration(&self) -> f64 {
+        if self.rects.is_empty() {
+            return 0.0;
+        }
+        self.total() as f64 / self.rects.len() as f64
+    }
 }
 
 /// One window's row.
@@ -194,6 +265,8 @@ fn sample(
         let outcome = result.map(|target| PointOutcome {
             control_id: target.provider.control_id,
             distance: target.pointer_distance(*point),
+            rect: target.nearest_rect_to(*point),
+            sample: Some(*point),
         });
         stats.record(outcome, elapsed);
     }
@@ -374,6 +447,19 @@ fn print_pass(label: &str, stats: &PassStats) {
             sorted.last().copied().unwrap_or(0.0),
         );
     }
+    let shape = &stats.off_target;
+    if shape.total() > 0 {
+        println!(
+            "           off-target {} points → {} distinct rects ({:.1} each)   below {} · above {} · left {} · right {}",
+            shape.total(),
+            shape.rects.len(),
+            shape.concentration(),
+            shape.below,
+            shape.above,
+            shape.left,
+            shape.right,
+        );
+    }
     if stats.acquired > stats.with_bounds {
         println!(
             "           {} acquired with no visible rectangle (scrolled out of view)",
@@ -461,6 +547,8 @@ mod tests {
             Ok(PointOutcome {
                 control_id: Some(50030),
                 distance: Some(0.0),
+                rect: None,
+                sample: None,
             }),
             Duration::from_millis(4),
         );
@@ -468,6 +556,8 @@ mod tests {
             Ok(PointOutcome {
                 control_id: Some(50030),
                 distance: Some(37.0),
+                rect: Some(ScreenRect::new(0, 0, 10, 10)),
+                sample: Some(ScreenPoint::new(50, 50)),
             }),
             Duration::from_millis(4),
         );
@@ -486,6 +576,8 @@ mod tests {
             Ok(PointOutcome {
                 control_id: None,
                 distance: None,
+                rect: None,
+                sample: None,
             }),
             Duration::from_millis(2),
         );
@@ -507,6 +599,8 @@ mod tests {
             Ok(PointOutcome {
                 control_id: Some(50020),
                 distance: Some(0.0),
+                rect: Some(ScreenRect::new(0, 0, 10, 10)),
+                sample: Some(ScreenPoint::new(5, 5)),
             }),
             Duration::from_millis(3),
         );
@@ -514,6 +608,63 @@ mod tests {
         assert_eq!(stats.sampled, 1, "an occluded point was counted as sampled");
         assert_eq!(stats.occluded, 1);
         assert_eq!(stats.latencies_us.len(), 1, "timed a point it never read");
+    }
+
+    /// Points scattered below one line of text, which is what an empty region
+    /// under the last rendered line looks like.
+    #[test]
+    fn empty_space_below_a_line_concentrates_on_one_attractor() {
+        let last_line = ScreenRect::new(100, 200, 400, 18);
+        let mut shape = OffTargetShape::default();
+        for step in 0..20 {
+            shape.record(
+                ScreenPoint::new(120 + step * 15, 300 + step * 10),
+                last_line,
+            );
+        }
+
+        assert_eq!(shape.total(), 20);
+        assert_eq!(shape.rects.len(), 1, "one line should catch them all");
+        assert_eq!(shape.concentration(), 20.0);
+        assert_eq!(shape.below, 20, "every point was below the line");
+    }
+
+    /// Each point resolving to its own rectangle, in every direction, which is
+    /// what inaccurate resolution would look like.
+    #[test]
+    fn scattered_resolution_leaves_a_rect_per_sample() {
+        let mut shape = OffTargetShape::default();
+        for step in 0..20i32 {
+            shape.record(
+                ScreenPoint::new(500, 500),
+                ScreenRect::new(100 + step * 40, 100 + step * 37, 30, 18),
+            );
+        }
+
+        assert_eq!(shape.rects.len(), 20, "no attractor should emerge");
+        assert_eq!(shape.concentration(), 1.0);
+        assert!(
+            shape.below > 0 && shape.above > 0,
+            "a scatter should land on both sides, got below {} above {}",
+            shape.below,
+            shape.above,
+        );
+    }
+
+    #[test]
+    fn an_on_target_point_is_not_recorded_as_a_miss() {
+        let mut stats = PassStats::default();
+        stats.record(
+            Ok(PointOutcome {
+                control_id: Some(50020),
+                distance: Some(0.0),
+                rect: Some(ScreenRect::new(0, 0, 10, 10)),
+                sample: Some(ScreenPoint::new(5, 5)),
+            }),
+            Duration::from_millis(1),
+        );
+        assert_eq!(stats.on_target, 1);
+        assert_eq!(stats.off_target.total(), 0);
     }
 
     #[test]

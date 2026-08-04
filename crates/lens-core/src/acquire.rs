@@ -187,9 +187,21 @@ impl TextTarget {
     /// sentence the user was not looking at. The threshold belongs to the
     /// caller; M1 measures the distribution before one is chosen.
     pub fn pointer_distance(&self, point: ScreenPoint) -> Option<f64> {
+        self.nearest_rect_to(point)
+            .map(|rect| rect.distance_to(point))
+    }
+
+    /// The resolved rectangle nearest a point, or `None` when nothing this
+    /// target resolved is currently visible.
+    ///
+    /// Exposed alongside [`Self::pointer_distance`] so a caller can ask *where*
+    /// the resolved text is, not only how far. The two must agree, which is why
+    /// the distance is derived from this rather than computed separately: a
+    /// distance measured against one rectangle and a direction against another
+    /// would describe a geometry that does not exist.
+    pub fn nearest_rect_to(&self, point: ScreenPoint) -> Option<ScreenRect> {
         crate::geometry::nearest_rect(&self.word_bounds, point)
             .or_else(|| crate::geometry::nearest_rect(&self.context_bounds, point))
-            .map(|rect| rect.distance_to(point))
     }
 }
 
