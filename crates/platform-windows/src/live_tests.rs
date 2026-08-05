@@ -1211,3 +1211,241 @@ fn be_the_wedged_application() {
     harness.stall_for(Duration::from_secs(20));
     std::thread::sleep(Duration::from_secs(25));
 }
+
+/// Milestone 2's gate condition: Lens never reads its own overlay.
+///
+/// If it did, the loop would translate its own translation and the second card
+/// would explain the first. Two mechanisms are supposed to stop it:
+///
+/// - `WS_EX_TRANSPARENT` on the overlay, so hit testing passes through it and
+///   `ElementFromPoint` never reaches it. This is the one that runs.
+/// - `AppPolicy::deny_self`, refusing by process name if anything ever does
+///   reach it. The backstop, checked separately below.
+///
+/// The click-through test already proves **Win32** hit testing skips the card.
+/// UI Automation does its own hit testing and is not obliged to agree, so this
+/// asks it directly.
+///
+/// **It aims the card at text rather than hoping.** The first version put a
+/// card over an empty patch of desktop, read nothing from any of nine samples,
+/// and passed: proving a dead region stays dead proves nothing. The second
+/// tried to cover the anchor point and could not, because the card is placed
+/// *beside* the text it explains, on purpose. So this measures where placement
+/// puts a card, then works backwards to an anchor that lands the card on a
+/// point already known to read.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn a_point_that_reads_text_still_reads_it_through_a_card_on_top() {
+    use std::time::{Duration, Instant};
+
+    use lens_core::card::Card;
+    use lens_core::geometry::ScreenRect;
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    use crate::window::{root_window_at, top_level_windows};
+
+    // This test's own strings, distinctive enough that finding either in a
+    // result is unambiguous.
+    const ORIGINAL: &str = "Zarvex qulmite brandophane, the seventh.";
+    const TRANSLATED: &str = "자르벡스 퀄마이트 브랜도페인, 일곱 번째.";
+
+    let acquirer = UiaTextAcquirer::new().expect("UI Automation is unreachable");
+    let context = AcquireContext::new(Generation(1));
+
+    // Find a coordinate on this desktop that reads real text. Bounded, because
+    // a screen with no prose on it would otherwise scan for minutes.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut anchored = None;
+    'search: for window in top_level_windows() {
+        let bounds = window.client_bounds;
+        let mut y = bounds.y + 12;
+        while y < bounds.bottom() - 12 {
+            let mut x = bounds.x + 12;
+            while x < bounds.right() - 12 {
+                if Instant::now() > deadline {
+                    break 'search;
+                }
+                let point = ScreenPoint::new(x, y);
+                if root_window_at(point) == Some(window.id) {
+                    if let Ok(target) = acquirer.acquire(point, &context) {
+                        if target.segmented.context().trim().chars().count() >= 12 {
+                            anchored = Some(point);
+                            break 'search;
+                        }
+                    }
+                }
+                x += 32;
+            }
+            y += 32;
+        }
+    }
+
+    let Some(point) = anchored else {
+        // Not a pass. A test that cannot find text cannot answer the question,
+        // and reporting that as green is how a gate stops meaning anything.
+        panic!(
+            "no window on this desktop exposed text to read, so this test could \
+             not be run. Open something with prose in it and run it again."
+        );
+    };
+
+    let overlay = crate::Overlay::start().expect("overlay");
+    let make_card = || {
+        Card::translated(
+            ORIGINAL,
+            &QuickTranslation {
+                text: TRANSLATED.to_owned(),
+                engine: EngineId::LocalOllama,
+                model: "qwen2.5:3b".to_owned(),
+                latency_ms: 900,
+            },
+        )
+    };
+
+    // Learn where placement puts a card relative to its anchor, by showing one
+    // and measuring. Placement is a pure function in `lens-core`, but its
+    // output in physical pixels depends on the monitor and the DPI, so it is
+    // measured here rather than assumed.
+    let probe_anchor = ScreenRect::new(point.x, point.y, 200, 20);
+    assert!(overlay.show(make_card(), probe_anchor));
+    std::thread::sleep(Duration::from_millis(500));
+    let first = card_rect(&overlay);
+    assert!(overlay.hide());
+    std::thread::sleep(Duration::from_millis(300));
+
+    let offset = (first.left - probe_anchor.x, first.top - probe_anchor.y);
+    let size = (first.right - first.left, first.bottom - first.top);
+
+    // Now aim: put the card's centre on the text that just answered. Without
+    // this the card lands wherever placement puts it, which on one run was
+    // nine points of empty desktop, and a test that cannot see any text cannot
+    // answer the question it exists to ask.
+    let aimed = ScreenRect::new(
+        point.x - offset.0 - size.0 / 2,
+        point.y - offset.1 - size.1 / 2,
+        200,
+        20,
+    );
+
+    // What is at that point with no card in the way.
+    let baseline = acquirer
+        .acquire(point, &context)
+        .map(|target| target.segmented.context().to_owned())
+        .expect("the point stopped reading between the search and the test");
+
+    assert!(overlay.show(make_card(), aimed));
+    std::thread::sleep(Duration::from_millis(500));
+    let placed = card_rect(&overlay);
+    let covered = point.x >= placed.left
+        && point.x < placed.right
+        && point.y >= placed.top
+        && point.y < placed.bottom;
+
+    let through = acquirer.acquire(point, &context);
+    let _ = overlay.hide();
+
+    assert!(
+        covered,
+        "the card was aimed at ({}, {}) and landed at {:?}, so it did not cover \
+         the text and nothing was tested. Placement clamps to the work area, \
+         which is correct, but it means this point cannot be used.",
+        point.x,
+        point.y,
+        (placed.left, placed.top, placed.right, placed.bottom),
+    );
+
+    let text = through
+        .expect("the point stopped reading once a card covered it")
+        .segmented
+        .context()
+        .to_owned();
+
+    // Compared, never printed. This is the product's own card, and the rule
+    // against logging captured text does not carve out exceptions.
+    assert!(
+        !text.contains(ORIGINAL) && !text.contains(TRANSLATED),
+        "the acquirer read the card's own text through UI Automation, so Lens \
+         would translate its own translation",
+    );
+    assert_eq!(
+        text, baseline,
+        "the point read different text once a card was over it, so the card \
+         changes what the accessibility layer sees even though it is never \
+         itself read",
+    );
+
+    println!(
+        "{} chars at ({}, {}), read identically with a card drawn over that \
+         exact point, and none of it the card's",
+        baseline.chars().count(),
+        point.x,
+        point.y,
+    );
+}
+
+/// Where a shown card actually is, in physical screen pixels.
+fn card_rect(overlay: &crate::Overlay) -> windows::Win32::Foundation::RECT {
+    let mut rect = windows::Win32::Foundation::RECT::default();
+    // SAFETY: a read-only query for the overlay's own rectangle.
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::GetWindowRect(
+            windows::Win32::Foundation::HWND(overlay.window_id() as *mut _),
+            &mut rect,
+        )
+        .expect("window rect");
+    }
+    rect
+}
+
+/// The backstop, in case the overlay ever stops being click-through.
+///
+/// `deny_self` is what refuses by name, and it is the mechanism that would
+/// have to work if `WS_EX_TRANSPARENT` were ever dropped. Cheap to check, and
+/// it is checked here rather than only in `lens-core` because the name it has
+/// to match is the one this platform reports.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn the_running_process_name_is_the_one_the_policy_denies() {
+    use lens_core::policy::{AppPolicy, AppTier};
+
+    let overlay = crate::Overlay::start().expect("overlay");
+    let point = {
+        let mut rect = windows::Win32::Foundation::RECT::default();
+        // SAFETY: a read-only query for the window's own rectangle.
+        unsafe {
+            windows::Win32::UI::WindowsAndMessaging::GetWindowRect(
+                windows::Win32::Foundation::HWND(overlay.window_id() as *mut _),
+                &mut rect,
+            )
+            .expect("window rect");
+        }
+        ScreenPoint::new((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2)
+    };
+
+    // Whatever Windows says is at that point, which for a click-through card
+    // is the window underneath it.
+    let underneath = crate::window::identity(crate::window::window_at(point));
+    println!("under the card: {:?}", underneath.process_name);
+
+    // And what this process is called, which is the string the product passes
+    // to `deny_self`.
+    let own = std::env::current_exe()
+        .ok()
+        .and_then(|path| {
+            path.file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+        })
+        .expect("this process has a name");
+    println!("this process: {own}");
+
+    let mut policy = AppPolicy::new(AppTier::Allow);
+    policy.deny_self(&own);
+    assert_eq!(
+        policy.tier_for(Some(&own)),
+        AppTier::Deny,
+        "deny_self did not deny the name this process actually runs under, so \
+         the backstop would not fire",
+    );
+
+    assert!(overlay.hide());
+}
