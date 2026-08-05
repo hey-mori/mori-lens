@@ -337,3 +337,214 @@ mod tests {
         assert!(!life.showing());
     }
 }
+
+/// Milestone 2's gate condition, composed rather than argued.
+///
+/// "Fast pointer movement produces no card spray." Two separate mechanisms are
+/// supposed to prevent it and each is tested on its own elsewhere: the hover
+/// machine does not settle while the pointer is moving, and this lifecycle
+/// drops an answer whose generation is no longer current. Neither test says
+/// anything about the two together, and the gate is about the two together.
+///
+/// So this runs the real `HoverSession` against a real `CardLifecycle`, with
+/// only the operating system and the model replaced, and counts the cards a
+/// user would have seen.
+#[cfg(test)]
+mod gate {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use std::time::Duration;
+
+    use lens_core::acquire::{
+        AcquireContext, AcquireError, AcquisitionSource, ProviderInfo, TextAcquirer, TextTarget,
+    };
+    use lens_core::geometry::{ScreenPoint, ScreenRect};
+    use lens_core::hover::{HoverConfig, HoverEvent};
+    use lens_core::policy::{AppPolicy, AppTier};
+    use lens_core::session::{HoverSession, InputState, Resolution};
+    use lens_core::text;
+    use lens_core::AppIdentity;
+
+    use super::{Action, CardLifecycle};
+
+    /// Always answers, and counts how often it was asked.
+    struct AlwaysReads(Rc<Cell<usize>>);
+
+    impl TextAcquirer for AlwaysReads {
+        fn acquire(
+            &self,
+            point: ScreenPoint,
+            _context: &AcquireContext,
+        ) -> Result<TextTarget, AcquireError> {
+            self.0.set(self.0.get() + 1);
+            Ok(TextTarget {
+                app: AppIdentity {
+                    process_name: Some("chrome".to_owned()),
+                    window_title: None,
+                },
+                source: AcquisitionSource::Accessibility,
+                provider: ProviderInfo::default(),
+                // A different sentence per position, so the deduplication that
+                // suppresses a repeat hover cannot be what passes this test.
+                segmented: text::segment(
+                    &format!("Sentence at {} by {} on the page.", point.x, point.y),
+                    0,
+                ),
+                word_bounds: vec![ScreenRect::new(point.x, point.y, 60, 18)],
+                context_bounds: vec![ScreenRect::new(point.x, point.y, 400, 18)],
+            })
+        }
+    }
+
+    fn awake() -> InputState {
+        InputState {
+            button_down: false,
+            scrolling: false,
+            typing: false,
+            modifier_held: false,
+            ocr_requested: false,
+        }
+    }
+
+    /// A hand sweeping across a page of prose, sampled the way the loop does.
+    ///
+    /// Every answer is delivered, late, exactly as a model returning a second
+    /// after the fact would deliver it. The count that matters is how many
+    /// cards were drawn.
+    #[test]
+    fn a_pointer_sweeping_across_a_page_draws_no_cards() {
+        let calls = Rc::new(Cell::new(0));
+        let mut policy = AppPolicy::default();
+        policy.set("chrome", AppTier::Allow);
+        let mut session = HoverSession::new(
+            HoverConfig::default(),
+            policy,
+            Box::new(AlwaysReads(Rc::clone(&calls))),
+        );
+        let mut life = CardLifecycle::new();
+
+        let mut shown = 0usize;
+        let mut pending: Vec<(lens_core::hover::Generation, ScreenRect)> = Vec::new();
+
+        // 60 samples at 25ms, 40px apart: a hand crossing a monitor in a second
+        // and a half, which is an ordinary reach for a scrollbar.
+        for step in 0..60u32 {
+            let now = Duration::from_millis(u64::from(step) * 25);
+            let point = ScreenPoint::new(100 + (step as i32) * 40, 300);
+            let sample = session.sample(point, now, awake(), Some("chrome"));
+
+            if let Some(HoverEvent::Settled { generation, point }) = session.observe(sample) {
+                life.hover_settled(generation);
+                if let Resolution::Presented(target) =
+                    session.resolve(generation, point, now, awake())
+                {
+                    pending.push((
+                        generation,
+                        target
+                            .anchor()
+                            .unwrap_or(ScreenRect::new(point.x, point.y, 1, 1)),
+                    ));
+                }
+            }
+
+            // Answers arrive a beat later, which is when a real one would.
+            if step > 2 {
+                for (generation, anchor) in pending.drain(..) {
+                    if life.answer_arrived(generation, anchor) == Action::Show {
+                        shown += 1;
+                    }
+                }
+            }
+
+            if life.pointer_moved(point, now) == Action::Hide {
+                // Retiring a card is not spray; it is the opposite.
+            }
+        }
+
+        assert_eq!(
+            calls.get(),
+            0,
+            "the pointer never rested, so nothing should have been read",
+        );
+        assert_eq!(
+            shown, 0,
+            "{shown} cards were drawn while the pointer was crossing the screen",
+        );
+    }
+
+    /// The other half, and the one that is not obvious: the pointer stops.
+    ///
+    /// A reader who sweeps across five sentences and then settles on the sixth
+    /// must get **one** card, for the sixth. Without the generation check they
+    /// would get the answers to all six, arriving in whatever order the model
+    /// finished them, each drawn over the last.
+    #[test]
+    fn stopping_after_a_sweep_yields_one_card_for_where_the_pointer_stopped() {
+        let calls = Rc::new(Cell::new(0));
+        let mut policy = AppPolicy::default();
+        policy.set("chrome", AppTier::Allow);
+        let mut session = HoverSession::new(
+            HoverConfig::default(),
+            policy,
+            Box::new(AlwaysReads(Rc::clone(&calls))),
+        );
+        let mut life = CardLifecycle::new();
+
+        let mut pending: Vec<(lens_core::hover::Generation, ScreenRect)> = Vec::new();
+        let mut now = Duration::ZERO;
+        let step = |session: &mut HoverSession,
+                    life: &mut CardLifecycle,
+                    point: ScreenPoint,
+                    now: Duration,
+                    pending: &mut Vec<_>| {
+            let sample = session.sample(point, now, awake(), Some("chrome"));
+            if let Some(HoverEvent::Settled { generation, point }) = session.observe(sample) {
+                life.hover_settled(generation);
+                if let Resolution::Presented(target) =
+                    session.resolve(generation, point, now, awake())
+                {
+                    pending.push((
+                        generation,
+                        target
+                            .anchor()
+                            .unwrap_or(ScreenRect::new(point.x, point.y, 1, 1)),
+                    ));
+                }
+            }
+        };
+
+        // Pause on six lines in turn, long enough for each to settle, so six
+        // jobs really are outstanding. The pathological case: not a sweep, but
+        // a reader skimming down a paragraph.
+        //
+        // 30 samples, because moving to a new target costs the 250ms leave
+        // grace plus the 320ms dwell before it can settle again. At 20 samples
+        // this test silently measured three hovers and called them six.
+        for sentence in 0..6i32 {
+            for _ in 0..30 {
+                let point = ScreenPoint::new(200, 200 + sentence * 30);
+                step(&mut session, &mut life, point, now, &mut pending);
+                now += Duration::from_millis(25);
+            }
+        }
+
+        assert_eq!(pending.len(), 6, "six hovers should have produced six jobs");
+        let last = pending.last().expect("six jobs").0;
+
+        // Now every answer comes back at once, oldest first, the way a queue
+        // drains when a model finally catches up.
+        let mut shown = Vec::new();
+        for (generation, anchor) in pending {
+            if life.answer_arrived(generation, anchor) == Action::Show {
+                shown.push(generation);
+            }
+        }
+
+        assert_eq!(
+            shown,
+            vec![last],
+            "every answer but the newest must be dropped; drawing the rest is \
+             a translation shown over a sentence the reader has left",
+        );
+    }
+}
