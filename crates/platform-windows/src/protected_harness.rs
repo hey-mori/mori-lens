@@ -32,10 +32,16 @@ use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-    GetMessageW, PostThreadMessageW, RegisterClassW, SetForegroundWindow, TranslateMessage, MSG,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WM_QUIT, WNDCLASSW, WS_CHILD, WS_EX_TOPMOST,
-    WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    GetMessageW, PostMessageW, PostThreadMessageW, RegisterClassW, SetForegroundWindow,
+    TranslateMessage, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_QUIT, WNDCLASSW, WS_CHILD,
+    WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
 };
+
+/// The message that makes the window's thread stop dispatching.
+///
+/// In the `WM_APP` range, which Windows reserves for exactly this: private
+/// messages an application defines for itself.
+const WM_STALL: u32 = WM_APP + 1;
 
 /// `ES_PASSWORD`. Not exposed as a constant by the binding, and the raw value
 /// is stable since Windows 3.
@@ -149,6 +155,35 @@ impl ProtectedHarness {
 
     pub fn window_id(&self) -> i64 {
         self.window_id
+    }
+
+    /// Stop answering for a while, the way a wedged application does.
+    ///
+    /// The pump is what UI Automation talks to: a provider is queried by
+    /// sending messages to the thread that owns the window, so a thread that
+    /// is not dispatching is a provider that never replies. This posts a
+    /// message whose handler sleeps, which blocks the pump for the duration
+    /// without touching anything else about the window.
+    ///
+    /// Returns immediately. The stall runs on the window's thread.
+    ///
+    /// Nothing in the product does this. It exists because
+    /// `AcquireError::Timeout` was in the taxonomy from the start and no code
+    /// path had ever produced one, so the guard against a 45-second `acquire`
+    /// (issue #28) could not be shown to work.
+    pub fn stall_for(&self, duration: std::time::Duration) {
+        let millis = usize::try_from(duration.as_millis()).unwrap_or(usize::MAX);
+        // SAFETY: posting a documented message to a window this harness owns.
+        // Posted rather than sent, so this thread does not wait on the sleep
+        // it is asking for.
+        unsafe {
+            let _ = PostMessageW(
+                Some(HWND(self.window_id as *mut _)),
+                WM_STALL,
+                WPARAM(millis),
+                LPARAM(0),
+            );
+        }
     }
 }
 
@@ -264,6 +299,12 @@ unsafe extern "system" fn window_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if message == WM_STALL {
+        // Sleeping inside a window procedure is exactly the thing a real
+        // application must never do, which is why it models one that has.
+        std::thread::sleep(std::time::Duration::from_millis(wparam.0 as u64));
+        return LRESULT(0);
+    }
     // SAFETY: the documented default handler for every message not handled here.
     unsafe { DefWindowProcW(window, message, wparam, lparam) }
 }
