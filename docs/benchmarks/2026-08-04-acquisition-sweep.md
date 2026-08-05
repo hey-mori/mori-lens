@@ -19,6 +19,27 @@ that found the harness bugs; only the third is measured here, because
 the first two sampled occluded windows and the second ran a stale
 binary.
 
+## A correction to every latency figure below, 2026-08-05
+
+**These were measured while the sweep was loading the machine, so they are an
+upper bound rather than an estimate.**
+
+Each grid point is a cross-process call whose work happens on the target
+application's UI thread. Sweeping fifteen windows makes every one of them do
+accessibility work at once, and the desktop's owner feels it. During one such
+session calls reached 8,328ms and a single one blocked for 45 seconds.
+
+Measured afterwards on the same machine at rest, with twelve points against one
+window:
+
+```
+p50 3.2 to 3.9ms · p95 4.0 to 8.4ms
+```
+
+So a real hover costs about **3 to 4ms**, not the 10ms recorded below. The
+figures below are not wrong, they answer a different question: what acquisition
+costs while fifteen applications are being interrogated at once.
+
 ## Latency, the whole chain
 
 `ElementFromPoint` through `GetBoundingRectangles`, per sample point,
