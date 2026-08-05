@@ -144,7 +144,26 @@ pub struct SystemPreferences {
     pub dark: bool,
     pub reduced_transparency: bool,
     pub high_contrast: bool,
+    /// Read, and currently unused: nothing here animates yet. It is carried so
+    /// the platform reader and the theme agree on what has been observed, and
+    /// there is deliberately no `entrance_ms` field pretending to act on it.
     pub reduced_motion: bool,
+    /// The user's own colours, when high contrast is on.
+    ///
+    /// Windows asks that a high-contrast application take its colours from
+    /// `GetSysColor` rather than pick its own, because the whole point of the
+    /// mode is that the user has chosen a pair that works for them. Filled in
+    /// by the platform; `lens-core` stays free of `GetSysColor`.
+    pub high_contrast_colours: Option<SystemColours>,
+}
+
+/// The user's chosen colours, from the system.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SystemColours {
+    pub window: Rgb,
+    pub window_text: Rgb,
+    pub gray_text: Rgb,
+    pub hot_light: Rgb,
 }
 
 /// Every colour and measurement the overlay needs.
@@ -161,13 +180,20 @@ pub struct Theme {
     /// A failure message.
     pub problem: Rgb,
     pub surface_alpha: u8,
+    /// Body text height in **points**, not pixels.
+    ///
+    /// Points because a card is read at arm's length on displays of different
+    /// densities, and a pixel height means two sizes on a desk with a 125%
+    /// monitor beside a 100% one. The adapter converts using the DPI of the
+    /// monitor the card is on.
+    ///
+    /// This was previously handed straight to `CreateFontW`, whose height is
+    /// in logical units, so the number was called points and behaved as
+    /// something else.
     pub body_pt: i32,
     pub small_pt: i32,
     pub padding: i32,
     pub corner_radius: i32,
-    /// Milliseconds for the card to appear. Zero when the system asks for
-    /// reduced motion.
-    pub entrance_ms: u32,
 }
 
 /// The lowest contrast ratio the body text may have against its surface.
@@ -184,6 +210,14 @@ pub const MIN_BODY_CONTRAST: f64 = 4.5;
 /// it is the only way a reader can tell an answer is not a translation of what
 /// they pointed at (`docs/privacy-model.md` §1), so it has to be readable.
 pub const MIN_ORIGINAL_CONTRAST: f64 = 3.0;
+
+/// The lowest contrast the footer may have.
+///
+/// The footer is small and incidental, and it carries one thing that is not:
+/// whether the answer came from a local engine or left the machine
+/// (`docs/privacy-model.md` §1). A privacy signal nobody can read is not a
+/// privacy signal, so it gets a floor rather than being treated as decoration.
+pub const MIN_FOOTER_CONTRAST: f64 = 3.0;
 
 impl Theme {
     /// Resolve a preset and the user's two choices against what the system
@@ -206,7 +240,7 @@ impl Theme {
                 Rgb::new(0x2b, 0x38, 0x4a),
                 Rgb::new(0xe8, 0xf0, 0xfa),
                 Rgb::new(0x93, 0xa6, 0xbd),
-                Rgb::new(0x6d, 0x7f, 0x95),
+                Rgb::new(0x70, 0x82, 0x97),
                 Rgb::new(0x8f, 0xc2, 0xff),
             ),
             Preset::Forest => (
@@ -214,7 +248,7 @@ impl Theme {
                 Rgb::new(0xc7, 0xd2, 0xc2),
                 Rgb::new(0x1e, 0x2b, 0x22),
                 Rgb::new(0x53, 0x66, 0x59),
-                Rgb::new(0x74, 0x86, 0x7a),
+                Rgb::new(0x60, 0x6f, 0x65),
                 Rgb::new(0x2f, 0x5d, 0x3f),
             ),
             Preset::Paper => (
@@ -230,7 +264,7 @@ impl Theme {
                 Rgb::new(0x3a, 0x3a, 0x3d),
                 Rgb::new(0xf2, 0xf2, 0xf5),
                 Rgb::new(0x98, 0x98, 0x9e),
-                Rgb::new(0x74, 0x74, 0x78),
+                Rgb::new(0x83, 0x83, 0x87),
                 Rgb::new(0x82, 0xb1, 0xff),
             ),
             Preset::System => (
@@ -238,7 +272,7 @@ impl Theme {
                 Rgb::new(0xd0, 0xd0, 0xd3),
                 Rgb::new(0x18, 0x18, 0x1a),
                 Rgb::new(0x55, 0x55, 0x5a),
-                Rgb::new(0x78, 0x78, 0x7e),
+                Rgb::new(0x6e, 0x6e, 0x74),
                 Rgb::new(0x1a, 0x4f, 0xb0),
             ),
         };
@@ -251,6 +285,25 @@ impl Theme {
             translucency
         };
 
+        // In high contrast the user has already chosen a colour pair that
+        // works for them, and a preset that keeps its own palette is
+        // overriding an accessibility setting with a preference. Earlier this
+        // file forced the surface opaque and then carried on painting Forest
+        // sage, which was reported as the system winning when only the
+        // transparency did.
+        let (surface, border, body, original, footer, problem) =
+            match (system.high_contrast, system.high_contrast_colours) {
+                (true, Some(system_colours)) => (
+                    system_colours.window,
+                    system_colours.window_text,
+                    system_colours.window_text,
+                    system_colours.window_text,
+                    system_colours.gray_text,
+                    system_colours.hot_light,
+                ),
+                _ => (surface, border, body, original, footer, problem),
+            };
+
         let factor = scale.factor();
         Self {
             surface,
@@ -260,23 +313,38 @@ impl Theme {
             footer,
             problem,
             surface_alpha: translucency.alpha(),
-            body_pt: (19.0 * factor).round() as i32,
-            small_pt: (15.0 * factor).round() as i32,
+            body_pt: (14.0 * factor).round() as i32,
+            small_pt: (11.0 * factor).round() as i32,
             padding: 14,
             corner_radius: 10,
-            entrance_ms: if system.reduced_motion { 0 } else { 120 },
         }
     }
 
-    /// The colour the body text is really sitting on, once a translucent
-    /// surface has let `behind` through.
+    /// What a colour on this card actually looks like once the window's
+    /// uniform alpha has blended it with whatever is behind.
     ///
-    /// This is the check that matters. A theme whose contrast is fine against
-    /// its own surface can still be unreadable on a white page or a photo,
-    /// which is exactly where this card appears.
+    /// **The window alpha applies to the whole window, not just its
+    /// background.** `SetLayeredWindowAttributes` with `LWA_ALPHA` sets the
+    /// opacity of everything the window draws, so the text fades along with
+    /// the surface it sits on.
+    ///
+    /// The first version of this file blended only the surface and left the
+    /// text at full strength, which models a composition nothing performs. It
+    /// made every contrast figure optimistic, and it is why the footer went
+    /// untested at 2.75:1 while the tests were green.
+    pub fn composited(&self, colour: Rgb, behind: Rgb) -> Rgb {
+        behind.mix(colour, f64::from(self.surface_alpha) / 255.0)
+    }
+
+    /// The surface as it appears over `behind`.
     pub fn effective_surface(&self, behind: Rgb) -> Rgb {
-        let opacity = f64::from(self.surface_alpha) / 255.0;
-        behind.mix(self.surface, opacity)
+        self.composited(self.surface, behind)
+    }
+
+    /// The contrast a reader actually gets for one role over `behind`.
+    pub fn effective_contrast(&self, ink: Rgb, behind: Rgb) -> f64 {
+        self.composited(ink, behind)
+            .contrast_with(self.effective_surface(behind))
     }
 }
 
@@ -310,47 +378,77 @@ mod tests {
         themes
     }
 
+    /// Every role, every preset, every translucency, over the two
+    /// backgrounds a card most often lands on.
+    ///
+    /// Composited the way the window actually composites: the uniform alpha
+    /// fades the ink as well as the surface. The previous version of this test
+    /// blended only the surface, which is a composition nothing performs, and
+    /// it reported figures that were optimistic for every role and never
+    /// looked at the footer at all.
     #[test]
-    fn every_preset_keeps_the_translation_readable_on_its_own_surface() {
-        for (name, theme) in every_theme() {
-            let contrast = theme.body.contrast_with(theme.surface);
-            assert!(
-                contrast >= MIN_BODY_CONTRAST,
-                "{name}: body contrast {contrast:.2} is below {MIN_BODY_CONTRAST}",
-            );
-        }
-    }
+    fn every_role_stays_readable_over_a_white_page_and_a_black_one() {
+        let mut worst: Vec<(String, f64, f64)> = Vec::new();
 
-    #[test]
-    fn every_preset_keeps_the_original_readable() {
-        // The original is the only way a reader can tell an answer is not a
-        // translation of what they pointed at, so it is quieter than the body
-        // and never decorative.
-        for (name, theme) in every_theme() {
-            let contrast = theme.original.contrast_with(theme.surface);
-            assert!(
-                contrast >= MIN_ORIGINAL_CONTRAST,
-                "{name}: original contrast {contrast:.2} is below {MIN_ORIGINAL_CONTRAST}",
-            );
-        }
-    }
-
-    /// The check that a design mock-up cannot make.
-    #[test]
-    fn the_translation_stays_readable_over_a_white_page_and_a_black_one() {
-        // A card appears over whatever the user is reading: a white document,
-        // a dark editor, a photograph. A translucent surface lets that
-        // through, so the contrast that matters is against the blend.
         for (name, theme) in every_theme() {
             for (what, behind) in [("white", WHITE), ("black", BLACK)] {
-                let effective = theme.effective_surface(behind);
-                let contrast = theme.body.contrast_with(effective);
-                assert!(
-                    contrast >= MIN_BODY_CONTRAST,
-                    "{name} over {what}: body contrast {contrast:.2}",
-                );
+                for (role, ink, floor) in [
+                    ("body", theme.body, MIN_BODY_CONTRAST),
+                    ("original", theme.original, MIN_ORIGINAL_CONTRAST),
+                    ("footer", theme.footer, MIN_FOOTER_CONTRAST),
+                    ("problem", theme.problem, MIN_ORIGINAL_CONTRAST),
+                ] {
+                    let contrast = theme.effective_contrast(ink, behind);
+                    worst.push((format!("{name} {role} over {what}"), contrast, floor));
+                    assert!(
+                        contrast >= floor,
+                        "{name}: {role} over {what} is {contrast:.2}, below {floor}",
+                    );
+                }
             }
         }
+
+        // Print the tightest few, so a change that eats the margin is visible
+        // in the output rather than only when it finally crosses the line.
+        worst.sort_by(|a, b| (a.1 - a.2).partial_cmp(&(b.1 - b.2)).unwrap());
+        for (what, contrast, floor) in worst.iter().take(3) {
+            println!("tightest: {what} {contrast:.2} against a floor of {floor}");
+        }
+    }
+
+    #[test]
+    fn a_solid_surface_composites_to_itself() {
+        // At full opacity there is nothing behind to blend with, so the
+        // effective colours must be the declared ones.
+        let theme = Theme::resolve(
+            Preset::Paper,
+            Translucency::Solid,
+            TextScale::Normal,
+            SystemPreferences::default(),
+        );
+        assert_eq!(theme.composited(theme.body, BLACK), theme.body);
+        assert_eq!(theme.composited(theme.body, WHITE), theme.body);
+    }
+
+    /// The bug the old model hid, kept as a test.
+    #[test]
+    fn fading_only_the_surface_would_overstate_the_contrast() {
+        // Blending the surface but not the ink is what the first version did.
+        // It is not a composition any window performs, and it flatters every
+        // theme. If someone reintroduces it, the two numbers will diverge and
+        // this fails.
+        let theme = Theme::resolve(
+            Preset::Forest,
+            Translucency::Clear,
+            TextScale::Normal,
+            SystemPreferences::default(),
+        );
+        let honest = theme.effective_contrast(theme.footer, WHITE);
+        let flattering = theme.footer.contrast_with(theme.effective_surface(WHITE));
+        assert!(
+            flattering > honest,
+            "the old model reported {flattering:.2} where the real one gives {honest:.2}",
+        );
     }
 
     #[test]
@@ -370,6 +468,53 @@ mod tests {
         }
     }
 
+    /// High contrast must take the user's colours, not just go opaque.
+    #[test]
+    fn high_contrast_uses_the_system_colours_over_the_preset() {
+        let chosen = SystemColours {
+            window: Rgb::new(0, 0, 0),
+            window_text: Rgb::new(0xff, 0xff, 0x00),
+            gray_text: Rgb::new(0x00, 0xff, 0xff),
+            hot_light: Rgb::new(0xff, 0x00, 0xff),
+        };
+        let system = SystemPreferences {
+            high_contrast: true,
+            high_contrast_colours: Some(chosen),
+            ..SystemPreferences::default()
+        };
+
+        // Forest is a light sage theme. In high contrast none of it survives.
+        let theme = Theme::resolve(
+            Preset::Forest,
+            Translucency::Clear,
+            TextScale::Normal,
+            system,
+        );
+        assert_eq!(theme.surface, chosen.window, "kept its own background");
+        assert_eq!(theme.body, chosen.window_text, "kept its own text colour");
+        assert_eq!(theme.footer, chosen.gray_text);
+        assert_eq!(theme.surface_alpha, Translucency::Solid.alpha());
+    }
+
+    /// High contrast with no colours available must still be safe.
+    #[test]
+    fn high_contrast_without_colours_still_goes_solid() {
+        // The platform could not read the pair. The surface must at least stop
+        // moving, rather than the preset carrying on translucent.
+        let system = SystemPreferences {
+            high_contrast: true,
+            high_contrast_colours: None,
+            ..SystemPreferences::default()
+        };
+        let theme = Theme::resolve(
+            Preset::Forest,
+            Translucency::Clear,
+            TextScale::Normal,
+            system,
+        );
+        assert_eq!(theme.surface_alpha, Translucency::Solid.alpha());
+    }
+
     #[test]
     fn high_contrast_also_makes_the_surface_solid() {
         let system = SystemPreferences {
@@ -383,21 +528,6 @@ mod tests {
             system,
         );
         assert_eq!(theme.surface_alpha, Translucency::Solid.alpha());
-    }
-
-    #[test]
-    fn reduced_motion_removes_the_entrance_rather_than_shortening_it() {
-        let system = SystemPreferences {
-            reduced_motion: true,
-            ..SystemPreferences::default()
-        };
-        let theme = Theme::resolve(
-            Preset::System,
-            Translucency::Balanced,
-            TextScale::Normal,
-            system,
-        );
-        assert_eq!(theme.entrance_ms, 0);
     }
 
     #[test]

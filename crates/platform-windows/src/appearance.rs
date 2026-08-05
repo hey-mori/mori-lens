@@ -11,7 +11,7 @@
 //! guessing wrong towards a translucent one can make a translation
 //! unreadable for the person who asked for it not to be.
 
-use lens_core::theme::SystemPreferences;
+use lens_core::theme::{Rgb, SystemColours, SystemPreferences};
 use windows::core::w;
 use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 use windows::Win32::UI::Accessibility::HIGHCONTRASTW;
@@ -26,22 +26,49 @@ const HCF_HIGHCONTRASTON: u32 = 0x0000_0001;
 
 /// Read every appearance preference the theme cares about.
 pub fn system_preferences() -> SystemPreferences {
+    let hc = high_contrast();
     SystemPreferences {
-        // Absent key means light, which is the Windows default.
-        dark: personalize_dword("AppsUseLightTheme")
-            .map(|v| v == 0)
-            .unwrap_or(false),
-        // Absent key means transparency is on, so reduced is false.
-        reduced_transparency: personalize_dword("EnableTransparency")
-            .map(|v| v == 0)
-            .unwrap_or(false),
-        high_contrast: high_contrast(),
+        // Absent means light, the Windows default. An unreadable key also
+        // yields light, which is the safe direction here: the wrong light card
+        // is ugly, the wrong dark one is what a reader chose against.
+        dark: matches!(personalize_dword("AppsUseLightTheme"), Read::Value(0)),
+        reduced_transparency: match personalize_dword("EnableTransparency") {
+            // The user turned transparency off.
+            Read::Value(0) => true,
+            Read::Value(_) => false,
+            // Absent is the documented Windows default: transparency on.
+            Read::Absent => false,
+            // An actual failure. Fail towards the solid card, because guessing
+            // wrong that way costs an effect and guessing wrong the other way
+            // can leave a translation unreadable for the person who asked for
+            // it not to be.
+            Read::Failed => true,
+        },
+        high_contrast: hc,
         reduced_motion: reduced_motion(),
+        // Only when high contrast is on. Outside it these are the ordinary
+        // system colours, and a preset chosen for reading is the better
+        // answer than the desktop's window colours.
+        high_contrast_colours: hc.then(high_contrast_colours).flatten(),
     }
 }
 
-/// One DWORD from the Personalize key, or `None` if it cannot be read.
-fn personalize_dword(name: &str) -> Option<u32> {
+/// The three outcomes of reading a preference, which are not two.
+///
+/// An absent key and a failed read mean different things and deserve different
+/// answers: absent is a documented default, failed is ignorance. Collapsing
+/// them into `Option` is exactly what made this file's comment and its
+/// behaviour disagree, the comment promising a conservative fallback that the
+/// code did not perform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Read {
+    Value(u32),
+    Absent,
+    Failed,
+}
+
+/// One DWORD from the Personalize key.
+fn personalize_dword(name: &str) -> Read {
     let mut value = 0u32;
     let mut size = std::mem::size_of::<u32>() as u32;
     let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
@@ -59,7 +86,16 @@ fn personalize_dword(name: &str) -> Option<u32> {
             Some(&mut size),
         )
     };
-    status.is_ok().then_some(value)
+    // `RegGetValueW` returns a WIN32_ERROR directly rather than a Result.
+    // ERROR_FILE_NOT_FOUND is the documented answer for a key or value that
+    // is simply not there, which is the Windows default rather than a fault.
+    const ERROR_SUCCESS: u32 = 0;
+    const ERROR_FILE_NOT_FOUND: u32 = 2;
+    match status.0 {
+        ERROR_SUCCESS => Read::Value(value),
+        ERROR_FILE_NOT_FOUND => Read::Absent,
+        _ => Read::Failed,
+    }
 }
 
 fn high_contrast() -> bool {
@@ -93,4 +129,33 @@ fn reduced_motion() -> bool {
     };
     // Unreadable means assume motion should be reduced.
     ok.is_err() || !animations.as_bool()
+}
+
+/// The user's chosen high-contrast colours.
+///
+/// Read only when high contrast is on, because outside it these are the
+/// ordinary system colours and a preset is the better answer.
+fn high_contrast_colours() -> Option<SystemColours> {
+    use windows::Win32::Graphics::Gdi::{
+        GetSysColor, COLOR_GRAYTEXT, COLOR_HOTLIGHT, COLOR_WINDOW, COLOR_WINDOWTEXT,
+    };
+
+    // `GetSysColor` returns a COLORREF, which is 0x00BBGGRR.
+    fn rgb(colorref: u32) -> Rgb {
+        Rgb::new(
+            (colorref & 0xff) as u8,
+            ((colorref >> 8) & 0xff) as u8,
+            ((colorref >> 16) & 0xff) as u8,
+        )
+    }
+
+    // SAFETY: read-only lookups of documented system colour indices.
+    unsafe {
+        Some(SystemColours {
+            window: rgb(GetSysColor(COLOR_WINDOW)),
+            window_text: rgb(GetSysColor(COLOR_WINDOWTEXT)),
+            gray_text: rgb(GetSysColor(COLOR_GRAYTEXT)),
+            hot_light: rgb(GetSysColor(COLOR_HOTLIGHT)),
+        })
+    }
 }
