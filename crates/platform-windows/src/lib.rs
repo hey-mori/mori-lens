@@ -18,6 +18,7 @@
 
 mod appearance;
 mod com;
+mod glass;
 mod inventory;
 pub mod overlay;
 pub mod tray;

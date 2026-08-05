@@ -233,21 +233,16 @@ fn the_overlay_refuses_a_translation_with_no_original() {
 #[test]
 #[ignore = "needs a live desktop session; run manually"]
 fn a_shown_card_has_text_painted_on_it() {
-    use std::collections::HashSet;
-
     use lens_core::card::Card;
     use lens_core::geometry::ScreenRect;
     use lens_core::translate::{EngineId, QuickTranslation};
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::Graphics::Gdi::{
-        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
-        GetPixel, ReleaseDC, SelectObject, SRCCOPY,
-    };
-    use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 
     let Some(overlay) = crate::Overlay::start() else {
         panic!("could not create the overlay window");
     };
+
+    // So a count left over from an earlier check cannot pass for this one.
+    crate::overlay::forget_last_frame();
 
     let card = Card::translated(
         "The output files came back empty.",
@@ -261,45 +256,21 @@ fn a_shown_card_has_text_painted_on_it() {
     assert!(overlay.show(card, ScreenRect::new(500, 400, 400, 22)));
     std::thread::sleep(std::time::Duration::from_millis(800));
 
-    let window = HWND(overlay.window_id() as *mut _);
-    // SAFETY: every GDI object below is released or deleted before returning,
-    // and the window is this process's own.
-    let colours: HashSet<u32> = unsafe {
-        let mut rect = windows::Win32::Foundation::RECT::default();
-        GetClientRect(window, &mut rect).expect("client rect");
-        let (width, height) = (rect.right, rect.bottom);
-        assert!(width > 100 && height > 60, "card is {width}x{height}");
+    let ink = crate::overlay::last_frame_ink();
+    println!("opaque pixels in the presented frame: {ink}");
 
-        // The overlay's own device context, so nothing of the user's screen
-        // is read even incidentally.
-        let source = GetDC(Some(window));
-        let memory = CreateCompatibleDC(Some(source));
-        let bitmap = CreateCompatibleBitmap(source, width, height);
-        let previous = SelectObject(memory, bitmap.into());
-
-        let copied = BitBlt(memory, 0, 0, width, height, Some(source), 0, 0, SRCCOPY).is_ok();
-
-        let mut seen = HashSet::new();
-        if copied {
-            for y in (0..height).step_by(3) {
-                for x in (0..width).step_by(3) {
-                    seen.insert(GetPixel(memory, x, y).0);
-                }
-            }
-        }
-
-        SelectObject(memory, previous);
-        let _ = DeleteObject(bitmap.into());
-        let _ = DeleteDC(memory);
-        ReleaseDC(Some(window), source);
-        seen
-    };
-
-    println!("distinct colours sampled on the card: {}", colours.len());
+    // This used to sample the window's own device context. That stopped being
+    // possible when the card became a layered window presented through
+    // `UpdateLayeredWindow`: the content lives in the compositor and the
+    // window reads back as `CLR_INVALID`, so the check was quietly measuring
+    // one colour and would have gone on passing had the threshold been lower.
+    //
+    // Reading the screen instead would work and is refused. These checks
+    // sample the product's own surface and never the user's desktop.
     assert!(
-        colours.len() > 4,
-        "the card looks blank: {} distinct colours. Text is not being painted.",
-        colours.len(),
+        ink > 200,
+        "the presented frame carried {ink} opaque pixels, so the card is blank. \
+         Text is not being painted.",
     );
 
     assert!(overlay.hide());
@@ -323,15 +294,10 @@ fn watch_card(
     window_id: i64,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> std::thread::JoinHandle<Watched> {
-    use std::collections::HashSet;
     use std::sync::atomic::Ordering;
 
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::Graphics::Gdi::{
-        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
-        GetPixel, ReleaseDC, SelectObject, SRCCOPY,
-    };
-    use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, IsWindowVisible};
+    use windows::Win32::UI::WindowsAndMessaging::IsWindowVisible;
 
     std::thread::spawn(move || {
         let window = HWND(window_id as *mut _);
@@ -344,45 +310,32 @@ fn watch_card(
 
         while !stop.load(Ordering::Relaxed) {
             watched.samples += 1;
-            // SAFETY: read-only queries; every GDI object is released below.
-            unsafe {
-                if !IsWindowVisible(window).as_bool() {
-                    watched.hidden += 1;
-                    std::thread::sleep(std::time::Duration::from_millis(3));
-                    continue;
-                }
-                let mut rect = windows::Win32::Foundation::RECT::default();
-                if GetClientRect(window, &mut rect).is_err() {
-                    continue;
-                }
-                let (w, h) = (rect.right, rect.bottom);
-                let source = GetDC(Some(window));
-                let memory = CreateCompatibleDC(Some(source));
-                let bitmap = CreateCompatibleBitmap(source, w, h);
-                let previous = SelectObject(memory, bitmap.into());
-                let copied = BitBlt(memory, 0, 0, w, h, Some(source), 0, 0, SRCCOPY).is_ok();
+            // SAFETY: a read-only query on a window this process owns.
+            let visible = unsafe { IsWindowVisible(window) }.as_bool();
+            if !visible {
+                watched.hidden += 1;
+                std::thread::sleep(std::time::Duration::from_millis(3));
+                continue;
+            }
 
-                let mut seen = HashSet::new();
-                if copied {
-                    for y in (0..h).step_by(9) {
-                        for x in (0..w).step_by(9) {
-                            seen.insert(GetPixel(memory, x, y).0);
-                        }
-                    }
-                }
-                SelectObject(memory, previous);
-                let _ = DeleteObject(bitmap.into());
-                let _ = DeleteDC(memory);
-                ReleaseDC(Some(window), source);
-
-                if copied {
-                    watched.thinnest = watched.thinnest.min(seen.len());
-                    // Background plus border is two or three colours. At or
-                    // below that is a card with no text on it.
-                    if seen.len() <= 4 {
-                        watched.blank += 1;
-                    }
-                }
+            // What the card is made of, rather than what the window's device
+            // context says. Since the card became a layered window presented
+            // through `UpdateLayeredWindow`, its content lives in the
+            // compositor and the window itself reads back as `CLR_INVALID`.
+            // This watcher was sampling that and finding one colour every
+            // time, which would have reported a permanent flicker and, with a
+            // looser threshold, a permanent pass.
+            //
+            // Reading the screen would also work and is refused: these checks
+            // sample the product's own surface and never the user's desktop.
+            //
+            // It measures a frame that was *presented* rather than a frame
+            // that is *visible*, which is a real difference and a small one:
+            // a layered window shows exactly the bitmap it was handed.
+            let ink = crate::overlay::last_frame_ink();
+            watched.thinnest = watched.thinnest.min(ink);
+            if ink == 0 {
+                watched.blank += 1;
             }
             std::thread::sleep(std::time::Duration::from_millis(3));
         }
@@ -418,6 +371,7 @@ fn a_streamed_answer_does_not_blank_or_disappear_between_redraws() {
     use lens_core::geometry::ScreenRect;
 
     let overlay = crate::Overlay::start().expect("overlay");
+    crate::overlay::forget_last_frame();
     let anchor = ScreenRect::new(500, 400, 300, 22);
     let original = "The output files came back empty, so the full test suite produced nothing.";
 
@@ -444,7 +398,7 @@ fn a_streamed_answer_does_not_blank_or_disappear_between_redraws() {
     let seen = watcher.join().expect("watcher");
     let period_ms = 800.0 / seen.samples as f64;
     println!(
-        "{} samples every {period_ms:.1}ms · {} hidden · {} blank · thinnest {} colours",
+        "{} samples every {period_ms:.1}ms · {} hidden · {} blank · thinnest {} opaque pixels",
         seen.samples, seen.hidden, seen.blank, seen.thinnest,
     );
 
@@ -1533,4 +1487,204 @@ fn a_click_on_the_tray_icon_becomes_a_request() {
     // does nothing when clicked is the most annoying way to fail.
     drop(tray);
     println!("icon removed on drop");
+}
+
+/// The card is drawn with real per-pixel alpha, not a uniform window opacity.
+///
+/// Every other overlay test passes whether Direct2D ran or the GDI fallback
+/// did, which makes them useless for the one thing this change is about. A
+/// renderer that silently fell back would look identical to every assertion in
+/// this file.
+///
+/// So this asserts the two things only the alpha path can produce:
+///
+/// - the window is **larger than the card**, by the shadow margin, and the
+///   extra pixels are almost entirely transparent
+/// - the window's corner and its centre are **different**, which for a GDI card
+///   filling its whole client area with one brush they cannot be
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn the_card_is_painted_with_per_pixel_alpha_and_not_a_flat_rectangle() {
+    use lens_core::card::Card;
+    use lens_core::geometry::ScreenRect;
+    use lens_core::theme::{Preset, SystemPreferences, TextScale, Theme, Translucency};
+    use lens_core::translate::{EngineId, QuickTranslation};
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+
+    assert!(
+        crate::glass::Glass::new().is_some(),
+        "Direct2D could not start on this machine, so the card is the GDI \
+         fallback and this test has nothing to measure. That is a supported \
+         state for the product and not for this assertion.",
+    );
+
+    let overlay = crate::Overlay::start().expect("overlay");
+    let anchor = ScreenRect::new(500, 400, 400, 22);
+    let card = Card::translated(
+        "The output files came back empty, so the suite produced nothing at all.",
+        &QuickTranslation {
+            text: "출력 파일이 비어 있어서 테스트 스위트는 아무것도 만들지 않았습니다.".to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "qwen2.5:3b".to_owned(),
+            latency_ms: 1090,
+        },
+    );
+    let second = Card::translated(
+        "The output files came back empty, so the suite produced nothing at all.",
+        &QuickTranslation {
+            text: "출력 파일이 비어 있어서 테스트 스위트는 아무것도 만들지 않았습니다.".to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "qwen2.5:3b".to_owned(),
+            latency_ms: 1090,
+        },
+    );
+    assert!(overlay.show(card, anchor));
+    std::thread::sleep(std::time::Duration::from_millis(800));
+
+    // SAFETY: read-only query against this process's own window.
+    let (width, height) = unsafe {
+        let mut rect = RECT::default();
+        GetWindowRect(HWND(overlay.window_id() as *mut _), &mut rect).expect("window rect");
+        (rect.right - rect.left, rect.bottom - rect.top)
+    };
+    println!(
+        "window {width}x{height}, card is {}px",
+        crate::overlay::card_width()
+    );
+
+    // The shadow needs room, so the window has to be wider than the card.
+    // A window exactly `CARD_WIDTH` wide means the Direct2D path did not draw
+    // this frame, which is exactly what happened the first time: the window
+    // had `SetLayeredWindowAttributes` called on it at creation, which makes
+    // `UpdateLayeredWindow` fail, and every other overlay test stayed green.
+    assert!(
+        width > crate::overlay::card_width(),
+        "the window is {width}px wide and the card is {}px, so there is no          shadow margin and this is the GDI fallback",
+        crate::overlay::card_width(),
+    );
+    assert!(overlay.hide());
+
+    // And the pixels themselves. Not read back from the window: once
+    // `UpdateLayeredWindow` has the bitmap the content lives in the
+    // compositor and `GetPixel` on the window answers CLR_INVALID.
+    let theme = Theme::resolve(
+        Preset::System,
+        Translucency::Balanced,
+        TextScale::Normal,
+        SystemPreferences::default(),
+    );
+    let glass = crate::glass::Glass::new().expect("Direct2D");
+    let laid = glass
+        .lay_out(&second, &theme, crate::overlay::card_width(), 1.0)
+        .expect("layout");
+    // SAFETY: the renderer creates and releases its own objects.
+    let (w, h, pixels) = unsafe { glass.pixels(&laid, &theme) }.expect("pixels");
+    let alpha = |x: i32, y: i32| pixels[(y * w + x) as usize] >> 24;
+
+    let corner = alpha(0, 0);
+    let middle = alpha(w / 2, h / 2);
+    let opaque = pixels.iter().filter(|pixel| (*pixel >> 24) == 255).count();
+    println!(
+        "corner alpha {corner} · card alpha {middle} · surface_alpha {} · {opaque} fully opaque pixels",
+        theme.surface_alpha,
+    );
+
+    // Outside the rounded outline and outside the shadow's reach.
+    assert_eq!(
+        corner, 0,
+        "the window's corner is not transparent, so the card is a rectangle          with a visible box around it",
+    );
+
+    // The surface is translucent, at the theme's own figure. Exactly, which
+    // is the point: the first version filled its shadow rings rather than
+    // stroking them, so fourteen of them stacked under the card and it
+    // measured 250 where the theme asked for 236. A theme's opacity that the
+    // renderer quietly adjusts is not a setting.
+    assert_eq!(
+        middle,
+        u32::from(theme.surface_alpha),
+        "the surface is not being drawn at the theme's opacity",
+    );
+
+    // The headline claim of this whole renderer: the text is opaque while the
+    // surface under it is not. With `SetLayeredWindowAttributes` this number
+    // is zero, because one opacity applies to every pixel in the window.
+    assert!(
+        opaque > 200,
+        "only {opaque} fully opaque pixels, so the text is being faded along          with the surface and nothing was gained",
+    );
+    assert!(
+        u32::from(theme.surface_alpha) < 255,
+        "this theme is opaque, so the test above proves nothing; pick a          translucent one",
+    );
+    assert!(overlay.hide());
+}
+
+/// Layout comes from the renderer that is going to draw it.
+///
+/// Measuring with `DrawTextW` and drawing with DirectWrite is how a card ends
+/// up with its last line clipped: the two engines break lines differently, and
+/// the difference only shows on the paragraph lengths nobody tested.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn a_longer_card_is_taller_and_the_renderer_is_the_one_that_says_so() {
+    use lens_core::card::Card;
+    use lens_core::theme::{Preset, SystemPreferences, TextScale, Theme, Translucency};
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    let glass = crate::glass::Glass::new().expect("Direct2D");
+    let theme = Theme::resolve(
+        Preset::System,
+        Translucency::Balanced,
+        TextScale::Normal,
+        SystemPreferences::default(),
+    );
+
+    let make = |translation: &str| {
+        Card::translated(
+            "A sentence.",
+            &QuickTranslation {
+                text: translation.to_owned(),
+                engine: EngineId::LocalOllama,
+                model: "qwen2.5:3b".to_owned(),
+                latency_ms: 900,
+            },
+        )
+    };
+
+    let short = glass
+        .lay_out(&make("짧은 문장."), &theme, 360, 1.0)
+        .expect("layout");
+    let long = glass
+        .lay_out(
+            &make(
+                "훨씬 더 긴 문장입니다. 이 문장은 카드 너비를 넘어가서 여러 줄로 \
+                 나뉘어야 하고, 그만큼 카드도 높아져야 합니다. 그렇지 않으면 \
+                 마지막 줄이 잘립니다.",
+            ),
+            &theme,
+            360,
+            1.0,
+        )
+        .expect("layout");
+
+    println!("short {}px · long {}px", short.height, long.height);
+    assert!(
+        long.height > short.height + 20,
+        "a paragraph that must wrap did not make the card taller: {} vs {}",
+        long.height,
+        short.height,
+    );
+
+    // And scaling is real, not decorative: the same card on a 150% display is
+    // half again as tall.
+    let scaled = glass
+        .lay_out(&make("짧은 문장."), &theme, 360, 1.5)
+        .expect("layout");
+    println!("the same short card at 150%: {}px", scaled.height);
+    assert!(
+        scaled.height > short.height,
+        "the card ignored the display scaling",
+    );
 }
