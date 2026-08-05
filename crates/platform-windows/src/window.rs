@@ -177,6 +177,20 @@ pub fn process_name_at(point: ScreenPoint) -> Option<String> {
     })
 }
 
+/// The same answer with the cache deliberately bypassed.
+///
+/// Only for the live check that compares the two. An absolute microsecond
+/// threshold was tried first and was flaky: most of a cached call is
+/// `WindowFromPoint` and `GetWindowThreadProcessId`, which happen either way,
+/// so the number moves with how busy the machine is. A ratio measured under
+/// the same conditions does not.
+#[cfg(test)]
+pub fn uncached_process_name_at(point: ScreenPoint) -> Option<String> {
+    let hwnd = window_at(point)?;
+    // SAFETY: `hwnd` came from `WindowFromPoint` and was checked for validity.
+    unsafe { executable_stem(hwnd) }
+}
+
 thread_local! {
     /// The last process id looked up, and what it was called.
     ///

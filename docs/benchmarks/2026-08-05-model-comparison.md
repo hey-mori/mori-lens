@@ -1,7 +1,8 @@
 # Which installed model should Lens translate with
 
 **2026-08-05**, Windows 11 build 26200, Ollama on `127.0.0.1:11434`, one
-machine, three sentences. Small, and it still overturned a rule.
+machine, three sentences. Small, and it still overturned two rules and a
+conclusion of its own.
 
 ## Why this was run
 
@@ -33,9 +34,9 @@ cargo test -p lens-translate -- --ignored --nocapture compare_every
 
 | Model | Mean | Verdict |
 |---|---|---|
-| `qwen2.5:3b` | 1460ms | wrong on all three |
-| `qwen2.5-coder:7b` | 1655ms | correct on all three |
-| `gemma4:e4b` | refused | emits broken UTF-8 |
+| `qwen2.5:3b` | 1098ms | wrong on all three |
+| `qwen2.5-coder:7b` | 1563ms | correct on all three |
+| `gemma4:e4b` | 13057ms | best of the three, far too slow |
 
 ### `qwen2.5:3b`, the previous default
 
@@ -46,7 +47,8 @@ cargo test -p lens-translate -- --ignored --nocapture compare_every
 ```
 
 - **점퍼** for "pointer". A jumper. This is the product's own tagline
-  sentence and the word the whole application is about.
+  sentence and the word the whole application is about. A later run of
+  the same sentence produced **손가락**, a finger.
 - **출제** for "output", which means setting an exam question.
 - **테스트 셸** for "test suite".
 - The third sentence's negation lands on the wrong clause, so it says
@@ -55,9 +57,9 @@ cargo test -p lens-translate -- --ignored --nocapture compare_every
 ### `qwen2.5-coder:7b`
 
 ```
-1731ms  출력 파일들이 비어있어서 전체 테스트 케이스가 아무것도 생성하지 않았습니다.
-1626ms  포인터를 문장 위에 두고 자신의 언어로 읽으세요.
-1609ms  이 변경은 버그 수정이 아닙니다. 코드가 기반으로 한 가정을 제거합니다.
+1652ms  출력 파일이 비어 있어서 전체 테스트 케이스가 아무것도 생성하지 않았습니다.
+1416ms  포인터를 문장 위에 두고 자신의 언어로 읽으세요.
+1623ms  이 변경은 버그 수정이 아닙니다. 코드가 기반으로 한 가정을 제거합니다.
 ```
 
 Correct on all three, including 포인터, and it kept the third sentence's
@@ -69,27 +71,70 @@ name would have chosen the worse one.
 
 ### `gemma4:e4b`
 
-Every request came back as `malformed`, which reads as "the model
-returned nothing". It does not. Asked directly:
+**This section was wrong twice, and the corrections matter more than the
+original claim did.**
+
+It first read that every request came back `malformed`, and that asking
+the model by hand returned one valid Korean word followed by lone UTF-16
+surrogates. The conclusion drawn was that the model emits broken text,
+and that refusing to draw mojibake was correct behaviour.
+
+**Neither half was true.**
+
+The surrogates were **this machine's console**, not the model. The
+diagnostic piped `curl` into Python on a Korean Windows install, where
+the default encoding is cp949, and UTF-8 bytes read as cp949 produce
+exactly that pattern. Read as UTF-8 from a file, the same reply is
+`출력 파일들이 비어 왔어요.` with no surrogate in it at all.
+
+The real failure was **this repository's token budget**:
 
 ```
-response = '출력 \udced\udcec\udceb\udcec 비어 \udcec\udcec\udcec.'
+"response":"", "done_reason":"length", eval_count: 123
 ```
 
-Valid Korean for the first word and **lone UTF-16 surrogates** after it.
-Refusing this is correct behaviour: mojibake on a card is worse than an
-honest failure, and `번역 결과를 이해할 수 없습니다` is exactly what happened.
-Not a Lens defect, and worth writing down so it is not rediscovered as
-one. 41 seconds to load, as well.
+`gemma4:e4b` reasons before it answers. At the 123 tokens its source text
+earned, the entire budget went on reasoning and there was nothing left to
+say with. At 512 it used **316 tokens** to produce a thirteen-character
+translation and stopped normally.
+
+So Lens was starving it, and reporting the result as the model's fault.
+
+With a generous retry after an empty answer it works, and it gives the
+best translations of the three:
+
+```
+12411ms  출력 파일들이 비어 나왔기 때문에, 전체 테스트 스위트에서 아무것도 생성되지 않았습니다.
+11776ms  포인터를 문장에 놓고 본인의 언어로 읽으세요.
+14984ms  이 변경 사항은 버그 수정이 아닙니다. 코드의 기반으로 했던 가정을 제거합니다.
+```
+
+**Thirteen seconds.** Correct, well phrased, and unusable on a hover: the
+reader has long since moved on. A model that reasons is the wrong shape
+for this product whatever it is called, and running it is the only way to
+find that out.
+
+### How both of those wrong conclusions happened
+
+Neither came from code that was hard to read. One came from a diagnostic
+that mangled its own output, and one from believing an error message this
+repository had written itself.
+
+The part that generalises: **a measurement tool is part of what is being
+measured.** The console's encoding was as much a variable as the model.
 
 ## What changed because of this
 
-1. **Code models are no longer excluded by name.** Embedding, whisper and
+1. **A retry after an empty answer gets a much larger budget**, fixed
+   rather than scaled: the size of a question says nothing about how much
+   reasoning a model will do before answering it. Paid only after a first
+   attempt returned nothing, so an ordinary hover never sees it.
+2. **Code models are no longer excluded by name.** Embedding, whisper and
    clip families still are, because those genuinely cannot produce prose.
-2. **Larger is preferred within a family**, up to 9B. Above that a hover
+3. **Larger is preferred within a family**, up to 9B. Above that a hover
    costs more than the answer is worth; nothing here measures that
    boundary, it is a judgement.
-3. **The fallback model name is no longer treated as a choice.** It was
+4. **The fallback model name is no longer treated as a choice.** It was
    passed to the router as though a person had asked for `qwen2.5:3b`, so
    on a machine that happened to have it installed the router
    short-circuited and never looked at the 7B beside it. A default nobody
@@ -100,10 +145,14 @@ After the change, this machine resolves to `qwen2.5-coder:7b`.
 ## What this does not establish
 
 One machine, one language pair, three sentences, one reader. It is enough
-to overturn a rule that had **no** evidence behind it, and not enough to
+to overturn rules that had **no** evidence behind them, and not enough to
 claim 7B is right in general or that 200ms is the true cost. A second
 machine, or a language pair that is not English into Korean, could say
 something different.
+
+Nothing here measures latency before choosing, either. A model that
+reasons is only discovered to be slow by running it, and the card shows
+the figure so a reader can see it and pin something else.
 
 The `PREFERRED` list still names families nobody has compared here:
 `translategemma` and `gemma3` are ahead of `qwen2.5` on reputation, which
