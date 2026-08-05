@@ -100,7 +100,9 @@ impl TranslationCache {
                 entry.used_at = tick;
                 self.hits += 1;
                 let mut answer = entry.translation.clone();
-                answer.latency_ms = 0;
+                // The measured latency is kept. What changes is that the card
+                // now knows not to present it as this hover's cost.
+                answer.cached = true;
                 Some(answer)
             }
             None => {
@@ -170,6 +172,7 @@ mod tests {
             engine: EngineId::LocalOllama,
             model: "qwen2.5:3b".to_owned(),
             latency_ms,
+            cached: false,
         }
     }
 
@@ -188,13 +191,31 @@ mod tests {
         assert_eq!(hit.text, "아무것도 생성하지 않았습니다.");
     }
 
+    /// The footer says what just happened, and a cache hit did not take
+    /// 2400ms. That was right, and the way it said so was not.
+    ///
+    /// This used to overwrite the latency with `0`, and the card printed
+    /// `0ms`. A user saw a broken clock rather than a fast answer, and said
+    /// so. Zero is not a different thing to say, it is a wrong one.
+    ///
+    /// So the measurement is kept as measured and a flag carries the fact,
+    /// which lets the card print `캐시` instead of a duration.
     #[test]
-    fn a_cached_answer_does_not_claim_the_original_wait() {
-        // The footer says what just happened. Reporting 2400ms for an answer
-        // that took nothing is a made-up number on screen.
+    fn a_cached_answer_is_marked_rather_than_given_a_made_up_latency() {
         let mut cache = TranslationCache::new(8);
         cache.insert(key("something"), answer("무엇인가", 2400));
-        assert_eq!(cache.get(&key("something")).unwrap().latency_ms, 0);
+
+        let hit = cache.get(&key("something")).expect("should hit");
+        assert!(hit.cached, "a hit did not say it was one");
+        assert_eq!(
+            hit.latency_ms, 2400,
+            "the measured latency was overwritten, which is how 0ms reached              the screen",
+        );
+    }
+
+    #[test]
+    fn an_answer_straight_from_the_engine_is_not_marked_cached() {
+        assert!(!answer("무엇인가", 2400).cached);
     }
 
     #[test]
