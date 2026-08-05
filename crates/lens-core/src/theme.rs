@@ -341,7 +341,7 @@ impl Theme {
             animate: !system.reduced_motion,
             body_pt: (11.0 * factor).round() as i32,
             small_pt: (9.0 * factor).round() as i32,
-            padding: 14,
+            padding: 12,
             corner_radius: 10,
         }
     }
