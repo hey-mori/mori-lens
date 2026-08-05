@@ -44,6 +44,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// messages an application defines for itself.
 const WM_STALL: u32 = WM_APP + 1;
 
+/// What both `EDIT` controls contain.
+///
+/// Latin and unambiguous: a recogniser check asserts exact words, and this is
+/// the text it asserts. Nothing about it is a user's.
+pub const HARNESS_TEXT: PCWSTR = w!("The output files came back empty");
+
 /// `ES_PASSWORD`. Not exposed as a constant by the binding, and the raw value
 /// is stable since Windows 3.
 const ES_PASSWORD: u32 = 0x0020;
@@ -301,7 +307,15 @@ unsafe fn edit_control(parent: HWND, x: i32, y: i32, extra: u32) -> Option<Scree
         CreateWindowExW(
             WINDOW_EX_STYLE(0),
             w!("EDIT"),
-            PCWSTR::null(),
+            // Text, so this window is something a recogniser can be pointed
+            // at. It is opaque and at a fixed position, which the card is not:
+            // a translucent card captured with the desktop showing through it
+            // reads as a mixture of both, which is what the first attempt at
+            // an OCR check found.
+            //
+            // A password field shows dots whatever it is given, which is
+            // itself worth having on screen.
+            HARNESS_TEXT,
             WINDOW_STYLE(WS_CHILD.0 | WS_VISIBLE.0 | ES_AUTOHSCROLL | extra),
             x,
             y,

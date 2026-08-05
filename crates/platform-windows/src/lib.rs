@@ -18,10 +18,11 @@
 
 mod appearance;
 pub mod autostart;
+pub mod capture;
 mod com;
 mod glass;
 mod inventory;
-pub mod ocr_spike;
+pub mod ocr;
 pub mod overlay;
 pub mod tray;
 mod uia;
