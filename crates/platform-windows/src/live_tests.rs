@@ -1002,3 +1002,212 @@ fn reading_where_a_window_just_closed_is_an_error_not_a_crash() {
     }
     println!("twenty further reads at the same coordinate, still alive");
 }
+
+/// Wedge an application in **another process** and read it.
+///
+/// `AcquireError::Timeout` has been in the failure taxonomy since it was
+/// written and nothing had ever produced one, because there was no timeout
+/// anywhere in the Windows acquisition path: UI Automation's default is two
+/// minutes. Issue #28 measured what that costs, one `acquire` blocking for 45
+/// seconds with the pointer loop behind it.
+///
+/// **Another process on purpose.** The first version of this test wedged a
+/// window on a second thread of this one, and the read blocked for the full
+/// stall and came back `Empty`. That is not a bug in the guard, it is its
+/// scope: `IUIAutomation2::SetTransactionTimeout` bounds the client's
+/// cross-process calls and does nothing for a provider inside the client. The
+/// negative is kept below, because a guard's edges are worth knowing and the
+/// product never reads its own process anyway (`AppPolicy::deny_self`).
+///
+/// So this spawns the test binary again, has the child put a window up and stop
+/// dispatching, and reads it from here.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn a_wedged_application_in_another_process_is_a_timeout() {
+    use std::io::{BufRead, BufReader};
+    use std::time::{Duration, Instant};
+
+    use lens_core::acquire::{AcquireContext, AcquireError, TextAcquirer};
+    use lens_core::geometry::ScreenPoint;
+    use lens_core::hover::Generation;
+
+    let acquirer = UiaTextAcquirer::new().expect("UI Automation is unreachable");
+    assert!(
+        acquirer.calls_are_bounded(),
+        "the per-call limit was refused, so there is no guard to test",
+    );
+    let context = AcquireContext::new(Generation(1));
+
+    let mut child =
+        std::process::Command::new(std::env::current_exe().expect("this test binary has a path"))
+            .args(["--exact", WEDGE_TEST, "--ignored", "--nocapture"])
+            .env(WEDGE_ENV, "1")
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("could not spawn the wedge process");
+
+    let lines = BufReader::new(child.stdout.take().expect("piped")).lines();
+    let mut point = None;
+    let mut stalling = false;
+    for line in lines.map_while(Result::ok) {
+        if let Some(rest) = line.strip_prefix("WEDGE-READY ") {
+            let mut parts = rest.split_whitespace();
+            let x: i32 = parts.next().and_then(|v| v.parse().ok()).expect("x");
+            let y: i32 = parts.next().and_then(|v| v.parse().ok()).expect("y");
+            let window: i64 = parts.next().and_then(|v| v.parse().ok()).expect("window");
+            point = Some(ScreenPoint::new(x, y));
+
+            assert_eq!(
+                crate::window::root_window_at(ScreenPoint::new(x, y)),
+                Some(window),
+                "another window is on top of the wedged one, so this would measure the occluder",
+            );
+
+            // While the child is still dispatching.
+            let began = Instant::now();
+            let healthy = acquirer.acquire(ScreenPoint::new(x, y), &context).err();
+            println!(
+                "answering:  {healthy:?} in {}ms",
+                began.elapsed().as_millis(),
+            );
+            // Only that a dispatching window answers fast. Which error it
+            // answers with is a separate question, and an open one: read from
+            // another process this same control has come back `Empty` on one
+            // run and `Protected(Declared)` on the next, where the in-process
+            // test on it always answers `Empty`. Fail-safe in both directions
+            // seen so far, and tracked separately. Asserting a particular one
+            // here would make this test fail for a reason unrelated to
+            // timeouts, which is all it is for.
+            assert_ne!(
+                healthy,
+                Some(AcquireError::Timeout),
+                "a healthy window timed out, so the limit is set too low",
+            );
+        }
+        if line.starts_with("WEDGE-STALLING") {
+            stalling = true;
+            break;
+        }
+    }
+
+    let point = point.expect("the child never reported its window");
+    assert!(stalling, "the child never reached its stall");
+    // Let the sleep actually begin inside the window procedure.
+    std::thread::sleep(Duration::from_millis(200));
+
+    let began = Instant::now();
+    let wedged = acquirer.acquire(point, &context).err();
+    let elapsed = began.elapsed();
+    println!("wedged:     {wedged:?} in {}ms", elapsed.as_millis());
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert_eq!(
+        wedged,
+        Some(AcquireError::Timeout),
+        "a wedged application must be recorded as slow rather than as \
+         unsupported or protected: the compatibility matrix is built from \
+         these names and would otherwise carry a verdict about an application \
+         that never answered the question",
+    );
+    // The whole point. Without the guard this is the two-minute default.
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "the read took {}ms, which is not a bounded call",
+        elapsed.as_millis(),
+    );
+}
+
+/// What the guard does **not** cover, recorded rather than left to be
+/// rediscovered: a provider inside this process.
+///
+/// `SetTransactionTimeout` bounds the client's cross-process calls. A window on
+/// another thread of the same process is reached without one, so it blocks for
+/// as long as it likes. Harmless here because Lens refuses to read itself
+/// (`AppPolicy::deny_self`, and without it the card translates its own
+/// translation), but it is the difference between a guard and a guarantee.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn the_guard_does_not_reach_a_provider_inside_this_process() {
+    use std::time::{Duration, Instant};
+
+    use lens_core::acquire::{AcquireContext, AcquireError, TextAcquirer};
+    use lens_core::hover::Generation;
+
+    use crate::protected_harness::{centre, ProtectedHarness};
+
+    let acquirer = UiaTextAcquirer::new().expect("UI Automation is unreachable");
+    let context = AcquireContext::new(Generation(1));
+    let harness = ProtectedHarness::start().expect("harness");
+    let point = centre(harness.fields().plain);
+
+    harness.stall_for(Duration::from_secs(3));
+    std::thread::sleep(Duration::from_millis(150));
+
+    let began = Instant::now();
+    let wedged = acquirer.acquire(point, &context).err();
+    let elapsed = began.elapsed();
+    println!(
+        "same process, wedged: {wedged:?} in {}ms",
+        elapsed.as_millis(),
+    );
+
+    assert_ne!(
+        wedged,
+        Some(AcquireError::Timeout),
+        "the in-process path is now bounded too. Good news, but this test \
+         records the opposite; check what changed before deleting it.",
+    );
+    assert!(
+        elapsed >= Duration::from_secs(2),
+        "the call returned in {}ms, so it was not actually blocked and this \
+         test is measuring nothing",
+        elapsed.as_millis(),
+    );
+}
+
+const WEDGE_ENV: &str = "MORI_LENS_WEDGE";
+const WEDGE_TEST: &str = "live_tests::be_the_wedged_application";
+
+/// Not a test. The other half of the cross-process timeout test above, which
+/// re-runs this binary with [`WEDGE_ENV`] set so there is a second process to
+/// wedge.
+///
+/// It lives here rather than in a separate helper binary so that the window it
+/// puts up is the same `ProtectedHarness` every other live test uses, and so
+/// that nothing has to be built before the suite can run.
+#[test]
+#[ignore = "not a test; the wedged process for the timeout test"]
+fn be_the_wedged_application() {
+    use std::io::Write;
+    use std::time::Duration;
+
+    use crate::protected_harness::{centre, ProtectedHarness};
+
+    if std::env::var(WEDGE_ENV).is_err() {
+        println!("not the wedge process; nothing to do");
+        return;
+    }
+
+    let harness = ProtectedHarness::start().expect("harness");
+    let point = centre(harness.fields().plain);
+    // The window id too, so the parent can prove it is reading this window and
+    // not whatever happens to be on top of it. Measuring the occluder instead
+    // of the target is a mistake this repository has already made once.
+    println!(
+        "WEDGE-READY {} {} {}",
+        point.x,
+        point.y,
+        harness.window_id()
+    );
+    let _ = std::io::stdout().flush();
+
+    // Long enough for the parent to take its healthy reading.
+    std::thread::sleep(Duration::from_secs(2));
+
+    println!("WEDGE-STALLING");
+    let _ = std::io::stdout().flush();
+    harness.stall_for(Duration::from_secs(20));
+    std::thread::sleep(Duration::from_secs(25));
+}
