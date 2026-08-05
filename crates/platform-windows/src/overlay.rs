@@ -64,7 +64,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// on a 150% screen the same sentence wrapped onto more lines inside the same
 /// number of pixels, so the card was physically narrower and taller than the
 /// one beside it on a 100% screen.
-const CARD_WIDTH: i32 = 360;
+const CARD_WIDTH: i32 = 300;
 const MAX_HEIGHT: i32 = 420;
 
 /// `DWMWCP_ROUND`. Windows 11 rounded corners.
