@@ -2150,3 +2150,53 @@ fn measure_what_a_long_paragraph_does_to_the_card() {
         crate::overlay::max_card_height(),
     );
 }
+
+/// The spike that decides whether Milestone 4 can use Windows' own OCR.
+///
+/// [#62](https://github.com/swarea/mori-lens/issues/62). `Windows.Media.Ocr`
+/// documents a package identity requirement for desktop applications, and Lens
+/// ships as a single unpackaged `lens.exe`. A cargo test binary has no package
+/// identity either, so this is a fair proxy.
+///
+/// It draws its own bitmap and captures nothing.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn does_windows_ocr_work_from_an_unpackaged_binary() {
+    const SENTENCE: &str = "The output files came back empty.";
+
+    // Korean too. Lens reads a foreign language and answers in the reader's,
+    // so English is the common case, but the language decision needs to read
+    // Korean well enough to skip it rather than translate it back and forth.
+    const KOREAN: &str = "출력 파일이 비어 있었습니다.";
+
+    let verdict = crate::ocr_spike::probe(SENTENCE);
+    println!("engine available: {}", verdict.engine_available);
+    println!("languages: {:?}", verdict.languages);
+    println!("korean: {}", crate::ocr_spike::can_recognise("ko"));
+    println!("english: {}", crate::ocr_spike::can_recognise("en-US"));
+    println!("recognised: {:?}", verdict.recognised);
+    println!("failure: {:?}", verdict.failure);
+
+    // Measured rather than asserted for the languages: which recognition packs
+    // are installed is a property of the machine. What is asserted is the one
+    // thing the spike exists to settle.
+    assert!(
+        verdict.engine_available,
+        "no OCR engine from an unpackaged binary, so this backend costs the \
+         single-exe delivery this product promises: {:?}",
+        verdict.failure,
+    );
+
+    let found = verdict.recognised.expect("an engine but no result");
+    let normalised: String = found.chars().filter(|c| !c.is_whitespace()).collect();
+    let wanted: String = SENTENCE.chars().filter(|c| !c.is_whitespace()).collect();
+    assert_eq!(
+        normalised, wanted,
+        "black text on white is the easiest thing a recogniser is ever given",
+    );
+
+    // Measured, not asserted: a Korean recognition pack is a property of the
+    // machine, and the assertion above is the one this spike exists for.
+    let korean = crate::ocr_spike::probe(KOREAN);
+    println!("korean text -> {:?}", korean.recognised);
+}
