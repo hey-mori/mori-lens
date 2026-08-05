@@ -323,3 +323,67 @@ fn measure_how_often_a_translation_comes_back_empty() {
     }
     println!("\n{empty} of {} came back empty", samples.len());
 }
+
+/// Which installed model should Lens reach for.
+///
+/// The preference list has never been measured against a real machine: it was
+/// written from the sensible-sounding rule that a hover should not run the
+/// largest model on the box. Sensible-sounding is how the `qwen2.5` prefix
+/// ended up also matching `qwen2.5-coder`.
+///
+/// Latency is measured here. **Quality is not, and cannot be**: whether a
+/// Korean sentence reads well is a judgement, so this prints the answers and a
+/// person decides. That is the honest division of labour, and printing them is
+/// safe because every sentence here is one this file wrote.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn compare_every_installed_model_on_the_same_sentences() {
+    let Some(probe) = live() else {
+        return;
+    };
+    let Ok(installed) = probe.installed_models() else {
+        println!("could not list models");
+        return;
+    };
+
+    let samples = [
+        "The output files came back empty, so the full test suite produced nothing.",
+        "Rest the pointer on a sentence and read it in your own language.",
+        "This change is not a bug fix; it removes an assumption the code was built on.",
+    ];
+
+    for name in &installed {
+        let translator = OllamaTranslator::new(crate::DEFAULT_ENDPOINT, name);
+        // Loaded first, so the first sentence is not charged for the load.
+        let warm = translator.prewarm();
+        println!("\n=== {name} (warm in {warm:?})");
+
+        let mut total = 0u128;
+        let mut failures = 0usize;
+        for source in samples {
+            let request = QuickRequest::new(source, "Korean");
+            match translator.quick(&request) {
+                Ok(answer) => {
+                    total += answer.latency_ms;
+                    println!("  {}ms  {}", answer.latency_ms, answer.text);
+                }
+                Err(error) => {
+                    failures += 1;
+                    println!("  ----  {} [{}]", error.user_message(), error.reason());
+                }
+            }
+        }
+        println!(
+            "  mean {}ms over {} answered",
+            total / (samples.len() - failures).max(1) as u128,
+            samples.len() - failures,
+        );
+        // Handed back before the next one loads, or three models sit resident.
+        translator.release();
+    }
+
+    println!(
+        "\nLens would choose: {:?}",
+        lens_core::translate::choose_model(None, &installed),
+    );
+}
