@@ -1,4 +1,4 @@
-//! A global key that stops Lens reading the screen.
+//! The two global keys, and why they are one struct.
 //!
 //! `docs/privacy-model.md` §5 lists this as something a user can check, and it
 //! is the one control that matters most: a tool with this reach needs a way to
@@ -25,16 +25,36 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, MSG, PM_REMOVE, WM_HOTKEY};
 
-/// Our hotkey's id. Arbitrary; it only has to be unique within this thread.
-const HOTKEY_ID: i32 = 0x4C31;
+/// Hotkey ids. Arbitrary; they only have to be unique within this thread.
+const PAUSE_ID: i32 = 0x4C31;
+const OCR_ID: i32 = 0x4C32;
 
 /// `L`, for Lens.
 const VK_L: u32 = 0x4C;
+/// `O`, for OCR.
+const VK_O: u32 = 0x4F;
 
-/// Registers Ctrl+Alt+L and reports presses.
+/// What a press asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pressed {
+    /// Pause, or resume. Applied before this is returned.
+    PauseChanged,
+    /// Read what is under the pointer with OCR, because the accessibility
+    /// path has nothing to give there.
+    ReadWithOcr,
+}
+
+/// Registers both global keys and reports presses.
+///
+/// **One struct because there is one message queue.** `poll` drains this
+/// thread's messages, and a second handler doing the same would take the
+/// first one's messages and drop them: whichever ran first would work and the
+/// other would appear registered and never fire. That is a bug with no symptom
+/// except a key that does nothing.
 #[derive(Debug)]
 pub struct PauseKey {
     registered: bool,
+    ocr_registered: bool,
     paused: bool,
 }
 
@@ -45,21 +65,27 @@ impl PauseKey {
     pub fn register() -> Self {
         // SAFETY: registers a documented thread-local hotkey; `None` binds it
         // to this thread's message queue rather than to a window.
-        let registered = unsafe {
-            RegisterHotKey(
-                None,
-                HOTKEY_ID,
-                // NOREPEAT so holding the chord does not toggle repeatedly.
-                HOT_KEY_MODIFIERS(MOD_CONTROL.0 | MOD_ALT.0 | MOD_NOREPEAT.0),
-                VK_L,
+        // SAFETY: registers documented thread-local hotkeys; `None` binds them
+        // to this thread's message queue rather than to a window.
+        let (registered, ocr_registered) = unsafe {
+            // NOREPEAT so holding a chord does not fire repeatedly.
+            let modifiers = HOT_KEY_MODIFIERS(MOD_CONTROL.0 | MOD_ALT.0 | MOD_NOREPEAT.0);
+            (
+                RegisterHotKey(None, PAUSE_ID, modifiers, VK_L).is_ok(),
+                RegisterHotKey(None, OCR_ID, modifiers, VK_O).is_ok(),
             )
-        }
-        .is_ok();
+        };
 
         Self {
             registered,
+            ocr_registered,
             paused: false,
         }
+    }
+
+    /// Whether Ctrl+Alt+O was taken by something else.
+    pub fn ocr_is_registered(&self) -> bool {
+        self.ocr_registered
     }
 
     pub fn is_registered(&self) -> bool {
@@ -83,20 +109,27 @@ impl PauseKey {
     ///
     /// Returns whether the paused state changed, so the caller can report it
     /// and retire the card without printing a line on every loop iteration.
-    pub fn poll(&mut self) -> bool {
-        if !self.registered {
-            return false;
+    pub fn poll(&mut self) -> Vec<Pressed> {
+        let mut pressed = Vec::new();
+        if !self.registered && !self.ocr_registered {
+            return pressed;
         }
-        let mut changed = false;
         let mut message = MSG::default();
         // SAFETY: reads and removes messages from this thread's own queue.
         while unsafe { PeekMessageW(&mut message, None, 0, 0, PM_REMOVE) }.as_bool() {
-            if message.message == WM_HOTKEY && message.wParam.0 as i32 == HOTKEY_ID {
-                self.paused = !self.paused;
-                changed = true;
+            if message.message != WM_HOTKEY {
+                continue;
+            }
+            match message.wParam.0 as i32 {
+                PAUSE_ID => {
+                    self.paused = !self.paused;
+                    pressed.push(Pressed::PauseChanged);
+                }
+                OCR_ID => pressed.push(Pressed::ReadWithOcr),
+                _ => {}
             }
         }
-        changed
+        pressed
     }
 }
 
@@ -105,7 +138,8 @@ impl Drop for PauseKey {
         if self.registered {
             // SAFETY: unregisters the hotkey this instance registered.
             unsafe {
-                let _ = UnregisterHotKey(None, HOTKEY_ID);
+                let _ = UnregisterHotKey(None, PAUSE_ID);
+                let _ = UnregisterHotKey(None, OCR_ID);
             }
         }
     }
@@ -125,17 +159,21 @@ mod tests {
     /// message for a real key press: that would mean injecting keystrokes into
     /// the user's session, and a test that types Ctrl+Alt+L into whatever has
     /// focus is not a test worth having.
-    fn press(key: &mut PauseKey) {
+    fn press_id(key: &mut PauseKey, id: i32) -> Vec<Pressed> {
         // SAFETY: posts to this thread's own queue.
         unsafe {
             let _ = PostThreadMessageW(
                 GetCurrentThreadId(),
                 WM_HOTKEY,
-                WPARAM(HOTKEY_ID as usize),
+                WPARAM(id as usize),
                 LPARAM(0),
             );
         }
-        key.poll();
+        key.poll()
+    }
+
+    fn press(key: &mut PauseKey) {
+        press_id(key, PAUSE_ID);
     }
 
     #[test]
@@ -165,7 +203,48 @@ mod tests {
         unsafe {
             let _ = PostThreadMessageW(GetCurrentThreadId(), WM_HOTKEY + 1, WPARAM(0), LPARAM(0));
         }
-        assert!(!key.poll(), "an unrelated message changed the state");
+        assert!(
+            key.poll().is_empty(),
+            "an unrelated message was reported as a press",
+        );
         assert!(!key.is_paused());
+    }
+
+    /// Both keys share one drain, and that is the point of them sharing a
+    /// struct: a second handler calling `PeekMessage` would take these
+    /// messages and drop them, so one key would work and the other would look
+    /// registered and never fire.
+    #[test]
+    fn the_two_keys_do_not_take_each_others_messages() {
+        let mut key = PauseKey::register();
+        if !key.is_registered() || !key.ocr_is_registered() {
+            println!("SKIPPED: one of the chords is held by another application");
+            return;
+        }
+
+        assert_eq!(press_id(&mut key, OCR_ID), vec![Pressed::ReadWithOcr]);
+        assert!(!key.is_paused(), "the OCR key must not pause anything");
+
+        assert_eq!(press_id(&mut key, PAUSE_ID), vec![Pressed::PauseChanged]);
+        assert!(key.is_paused());
+    }
+
+    /// One drain, two presses, both reported and in order.
+    #[test]
+    fn two_presses_in_one_drain_are_both_reported() {
+        let mut key = PauseKey::register();
+        if !key.is_registered() || !key.ocr_is_registered() {
+            return;
+        }
+        // SAFETY: posts to this thread's own queue.
+        unsafe {
+            let thread = GetCurrentThreadId();
+            let _ = PostThreadMessageW(thread, WM_HOTKEY, WPARAM(OCR_ID as usize), LPARAM(0));
+            let _ = PostThreadMessageW(thread, WM_HOTKEY, WPARAM(PAUSE_ID as usize), LPARAM(0));
+        }
+        assert_eq!(
+            key.poll(),
+            vec![Pressed::ReadWithOcr, Pressed::PauseChanged],
+        );
     }
 }

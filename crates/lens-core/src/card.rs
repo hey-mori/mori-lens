@@ -165,6 +165,19 @@ impl Card {
     /// that looks hung.
     pub const LOADING_TEXT: &str = "모델을 불러오는 중";
 
+    /// A card that says something plainly, with no original to show.
+    ///
+    /// For the manual OCR path, where a refusal has no sentence attached to it:
+    /// the whole point is that nothing was read. Every other card carries the
+    /// original because there is one.
+    pub fn not_readable(message: impl Into<String>) -> Self {
+        Self {
+            original: String::new(),
+            body: CardBody::Problem(message.into()),
+            footer: String::new(),
+        }
+    }
+
     /// A card for text that could not be read at all.
     pub fn not_acquired(error: AcquireError) -> Self {
         Self {

@@ -92,6 +92,20 @@ impl std::fmt::Debug for HoverSession {
 }
 
 impl HoverSession {
+    /// A generation for work the hover machine did not start.
+    ///
+    /// Manual OCR is a keypress, not a settled hover, and it still has to be
+    /// cancellable in the same way: a translation that comes back after the
+    /// reader has moved on is dropped by generation, and a request with no
+    /// generation could not be.
+    ///
+    /// Taking one also makes every hover in flight stale, which is right. The
+    /// reader pressed a key; the sentence they were hovering a moment ago is
+    /// not what they are asking about.
+    pub fn next_generation(&mut self) -> Generation {
+        self.machine.take_generation()
+    }
+
     /// One line describing the policy, for a reload message.
     pub fn policy_summary(&self) -> String {
         self.policy.describe()
