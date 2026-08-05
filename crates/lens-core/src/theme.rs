@@ -339,6 +339,18 @@ impl Theme {
     /// text at full strength, which models a composition nothing performs. It
     /// made every contrast figure optimistic, and it is why the footer went
     /// untested at 2.75:1 while the tests were green.
+    ///
+    /// It is now a **lower bound rather than a description**, and deliberately
+    /// kept that way. The Windows card is drawn with per-pixel alpha, where
+    /// the surface is translucent and the ink on it is not, so the real
+    /// contrast there is better than this says. The fallback painter, used
+    /// where Direct2D cannot start, still fades the ink with the surface
+    /// exactly as modelled here.
+    ///
+    /// Two renderers, one number, and it holds for the worse of them. Raising
+    /// it to describe the better one would mean a theme that passes on a
+    /// machine with Direct2D and fails on a machine without it, which is a
+    /// readability guarantee that depends on the graphics stack.
     pub fn composited(&self, colour: Rgb, behind: Rgb) -> Rgb {
         behind.mix(colour, f64::from(self.surface_alpha) / 255.0)
     }
