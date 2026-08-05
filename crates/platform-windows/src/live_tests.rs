@@ -167,6 +167,7 @@ fn showing_a_card_does_not_move_the_foreground_window() {
             engine: EngineId::LocalOllama,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 1090,
+            cached: false,
         },
     );
     assert!(overlay.show(card, ScreenRect::new(400, 300, 520, 22)));
@@ -211,6 +212,7 @@ fn the_overlay_refuses_a_translation_with_no_original() {
             engine: EngineId::LocalOllama,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 10,
+            cached: false,
         },
     );
 
@@ -251,6 +253,7 @@ fn a_shown_card_has_text_painted_on_it() {
             engine: EngineId::LocalOllama,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 1090,
+            cached: false,
         },
     );
     assert!(overlay.show(card, ScreenRect::new(500, 400, 400, 22)));
@@ -652,6 +655,7 @@ fn a_card_anchored_on_a_second_monitor_stays_on_it() {
                 engine: EngineId::LocalOllama,
                 model: "qwen2.5:3b".to_owned(),
                 latency_ms: 900,
+                cached: false,
             },
         );
         assert!(overlay.show(card, anchor));
@@ -738,6 +742,7 @@ fn a_click_on_the_card_passes_through_to_what_is_underneath() {
             engine: EngineId::LocalOllama,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 900,
+            cached: false,
         },
     );
     assert!(overlay.show(card, ScreenRect::new(500, 400, 300, 22)));
@@ -1206,24 +1211,51 @@ fn one_attempt_at_reading_through_a_card() -> Result<String, String> {
 
     // Find a coordinate on this desktop that reads real text. Bounded, because
     // a screen with no prose on it would otherwise scan for minutes.
-    let deadline = Instant::now() + Duration::from_secs(15);
+    // A budget for the whole search, and one per window inside it.
+    //
+    // Without the second, the scan spends everything on whichever window comes
+    // first: measured, 2111 points across 3 windows in 15 seconds, which is
+    // one full-screen window's grid and never reaches the other two. A desktop
+    // with text on it was reported as having none.
+    let searched = Instant::now();
+    let deadline = searched + Duration::from_secs(20);
+    const PER_WINDOW: Duration = Duration::from_secs(4);
     let mut anchored = None;
-    'search: for window in top_level_windows() {
+    let mut probed = 0usize;
+    let mut windows = 0usize;
+    'window: for window in top_level_windows() {
+        windows += 1;
+        let window_deadline = Instant::now() + PER_WINDOW;
         let bounds = window.client_bounds;
         let mut y = bounds.y + 12;
         while y < bounds.bottom() - 12 {
             let mut x = bounds.x + 12;
             while x < bounds.right() - 12 {
-                if Instant::now() > deadline {
-                    break 'search;
+                let now = Instant::now();
+                if now > deadline {
+                    break 'window;
+                }
+                if now > window_deadline {
+                    continue 'window;
                 }
                 let point = ScreenPoint::new(x, y);
                 if root_window_at(point) == Some(window.id) {
-                    if let Ok(target) = acquirer.acquire(point, &context) {
-                        if target.segmented.context().trim().chars().count() >= 12 {
-                            anchored = Some(point);
-                            break 'search;
+                    probed += 1;
+                    match acquirer.acquire(point, &context) {
+                        Ok(target) => {
+                            if target.segmented.context().trim().chars().count() >= 12 {
+                                anchored = Some(point);
+                                break 'window;
+                            }
                         }
+                        // Give up on this window entirely. Another check in
+                        // this file deliberately wedges an application, and a
+                        // point over it costs the full guard: at 800ms a
+                        // sample the search spent its whole budget on one
+                        // unresponsive window and reported that the desktop
+                        // had no text on it.
+                        Err(AcquireError::Timeout) => continue 'window,
+                        Err(_) => {}
                     }
                 }
                 x += 32;
@@ -1233,7 +1265,15 @@ fn one_attempt_at_reading_through_a_card() -> Result<String, String> {
     }
 
     let Some(point) = anchored else {
-        return Err("no window on this desktop exposed text to read".to_owned());
+        return Err(format!(
+            "no text found: {probed} points across {windows} windows in {}ms{}",
+            searched.elapsed().as_millis(),
+            if Instant::now() > deadline {
+                ", stopped at the budget"
+            } else {
+                ""
+            },
+        ));
     };
 
     let overlay = crate::Overlay::start().expect("overlay");
@@ -1245,6 +1285,7 @@ fn one_attempt_at_reading_through_a_card() -> Result<String, String> {
                 engine: EngineId::LocalOllama,
                 model: "qwen2.5:3b".to_owned(),
                 latency_ms: 900,
+                cached: false,
             },
         )
     };
@@ -1574,6 +1615,7 @@ fn the_card_is_painted_with_per_pixel_alpha_and_not_a_flat_rectangle() {
             engine: EngineId::LocalOllama,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 1090,
+            cached: false,
         },
     );
     let second = Card::translated(
@@ -1583,6 +1625,7 @@ fn the_card_is_painted_with_per_pixel_alpha_and_not_a_flat_rectangle() {
             engine: EngineId::LocalOllama,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 1090,
+            cached: false,
         },
     );
     assert!(overlay.show(card, anchor));
@@ -1700,6 +1743,7 @@ fn a_longer_card_is_taller_and_the_renderer_is_the_one_that_says_so() {
                 engine: EngineId::LocalOllama,
                 model: "qwen2.5:3b".to_owned(),
                 latency_ms: 900,
+                cached: false,
             },
         )
     };
@@ -1801,6 +1845,7 @@ fn a_short_answer_gets_a_narrow_card_and_a_long_one_gets_a_wide_card() {
                 engine: EngineId::LocalOllama,
                 model: "qwen2.5:3b".to_owned(),
                 latency_ms: 900,
+                cached: false,
             },
         )
     };
@@ -1871,6 +1916,7 @@ fn the_same_card_is_the_same_physical_size_on_a_scaled_display() {
             engine: EngineId::LocalOllama,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 900,
+            cached: false,
         },
     );
 
@@ -1939,25 +1985,42 @@ fn the_process_under_the_pointer_is_cached_without_going_stale() {
          the policy would be given",
     );
 
-    // Ten thousand samples is four minutes of hovering at the loop's rate.
-    const SAMPLES: u32 = 10_000;
-    let began = Instant::now();
+    // Two thousand of each, back to back, so both pay the same machine.
+    //
+    // An absolute microsecond threshold was tried first and was flaky: it
+    // passed alone at 8.2us against a 10us bound and failed inside the full
+    // suite. Most of a cached call is `WindowFromPoint` and
+    // `GetWindowThreadProcessId`, which happen either way, so the figure moves
+    // with how busy the box is. A ratio does not.
+    const SAMPLES: u32 = 2_000;
     let mut wrong = 0usize;
+
+    let began = Instant::now();
     for _ in 0..SAMPLES {
         if crate::window::process_name_at(point).as_deref() != Some(own.as_str()) {
             wrong += 1;
         }
     }
-    let each = began.elapsed().as_secs_f64() * 1e6 / f64::from(SAMPLES);
-    println!("{SAMPLES} samples · {each:.1}us each · {wrong} wrong");
+    let cached = began.elapsed().as_secs_f64() * 1e6 / f64::from(SAMPLES);
 
-    assert_eq!(wrong, 0, "the cached name changed under repeated lookups");
-    // Opening a process handle and querying its image path is tens of
-    // microseconds. A cache hit is a comparison.
+    let began = Instant::now();
+    for _ in 0..SAMPLES {
+        if crate::window::uncached_process_name_at(point).as_deref() != Some(own.as_str()) {
+            wrong += 1;
+        }
+    }
+    let uncached = began.elapsed().as_secs_f64() * 1e6 / f64::from(SAMPLES);
+
+    println!(
+        "{SAMPLES} each · cached {cached:.1}us · uncached {uncached:.1}us · {:.1}x · {wrong} wrong",
+        uncached / cached.max(0.001),
+    );
+
+    assert_eq!(wrong, 0, "the name changed under repeated lookups");
     assert!(
-        each < 10.0,
-        "{each:.1}us per lookup, so nothing is being cached and the loop is \
-         paying for a process handle forty times a second",
+        uncached > cached * 2.0,
+        "cached {cached:.1}us against uncached {uncached:.1}us, so the cache is \
+         not saving the process handle the loop opens forty times a second",
     );
 }
 
@@ -1997,6 +2060,7 @@ fn a_theme_set_at_runtime_changes_the_next_card() {
             engine: EngineId::LocalOllama,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 900,
+            cached: false,
         },
     );
     let anchor = ScreenRect::new(500, 300, 300, 22);
@@ -2066,6 +2130,7 @@ fn measure_what_a_long_paragraph_does_to_the_card() {
             engine: EngineId::LocalOllama,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 900,
+            cached: false,
         },
     );
 
