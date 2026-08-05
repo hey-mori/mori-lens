@@ -55,6 +55,8 @@ not written), **out of v1** (deliberately excluded).
 | Hover probe, follow mode | built, unverified |
 | Card themes | **shipped** · four presets, contrast checked against the composite over a white page and a black one |
 | Pause control | **shipped** · Ctrl+Alt+L or the tray icon, and paused means the pointer is not sampled |
+| Settings file | **shipped** · `%APPDATA%\Mori Lens\settings.conf`, written with every option on first run, and a line it does not understand is reported at startup rather than ignored |
+| Per-application tiers | **shipped** · set in the settings file; password managers are denied before the file is read and cannot be re-enabled by omission |
 | Tray icon | **shipped** · shows whether Lens is listening, pauses on a click, quits from its menu, and survives Explorer restarting |
 | Translation cache | **shipped** · in memory, keyed on model and prompt version |
 | Hover probe, sweep mode | **shipped** · produced the 2026-08-04 measurements |
@@ -77,12 +79,12 @@ recorded in
 [`compatibility/windows-app-matrix.md`](compatibility/windows-app-matrix.md).
 That gate is [ADR-0008](decisions/ADR-0008-probe-before-product.md).
 
-Ten capabilities have passed it. The rest have unit tests, which prove
-the logic and prove nothing about a desktop.
+Twelve capabilities have passed it. The rest have unit tests, which
+prove the logic and prove nothing about a desktop.
 
-What is still missing before this is something a person installs:
-per-application tiers a user can set, settings that survive a restart,
-and a first run that says what to do when Ollama is absent.
+What is still missing before this is something a person installs: a
+first run that says what to do when Ollama is absent, and a way to start
+with Windows.
 
 **What the measurement found, since it changes what "works" means
 here:** acquisition succeeds, at p50 10ms, and returns the *right* text
