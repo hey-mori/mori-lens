@@ -20,6 +20,7 @@ mod appearance;
 mod com;
 mod inventory;
 pub mod overlay;
+pub mod tray;
 mod uia;
 mod window;
 
@@ -31,6 +32,7 @@ mod protected_harness;
 pub use appearance::system_preferences;
 pub use inventory::{text_inventory, WindowTextInventory};
 pub use overlay::Overlay;
+pub use tray::{Tray, TrayEvent};
 pub use uia::UiaTextAcquirer;
 pub use window::{
     declare_dpi_awareness, process_name_at, root_window_at, top_level_windows, WindowInfo,

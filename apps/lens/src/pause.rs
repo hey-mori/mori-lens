@@ -70,6 +70,15 @@ impl PauseKey {
         self.paused
     }
 
+    /// Flip the state without a hotkey.
+    ///
+    /// The tray icon's entrance. It sets the same flag rather than keeping its
+    /// own, because a product whose icon and hotkey disagree about whether it
+    /// is paused is worse than one with neither.
+    pub fn toggle(&mut self) {
+        self.paused = !self.paused;
+    }
+
     /// Drain pending messages and apply any hotkey presses.
     ///
     /// Returns whether the paused state changed, so the caller can report it
