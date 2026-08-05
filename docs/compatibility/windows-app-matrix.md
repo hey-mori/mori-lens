@@ -1,7 +1,10 @@
 # Windows application compatibility
 
-**Status · Chrome, Edge, Word, Notepad, VS Code and an Electron messenger
-measured. Windows Settings and the Edge PDF viewer remain.**
+**Status · all eight gate applications measured, 2026-08-05.** Windows
+Settings and the Edge PDF viewer were the last two, and closing them
+corrected an earlier claim: both windows the 2026-08-04 run recorded as
+"Edge" were the PDF viewer, so Edge's HTML rendering had never actually
+been measured. It has been now, separately.
 
 The full set is the gate on Milestone 2
 ([ADR-0008](../decisions/ADR-0008-probe-before-product.md)). Nothing here is filled
@@ -94,11 +97,11 @@ between them they cover where a user actually meets a second language.
 |-------------|-----------|---------------------|
 | Notepad | Document provider, measured | the simplest text case; measured, and it is **not** the Win32 `EDIT` family |
 | Chrome | Chromium | where most reading happens; needs the accessibility wake |
-| Edge | Chromium | same engine, different shell and PDF viewer |
+| Edge | Chromium | measured on HTML, separately from its PDF viewer |
 | VS Code | Electron | code and documentation, a heavy renderer; measured, and the editor exposes nothing |
 | Word | Win32 / Office | the document case |
-| Edge PDF viewer | Chromium PDF | text PDFs, the boundary before OCR |
-| Windows Settings | WinUI | modern XAML controls |
+| Edge PDF viewer | Chromium PDF | measured: a text PDF reads like a page |
+| Windows Settings | WinUI | measured: sparse, and correct wherever there is text |
 | Slack or Teams | Electron | messenger under load |
 | KakaoTalk | Win32 / Document provider | measured: one blob, and the messenger a Korean reader actually uses |
 
@@ -307,6 +310,95 @@ a real error rather than a tuning choice:
 3. Counting **text that resolved but is not rendered** as a miss. It is not:
    unrendered is scrolled out of view, not mislocated, and the product treats
    it the same way.
+
+### The last two gate rows, 2026-08-05
+
+Build `dea1e18`, per-monitor aware v2, 125% scaling on the primary display.
+
+Neither application had to be raised for the inventory, and neither had
+to be arranged by hand for the sweep beyond not being covered.
+
+#### Windows Settings · WinUI
+
+```
+application          elements  withtext    chars  smallest  on-target
+ApplicationFrameHo…        33        32      327      20px      12/12
+
+sweep  1500x1032 at (114, 70)
+  cold   acquired 18/176 (10%)   latency p50 4.9ms · p95 8.3ms
+         separable 14 distinct targets among 14 on-target hits
+         unsupported 158
+  woken  identical, so this provider was never cold
+```
+
+**Supported, and sparse.** 10% acquisition is the correct answer for
+this window rather than a poor one: a Settings page is mostly empty
+space, and `unsupported` is what an empty region should return. The
+number that matters is that all 14 acquisitions resolved onto their own
+text, and that 14 of them were distinct. A pointer can aim inside this
+window.
+
+327 characters is the whole window. Settings is labels and toggles, not
+prose, so the reader this product is for meets little here.
+
+#### Edge PDF viewer · Chromium PDF
+
+Measured on a text PDF (a business document, not named here).
+
+```
+application          elements  withtext    chars  smallest  on-target
+msedge                    143       142     5492      13px      11/12
+
+sweep  992x959 at (2527, 134)
+  cold   acquired 116/132 (88%)   latency p50 7.0ms · p95 9.6ms
+         separable 8 distinct targets among 8 on-target hits
+         unsupported 16
+  woken  114/132 (86%), 6 separable
+         wake: -2 acquisitions, which means the window changed under the sweep
+```
+
+**A text PDF reads like a page.** 88% acquired at 7ms, every hit on
+target, 13px as the smallest element. This is the boundary the roadmap
+put before OCR, and for a text PDF the accessibility path is simply
+enough. A scanned PDF is still OCR's territory and is not this row.
+
+The woken pass losing two acquisitions is the window scrolling or
+re-laying-out mid-run, not the wake doing harm.
+
+#### Edge on HTML · Chromium
+
+The row that turned out to be missing. Measured on a local page written
+for the purpose, in a new window, so nothing of the user's was disturbed.
+
+```
+application          elements  withtext    chars  smallest  on-target
+msedge                      8         6     1009      20px        5/5
+
+sweep  992x959 at (2537, 144)
+  cold   acquired 108/120 (90%)   latency p50 7.2ms · p95 9.5ms
+         separable 8 distinct targets among 8 on-target hits
+```
+
+**Supported.** 90% at 7ms, all on target.
+
+#### The correction this run forced
+
+The 2026-08-05 inventory recorded two `msedge` rows and the text above
+them said *"Edge works, on both windows"*. Printing window titles showed
+both of those windows were displaying **PDFs**. So that sentence was a
+claim about the PDF viewer twice, and Edge's HTML rendering, which is
+the row the gate actually asks for, had never been measured at all.
+
+Two windows of one process are two results, and the inventory could not
+tell them apart. It can now, behind `--titles`, off by default because a
+window title is a document name.
+
+#### And one about occlusion, again
+
+The first attempt at the PDF sweep returned `0/12 acquired, 120
+occluded`. The new Edge window opened to measure HTML was sitting on top
+of it. The sweep reported the occlusion honestly and the number was
+still nearly published as a PDF result.
 
 ### KakaoTalk, 2026-08-05: the case the product is for, and it is the bad one
 

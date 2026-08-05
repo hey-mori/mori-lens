@@ -44,7 +44,7 @@ pub fn run(only: Option<&str>) -> Vec<WindowTextInventory> {
     found
 }
 
-pub fn print_report(windows: &[WindowTextInventory]) {
+pub fn print_report(windows: &[WindowTextInventory], titles: bool) {
     if windows.is_empty() {
         println!("No window matched.");
         return;
@@ -91,6 +91,16 @@ pub fn print_report(windows: &[WindowTextInventory]) {
                 .map_or("?".to_owned(), |h| format!("{h}px")),
             on_target,
         );
+        if titles {
+            // Opt-in. Two Edge windows are two different results, and the
+            // matrix cannot record which is which without this. Off by
+            // default because a title is a document name.
+            println!(
+                "{:<20}{}",
+                "",
+                truncate(window.title.as_deref().unwrap_or("(untitled)"), 70),
+            );
+        }
         if !notes.is_empty() {
             println!("{:<20}{}", "", notes.join(" · "));
         }

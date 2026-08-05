@@ -85,6 +85,9 @@ INVENTORY MODE
     element is known before the question is asked.
 
     --only <text>       Only windows whose process name contains this.
+    --titles            Print each window's title. Off by default: two Edge
+                        windows are two results and the matrix has to say
+                        which is which, but a title is a document name.
 
     -h, --help          This text.
 ";
@@ -95,6 +98,7 @@ enum Mode {
     Follow(Options),
     Inventory {
         only: Option<String>,
+        titles: bool,
     },
     Sweep {
         options: sweep::SweepOptions,
@@ -107,6 +111,7 @@ fn parse_args() -> Result<Mode, String> {
     if args.first().is_some_and(|first| first == "inventory") {
         args.remove(0);
         let mut only = None;
+        let mut titles = false;
         let mut rest = args.into_iter();
         while let Some(arg) = rest.next() {
             match arg.as_str() {
@@ -114,11 +119,12 @@ fn parse_args() -> Result<Mode, String> {
                     print!("{USAGE}");
                     std::process::exit(0);
                 }
+                "--titles" => titles = true,
                 "--only" => only = Some(rest.next().ok_or("--only needs some text to match")?),
                 other => return Err(format!("unknown argument: {other}")),
             }
         }
-        return Ok(Mode::Inventory { only });
+        return Ok(Mode::Inventory { only, titles });
     }
     if args.first().is_some_and(|first| first == "sweep") {
         args.remove(0);
@@ -241,14 +247,20 @@ pub fn run() -> ExitCode {
     match mode {
         Mode::Follow(options) => follow(acquirer, options, dpi_declared),
         Mode::Sweep { options, only } => run_sweep(acquirer, options, only, dpi_declared),
-        Mode::Inventory { only } => {
+        Mode::Inventory { only, titles } => {
             println!(
                 "hover-probe inventory · build {}
 ",
                 build_stamp()
             );
+            if titles {
+                println!(
+                    "  titles    PRINTING WINDOW TITLES. Not their content.
+"
+                );
+            }
             let found = inventory::run(only.as_deref());
-            inventory::print_report(&found);
+            inventory::print_report(&found, titles);
             ExitCode::SUCCESS
         }
     }

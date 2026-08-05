@@ -28,6 +28,12 @@ use crate::window::top_level_windows;
 #[derive(Debug, Clone, Default)]
 pub struct WindowTextInventory {
     pub process_name: String,
+    /// The window's title, for telling two windows of one process apart.
+    ///
+    /// A title is not text under the pointer, so the rule against logging
+    /// captured content does not reach it. It is still someone's document name,
+    /// so the probe keeps it behind a flag and does not print it by default.
+    pub title: Option<String>,
     /// Descendants advertising a text pattern.
     pub text_elements: usize,
     /// How many of those returned any characters.
@@ -83,10 +89,13 @@ pub fn text_inventory(wanted: impl Fn(&str) -> bool) -> Vec<WindowTextInventory>
             if !wanted(&name) {
                 return None;
             }
+            let title = window.title.clone();
             // SAFETY: read-only automation queries on a handle just enumerated;
             // a window that closes mid-walk yields an error, not a crash.
             let inventory = unsafe { inventory_of(&automation, HWND(window.id as *mut _), name) };
-            inventory.filter(|found| found.text_elements > 0)
+            inventory
+                .map(|found| WindowTextInventory { title, ..found })
+                .filter(|found| found.text_elements > 0)
         })
         .collect()
 }
