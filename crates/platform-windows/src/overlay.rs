@@ -93,7 +93,7 @@ fn current_theme() -> Theme {
     THEME.lock().ok().and_then(|slot| *slot).unwrap_or_else(|| {
         Theme::resolve(
             lens_core::theme::Preset::System,
-            lens_core::theme::Translucency::Balanced,
+            lens_core::theme::Translucency::DEFAULT,
             lens_core::theme::TextScale::Normal,
             lens_core::theme::SystemPreferences::default(),
         )
