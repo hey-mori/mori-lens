@@ -65,6 +65,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// number of pixels, so the card was physically narrower and taller than the
 /// one beside it on a 100% screen.
 const CARD_WIDTH: i32 = 300;
+/// The tallest a card may be, in pixels at 100% scaling.
+///
+/// Scaled per monitor, and it was not. That is the same defect the width above
+/// records as fixed, left behind in the line underneath it: on a 150% display a
+/// card's content is half again as tall while this ceiling stayed at 420
+/// physical pixels, so the point at which a long answer gets its last lines cut
+/// off arrived a third earlier than on a 100% one. Nothing clamps the drawing,
+/// so a card over the ceiling is not shortened, it is clipped.
 const MAX_HEIGHT: i32 = 420;
 
 /// `DWMWCP_ROUND`. Windows 11 rounded corners.
@@ -382,18 +390,23 @@ unsafe fn show_card(
     };
     let laid = glass.and_then(|glass| glass.lay_out_between(&card, &theme, range, scale));
 
-    // The card is as wide as its contents need, up to the limit. A fixed box
-    // holding one short line is mostly empty, which reads as something that
-    // failed to load rather than as an answer.
+    // The card is as wide and as tall as its contents need, up to the limit. A
+    // fixed box holding one short line is mostly empty, which reads as
+    // something that failed to load rather than as an answer.
+    let ceiling = card_height_ceiling(scale);
     let (width, height) = match &laid {
-        Some(laid) => (laid.width, laid.height.clamp(80, MAX_HEIGHT)),
+        // **No floor.** There was one, at 80 physical pixels, and a card that
+        // laid out shorter than that got a window taller than its contents:
+        // empty space along the bottom edge of exactly the cards that had least
+        // in them. The renderer measures what it drew, and that measurement is
+        // the answer.
+        Some(laid) => (laid.width, laid.height.min(ceiling)),
         // The fallback painter has no way to measure a natural width, so it
-        // keeps the full one. A machine without Direct2D gets the old card.
+        // keeps the full one. A machine without Direct2D gets the old card, and
+        // the floor with it: `measure` is a GDI estimate rather than a layout,
+        // and it is the one caller that can come back with too small a number.
         // SAFETY: measuring against the window's own device context.
-        None => (
-            widest,
-            unsafe { measure(window, &card) }.clamp(80, MAX_HEIGHT),
-        ),
+        None => (widest, unsafe { measure(window, &card) }.clamp(80, ceiling)),
     };
 
     if let Ok(mut slot) = CONTENT.lock() {
@@ -936,6 +949,19 @@ unsafe fn rise(
 /// Exposed for the live checks, which lay a card out themselves and compare.
 pub fn max_card_width() -> i32 {
     CARD_WIDTH
+}
+
+/// The window height a card of this laid-out height gets.
+///
+/// Exposed so a diagnostic can ask whether a card fits the window it is drawn
+/// into, which is a question no screenshot answers reliably.
+pub fn card_height_for(laid_height: i32, scale: f32) -> i32 {
+    laid_height.min(card_height_ceiling(scale))
+}
+
+/// The tallest a card may be on a display at this scaling.
+fn card_height_ceiling(scale: f32) -> i32 {
+    (MAX_HEIGHT as f32 * scale).round() as i32
 }
 
 /// Whether the overlay class is registered with the styles it must have.
