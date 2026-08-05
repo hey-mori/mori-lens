@@ -1548,26 +1548,10 @@ fn the_card_is_painted_with_per_pixel_alpha_and_not_a_flat_rectangle() {
         GetWindowRect(HWND(overlay.window_id() as *mut _), &mut rect).expect("window rect");
         (rect.right - rect.left, rect.bottom - rect.top)
     };
-    println!(
-        "window {width}x{height}, card is {}px",
-        crate::overlay::card_width()
-    );
 
-    // The shadow needs room, so the window has to be wider than the card.
-    // A window exactly `CARD_WIDTH` wide means the Direct2D path did not draw
-    // this frame, which is exactly what happened the first time: the window
-    // had `SetLayeredWindowAttributes` called on it at creation, which makes
-    // `UpdateLayeredWindow` fail, and every other overlay test stayed green.
-    assert!(
-        width > crate::overlay::card_width(),
-        "the window is {width}px wide and the card is {}px, so there is no          shadow margin and this is the GDI fallback",
-        crate::overlay::card_width(),
-    );
-    assert!(overlay.hide());
-
-    // And the pixels themselves. Not read back from the window: once
-    // `UpdateLayeredWindow` has the bitmap the content lives in the
-    // compositor and `GetPixel` on the window answers CLR_INVALID.
+    // What the renderer says this card should be, so the comparison is against
+    // the card that was drawn rather than against a fixed number. The card
+    // fits its contents now, so a constant would only be right by accident.
     let theme = Theme::resolve(
         Preset::System,
         Translucency::Balanced,
@@ -1576,8 +1560,29 @@ fn the_card_is_painted_with_per_pixel_alpha_and_not_a_flat_rectangle() {
     );
     let glass = crate::glass::Glass::new().expect("Direct2D");
     let laid = glass
-        .lay_out(&second, &theme, crate::overlay::card_width(), 1.0)
+        .lay_out(&second, &theme, crate::overlay::max_card_width(), 1.0)
         .expect("layout");
+    println!(
+        "window {width}x{height}, card {}x{}",
+        laid.width, laid.height
+    );
+
+    // The shadow needs room, so the window has to be wider than the card. A
+    // window exactly the card's width means the Direct2D path did not draw
+    // this frame, which is what happened the first time: the window had
+    // `SetLayeredWindowAttributes` called on it at creation, which makes
+    // `UpdateLayeredWindow` fail, and every other overlay test stayed green.
+    assert!(
+        width > laid.width,
+        "the window is {width}px wide and the card is {}px, so there is no \
+         shadow margin and this is the GDI fallback",
+        laid.width,
+    );
+    assert!(overlay.hide());
+
+    // And the pixels themselves. Not read back from the window: once
+    // `UpdateLayeredWindow` has the bitmap the content lives in the
+    // compositor and `GetPixel` on the window answers CLR_INVALID.
     // SAFETY: the renderer creates and releases its own objects.
     let (w, h, pixels) = unsafe { glass.pixels(&laid, &theme) }.expect("pixels");
     let alpha = |x: i32, y: i32| pixels[(y * w + x) as usize] >> 24;
@@ -1719,4 +1724,137 @@ fn autostart_writes_reads_and_removes_its_own_value() {
 
     // And the real setting is untouched by all of that.
     println!("autostart is currently {}", crate::autostart::is_enabled());
+}
+
+/// The card is the size of what is in it.
+///
+/// A fixed box holding one short line is mostly empty, and empty space where an
+/// answer should be reads as something that failed to load. This is the check
+/// that the width is chosen rather than assumed.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn a_short_answer_gets_a_narrow_card_and_a_long_one_gets_a_wide_card() {
+    use lens_core::card::Card;
+    use lens_core::theme::{Preset, SystemPreferences, TextScale, Theme, Translucency};
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    let glass = crate::glass::Glass::new().expect("Direct2D");
+    let theme = Theme::resolve(
+        Preset::System,
+        Translucency::Balanced,
+        TextScale::Normal,
+        SystemPreferences::default(),
+    );
+    let widest = crate::overlay::max_card_width();
+
+    let card = |original: &str, translated: &str| {
+        Card::translated(
+            original,
+            &QuickTranslation {
+                text: translated.to_owned(),
+                engine: EngineId::LocalOllama,
+                model: "qwen2.5:3b".to_owned(),
+                latency_ms: 900,
+            },
+        )
+    };
+
+    let short = glass
+        .lay_out(&card("Sign in", "로그인"), &theme, widest, 1.0)
+        .expect("layout");
+    let long = glass
+        .lay_out(
+            &card(
+                "The output files came back empty, so the full test suite produced nothing at all.",
+                "출력 파일이 비어 있었기 때문에 전체 테스트 스위트는 아무것도 생성하지 않았습니다.",
+            ),
+            &theme,
+            widest,
+            1.0,
+        )
+        .expect("layout");
+
+    println!(
+        "short {}x{} · long {}x{} · limit {widest}",
+        short.width, short.height, long.width, long.height,
+    );
+
+    assert!(
+        short.width < long.width,
+        "both cards came out the same width, so the width is not being fitted",
+    );
+    assert!(
+        long.width <= widest,
+        "a long answer was given {}px, past the {widest}px limit",
+        long.width,
+    );
+    // And not so narrow that the footer wraps under it.
+    assert!(
+        short.width >= 200,
+        "a short answer shrank to {}px, which is a tooltip",
+        short.width,
+    );
+}
+
+/// The card scales with the display, not just the text on it.
+///
+/// The width was a fixed pixel count while the fonts and padding were scaled,
+/// so on a 150% monitor the same sentence wrapped into more lines inside the
+/// same box: a card that was physically narrower and taller than the one on the
+/// 100% monitor beside it.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn the_same_card_is_the_same_physical_size_on_a_scaled_display() {
+    use lens_core::card::Card;
+    use lens_core::theme::{Preset, SystemPreferences, TextScale, Theme, Translucency};
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    let glass = crate::glass::Glass::new().expect("Direct2D");
+    let theme = Theme::resolve(
+        Preset::System,
+        Translucency::Balanced,
+        TextScale::Normal,
+        SystemPreferences::default(),
+    );
+    let card = Card::translated(
+        "The output files came back empty, so the full test suite produced nothing at all.",
+        &QuickTranslation {
+            text:
+                "출력 파일이 비어 있었기 때문에 전체 테스트 스위트는 아무것도 생성하지 않았습니다."
+                    .to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "qwen2.5:3b".to_owned(),
+            latency_ms: 900,
+        },
+    );
+
+    let widest = crate::overlay::max_card_width() as f32;
+    let plain = glass
+        .lay_out(&card, &theme, widest as i32, 1.0)
+        .expect("layout");
+    let scaled = glass
+        .lay_out(&card, &theme, (widest * 1.5).round() as i32, 1.5)
+        .expect("layout");
+
+    println!(
+        "100%: {}x{} · 150%: {}x{}",
+        plain.width, plain.height, scaled.width, scaled.height,
+    );
+
+    // Half again as wide, within a pixel or two of rounding.
+    let expected = plain.width as f32 * 1.5;
+    assert!(
+        (scaled.width as f32 - expected).abs() <= 4.0,
+        "at 150% the card is {}px where {expected:.0}px would be the same \
+         physical width",
+        scaled.width,
+    );
+    // And therefore not dramatically taller: the same words fit the same way.
+    assert!(
+        (scaled.height as f32) < plain.height as f32 * 1.8,
+        "at 150% the card is {}px tall against {}px, so the text is wrapping \
+         differently and the box is not scaling with it",
+        scaled.height,
+        plain.height,
+    );
 }
