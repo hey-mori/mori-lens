@@ -203,6 +203,43 @@ the probe correctly refused to report someone else's numbers: Edge,
 Word, the Edge PDF viewer, Windows Settings, and an Electron messenger.
 Bringing each forward and sweeping it is the remaining work on issue #3.
 
+### Can it tell which message the pointer is on?
+
+Measured 2026-08-05 on an Electron chat window, because the on-target rate
+cannot answer this on its own: **one huge correct target scores 100%**. So the
+sweep now also counts how many *distinct* rectangles the on-target hits resolve
+to.
+
+```
+claude (Electron), 1884x1112, 240 points
+  acquired    25/240 (10%)
+  on-target   22/25 (88%)   distance p50 0px · p95 9px · max 22px
+  separable   22 distinct targets among 22 on-target hits (1.0 each)
+  control     50020 Text x25 · word unit: word x25
+```
+
+**Every on-target hit resolved to a different rectangle.** The window is not
+one blob with a pointer somewhere in it: each message, and within it each word,
+is its own element. Combined with a 22px worst-case error, the pointer lands on
+a specific word and the right one.
+
+That is the good case, and it is the case a messenger presents. The bad case is
+the one above: a document or edit control is a single scrollable region where
+`RangeFromPoint` answers with the nearest text anywhere in it, and the answer
+can be 1,465px away.
+
+So the honest summary of "does it know what you pointed at":
+
+| Surface | Which window | Which sentence |
+|---|---|---|
+| labels, chat, most UI | reliable | 86 to 100%, each hit separable |
+| document, editor body | reliable | 3 to 18%; the rest is suppressed rather than shown wrong |
+| VS Code's editor | reliable | nothing is exposed at all (#14) |
+
+**Which window** is not in doubt anywhere: `ElementFromPoint` performs the same
+hit test that decides where a click goes, and the probe verifies the owning
+window per point, which is how the occlusion bug was caught.
+
 ### The finding that changes the design
 
 On-target rate splits by control type, and the split held across all
