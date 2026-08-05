@@ -71,6 +71,20 @@ pub enum Translucency {
 }
 
 impl Translucency {
+    /// What a card uses when nobody has chosen.
+    ///
+    /// Here rather than at each call site, because it was at each call site: the
+    /// overlay picked one and four rendering diagnostics each picked their own,
+    /// so changing the product's default left every diagnostic drawing the old
+    /// card and reporting it as the current one.
+    ///
+    /// **Opaque.** A translucent panel takes part of its edge colour from
+    /// whatever is behind it, so one hairline reads differently along its own
+    /// length, and over a page of text that looks blotchy rather than thin. The
+    /// other levels stay available and a user can ask for them; they are just
+    /// not what a reading tool starts with.
+    pub const DEFAULT: Self = Self::Solid;
+
     /// Surface alpha, 0 to 255.
     ///
     /// None of these reach fully opaque except `Solid`, and none go far below
