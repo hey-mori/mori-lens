@@ -105,7 +105,7 @@ const SHADOW_REACH: f32 = 17.0;
 /// This is the **peak**, right against the card, and it falls away smoothly
 /// from there. It used to be the strength of a 2px ring at the same place,
 /// which is a different thing wearing the same number.
-const SHADOW_STRENGTH: f32 = 0.16;
+const SHADOW_STRENGTH: f32 = 0.13;
 
 /// How far down the shadow is offset. Light from above, as every other panel on
 /// this desktop assumes.
@@ -444,18 +444,10 @@ impl Glass {
                 return false;
             };
 
-            let drawn = self.draw(dc, laid, theme, width, height, margin as f32);
+            let drawn = self.render(dc, bits, laid, theme, width, height, margin as f32);
             if drawn {
                 let pixels =
-                    std::slice::from_raw_parts_mut(bits.cast::<u32>(), (width * height) as usize);
-                cast_shadow(
-                    pixels,
-                    width,
-                    height,
-                    margin as f32,
-                    CORNER * laid.scale,
-                    laid.scale,
-                );
+                    std::slice::from_raw_parts(bits.cast::<u32>(), (width * height) as usize);
                 let ink = pixels.iter().filter(|pixel| (*pixel >> 24) == 255).count();
                 LAST_FRAME_INK.store(ink, std::sync::atomic::Ordering::Relaxed);
             }
@@ -516,6 +508,48 @@ impl Glass {
     ) -> bool {
         // SAFETY: the caller's guarantee, passed straight through.
         unsafe { self.present_faded(window, laid, theme, card_rect, 255) }
+    }
+
+    /// Everything that makes a frame: the card, then the shadow under it.
+    ///
+    /// **One path, used by both callers.** The shadow used to be applied only
+    /// where a frame was presented, so the entry point that renders a card for
+    /// inspection produced a different image from the one on screen. A
+    /// diagnostic that does not draw what the product draws is worse than none:
+    /// this one reported a frame with no shadow at all, which was true of
+    /// itself and false of everything else.
+    ///
+    /// # Safety
+    /// `dc` must hold a 32-bit top-down DIB of exactly `width` by `height`, and
+    /// `bits` must be its pixels.
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn render(
+        &self,
+        dc: HDC,
+        bits: *mut core::ffi::c_void,
+        laid: &Laid,
+        theme: &Theme,
+        width: i32,
+        height: i32,
+        margin: f32,
+    ) -> bool {
+        // SAFETY: the caller's guarantee.
+        unsafe {
+            if !self.draw(dc, laid, theme, width, height, margin) {
+                return false;
+            }
+            let pixels =
+                std::slice::from_raw_parts_mut(bits.cast::<u32>(), (width * height) as usize);
+            cast_shadow(
+                pixels,
+                width,
+                height,
+                margin,
+                CORNER * laid.scale,
+                laid.scale,
+            );
+            true
+        }
     }
 
     /// # Safety
@@ -669,7 +703,7 @@ impl Glass {
         // SAFETY: everything created here is released before returning.
         unsafe {
             let (dc, bitmap, previous, bits) = surface(width, height)?;
-            let drawn = self.draw(dc, laid, theme, width, height, margin as f32);
+            let drawn = self.render(dc, bits, laid, theme, width, height, margin as f32);
             let copied = drawn.then(|| {
                 std::slice::from_raw_parts(bits.cast::<u32>(), (width * height) as usize).to_vec()
             });
@@ -732,26 +766,29 @@ fn cast_shadow(pixels: &mut [u32], width: i32, height: i32, margin: f32, radius:
         for x in 0..width {
             let index = (y * width + x) as usize;
             let existing = pixels[index] >> 24;
-            // Already solid: nothing can go under it, and skipping is most of
-            // the card.
-            if existing == 255 {
-                continue;
-            }
 
             // Distance to the rounded rectangle, negative inside it.
             let dx = (f64::from(x) as f32 + 0.5 - centre_x).abs() - inner_x;
             let dy = (f64::from(y) as f32 + 0.5 - centre_y).abs() - inner_y;
             let outside = dx.max(0.0).hypot(dy.max(0.0));
             let distance = outside + dx.max(dy).min(0.0) - radius;
-            if distance >= reach {
+            // Inside the card, or past the shadow's reach. **Inside**, not
+            // "already opaque": the card's surface is translucent by design, so
+            // an opacity test let the shadow through underneath it and lifted
+            // it from the theme's 236 to 239. That is the same defect filled
+            // rings had, at a tenth of the size, and the unit test missed it
+            // because its fixture card was solid and a real one never is.
+            if distance <= 0.0 || distance >= reach {
                 continue;
             }
 
-            // Smoothstep rather than a power: it leaves the card at full
-            // strength and arrives at nothing with no edge, which is the whole
-            // difference between a shadow and an outline.
-            let t = (distance.max(0.0) / reach).clamp(0.0, 1.0);
-            let falloff = 1.0 - t * t * (3.0 - 2.0 * t);
+            // A power curve, not a smoothstep. Smoothstep has zero slope at
+            // both ends, so it holds near its peak for the first third of the
+            // distance: that plateau is a band of even grey hugging the card,
+            // which is exactly what a reader calls a box. This drops from the
+            // first pixel and is nearly gone by halfway.
+            let t = (distance / reach).clamp(0.0, 1.0);
+            let falloff = (1.0 - t).powf(2.6);
             let shade = (SHADOW_STRENGTH * falloff).clamp(0.0, 1.0);
             if shade <= 0.0 {
                 continue;
@@ -825,10 +862,12 @@ mod shadow {
         let (margin, radius) = (20.0f32, 10.0f32);
         let (width, height) = (200 + 40, 80 + 40);
         let mut pixels = vec![0u32; (width * height) as usize];
-        // The card itself, opaque, so the pass has something to go under.
+        // The card itself, **translucent**, because a real one is: an opaque
+        // fixture hid a defect where the shadow was composited underneath the
+        // surface and lifted its alpha above the theme's figure.
         for y in margin as i32..height - margin as i32 {
             for x in margin as i32..width - margin as i32 {
-                pixels[(y * width + x) as usize] = 0xffff_ffff;
+                pixels[(y * width + x) as usize] = 0xecdf_dfe0;
             }
         }
         (pixels, width, height, margin, radius)
@@ -841,12 +880,18 @@ mod shadow {
     /// The whole point. A card sitting on its own shadow measured 250 where the
     /// theme asked for 236 the last time this was drawn underneath it.
     #[test]
-    fn the_card_itself_is_never_darkened() {
+    fn the_card_itself_is_never_darkened_even_though_it_is_translucent() {
         let (mut pixels, width, height, margin, radius) = frame();
         let inside = pixels.clone();
         cast_shadow(&mut pixels, width, height, margin, radius, 1.0);
-        for y in margin as i32 + 2..height - margin as i32 - 2 {
-            for x in margin as i32 + 2..width - margin as i32 - 2 {
+        // Inside the rounded shape, which is not the same as inside the
+        // fixture's square: a corner of the square lies outside the card's
+        // actual outline and correctly receives shadow. Checking the square
+        // was the first version of this test and it failed for that reason,
+        // which is the fixture being wrong rather than the code.
+        let inset = margin as i32 + radius as i32 + 1;
+        for y in inset..height - inset {
+            for x in inset..width - inset {
                 let at = (y * width + x) as usize;
                 assert_eq!(pixels[at], inside[at], "the card changed at ({x}, {y})");
             }
@@ -917,5 +962,19 @@ mod shadow {
         let above = alpha(&pixels, width, x, margin as i32 - 4);
         let below = alpha(&pixels, width, x, height - margin as i32 + 3);
         assert!(below > above, "above {above}, below {below}");
+    }
+
+    /// And the corner outside the rounded outline **does** get shadow, which
+    /// is what makes the card look cut from the page rather than pasted on it.
+    #[test]
+    fn the_corner_outside_the_rounded_outline_is_shaded() {
+        let (mut pixels, width, height, margin, radius) = frame();
+        cast_shadow(&mut pixels, width, height, margin, radius, 1.0);
+        // Just inside the fixture's square corner, just outside the card's.
+        let at = margin as i32 + 2;
+        assert!(
+            alpha(&pixels, width, at, at) > 0,
+            "the rounded corner was left unshaded",
+        );
     }
 }
