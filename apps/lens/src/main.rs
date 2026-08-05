@@ -447,6 +447,12 @@ fn main() -> std::process::ExitCode {
     std::thread::spawn(move || {
         // The translator lives on the worker, not shared: it holds no state
         // worth sharing and this keeps the loop free of a lock.
+        // When the last answer came back. Ollama's lease is thirty minutes and
+        // every request resets it, so within that window the model is
+        // certainly still in memory and there is nothing to ask about.
+        let mut last_answer: Option<Instant> = None;
+        const LEASE_IS_SAFE_FOR: Duration = Duration::from_secs(20 * 60);
+
         while let Ok(job) = jobs_rx.recv() {
             // Take only the newest queued job. A pointer crossing three
             // sentences queues three translations, and finishing them all
@@ -465,6 +471,20 @@ fn main() -> std::process::ExitCode {
             let mut request = QuickRequest::new(&job.original, &job.language);
             if let Some(word) = &job.focused_word {
                 request = request.with_focus(word);
+            }
+
+            // A cold load measured thirteen seconds on this machine, and for
+            // all of it the card said only "번역 중", which reads as a hung
+            // application rather than as a machine doing something. Asked only
+            // when the lease may have lapsed, because the question costs 8ms.
+            let may_have_unloaded = last_answer.is_none_or(|at| at.elapsed() > LEASE_IS_SAFE_FOR);
+            if may_have_unloaded && !translator.is_resident() {
+                let _ = answers_tx.send(Answer {
+                    generation: job.generation,
+                    card: Card::loading_model(&job.original),
+                    anchor: job.anchor,
+                    final_answer: false,
+                });
             }
 
             let key = CacheKey::of(&request, translator.model(), PROMPT_VERSION);
@@ -503,6 +523,7 @@ fn main() -> std::process::ExitCode {
                 }
                 Err(error) => Card::not_translated(&job.original, &error),
             };
+            last_answer = Some(Instant::now());
             if answers_tx
                 .send(Answer {
                     generation: job.generation,
@@ -934,7 +955,7 @@ fn log_card(card: &Card) {
             lens_core::card::CardBody::Translation(text) =>
                 format!("translated={} chars", text.chars().count()),
             lens_core::card::CardBody::Problem(_) => "problem".to_owned(),
-            lens_core::card::CardBody::Waiting => "waiting".to_owned(),
+            lens_core::card::CardBody::Waiting(status) => format!("waiting: {status}"),
         },
         card.footer,
     );
