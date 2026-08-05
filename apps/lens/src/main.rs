@@ -737,6 +737,16 @@ fn main() -> std::process::ExitCode {
                     // re-words their own sentence, which on a mostly-Korean
                     // screen is most hovers.
                     if decide(&sentence, &language) == Decision::AlreadyInTarget {
+                        // The last silent path. A reader hovering Korean saw
+                        // nothing happen and had no way to tell that from an
+                        // application exposing no text, which every other
+                        // quiet outcome now explains.
+                        if let Some(line) = narrator.line_for_skip(
+                            &format!("already in {language}"),
+                            process_name.as_deref(),
+                        ) {
+                            println!("{line}");
+                        }
                         continue;
                     }
                     // The region the card must not cover, which is the
