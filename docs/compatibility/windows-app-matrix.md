@@ -270,10 +270,43 @@ back with nothing classifiable, which no other application has produced. Worth
 understanding before concluding anything about why the on-target rate is so
 low, because an empty expansion and a mislocated one are different faults.
 
-Two further KakaoTalk windows were fully occluded and are unmeasured. The one
-measured is 475x800, which is the size of the friend list rather than an open
-conversation, so **this row may not describe the surface that matters**. A
-sweep with a conversation in front is the next thing to do.
+#### With a conversation open, it is worse
+
+The friend list above may not have been the surface that mattered, so it was
+measured again with a conversation window in front. Twice, once with the
+accessibility wake and once without:
+
+| Window | Points | Acquired | On-target | Distance p50 / max | Word unit |
+|---|---:|---:|---:|---:|---|
+| 475x800 friend list | 104 | 14 (13%) | 14% | 57px / 221px | unknown 8, word 6 |
+| 475x1011 conversation | 128 | 7 (5%) | **0%** | 167px / 362px | unknown 6, word 1 |
+| 475x1011, wake sent | 98 | 6 (6%) | **0%** | 216px / 370px | unknown 5, word 1 |
+
+**Nothing resolves to where the pointer is.** Not one on-target hit across two
+conversation sweeps. The wake changes nothing, which is expected since it is a
+Chromium mechanism and this is not Chromium; its woken pass is also
+contaminated, 76 of 98 points occluded because a window moved under it.
+
+Two other KakaoTalk windows returned `unsupported` at every single one of 80
+and 72 points: no text pattern anywhere.
+
+The consistent signature across all three: control `50030` Document, five to
+thirteen percent of points exposing anything at all, word expansion returning
+nothing classifiable five times out of six, and every off-target hit resolving
+*upward* to one of two or three rectangles.
+
+#### What follows
+
+**KakaoTalk is an OCR case, not an accessibility case.**
+[ADR-0002](../decisions/ADR-0002-accessibility-first-acquisition.md) reserves
+OCR for surfaces that expose no usable text, and this is one, measured three
+times.
+
+That is worth more than a matrix row, because it is the messenger a Korean
+reader is most likely to meet a second language in, and the manual OCR fallback
+is currently M5, behind deep analysis and after two other milestones. Whether
+that ordering still makes sense is a product question, raised in #34 rather
+than decided here.
 
 ### The finding that changes the design
 
