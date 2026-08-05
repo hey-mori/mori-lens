@@ -95,6 +95,17 @@ the trade is real and worth stating:
 A reader who prefers the trade the other way writes `model = qwen2.5:3b`
 in their settings file, and a named model is always honoured.
 
+**The original is shown, and may be shortened.** A card caps it at two
+lines and ends with an ellipsis. The reason it is there at all is so a
+reader can see that the answer belongs to the sentence they pointed at,
+and the first line settles that; a three-line English paragraph above the
+answer was mostly text they had already read, and it pushed the
+translation out of the first glance.
+
+What is not acceptable, and is not done, is showing a translation with
+**no** original: that is the only version of this card a page could use
+to say something the reader has no way to check.
+
 What this does and does not put at risk:
 
 - **Not at risk:** anything being executed, opened, followed, typed into
