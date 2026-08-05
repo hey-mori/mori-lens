@@ -54,20 +54,43 @@ pub const DEFAULT_MODEL: &str = "qwen2.5:3b";
 pub struct OllamaTranslator {
     endpoint: String,
     model: String,
+    /// Whether a person asked for this model, or it is just the fallback name.
+    ///
+    /// The difference decides whether [`Self::resolve_model`] may replace it.
+    /// Without it, [`DEFAULT_MODEL`] behaved like a choice: on a machine where
+    /// it happened to be installed, selection short-circuited and the better
+    /// model sitting next to it was never considered. A default nobody picked
+    /// should not outrank a measurement.
+    pinned: bool,
     timeout: Duration,
 }
 
 impl Default for OllamaTranslator {
     fn default() -> Self {
-        Self::new(DEFAULT_ENDPOINT, DEFAULT_MODEL)
+        Self::choosing(DEFAULT_ENDPOINT)
     }
 }
 
 impl OllamaTranslator {
+    /// A translator for a model the user named. It will not be replaced.
     pub fn new(endpoint: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
             endpoint: endpoint.into(),
             model: model.into(),
+            pinned: true,
+            timeout: QUICK_TIMEOUT,
+        }
+    }
+
+    /// A translator that will use whichever installed model suits best.
+    ///
+    /// The name it starts with is only what appears in "this model is not
+    /// installed" if nothing at all is.
+    pub fn choosing(endpoint: impl Into<String>) -> Self {
+        Self {
+            endpoint: endpoint.into(),
+            model: DEFAULT_MODEL.to_owned(),
+            pinned: false,
             timeout: QUICK_TIMEOUT,
         }
     }
@@ -162,17 +185,10 @@ impl OllamaTranslator {
         if installed.is_empty() {
             return Err(TranslateError::ModelMissing(self.model.clone()));
         }
-        if installed.iter().any(|name| name == &self.model) {
-            return Ok(&self.model);
-        }
-        // Smallest first: a quick translation on every hover is the wrong place
-        // to run the largest model on the machine.
-        const PREFERRED: [&str; 3] = ["translategemma", "qwen2.5:3b", "qwen2.5"];
-        let chosen = PREFERRED
-            .iter()
-            .find_map(|prefix| installed.iter().find(|name| name.starts_with(prefix)))
-            .or_else(|| installed.first())
-            .cloned()
+        // The choice itself is pure and lives in `lens-core`, so which model a
+        // given set of installs produces is testable without an Ollama.
+        let wanted = self.pinned.then_some(self.model.as_str());
+        let chosen = lens_core::translate::choose_model(wanted, &installed)
             .ok_or_else(|| TranslateError::ModelMissing(self.model.clone()))?;
         self.model = chosen;
         Ok(&self.model)
