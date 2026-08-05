@@ -131,6 +131,8 @@ it. It opens no window and appears in the notification area.
 - **Click the tray icon** to pause. Paused means no accessibility call is
   made at all, not that the card is hidden. `Ctrl+Alt+L` does the same.
 - **Right-click it** for the settings file, start-with-Windows, and quit.
+  That is the way out: Lens opens no console, so a shell does not wait for
+  it and `Ctrl+C` at the prompt goes to the shell rather than to Lens.
 
 The first run writes `%APPDATA%\Mori Lens\settings.conf` with every
 option in it, commented. That is where the target language, the theme,
