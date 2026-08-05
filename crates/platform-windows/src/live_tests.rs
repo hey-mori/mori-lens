@@ -2151,52 +2151,175 @@ fn measure_what_a_long_paragraph_does_to_the_card() {
     );
 }
 
-/// The spike that decides whether Milestone 4 can use Windows' own OCR.
+/// Windows' own OCR, from a binary built the way `lens.exe` is.
 ///
-/// [#62](https://github.com/swarea/mori-lens/issues/62). `Windows.Media.Ocr`
-/// documents a package identity requirement for desktop applications, and Lens
-/// ships as a single unpackaged `lens.exe`. A cargo test binary has no package
-/// identity either, so this is a fair proxy.
-///
-/// It draws its own bitmap and captures nothing.
+/// [#62](https://github.com/swarea/mori-lens/issues/62) settled the question
+/// that blocked this milestone: `Windows.Media.Ocr` documents a package
+/// identity requirement for desktop applications, and Lens ships one loose
+/// exe. A cargo test binary has no package identity either.
 #[test]
 #[ignore = "needs a live desktop session; run manually"]
-fn does_windows_ocr_work_from_an_unpackaged_binary() {
-    const SENTENCE: &str = "The output files came back empty.";
+fn windows_ocr_is_available_and_speaks_both_languages() {
+    println!("languages: {:?}", crate::ocr::available_languages());
+    println!("korean:  {}", crate::ocr::can_recognise("ko"));
+    println!("english: {}", crate::ocr::can_recognise("en-US"));
 
-    // Korean too. Lens reads a foreign language and answers in the reader's,
-    // so English is the common case, but the language decision needs to read
-    // Korean well enough to skip it rather than translate it back and forth.
+    // Measured rather than asserted: which recognition packs are installed is
+    // a property of the machine, and a suite that fails on somebody's laptop
+    // for that reason teaches them to ignore it.
+    assert!(
+        !crate::ocr::available_languages().is_empty(),
+        "no recognisers at all, so this backend cannot serve anyone here",
+    );
+}
+
+/// Capture a rectangle, read it, and get words back where they actually are.
+///
+/// **The subject is the harness window**, which is this repository's own,
+/// opaque, at a fixed position, and now carries a known sentence. The obvious
+/// subject was one of Lens's own cards, and it was wrong for a reason worth
+/// writing down: the card is **translucent**, so capturing its rectangle
+/// captures the desktop showing through it. The first run of this check read
+/// back `계속`, a word from whatever was behind it.
+///
+/// Reading the product's own card is also the thing the milestone gate forbids.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn a_captured_rectangle_comes_back_as_words_in_the_right_places() {
+    use lens_core::geometry::{ScreenPoint, ScreenRect};
+
+    use crate::protected_harness::ProtectedHarness;
+
+    let harness = ProtectedHarness::start().expect("harness");
+    // Settled, drawn, and on top: the harness raises itself, and a capture
+    // taken before it has painted reads whatever it is covering.
+    std::thread::sleep(std::time::Duration::from_millis(400));
+
+    let field = harness.fields().plain;
+    // A little wider than the control, so a word at the edge is not clipped in
+    // half and reported as two.
+    let region = ScreenRect::new(
+        field.x - 6,
+        field.y - 6,
+        field.width + 12,
+        field.height + 12,
+    );
+
+    let capture = crate::capture::rectangle(region).expect("the region could not be captured");
+    let read = crate::ocr::read(&capture, ScreenPoint::new(region.x, region.y))
+        .expect("the recogniser returned nothing");
+
+    let found = read.text();
+    println!(
+        "captured {}x{} · read {found:?}",
+        region.width, region.height
+    );
+
+    let flat: String = found.chars().filter(|c| !c.is_whitespace()).collect();
+    let wanted: String = "The output files came back empty"
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    assert!(
+        flat.contains(&wanted),
+        "the harness's own sentence did not come back out of the recogniser: \
+         {found:?}",
+    );
+
+    // The half that matters more than the text: a word knows where it is.
+    // Every rectangle must land inside the region that was captured, or the
+    // translation from bitmap coordinates to screen coordinates is wrong and
+    // the pointer would resolve to the wrong word.
+    let words: Vec<_> = read.lines.iter().flat_map(|line| &line.words).collect();
+    assert!(!words.is_empty(), "text but no words");
+    for word in &words {
+        assert!(
+            word.bounds.x >= region.x
+                && word.bounds.y >= region.y
+                && word.bounds.right() <= region.right() + 2
+                && word.bounds.bottom() <= region.bottom() + 2,
+            "{:?} at {:?} is outside the captured region {region:?}",
+            word.text,
+            word.bounds,
+        );
+    }
+
+    // And pointing at the middle of a word resolves to that word, which is the
+    // whole reason the rectangles are carried at all.
+    let target = words
+        .iter()
+        .find(|word| word.text.chars().count() >= 5)
+        .expect("a word worth pointing at");
+    let middle = ScreenPoint::new(
+        target.bounds.x + target.bounds.width / 2,
+        target.bounds.y + target.bounds.height / 2,
+    );
+    let (_, resolved) = read.word_at(middle).expect("a word under the pointer");
+    println!(
+        "pointing at the middle of {:?} resolved {:?}",
+        target.text, resolved.text,
+    );
+    assert_eq!(
+        resolved.text, target.text,
+        "a point in the middle of a word resolved to a different one",
+    );
+}
+
+/// What a capture of a translucent card actually contains.
+///
+/// Recorded rather than fixed, because it is not a defect: a card drawn with
+/// per-pixel alpha lets the desktop through, and `BitBlt` from the screen sees
+/// the composited result. It matters for the milestone, where the card has to
+/// be **hidden** before a region under it is captured, and it is the kind of
+/// thing that is obvious once seen and expensive to discover later.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn measure_what_a_capture_sees_through_the_card() {
+    use lens_core::card::Card;
+    use lens_core::geometry::{ScreenPoint, ScreenRect};
+    use lens_core::translate::{EngineId, QuickTranslation};
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+
     const KOREAN: &str = "출력 파일이 비어 있었습니다.";
 
-    let verdict = crate::ocr_spike::probe(SENTENCE);
-    println!("engine available: {}", verdict.engine_available);
-    println!("languages: {:?}", verdict.languages);
-    println!("korean: {}", crate::ocr_spike::can_recognise("ko"));
-    println!("english: {}", crate::ocr_spike::can_recognise("en-US"));
-    println!("recognised: {:?}", verdict.recognised);
-    println!("failure: {:?}", verdict.failure);
+    let overlay = crate::Overlay::start().expect("overlay");
+    assert!(overlay.show(
+        Card::translated(
+            "The output files came back empty.",
+            &QuickTranslation {
+                text: KOREAN.to_owned(),
+                engine: EngineId::LocalOllama,
+                model: "qwen2.5:3b".to_owned(),
+                latency_ms: 900,
+                cached: false,
+            },
+        ),
+        ScreenRect::new(400, 300, 300, 22),
+    ));
+    std::thread::sleep(std::time::Duration::from_millis(700));
 
-    // Measured rather than asserted for the languages: which recognition packs
-    // are installed is a property of the machine. What is asserted is the one
-    // thing the spike exists to settle.
-    assert!(
-        verdict.engine_available,
-        "no OCR engine from an unpackaged binary, so this backend costs the \
-         single-exe delivery this product promises: {:?}",
-        verdict.failure,
+    // SAFETY: a read-only query on this process's own window.
+    let rect = unsafe {
+        let mut rect = RECT::default();
+        GetWindowRect(HWND(overlay.window_id() as *mut _), &mut rect).expect("window rect");
+        rect
+    };
+    let region = ScreenRect::new(
+        rect.left,
+        rect.top,
+        rect.right - rect.left,
+        rect.bottom - rect.top,
     );
+    let capture = crate::capture::rectangle(region).expect("capture");
+    let read = crate::ocr::read(&capture, ScreenPoint::new(region.x, region.y)).expect("read");
+    let _ = overlay.hide();
 
-    let found = verdict.recognised.expect("an engine but no result");
-    let normalised: String = found.chars().filter(|c| !c.is_whitespace()).collect();
-    let wanted: String = SENTENCE.chars().filter(|c| !c.is_whitespace()).collect();
-    assert_eq!(
-        normalised, wanted,
-        "black text on white is the easiest thing a recogniser is ever given",
+    let flat: String = read.text().chars().filter(|c| !c.is_whitespace()).collect();
+    let wanted: String = KOREAN.chars().filter(|c| !c.is_whitespace()).collect();
+    println!(
+        "through the card: {:?} · card's own text recovered: {}",
+        read.text().replace('\n', " / "),
+        flat.contains(&wanted),
     );
-
-    // Measured, not asserted: a Korean recognition pack is a property of the
-    // machine, and the assertion above is the one this spike exists for.
-    let korean = crate::ocr_spike::probe(KOREAN);
-    println!("korean text -> {:?}", korean.recognised);
 }
