@@ -930,3 +930,75 @@ fn what_a_window_exposes_without_raising_it() {
          not an alternative to raising windows",
     );
 }
+
+/// A window that closes under the pointer must not take Lens with it.
+///
+/// Milestone 1's other untested gate: "no crash from an element belonging to a
+/// closed window". `docs/architecture.md` calls this a normal outcome rather
+/// than an exception, and `AcquireError::ElementGone` exists for it, but
+/// nothing had ever destroyed a window mid-flight to find out.
+///
+/// It is not a hypothetical. A menu closes, a tooltip disappears, a tab is
+/// shut: the UI under a resting pointer changes constantly, and
+/// `ElementFromPoint` can hand back an element whose process has already let
+/// go of it.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn reading_where_a_window_just_closed_is_an_error_not_a_crash() {
+    use lens_core::acquire::{AcquireContext, TextAcquirer};
+    use lens_core::hover::Generation;
+
+    use crate::protected_harness::{centre, ProtectedHarness};
+
+    let acquirer = UiaTextAcquirer::new().expect("UI Automation is unreachable");
+    let context = AcquireContext::new(Generation(1));
+
+    // A window with a real control in it, then the same coordinate after the
+    // window is gone.
+    let point = {
+        let harness = ProtectedHarness::start().expect("harness");
+        let point = centre(harness.fields().plain);
+        let before = acquirer.acquire(point, &context);
+        println!("while the window existed: {:?}", before.map(|_| "read"));
+        point
+        // Dropped here: the window is destroyed and its thread joined.
+    };
+
+    // The window is gone. Whatever is underneath now answers, or nothing does,
+    // and either is fine. What must not happen is a panic or a hang.
+    let started = std::time::Instant::now();
+    let after = acquirer.acquire(point, &context);
+    let elapsed = started.elapsed();
+
+    println!(
+        "after it closed: {:?} in {}ms",
+        after
+            .as_ref()
+            .map(|_| "read")
+            .map_err(|error| error.reason()),
+        elapsed.as_millis(),
+    );
+
+    // Reaching this line at all is most of the test: a crash would have taken
+    // the process. The rest guards against the other failure, an adapter that
+    // blocks forever on an element nobody owns.
+    //
+    // What this does **not** cover: the transition from a successful read to a
+    // closed window. The harness's plain EDIT exposes no text pattern, so the
+    // "before" read is already `Unsupported`. Covering that properly needs a
+    // harness control that reads, and the gate this satisfies is about not
+    // crashing rather than about the transition.
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "reading a closed window's coordinate took {}ms, which is a hang rather \
+         than an error",
+        elapsed.as_millis(),
+    );
+
+    // Repeated, because a stale COM interface tends to fail differently the
+    // second time, and the adapter caches nothing precisely so that it cannot.
+    for _ in 0..20 {
+        let _ = acquirer.acquire(point, &context);
+    }
+    println!("twenty further reads at the same coordinate, still alive");
+}

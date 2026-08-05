@@ -34,6 +34,17 @@ runaway UI Automation calls during fast pointer movement, no crash from
 an element belonging to a closed window, and behaviour recorded at more
 than one DPI scale and on more than one monitor.
 
+Standing, 2026-08-05:
+
+| Condition | State |
+|---|---|
+| Notepad, Chrome, Edge, VS Code, Word, Electron messenger | measured |
+| Windows Settings, Edge PDF viewer | **open**; they need only to be running, not raised |
+| correct-word judgement by a person | **open**; the on-target rate is a proxy and no human has confirmed a resolved word |
+| no runaway calls on fast movement | measured: a pointer crossing a monitor costs zero calls, a resting hand costs one |
+| no crash from a closed window's element | measured: a typed error in 153ms, and twenty further reads survive |
+| more than one DPI scale, more than one monitor | measured |
+
 ## M2 · Windows native overlay
 
 Passive tooltip that never takes focus and passes clicks through; the
