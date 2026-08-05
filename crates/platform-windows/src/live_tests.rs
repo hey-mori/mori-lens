@@ -2402,3 +2402,66 @@ fn dump_the_frame_around_a_card() {
         println!("  {n:>3}  a={:>3}  rgb={:06x}", p >> 24, p & 0x00ff_ffff);
     }
 }
+
+/// How much of the page a card actually takes.
+///
+/// A user called the card's presence too large, which is a judgement about
+/// area rather than about any one number in it. This prints the area, so the
+/// next change to padding, gaps or width is answerable with a figure instead of
+/// another screenshot.
+///
+/// The card is the one from that screenshot: two lines of English original, two
+/// of Korean answer, and the footer.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn measure_how_much_of_the_page_a_card_covers() {
+    use lens_core::card::Card;
+    use lens_core::theme::{Preset, SystemPreferences, TextScale, Theme, Translucency};
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    let glass = crate::glass::Glass::new().expect("Direct2D");
+    let theme = Theme::resolve(
+        Preset::System,
+        Translucency::DEFAULT,
+        TextScale::Normal,
+        SystemPreferences::default(),
+    );
+
+    let card = Card::translated(
+        "So deploying is what makes yesterday's work real, and that's the safe, obvious \
+         first step.",
+        &QuickTranslation {
+            text: "어제의 일은 배포로 현실화되며, 이것이 안전하고 명백한 첫 단계입니다.".to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "qwen2.5-coder:7b".to_owned(),
+            latency_ms: 1500,
+            cached: false,
+        },
+    );
+
+    for scale in [1.0f32, 1.5] {
+        // Scaled, as `show_card` scales it. Passing the 100% figure at 150%
+        // measures a card a third narrower than the product draws, and the
+        // first run of this reported one: 350 wide and 251 tall, which is not a
+        // card that exists.
+        let widest = (crate::overlay::max_card_width() as f32 * scale).round() as i32;
+        let laid = glass.lay_out(&card, &theme, widest, scale).expect("layout");
+        println!(
+            "scale {scale}: {}x{} = {} px",
+            laid.width,
+            laid.height,
+            laid.width * laid.height,
+        );
+    }
+
+    // No assertion on the figures. What is small enough is the user's call and
+    // it changes; what this guarantees is that the answer is measured.
+    let laid = glass
+        .lay_out(&card, &theme, crate::overlay::max_card_width(), 1.0)
+        .expect("layout");
+    assert!(laid.width > 0 && laid.height > 0);
+    assert!(
+        laid.width <= crate::overlay::max_card_width(),
+        "a card may never be wider than it was offered",
+    );
+}

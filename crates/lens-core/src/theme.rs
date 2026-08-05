@@ -228,6 +228,13 @@ pub struct Theme {
     /// something else.
     pub body_pt: i32,
     pub small_pt: i32,
+    /// The model, where it ran, and how long it took.
+    ///
+    /// Its own size, and the smallest on the card, because it is the only line
+    /// that is not the reader's text: it is there to answer "where did this
+    /// come from", which is a question asked once and then never again. At the
+    /// original's size it read as a third paragraph.
+    pub footer_pt: i32,
     pub padding: i32,
     pub corner_radius: i32,
 }
@@ -355,7 +362,8 @@ impl Theme {
             animate: !system.reduced_motion,
             body_pt: (11.0 * factor).round() as i32,
             small_pt: (9.0 * factor).round() as i32,
-            padding: 12,
+            footer_pt: (8.0 * factor).round() as i32,
+            padding: 9,
             corner_radius: 10,
         }
     }
@@ -643,6 +651,35 @@ mod tests {
             "small is {}pt",
             theme.small_pt,
         );
+        // The three sizes are a hierarchy, and it has to hold at every scale a
+        // reader can pick: the answer is the loudest thing on the card and the
+        // provenance line is the quietest. A footer that grew past the original
+        // would make the card's least important line look like a paragraph.
+        for scale in [
+            TextScale::Small,
+            TextScale::Normal,
+            TextScale::Large,
+            TextScale::Larger,
+        ] {
+            let at = Theme::resolve(
+                Preset::System,
+                Translucency::DEFAULT,
+                scale,
+                SystemPreferences::default(),
+            );
+            assert!(
+                at.footer_pt < at.small_pt && at.small_pt < at.body_pt,
+                "{}pt footer, {}pt small, {}pt body",
+                at.footer_pt,
+                at.small_pt,
+                at.body_pt,
+            );
+            assert!(
+                at.footer_pt >= 7,
+                "footer is {}pt, too small to read",
+                at.footer_pt
+            );
+        }
         // Even at the largest scale a reader chose, it stays readable rather
         // than becoming a poster.
         let largest = Theme::resolve(
