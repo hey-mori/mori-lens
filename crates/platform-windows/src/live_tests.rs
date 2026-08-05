@@ -2332,9 +2332,14 @@ fn measure_what_a_capture_sees_through_the_card() {
         flat.chars().count(),
         flat.contains(&wanted),
     );
-    assert!(
-        !flat.contains(&wanted),
-        "the card's own text came back, so it is opaque after all and the \
-         milestone would not need to hide it before capturing underneath",
-    );
+    // Deliberately not asserted in either direction, and the first version of
+    // this asserted one of them. A capture of the card's rectangle is a
+    // **mixture**: the surface is 92% opaque, so its own text usually wins,
+    // and over a busy background the desktop's text comes through instead.
+    // Both have been seen on this machine, minutes apart.
+    //
+    // Which one wins is not the finding. The finding is that neither is
+    // trustworthy, so the milestone hides the card before capturing under it
+    // rather than reasoning about what the composite will contain.
+    let _ = flat.contains(&wanted);
 }
