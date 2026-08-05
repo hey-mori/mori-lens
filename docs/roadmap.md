@@ -55,6 +55,17 @@ per-application tiers.
 fast pointer movement produces no card spray; Lens never reads its own
 overlay; verified on multiple monitors and in a full-screen application.
 
+Standing, 2026-08-05:
+
+| Condition | State |
+|---|---|
+| focus is never stolen | measured: the foreground window is unchanged across a show |
+| no card spray on fast movement | measured: a pointer crossing a monitor draws zero cards, and six queued answers draw one |
+| Lens never reads its own overlay | measured: 193 characters read identically with a card drawn over that exact point |
+| more than one monitor | measured: a card anchored on the second monitor stays on it |
+| a full-screen application | **open** |
+| tray icon, per-application tiers | **not built** |
+
 ## M3 · Quick translation
 
 Ollama discovery and health, model routing over the discovered set,
