@@ -91,8 +91,28 @@ pub fn token_budget(source_chars: usize) -> u32 {
 /// See `docs/benchmarks/2026-08-05-model-comparison.md`.
 const NOT_FOR_PROSE: [&str; 5] = ["embed", "bge", "nomic", "whisper", "clip"];
 
-/// Preferred translation models, best first, matched as a name prefix.
-const PREFERRED: [&str; 3] = ["translategemma", "gemma3", "qwen2.5"];
+/// Model families measured to work for a hover, matched as a name prefix.
+///
+/// **Only families that have actually been run.** It began as
+/// `["translategemma", "gemma3", "qwen2.5"]`, and the first two were there on
+/// reputation: one sounds like a translation engine and the other sounds
+/// capable.
+///
+/// `translategemma` was pulled and measured on 2026-08-05. It is not a
+/// translation engine, it is a chat model with a translation-sounding name:
+/// given bare text it spent 53 seconds writing English commentary, and with a
+/// short instruction it answered in markdown with alternatives. Through this
+/// crate's fenced prompt it behaves, and is **2.5 times slower** than the
+/// family below, with one timeout in three sentences.
+///
+/// It was first in this list. A user who had it installed would have been
+/// routed to it by a preference nobody had ever run.
+///
+/// `gemma3` is removed for the same reason in advance: never run here either.
+/// A model nobody has measured is a guess rather than a preference, and
+/// everything not named here is still chosen by size, which is a rule with
+/// evidence behind it.
+const PREFERRED: [&str; 1] = ["qwen2.5"];
 
 /// Above this, a hover costs more than it is worth.
 ///
@@ -489,8 +509,34 @@ mod tests {
 
     #[test]
     fn a_measured_family_is_preferred_over_a_bigger_stranger() {
-        let installed = models(&["some-stranger:8b", "gemma3:4b"]);
-        assert_eq!(choose_model(None, &installed).as_deref(), Some("gemma3:4b"),);
+        let installed = models(&["some-stranger:8b", "qwen2.5:3b"]);
+        assert_eq!(
+            choose_model(None, &installed).as_deref(),
+            Some("qwen2.5:3b")
+        );
+    }
+
+    /// The one this list was reordered for. `translategemma` was first here on
+    /// the strength of its name; measured, it is 2.5 times slower than the
+    /// family below it and timed out on one sentence in three.
+    #[test]
+    fn a_model_named_after_translation_is_not_preferred_for_being_named_that() {
+        let installed = models(&["translategemma:latest", "qwen2.5-coder:7b"]);
+        assert_eq!(
+            choose_model(None, &installed).as_deref(),
+            Some("qwen2.5-coder:7b"),
+        );
+    }
+
+    /// And it is still used when it is what the machine has. Slow beats
+    /// nothing, and the card shows the latency.
+    #[test]
+    fn a_slow_model_is_still_better_than_no_translation() {
+        let installed = models(&["translategemma:latest"]);
+        assert_eq!(
+            choose_model(None, &installed).as_deref(),
+            Some("translategemma:latest"),
+        );
     }
 
     /// Among models nobody has measured, larger won where it was measured.
