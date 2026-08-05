@@ -1,7 +1,6 @@
 # Windows application compatibility
 
-**Status · started. Five windows measured across two sessions, four of
-the eight target applications still unmeasured.**
+**Status · started. Seven windows measured across three sessions.**
 
 The full set is the gate on Milestone 2
 ([ADR-0008](../decisions/ADR-0008-probe-before-product.md)). Nothing here is filled
@@ -100,6 +99,7 @@ between them they cover where a user actually meets a second language.
 | Edge PDF viewer | Chromium PDF | text PDFs, the boundary before OCR |
 | Windows Settings | WinUI | modern XAML controls |
 | Slack or Teams | Electron | messenger under load |
+| KakaoTalk | Win32 / Document provider | measured: one blob, and the messenger a Korean reader actually uses |
 
 ## Results
 
@@ -239,6 +239,41 @@ So the honest summary of "does it know what you pointed at":
 **Which window** is not in doubt anywhere: `ElementFromPoint` performs the same
 hit test that decides where a click goes, and the probe verifies the owning
 window per point, which is how the occlusion bug was caught.
+
+### KakaoTalk, 2026-08-05: the case the product is for, and it is the bad one
+
+```
+KakaoTalk, 475x800, 104 points, build 007c8ec
+  acquired    14/104 (13%)
+  on-target   2/14 (14%)     distance p50 57px · p95 221px · max 221px
+  separable   1 distinct target among 2 on-target hits
+  off-target  12 points -> 3 distinct rects (4.0 each)   below 7 · above 0 · left 1 · right 4
+  gate        would accept 1 of 12 as slack
+  control     50030 Document x14
+  word unit   unknown 8 · word 6
+  unsupported 90
+```
+
+**A messenger that behaves like a document, not like the other messenger
+measured.** The Electron chat window gave 22 distinct targets from 22
+on-target hits; KakaoTalk gives **one**. Twelve off-target hits collapse to
+three rectangles. The whole conversation is a single scrollable region with a
+pointer somewhere inside it.
+
+The consequence, and it follows from the design rather than being a separate
+fault: the distance gate suppresses eleven of the twelve, so **Lens shows
+nothing** in KakaoTalk rather than showing the wrong message. Correct
+behaviour, and a product that does very little there.
+
+New in this row: `word unit: unknown 8`. Eight of fourteen word expansions came
+back with nothing classifiable, which no other application has produced. Worth
+understanding before concluding anything about why the on-target rate is so
+low, because an empty expansion and a mislocated one are different faults.
+
+Two further KakaoTalk windows were fully occluded and are unmeasured. The one
+measured is 475x800, which is the size of the friend list rather than an open
+conversation, so **this row may not describe the surface that matters**. A
+sweep with a conversation in front is the next thing to do.
 
 ### The finding that changes the design
 
