@@ -61,6 +61,25 @@ pub fn print_report(windows: &[WindowTextInventory]) {
         } else {
             format!("{}/{}", window.resolved_into_element, window.probed)
         };
+        let mut notes = Vec::new();
+        if window.unlocated > 0 {
+            notes.push(format!("{} resolved but not rendered", window.unlocated));
+        }
+        let misses = if window.miss_distances.is_empty() {
+            String::new()
+        } else {
+            let mut sorted = window.miss_distances.clone();
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            format!(
+                "{} mislocated by {:.0} to {:.0}px",
+                sorted.len(),
+                sorted[0],
+                sorted[sorted.len() - 1],
+            )
+        };
+        if !misses.is_empty() {
+            notes.push(misses);
+        }
         println!(
             "{:<20}{:>9}{:>10}{:>9}{:>10}{:>11}",
             truncate(&window.process_name, 19),
@@ -72,6 +91,9 @@ pub fn print_report(windows: &[WindowTextInventory]) {
                 .map_or("?".to_owned(), |h| format!("{h}px")),
             on_target,
         );
+        if !notes.is_empty() {
+            println!("{:<20}{}", "", notes.join(" · "));
+        }
     }
 
     println!();
@@ -80,6 +102,10 @@ pub fn print_report(windows: &[WindowTextInventory]) {
     println!("smallest   the shortest text element, in pixels. A window whose");
     println!("           smallest is the height of the whole window holds its text");
     println!("           in one piece, and a pointer cannot aim inside it.");
+    println!("           A probe that resolved to text with no rectangle is");
+    println!("           counted apart, rather than as a miss: unrendered text is");
+    println!("           scrolled out of view, not mislocated, and the product");
+    println!("           treats it the same way.");
     println!("on-target  the check the grid sweep could never make: for each");
     println!("           sampled element, a point at its own centre is given to");
     println!("           its own text pattern, and the answer is correct only if");
