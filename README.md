@@ -150,6 +150,9 @@ it. It opens no window and appears in the notification area.
   check what was read.
 - **Click the tray icon** to pause. Paused means no accessibility call is
   made at all, not that the card is hidden. `Ctrl+Alt+L` does the same.
+- **Press Ctrl+Alt+O** where the accessibility path gives nothing, and Lens
+  reads the band around the pointer with OCR instead. It never does this
+  on its own, and no image is ever written anywhere.
 - **Right-click it** for the settings file, start-with-Windows, and quit.
   That is the way out: Lens opens no console, so a shell does not wait for
   it and `Ctrl+C` at the prompt goes to the shell rather than to Lens.

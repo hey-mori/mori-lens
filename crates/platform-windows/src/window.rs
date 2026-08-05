@@ -203,6 +203,36 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+/// The scaling of the monitor a point is on, as a multiplier on 96 DPI.
+///
+/// Per monitor, because a desk with a 150% display beside a 100% one would
+/// otherwise crop a physically different amount of screen on each.
+pub fn monitor_scale_at(point: ScreenPoint) -> f32 {
+    // SAFETY: read-only monitor and DPI queries; NEAREST always yields one.
+    unsafe {
+        let monitor = windows::Win32::Graphics::Gdi::MonitorFromPoint(
+            windows::Win32::Foundation::POINT {
+                x: point.x,
+                y: point.y,
+            },
+            windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONEAREST,
+        );
+        let mut dpi_x = 96u32;
+        let mut dpi_y = 96u32;
+        if windows::Win32::UI::HiDpi::GetDpiForMonitor(
+            monitor,
+            windows::Win32::UI::HiDpi::MDT_EFFECTIVE_DPI,
+            &mut dpi_x,
+            &mut dpi_y,
+        )
+        .is_err()
+        {
+            return 1.0;
+        }
+        dpi_x as f32 / 96.0
+    }
+}
+
 /// The id of the top-level window that actually owns a screen point.
 ///
 /// `WindowFromPoint` answers with whatever is topmost, which is the only

@@ -69,7 +69,7 @@ not written), **out of v1** (deliberately excluded).
 | Failure messages that say what to do | **shipped** · an absent Ollama names ollama.com, a missing model names the `ollama pull` command, on the card and in the tray tooltip |
 | Quick translation via Ollama | **shipped** · warm median around 1.6s, streamed, cached in memory, model resolved at startup |
 | Deep analysis (grammar, structure) | planned · M5 |
-| Manual OCR fallback (Windows) | planned · **M4**, swapped ahead of deep analysis because VS Code and KakaoTalk expose almost nothing |
+| Manual OCR fallback (Windows) | **shipped** · Ctrl+Alt+O reads a band around the pointer, hides the card first, resolves the word under it, and feeds the same translation and card path. Never automatic, never to disk |
 | macOS acquisition | planned · M6 |
 | macOS overlay and Vision OCR | planned · M7 |
 | Saved vocabulary and sentences | planned · M8 |
@@ -84,7 +84,7 @@ recorded in
 [`compatibility/windows-app-matrix.md`](compatibility/windows-app-matrix.md).
 That gate is [ADR-0008](decisions/ADR-0008-probe-before-product.md).
 
-Sixteen capabilities have passed it. The rest have unit tests, which
+Seventeen capabilities have passed it. The rest have unit tests, which
 prove the logic and prove nothing about a desktop.
 
 What is still missing before this is something a person installs: a
