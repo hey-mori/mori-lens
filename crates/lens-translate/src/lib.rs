@@ -270,6 +270,23 @@ impl OllamaTranslator {
         )
     }
 
+    /// The same body with an extra line appended to the system prompt.
+    ///
+    /// For measuring a prompt change before making it, so a wording that
+    /// sounds better can be shown to be better.
+    #[cfg(test)]
+    pub fn body_for_with_extra(&self, request: &QuickRequest, extra: &str) -> String {
+        let budget = lens_core::translate::token_budget(request.source_text.chars().count());
+        let body = self.body_with_budget(request, false, budget);
+        // The system prompt is the first string field; appending to it here
+        // keeps the fence and the request otherwise identical.
+        body.replacen(
+            "Keep code identifiers, file paths, and URLs unchanged.",
+            &format!("Keep code identifiers, file paths, and URLs unchanged.{extra}"),
+            1,
+        )
+    }
+
     fn body_with_budget(&self, request: &QuickRequest, streaming: bool, budget: u32) -> String {
         let fence = fence_for(&request.source_text);
         // The fence is concatenated with the text on purpose, which is the one
