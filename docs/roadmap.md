@@ -65,7 +65,7 @@ Standing, 2026-08-05:
 | more than one monitor | measured: a card anchored on the second monitor stays on it |
 | a full-screen application | **open** |
 | tray icon | built and measured: the shell accepts it, a click becomes a pause, and it leaves on exit |
-| per-application tiers | **not built**; the tiers exist in `lens-core`, nothing lets a user set one |
+| per-application tiers | built: set in the settings file, with the password-manager floor unreachable by omission |
 
 ## M3 · Quick translation
 

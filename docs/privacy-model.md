@@ -115,6 +115,33 @@ rather than global automatic hover. A tool that reads everything from
 first launch has to earn that, and it cannot earn it before the
 compatibility matrix says how well it reads anything.
 
+### Where a user sets this
+
+`%APPDATA%\Mori Lens\settings.conf`, written with every option in it on
+first run so the answer to "how do I stop it reading that" is a file
+that already exists:
+
+```
+default = modifier
+
+[applications]
+chrome = allow
+code = deny
+```
+
+Until this file existed the tiers could be built in code and by nothing
+else, which meant the control described above was not reachable by the
+person it protects. A privacy control a user cannot reach is not a
+control.
+
+Two properties of it are asserted rather than asserted-to:
+
+- The password-manager list is applied **before** the file, so writing
+  `default = allow` does not switch it off. Turning one off takes naming
+  it, which is a user's call to make deliberately and not by omission.
+- `--auto` moves only the default tier. A `deny` written in the file
+  survives it.
+
 ## 3. Logging
 
 The rule: **log the shape, never the content.**
