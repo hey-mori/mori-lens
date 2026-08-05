@@ -1,6 +1,7 @@
 //! The probe loop, Windows.
 
 mod inventory;
+mod ocr_probe;
 mod pointer;
 mod report;
 mod sweep;
@@ -49,6 +50,7 @@ USAGE
     hover-probe [OPTIONS]           follow the pointer
     hover-probe sweep [OPTIONS]     measure whole windows, pointer untouched
     hover-probe inventory [--only x] ask each window what text it holds
+    hover-probe ocr [OPTIONS]       read the foreground window with OCR
 
 FOLLOW MODE
     Rest the pointer on text. One line is printed per resolved hover.
@@ -89,6 +91,25 @@ INVENTORY MODE
                         windows are two results and the matrix has to say
                         which is which, but a title is a document name.
 
+OCR MODE
+    Captures the foreground window's client area, recognises it, and samples
+    the same grid a sweep uses. Reports how many of those points land on a
+    recognised word, and, unless told not to, how many the accessibility path
+    resolves over the same points. That pair is the row this milestone exists
+    to produce.
+
+    The foreground window, and only that: a capture reads pixels, and the
+    pixels inside a covered window belong to whatever is covering it. Put the
+    application in front and run this. No window is raised or moved.
+
+    Counts only. It never prints recognised text.
+
+    --points <n>        Grid points. Default 240, matching a sweep.
+    --expect <text>     Say what is on screen. Reports found or not found
+                        without printing anything.
+    --no-compare        Skip the accessibility half.
+    --budget <s>        Seconds allowed for the accessibility half. Default 20.
+
     -h, --help          This text.
 ";
 
@@ -104,6 +125,7 @@ enum Mode {
         options: sweep::SweepOptions,
         only: Option<String>,
     },
+    Ocr(ocr_probe::OcrOptions),
 }
 
 fn parse_args() -> Result<Mode, String> {
@@ -125,6 +147,10 @@ fn parse_args() -> Result<Mode, String> {
             }
         }
         return Ok(Mode::Inventory { only, titles });
+    }
+    if args.first().is_some_and(|first| first == "ocr") {
+        args.remove(0);
+        return parse_ocr(args).map(Mode::Ocr);
     }
     if args.first().is_some_and(|first| first == "sweep") {
         args.remove(0);
@@ -153,6 +179,42 @@ fn parse_options(args: Vec<String>) -> Result<Options, String> {
             }
             "--expect" => {
                 options.expect = Some(args.next().ok_or("--expect needs a word")?);
+            }
+            other => return Err(format!("unknown argument: {other}")),
+        }
+    }
+
+    Ok(options)
+}
+
+fn parse_ocr(args: Vec<String>) -> Result<ocr_probe::OcrOptions, String> {
+    let mut options = ocr_probe::OcrOptions::default();
+    let mut args = args.into_iter();
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-h" | "--help" => {
+                print!("{USAGE}");
+                std::process::exit(0);
+            }
+            "--no-compare" => options.compare = false,
+            "--expect" => {
+                options.expect = Some(args.next().ok_or("--expect needs some text")?);
+            }
+            "--points" => {
+                options.points = args
+                    .next()
+                    .ok_or("--points needs a number")?
+                    .parse()
+                    .map_err(|_| "--points needs a number")?;
+            }
+            "--budget" => {
+                let seconds: u64 = args
+                    .next()
+                    .ok_or("--budget needs a number of seconds")?
+                    .parse()
+                    .map_err(|_| "--budget needs a number of seconds")?;
+                options.budget = Duration::from_secs(seconds);
             }
             other => return Err(format!("unknown argument: {other}")),
         }
@@ -247,6 +309,7 @@ pub fn run() -> ExitCode {
     match mode {
         Mode::Follow(options) => follow(acquirer, options, dpi_declared),
         Mode::Sweep { options, only } => run_sweep(acquirer, options, only, dpi_declared),
+        Mode::Ocr(options) => run_ocr(&acquirer, &options, dpi_declared),
         Mode::Inventory { only, titles } => {
             println!(
                 "hover-probe inventory · build {}
@@ -262,6 +325,54 @@ pub fn run() -> ExitCode {
             let found = inventory::run(only.as_deref());
             inventory::print_report(&found, titles);
             ExitCode::SUCCESS
+        }
+    }
+}
+
+/// Give the operator time to put the right window in front.
+///
+/// The probe is started from a terminal, which means the terminal is the
+/// foreground window at the moment it starts. Without this pause every run
+/// would measure the console it was launched from, and it would look like a
+/// perfectly ordinary result.
+const FOCUS_DELAY: Duration = Duration::from_secs(4);
+
+fn run_ocr(
+    acquirer: &UiaTextAcquirer,
+    options: &ocr_probe::OcrOptions,
+    dpi_declared: bool,
+) -> ExitCode {
+    println!(
+        "hover-probe ocr · build {}
+",
+        build_stamp()
+    );
+    if !dpi_declared {
+        println!(
+            "  dpi       NOT DECLARED: every rectangle below may be wrong on a scaled display"
+        );
+    }
+    println!(
+        "  languages {:?}",
+        lens_platform_windows::ocr::available_languages(),
+    );
+    println!(
+        "  waiting   {}s · click the window you want measured",
+        FOCUS_DELAY.as_secs(),
+    );
+    std::thread::sleep(FOCUS_DELAY);
+
+    match ocr_probe::run(acquirer, options) {
+        Ok(row) => {
+            ocr_probe::print(&row);
+            ExitCode::SUCCESS
+        }
+        Err(reason) => {
+            println!(
+                "
+  failed    {reason}"
+            );
+            ExitCode::from(1)
         }
     }
 }
