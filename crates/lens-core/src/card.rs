@@ -51,14 +51,14 @@ pub enum CardBody {
     Translation(String),
     /// A sentence the user can act on, never a code.
     Problem(String),
-    /// The answer is on its way.
+    /// The answer is on its way, and what is happening while it is.
     ///
     /// A quick translation measures about a second and a half from the pointer
     /// settling, and for most of that the screen shows nothing at all. A user
     /// cannot tell that from a product that did not notice them, so they move
     /// the pointer, which cancels the hover, which means it really does show
     /// nothing. This is the state that breaks that loop.
-    Waiting,
+    Waiting(String),
 }
 
 impl Card {
@@ -131,9 +131,18 @@ impl Card {
     /// `apps/lens/src/lifecycle.rs`: a cached sentence answers in microseconds
     /// and flashing this first would be worse than the wait it replaces.
     pub fn waiting(original: impl Into<String>) -> Self {
+        Self::in_progress(original, Self::WAITING_TEXT)
+    }
+
+    /// A waiting card for a translation that is waiting on a model load.
+    pub fn loading_model(original: impl Into<String>) -> Self {
+        Self::in_progress(original, Self::LOADING_TEXT)
+    }
+
+    fn in_progress(original: impl Into<String>, status: &str) -> Self {
         Self {
             original: original.into(),
-            body: CardBody::Waiting,
+            body: CardBody::Waiting(status.to_owned()),
             footer: String::new(),
         }
     }
@@ -147,6 +156,14 @@ impl Card {
     /// this product does not run one (`CLAUDE.md`); it would also be the first
     /// thing to ignore the system's reduced-motion setting.
     pub const WAITING_TEXT: &str = "번역 중";
+
+    /// What a waiting card says while the engine is still loading a model.
+    ///
+    /// A separate sentence because it is a separate wait. A translation takes
+    /// about a second and a half; a cold model took thirteen. The reader is
+    /// owed the difference, and "번역 중" for thirteen seconds is a product
+    /// that looks hung.
+    pub const LOADING_TEXT: &str = "모델을 불러오는 중";
 
     /// A card for text that could not be read at all.
     pub fn not_acquired(error: AcquireError) -> Self {
@@ -174,7 +191,7 @@ impl Card {
             CardBody::Problem(text) => !text.trim().is_empty(),
             // The original is the whole card, so the rule that a translation
             // never appears without one is what makes this showable at all.
-            CardBody::Waiting => !self.original.trim().is_empty(),
+            CardBody::Waiting(_) => !self.original.trim().is_empty(),
         }
     }
 }
@@ -387,7 +404,7 @@ mod waiting_tests {
     fn a_waiting_card_shows_the_sentence_it_is_working_on() {
         let card = Card::waiting("The output files came back empty.");
         assert!(card.is_showable());
-        assert_eq!(card.body, CardBody::Waiting);
+        assert_eq!(card.body, CardBody::Waiting(Card::WAITING_TEXT.to_owned()));
         // No engine has answered, so there is nothing true to put here. An
         // invented latency would be the one number on the card that lied.
         assert!(card.footer.is_empty());
@@ -446,5 +463,26 @@ mod streaming_tests {
             },
         );
         assert_eq!(body_of(&finished), "나는 다른 파일에서 삽입 스크립트를");
+    }
+}
+
+#[cfg(test)]
+mod loading_tests {
+    use super::*;
+
+    /// Thirteen seconds of "번역 중" reads as a hung application. The reader is
+    /// owed the difference between a translation and a model load.
+    #[test]
+    fn a_model_load_says_so_rather_than_claiming_to_be_translating() {
+        let card = Card::loading_model("The output files came back empty.");
+        assert!(card.is_showable());
+        assert_eq!(card.body, CardBody::Waiting(Card::LOADING_TEXT.to_owned()));
+        assert_ne!(Card::LOADING_TEXT, Card::WAITING_TEXT);
+    }
+
+    /// Same rule as every other card: the original is what makes it showable.
+    #[test]
+    fn a_model_load_with_no_original_is_refused() {
+        assert!(!Card::loading_model("  ").is_showable());
     }
 }
