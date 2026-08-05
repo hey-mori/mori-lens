@@ -58,6 +58,9 @@ not written), **out of v1** (deliberately excluded).
 | Pause control | **shipped** · Ctrl+Alt+L or the tray icon, and paused means the pointer is not sampled |
 | Settings file | **shipped** · `%APPDATA%\Mori Lens\settings.conf`, written with every option on first run, and a line it does not understand is reported at startup rather than ignored |
 | Per-application tiers | **shipped** · set in the settings file; password managers are denied before the file is read and cannot be re-enabled by omission |
+| No console window | **shipped** · a Windows subsystem binary that takes the launching terminal's console when there is one, guarded by a test that reads the PE header |
+| Waiting state | **shipped** · the card says it heard you after 180ms instead of leaving the screen empty for the second a model takes, and never for a cached sentence |
+| Start with Windows | **shipped** · off unless turned on from the tray menu, per-user run key, no elevation |
 | Tray icon | **shipped** · shows whether Lens is listening, pauses on a click, quits from its menu, and survives Explorer restarting |
 | Translation cache | **shipped** · in memory, keyed on model and prompt version |
 | Hover probe, sweep mode | **shipped** · produced the 2026-08-04 measurements |
@@ -81,11 +84,13 @@ recorded in
 [`compatibility/windows-app-matrix.md`](compatibility/windows-app-matrix.md).
 That gate is [ADR-0008](decisions/ADR-0008-probe-before-product.md).
 
-Thirteen capabilities have passed it. The rest have unit tests, which
+Sixteen capabilities have passed it. The rest have unit tests, which
 prove the logic and prove nothing about a desktop.
 
-What is still missing before this is something a person installs: a way
-to start with Windows, and an installer.
+What is still missing before this is something a person installs: a
+signed binary and an installer, so Windows does not warn on first run.
+Building it yourself is the current answer and it is not one most people
+will accept.
 
 **What the measurement found, since it changes what "works" means
 here:** acquisition succeeds, at p50 10ms, and returns the *right* text

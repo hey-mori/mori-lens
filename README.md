@@ -92,7 +92,66 @@ docs/research/             what was verified, and where the evidence is
 docs/compatibility/        per-application results, filled in by running
 ```
 
-## Run
+## Use it
+
+Two things, and one of them is not Lens.
+
+**1. A local model.** Lens does not bundle one
+([ADR-0007](docs/decisions/ADR-0007-local-first-inference.md)). Install
+[Ollama](https://ollama.com), then pull a small model:
+
+```bash
+ollama pull qwen2.5:3b
+```
+
+If you skip this, Lens still starts and tells you exactly this, on the
+card and in the tray tooltip. It does not fail silently.
+
+**2. Build it.**
+
+```bash
+cargo build --release -p lens
+```
+
+`target/release/lens.exe` is the whole product: one file, no installer,
+no service, no elevation. Put it wherever you keep such things and run
+it. It opens no window and appears in the notification area.
+
+### What happens then
+
+- **Hold Alt and rest the pointer** on a sentence. A card appears beside
+  it with the translation, and the original above it so you can always
+  check what was read.
+- **Click the tray icon** to pause. Paused means no accessibility call is
+  made at all, not that the card is hidden. `Ctrl+Alt+L` does the same.
+- **Right-click it** for the settings file, start-with-Windows, and quit.
+
+The first run writes `%APPDATA%\Mori Lens\settings.conf` with every
+option in it, commented. That is where the target language, the theme,
+and the per-application rules live:
+
+```
+default = modifier          # allow, modifier, or deny
+
+[applications]
+chrome = allow              # no Alt needed here
+code = deny                 # never, not even with Alt
+```
+
+Password managers are denied before that file is read, and writing
+`default = allow` does not switch that off.
+
+Command line flags win over the file, for a one-off run:
+
+```bash
+lens.exe --auto --theme forest --text large
+```
+
+`lens.exe --selftest` runs the whole chain once against text already on
+screen, without touching the pointer, and reports each stage. It is the
+fastest way to tell a broken install from an empty screen.
+
+## Develop
 
 ```bash
 cargo test

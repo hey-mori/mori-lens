@@ -17,6 +17,7 @@
 #![cfg(windows)]
 
 mod appearance;
+pub mod autostart;
 mod com;
 mod glass;
 mod inventory;

@@ -20,6 +20,12 @@
 //! appearing over a sentence the user stopped looking at a second ago.
 
 #![cfg(windows)]
+// No console window. A tray application that opens a black terminal you must
+// leave open is not a tray application, and that terminal was the most
+// unfinished thing about this product. `console::attach_to_launcher` takes the
+// launching terminal's console back when there is one, so running it from a
+// shell still prints and double-clicking it does not open anything.
+#![windows_subsystem = "windows"]
 
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -40,6 +46,7 @@ use lens_platform_windows::{
 };
 use lens_translate::OllamaTranslator;
 
+mod console;
 mod lifecycle;
 mod pause;
 mod pointer;
@@ -284,6 +291,9 @@ fn parse() -> Result<Options, String> {
 }
 
 fn main() -> std::process::ExitCode {
+    // Before the first `println!`, or the banner goes nowhere.
+    console::attach_to_launcher();
+
     let options = match parse() {
         Ok(options) => options,
         Err(message) => {
@@ -537,6 +547,9 @@ fn main() -> std::process::ExitCode {
     // one part of the product with no coverage, and the only bug a user has
     // reported here lived in it. See lifecycle.rs.
     let mut life = lifecycle::CardLifecycle::new();
+    // The sentence the outstanding translation belongs to, so a waiting card
+    // can show it. One at a time: a second hover replaces the first.
+    let mut pending_original = String::new();
 
     // Pause has three entrances now: the hotkey, the tray icon, and the tray
     // menu. They set the same flag rather than each doing their own thing,
@@ -553,6 +566,21 @@ fn main() -> std::process::ExitCode {
                         pause_changed = true;
                     }
                     TrayEvent::Quit => quitting = true,
+                    TrayEvent::OpenSettings => {
+                        // The path is in the banner, which a user who
+                        // double-clicked the binary never saw.
+                        open_in_editor(&options.source.path);
+                    }
+                    TrayEvent::ToggleAutostart => {
+                        let now = if lens_platform_windows::autostart::is_enabled() {
+                            lens_platform_windows::autostart::disable();
+                            false
+                        } else {
+                            lens_platform_windows::autostart::enable();
+                            lens_platform_windows::autostart::is_enabled()
+                        };
+                        println!("start with Windows: {}", if now { "on" } else { "off" });
+                    }
                 }
             }
         }
@@ -621,6 +649,10 @@ fn main() -> std::process::ExitCode {
                         .anchor()
                         .unwrap_or(ScreenRect::new(point.x, point.y, 1, 1));
                     if !sentence.is_empty() {
+                        // Remembered before the job is sent, so the loop can
+                        // tell the reader it was heard if the answer is slow.
+                        life.job_dispatched(generation, anchor, now);
+                        pending_original = sentence.clone();
                         let _ = jobs_tx.send(Job {
                             generation,
                             original: sentence,
@@ -637,6 +669,13 @@ fn main() -> std::process::ExitCode {
                 | Resolution::Duplicate(_)
                 | Resolution::Stale => {}
             }
+        }
+
+        // Say the sentence was heard, if the answer is taking long enough
+        // that the screen would otherwise be empty. Once per translation, and
+        // never for one the cache already answered.
+        if let Some(anchor) = life.waited_long_enough(now) {
+            overlay.show(Card::waiting(&pending_original), anchor);
         }
 
         if life.pointer_moved(position, now) == lifecycle::Action::Hide {
@@ -668,6 +707,31 @@ fn main() -> std::process::ExitCode {
     std::process::ExitCode::SUCCESS
 }
 
+/// Open the settings file with whatever the user edits `.conf` files with.
+///
+/// `ShellExecuteW` rather than a hard-coded editor: the point is that it opens
+/// in whatever they already use. A machine with no association for the
+/// extension shows the "open with" chooser, which is the correct outcome and
+/// not an error worth reporting.
+fn open_in_editor(path: &std::path::Path) {
+    use std::os::windows::ffi::OsStrExt;
+
+    let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    wide.push(0);
+    // SAFETY: a documented shell call with a null-terminated path this
+    // function owns, on an action the user just chose from a menu.
+    unsafe {
+        let _ = windows::Win32::UI::Shell::ShellExecuteW(
+            None,
+            windows::core::w!("open"),
+            windows::core::PCWSTR(wide.as_ptr()),
+            windows::core::PCWSTR::null(),
+            windows::core::PCWSTR::null(),
+            windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+        );
+    }
+}
+
 /// What the tray icon says when the pointer rests on it.
 ///
 /// The two facts a user wants without opening anything: whether it is
@@ -697,6 +761,7 @@ fn log_card(card: &Card) {
             lens_core::card::CardBody::Translation(text) =>
                 format!("translated={} chars", text.chars().count()),
             lens_core::card::CardBody::Problem(_) => "problem".to_owned(),
+            lens_core::card::CardBody::Waiting => "waiting".to_owned(),
         },
         card.footer,
     );
