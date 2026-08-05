@@ -387,3 +387,124 @@ fn compare_every_installed_model_on_the_same_sentences() {
         lens_core::translate::choose_model(None, &installed),
     );
 }
+
+/// The sentence a user watched fail on screen.
+///
+/// A card came back `번역 결과를 이해할 수 없습니다` for an ordinary English
+/// sentence off a Spring error page, with `qwen2.5-coder:7b`. That means the
+/// model produced nothing, twice, since an empty answer already retries once.
+///
+/// Measured rather than asserted: what it does is the finding.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn measure_the_sentence_that_failed_on_screen() {
+    let Some(translator) = live() else {
+        return;
+    };
+
+    // Exactly what was on the page, including the path, which is the part most
+    // likely to be doing it: the prompt tells the model to keep file paths and
+    // URLs unchanged, and this sentence is mostly one.
+    let samples = [
+        "This application has no explicit mapping for /error, so you are seeing this as a fallback.",
+        "This application has no explicit mapping, so you are seeing this as a fallback.",
+        "There was an unexpected error (type=Not Found, status=404).",
+        "Whitelabel Error Page",
+    ];
+
+    for source in samples {
+        let request = QuickRequest::new(source, "Korean");
+        let mut partials = 0usize;
+        let mut on_partial = |_: &str| partials += 1;
+        match translator.quick_streaming(&request, &mut on_partial) {
+            Ok(answer) => println!(
+                "ok    {:>3} chars -> {:>3} chars, {} partials · {}",
+                source.chars().count(),
+                answer.text.chars().count(),
+                partials,
+                answer.text,
+            ),
+            Err(error) => println!(
+                "FAIL  {:>3} chars -> {} [{}]",
+                source.chars().count(),
+                error.user_message(),
+                error.reason(),
+            ),
+        }
+    }
+}
+
+/// Where the `/error` sentence actually breaks.
+///
+/// Asked directly, `qwen2.5-coder:7b` translates it cleanly. Through Lens it
+/// comes back `malformed`. So the fault is in this crate, and this narrows it:
+/// the streamed path and the whole-answer path use the same prompt and the
+/// same fence, and differ only in how the reply is read.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn narrow_down_where_the_slash_sentence_is_lost() {
+    let Some(translator) = live() else {
+        return;
+    };
+    let source =
+        "This application has no explicit mapping for /error, so you are seeing this as a fallback.";
+    let request = QuickRequest::new(source, "Korean");
+
+    match translator.quick(&request) {
+        Ok(answer) => println!(
+            "whole answer: {} chars · {}",
+            answer.text.chars().count(),
+            answer.text
+        ),
+        Err(error) => println!("whole answer: FAILED [{}]", error.reason()),
+    }
+
+    let mut pieces = Vec::new();
+    let mut on_partial = |text: &str| pieces.push(text.chars().count());
+    match translator.quick_streaming(&request, &mut on_partial) {
+        Ok(answer) => println!(
+            "streamed:     {} chars · partials {:?} · {}",
+            answer.text.chars().count(),
+            pieces,
+            answer.text,
+        ),
+        Err(error) => println!(
+            "streamed:     FAILED [{}] · partials {pieces:?}",
+            error.reason()
+        ),
+    }
+}
+
+/// What Lens actually sends, and what actually comes back.
+///
+/// gemma4:e4b answers cleanly when asked by hand with a system prompt and a
+/// fence, and fails every time through this crate. The difference is in the
+/// request this crate builds, so this prints it.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn show_the_request_and_reply_for_a_model_that_fails() {
+    let translator = OllamaTranslator::new(crate::DEFAULT_ENDPOINT, "gemma4:e4b");
+    let request = QuickRequest::new("The output files came back empty.", "Korean");
+
+    let body = translator.body_for(&request, false);
+    println!("--- request ({} bytes)\n{body}\n", body.len());
+
+    match crate::http::post(
+        crate::DEFAULT_ENDPOINT,
+        "/api/generate",
+        &body,
+        std::time::Duration::from_secs(120),
+    ) {
+        Ok(reply) => {
+            println!("--- reply ({} bytes)", reply.len());
+            // The whole body, because this is a diagnostic against a sentence
+            // this file wrote and the point is what the parser sees.
+            println!("{}", &reply[..reply.len().min(700)]);
+            println!(
+                "\nparsed response field: {:?}",
+                crate::json::string_value_of_key(&reply, "response"),
+            );
+        }
+        Err(error) => println!("--- transport failed: {}", error.reason()),
+    }
+}
