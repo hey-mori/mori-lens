@@ -65,6 +65,16 @@ impl AppPolicy {
         policy
     }
 
+    /// The tier for anything with no rule of its own.
+    pub fn default_tier(&self) -> AppTier {
+        self.default_tier
+    }
+
+    /// How many applications have a rule.
+    pub fn rule_count(&self) -> usize {
+        self.rules.len()
+    }
+
     /// Change the tier for everything with no rule of its own.
     ///
     /// The `--auto` flag's entire effect. It moves the floor and leaves every

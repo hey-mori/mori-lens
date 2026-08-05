@@ -804,6 +804,11 @@ pub fn forget_last_frame() {
     crate::glass::forget_last_frame();
 }
 
+/// The tallest a card may be, for the live check that measures against it.
+pub fn max_card_height() -> i32 {
+    MAX_HEIGHT
+}
+
 /// The widest a card may be at 100% scaling, before the shadow around it.
 ///
 /// Exposed for the live checks, which lay a card out themselves and compare.
