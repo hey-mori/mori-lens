@@ -371,6 +371,19 @@ fn main() -> std::process::ExitCode {
         }
     };
 
+    // Printed because the alternative is discovering it during a freeze. UI
+    // Automation waits two minutes for a wedged provider unless told not to,
+    // and a hover that inherits that default takes the pointer loop with it
+    // (issue #28).
+    println!(
+        "  guard     {}",
+        if acquirer.calls_are_bounded() {
+            "a slow application is given 800ms, then abandoned"
+        } else {
+            "UNBOUNDED: one wedged application can hold the pointer loop for two minutes"
+        }
+    );
+
     let mut policy = AppPolicy::new(if options.automatic {
         AppTier::Allow
     } else {

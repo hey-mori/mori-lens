@@ -99,6 +99,29 @@ product's failure taxonomy rather than an error-handling detail:
 Collapsing these into one error would destroy the only data Milestone 1
 produces ([ADR-0008](decisions/ADR-0008-probe-before-product.md)).
 
+### What bounds `Timeout`
+
+UI Automation's default is to wait **two minutes** for one cross-process
+call. Nothing overrides it unless the client says so, which is why
+`Timeout` sat in this table for weeks with no code path able to produce
+one, and why a single wedged application could block an `acquire` for 45
+seconds (issue #28).
+
+Two guards, catching different failures:
+
+- **Per call**, `IUIAutomation2::SetTransactionTimeout` at 800ms and
+  `SetConnectionTimeout` at 300ms. This needs the `CUIAutomation8`
+  co-class; the original `CUIAutomation` predates the interface, so a
+  client built from it silently keeps the two-minute default.
+- **Per chain**, a 400ms deadline across the eight calls one read makes.
+  A provider answering every call just under the per-call limit is
+  within its rights and still stalls the caller for seconds.
+
+The per-call limit covers cross-process calls only. A provider inside
+the client process is reached without one and can block indefinitely.
+That is harmless here because Lens refuses to read its own process, and
+it is recorded as a live test rather than left to be rediscovered.
+
 ## 4. Generations and staleness
 
 Every hover gets a monotonically increasing `Generation`. It travels
