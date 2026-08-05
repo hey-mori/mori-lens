@@ -177,6 +177,18 @@ impl Overlay {
             && self.wake()
     }
 
+    /// Paint with a different theme from now on.
+    ///
+    /// The card resolves its theme when it draws, so this takes effect on the
+    /// next one. Without it the theme was decided at startup, and switching
+    /// Windows to dark mode left a pale card sitting over dark windows until
+    /// Lens was restarted.
+    pub fn set_theme(&self, theme: Theme) {
+        if let Ok(mut slot) = THEME.lock() {
+            *slot = Some(theme);
+        }
+    }
+
     /// The card window, as an opaque id.
     ///
     /// Only for the live check that reads its pixels back to prove text was

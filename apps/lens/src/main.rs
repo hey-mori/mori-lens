@@ -50,6 +50,7 @@ mod console;
 mod lifecycle;
 mod pause;
 mod pointer;
+mod refresh;
 
 /// What the worker is asked to translate.
 struct Job {
@@ -57,6 +58,10 @@ struct Job {
     original: String,
     focused_word: Option<String>,
     anchor: ScreenRect,
+    /// Carried with the job rather than owned by the worker, so editing the
+    /// target language in the settings file takes effect on the next hover
+    /// instead of the next launch.
+    language: String,
 }
 
 /// What comes back, still carrying the generation it belongs to.
@@ -360,7 +365,7 @@ fn main() -> std::process::ExitCode {
     );
     println!("\nRest the pointer on a sentence. Ctrl+C to quit.\n");
 
-    let system = system_preferences();
+    let mut system = system_preferences();
     let theme = Theme::resolve(options.preset, options.translucency, options.text, system);
     println!(
         "  theme     {} · {}pt body, converted per monitor · surface alpha {}",
@@ -417,7 +422,6 @@ fn main() -> std::process::ExitCode {
     let (jobs_tx, jobs_rx) = mpsc::channel::<Job>();
     let (answers_tx, answers_rx) = mpsc::channel::<Answer>();
 
-    let language = options.language.clone();
     let mut cache = TranslationCache::new(CACHE_ENTRIES);
     let warm_translator = translator.clone();
     // Kept for the exit path: the worker takes ownership of the translator.
@@ -451,7 +455,7 @@ fn main() -> std::process::ExitCode {
                 println!("worker  skipped {skipped} stale job(s)");
             }
 
-            let mut request = QuickRequest::new(&job.original, &language);
+            let mut request = QuickRequest::new(&job.original, &job.language);
             if let Some(word) = &job.focused_word {
                 request = request.with_focus(word);
             }
@@ -547,6 +551,13 @@ fn main() -> std::process::ExitCode {
     // one part of the product with no coverage, and the only bug a user has
     // reported here lived in it. See lifecycle.rs.
     let mut life = lifecycle::CardLifecycle::new();
+    // Editing the settings file used to do nothing until the next launch,
+    // which made the tray's "open settings" a dead end, and the theme was
+    // resolved once so switching Windows to dark mode left a pale card over
+    // dark windows.
+    let mut watcher = refresh::Watcher::new(&options.source.path, system);
+    let mut theme = theme;
+    let mut language = options.language.clone();
     // The sentence the outstanding translation belongs to, so a waiting card
     // can show it. One at a time: a second hover replaces the first.
     let mut pending_original = String::new();
@@ -605,10 +616,77 @@ fn main() -> std::process::ExitCode {
                     } else {
                         Glyph::Listening
                     },
-                    &tooltip(&options.language, &engine_line, pause.is_paused()),
+                    &tooltip(&language, &engine_line, pause.is_paused()),
+                    theme.body,
                 );
             }
         }
+        // Anything edited or switched since the last look. Once a second,
+        // and neither of these reads the screen.
+        let changes = watcher.poll(started.elapsed(), system_preferences);
+        if changes.any() {
+            let (settings, problems) = match changes.settings {
+                Some((settings, problems)) => (Some(settings), problems),
+                None => (None, Vec::new()),
+            };
+            for problem in &problems {
+                println!("settings line {}: {}", problem.line, problem.message);
+            }
+
+            if let Some(settings) = &settings {
+                language = settings.language.clone();
+                let mut policy = settings.policy();
+                policy.deny_self("lens");
+                session.reconfigure(
+                    HoverConfig {
+                        dwell: Duration::from_millis(settings.dwell_ms),
+                        ..HoverConfig::default()
+                    },
+                    policy,
+                );
+                if settings.model != options.model {
+                    // The worker owns the translator, and swapping a model
+                    // mid-flight would leave a queued job answered by the one
+                    // it did not ask for. Said rather than silently ignored.
+                    println!("settings: the model changed; restart to use it");
+                }
+            }
+
+            // The theme depends on both: a preset from the file, and dark
+            // mode from the system.
+            let appearance = changes.appearance.unwrap_or(system);
+            system = appearance;
+            let chosen = settings.as_ref().map_or(
+                (options.preset, options.translucency, options.text),
+                |settings| {
+                    (
+                        preset_named(&settings.theme).unwrap_or(options.preset),
+                        translucency_named(&settings.translucency).unwrap_or(options.translucency),
+                        text_named(&settings.text).unwrap_or(options.text),
+                    )
+                },
+            );
+            theme = Theme::resolve(chosen.0, chosen.1, chosen.2, appearance);
+            overlay.set_theme(theme);
+            if let Some(tray) = &tray {
+                tray.set_state(
+                    if pause.is_paused() {
+                        Glyph::Paused
+                    } else {
+                        Glyph::Listening
+                    },
+                    &tooltip(&language, &engine_line, pause.is_paused()),
+                    theme.body,
+                );
+            }
+            println!(
+                "reloaded · {} · dark={} · {}",
+                language,
+                appearance.dark,
+                session.policy_summary(),
+            );
+        }
+
         if pause.is_paused() {
             // Nothing is read while paused. Not a suppressed result, not a
             // hidden card: no accessibility call is made at all, which is what
@@ -642,7 +720,7 @@ fn main() -> std::process::ExitCode {
                     // over Korean waits a second and a half for a card that
                     // re-words their own sentence, which on a mostly-Korean
                     // screen is most hovers.
-                    if decide(&sentence, &options.language) == Decision::AlreadyInTarget {
+                    if decide(&sentence, &language) == Decision::AlreadyInTarget {
                         continue;
                     }
                     let anchor = target
@@ -658,6 +736,7 @@ fn main() -> std::process::ExitCode {
                             original: sentence,
                             focused_word: target.segmented.word_text().map(str::to_owned),
                             anchor,
+                            language: language.clone(),
                         });
                     }
                 }

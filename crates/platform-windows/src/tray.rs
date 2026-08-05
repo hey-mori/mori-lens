@@ -90,7 +90,14 @@ pub enum TrayEvent {
 
 /// What the loop asks the tray to do.
 enum Command {
-    SetState { glyph: Glyph, tip: String },
+    SetState {
+        glyph: Glyph,
+        tip: String,
+        /// The theme's ink. Carried with the state rather than fixed at
+        /// startup, so switching to dark mode does not leave the icon in the
+        /// old theme's colour.
+        colour: Rgb,
+    },
 }
 
 /// What the menu says, which depends on what is currently true.
@@ -172,12 +179,13 @@ impl Tray {
     /// Called when pausing and resuming, so the icon and the state cannot
     /// disagree. A tray icon that still looks live while the product is paused
     /// is worse than none, because it is confidently wrong.
-    pub fn set_state(&self, glyph: Glyph, tip: &str) -> bool {
+    pub fn set_state(&self, glyph: Glyph, tip: &str, colour: Rgb) -> bool {
         PAUSED.store(glyph == Glyph::Paused, std::sync::atomic::Ordering::Relaxed);
         self.commands
             .send(Command::SetState {
                 glyph,
                 tip: tip.to_owned(),
+                colour,
             })
             .is_ok()
             && self.wake()
@@ -432,8 +440,14 @@ unsafe fn pump(
         while GetMessageW(&mut message, None, 0, 0).as_bool() {
             match message.message {
                 WM_TRAY_REFRESH => {
-                    while let Ok(Command::SetState { glyph, tip: fresh }) = commands.try_recv() {
+                    while let Ok(Command::SetState {
+                        glyph,
+                        tip: fresh,
+                        colour,
+                    }) = commands.try_recv()
+                    {
                         tip = fresh;
+                        state.colour = colour;
                         state.modify(window, glyph, &tip);
                     }
                 }

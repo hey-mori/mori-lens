@@ -92,6 +92,22 @@ impl std::fmt::Debug for HoverSession {
 }
 
 impl HoverSession {
+    /// One line describing the policy, for a reload message.
+    pub fn policy_summary(&self) -> String {
+        self.policy.describe()
+    }
+
+    /// Replace the policy and the timings without losing the current hover.
+    ///
+    /// For a settings file edited while Lens is running. The machine keeps its
+    /// state on purpose: a reader hovering a sentence when the file is saved
+    /// should not have the card yanked away because a rule they did not touch
+    /// was re-read.
+    pub fn reconfigure(&mut self, config: HoverConfig, policy: AppPolicy) {
+        self.machine.reconfigure(config);
+        self.policy = policy;
+    }
+
     pub fn new(
         config: HoverConfig,
         policy: AppPolicy,
