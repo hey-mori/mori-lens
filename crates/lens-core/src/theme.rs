@@ -360,7 +360,7 @@ impl Theme {
             // and contrast above. A card that slides in for somebody who has
             // asked their whole machine to stop moving is not a nice touch.
             animate: !system.reduced_motion,
-            body_pt: (11.0 * factor).round() as i32,
+            body_pt: (10.0 * factor).round() as i32,
             small_pt: (9.0 * factor).round() as i32,
             footer_pt: (8.0 * factor).round() as i32,
             padding: 9,
