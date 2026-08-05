@@ -101,8 +101,14 @@ Two things, and one of them is not Lens.
 [Ollama](https://ollama.com), then pull a small model:
 
 ```bash
-ollama pull qwen2.5:3b
+ollama pull qwen2.5:7b
 ```
+
+A 3B model is fast and visibly wrong: measured on 2026-08-05 it rendered
+"pointer" as 점퍼, a jumper. 7B cost 200ms more and was right every time.
+See [the comparison](docs/benchmarks/2026-08-05-model-comparison.md).
+Lens picks the best of what is installed, so pulling a better one is the
+whole configuration step.
 
 If you skip this, Lens still starts and tells you exactly this, on the
 card and in the tray tooltip. It does not fail silently.
