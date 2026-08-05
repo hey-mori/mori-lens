@@ -230,7 +230,7 @@ fn main() -> std::process::ExitCode {
     let system = system_preferences();
     let theme = Theme::resolve(options.preset, options.translucency, options.text, system);
     println!(
-        "  theme     {} · {}pt body · surface alpha {}",
+        "  theme     {} · {}pt body, converted per monitor · surface alpha {}",
         options.preset.as_str(),
         theme.body_pt,
         theme.surface_alpha,
