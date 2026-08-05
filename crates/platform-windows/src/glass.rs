@@ -109,6 +109,13 @@ const SHADOW_RINGS: i32 = 14;
 const FONT: PCWSTR = windows::core::w!("Segoe UI");
 const LOCALE: PCWSTR = windows::core::w!("");
 
+/// The narrowest a card may be, in pixels at 100% scaling.
+///
+/// A card fits its contents, and without a floor a two-character answer
+/// produces a card the size of a tooltip, with the footer wrapping onto three
+/// lines beneath it.
+const MIN_CARD_WIDTH: i32 = 220;
+
 /// Gap under the original, before the translation.
 const GAP_AFTER_ORIGINAL: f32 = 7.0;
 /// Gap under the translation, before the footer.
@@ -185,69 +192,95 @@ impl Glass {
     /// `scale` is the monitor's DPI over 96, applied to every size here so a
     /// card on a 150% display is the same physical size as one on a 100%
     /// display beside it.
-    pub fn lay_out(&self, card: &Card, theme: &Theme, width: i32, scale: f32) -> Option<Laid> {
+    pub fn lay_out(&self, card: &Card, theme: &Theme, max_width: i32, scale: f32) -> Option<Laid> {
         let padding = theme.padding as f32 * scale;
-        let inner = (width as f32 - padding * 2.0).max(1.0);
-        let mut runs = Vec::new();
-        let mut y = padding;
+        let widest = (max_width as f32 - padding * 2.0).max(1.0);
 
-        let mut place =
-            |text: &str, at: f32, points: i32, semibold: bool, colour: Rgb, opaque: bool| {
-                if text.trim().is_empty() {
-                    return 0.0;
-                }
-                // SAFETY: documented layout creation; the returned interface is
-                // owned by the `Run` it goes into.
-                let Some((layout, height)) = (unsafe {
-                    self.layout(text, points as f32 * scale * 96.0 / 72.0, semibold, inner)
-                }) else {
-                    return 0.0;
-                };
+        // Every run, laid out at the widest the card is allowed to be. What
+        // comes back is not how wide it *is*: `DWRITE_TEXT_METRICS::width` is
+        // the width actually used, which for a short answer is a fraction of
+        // what it was offered.
+        let mut runs = Vec::new();
+        let mut push = |text: &str, points: i32, semibold: bool, colour: Rgb| {
+            if text.trim().is_empty() {
+                return;
+            }
+            let size_px = points as f32 * scale * 96.0 / 72.0;
+            // SAFETY: documented layout creation; the interface is owned by the
+            // `Run` it goes into.
+            let made = unsafe { self.layout(text, size_px, semibold, widest) };
+            if let Some((layout, _)) = made {
                 runs.push(Run {
                     layout,
-                    y: at,
+                    y: 0.0,
                     colour,
-                    opaque,
+                    opaque: true,
                 });
-                height
-            };
+            }
+        };
 
         // The original first and quieter. Above the answer because the reader's
         // eye is already there, and present at all because it is the only way
         // to notice an answer that is not a translation.
-        let original = place(
-            &card.original,
-            y,
-            theme.small_pt,
-            false,
-            theme.original,
-            // Quieter than the translation by colour, not by opacity. Fading it
-            // was the old renderer's only way to say "secondary" and it cost
-            // legibility to say it.
-            true,
-        );
-        if original > 0.0 {
-            y += original + GAP_AFTER_ORIGINAL * scale;
-        }
+        //
+        // Quieter by colour, not by opacity. Fading it was the old renderer's
+        // only way to say "secondary" and it cost legibility to say it.
+        push(&card.original, theme.small_pt, false, theme.original);
 
         let waiting = Card::WAITING_TEXT.to_owned();
-        let (body, colour, weight) = match &card.body {
-            CardBody::Translation(text) => (text, theme.body, true),
-            CardBody::Problem(text) => (text, theme.problem, true),
+        let (body, colour, weight, points) = match &card.body {
+            CardBody::Translation(text) => (text, theme.body, true, theme.body_pt),
+            CardBody::Problem(text) => (text, theme.problem, true, theme.body_pt),
             // Quiet, and at the footer's colour and size: it is a status, not
             // an answer, and it must not read as one for the second it is up.
-            CardBody::Waiting => (&waiting, theme.footer, false),
+            CardBody::Waiting => (&waiting, theme.footer, false, theme.small_pt),
         };
-        let body_pt = match &card.body {
-            CardBody::Waiting => theme.small_pt,
-            _ => theme.body_pt,
-        };
-        y += place(body, y, body_pt, weight, colour, true) + GAP_BEFORE_FOOTER * scale;
-        y += place(&card.footer, y, theme.small_pt, false, theme.footer, true);
+        push(body, points, weight, colour);
+        push(&card.footer, theme.small_pt, false, theme.footer);
+
+        // Fit the card to what is in it. A fixed 420px box holding one short
+        // line is mostly empty, which reads as a window that failed to load
+        // rather than as an answer.
+        //
+        // Never below the floor: a card that shrinks to the width of `네` is a
+        // tooltip, and it also makes the footer wrap.
+        let natural = runs
+            .iter()
+            // SAFETY: metrics on a layout this function owns.
+            .filter_map(|run| unsafe { text_width(&run.layout) })
+            .fold(0.0f32, f32::max);
+        let floor = MIN_CARD_WIDTH as f32 * scale - padding * 2.0;
+        let inner = natural.max(floor).min(widest).ceil();
+
+        // Re-flow at the width actually chosen, and only now find out how tall
+        // each run is. Measuring height at one width and drawing at another is
+        // how a card ends up with its last line clipped.
+        let mut y = padding;
+        for (index, run) in runs.iter_mut().enumerate() {
+            // SAFETY: documented calls on a layout this function owns.
+            let height = unsafe {
+                if run.layout.SetMaxWidth(inner).is_err() {
+                    return None;
+                }
+                let mut metrics = DWRITE_TEXT_METRICS::default();
+                run.layout.GetMetrics(&mut metrics).ok()?;
+                metrics.height
+            };
+            run.y = y;
+            y += height;
+            // The gaps belong between the runs, not after the last one.
+            if index + 1 < 3 {
+                y += if index == 0 {
+                    GAP_AFTER_ORIGINAL * scale
+                } else {
+                    GAP_BEFORE_FOOTER * scale
+                };
+            }
+        }
 
         Some(Laid {
             runs,
-            width,
+            width: (inner + padding * 2.0).ceil() as i32,
             height: (y + padding).ceil() as i32,
             scale,
         })
@@ -567,6 +600,19 @@ impl Glass {
             let _ = DeleteDC(dc);
             copied.map(|pixels| (width, height, pixels))
         }
+    }
+}
+
+/// How wide a laid-out run actually is, rather than how wide it was offered.
+///
+/// # Safety
+/// `layout` must be live.
+unsafe fn text_width(layout: &IDWriteTextLayout) -> Option<f32> {
+    // SAFETY: a documented read-only query.
+    unsafe {
+        let mut metrics = DWRITE_TEXT_METRICS::default();
+        layout.GetMetrics(&mut metrics).ok()?;
+        Some(metrics.width)
     }
 }
 
