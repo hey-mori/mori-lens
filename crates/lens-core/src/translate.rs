@@ -214,7 +214,19 @@ pub struct QuickTranslation {
     /// (`docs/privacy-model.md` §1).
     pub engine: EngineId,
     pub model: String,
+    /// How long the engine took, the first time it was asked.
+    ///
+    /// Kept as measured even when the answer came back from the cache, because
+    /// zero is not a measurement. The cache used to overwrite this with `0` and
+    /// the card printed `0ms`, which reads as a broken clock rather than as a
+    /// fast answer.
     pub latency_ms: u128,
+    /// Whether this came from the cache rather than the engine.
+    ///
+    /// A separate flag rather than a magic latency: the card has to say
+    /// something different, and "zero milliseconds" is not a different thing to
+    /// say, it is a wrong one.
+    pub cached: bool,
 }
 
 /// Which engine produced an answer.
