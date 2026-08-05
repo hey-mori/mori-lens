@@ -1649,7 +1649,7 @@ fn the_card_is_painted_with_per_pixel_alpha_and_not_a_flat_rectangle() {
     // fits its contents now, so a constant would only be right by accident.
     let theme = Theme::resolve(
         Preset::System,
-        Translucency::Balanced,
+        Translucency::DEFAULT,
         TextScale::Normal,
         SystemPreferences::default(),
     );
@@ -1736,7 +1736,7 @@ fn a_longer_card_is_taller_and_the_renderer_is_the_one_that_says_so() {
     let glass = crate::glass::Glass::new().expect("Direct2D");
     let theme = Theme::resolve(
         Preset::System,
-        Translucency::Balanced,
+        Translucency::DEFAULT,
         TextScale::Normal,
         SystemPreferences::default(),
     );
@@ -1837,7 +1837,7 @@ fn a_short_answer_gets_a_narrow_card_and_a_long_one_gets_a_wide_card() {
     let glass = crate::glass::Glass::new().expect("Direct2D");
     let theme = Theme::resolve(
         Preset::System,
-        Translucency::Balanced,
+        Translucency::DEFAULT,
         TextScale::Normal,
         SystemPreferences::default(),
     );
@@ -1909,7 +1909,7 @@ fn the_same_card_is_the_same_physical_size_on_a_scaled_display() {
     let glass = crate::glass::Glass::new().expect("Direct2D");
     let theme = Theme::resolve(
         Preset::System,
-        Translucency::Balanced,
+        Translucency::DEFAULT,
         TextScale::Normal,
         SystemPreferences::default(),
     );
@@ -2052,7 +2052,7 @@ fn a_theme_set_at_runtime_changes_the_next_card() {
     let theme_at = |scale| {
         Theme::resolve(
             Preset::System,
-            Translucency::Balanced,
+            Translucency::DEFAULT,
             scale,
             SystemPreferences::default(),
         )
@@ -2111,7 +2111,7 @@ fn measure_what_a_long_paragraph_does_to_the_card() {
     let glass = crate::glass::Glass::new().expect("Direct2D");
     let theme = Theme::resolve(
         Preset::System,
-        Translucency::Balanced,
+        Translucency::DEFAULT,
         TextScale::Normal,
         SystemPreferences::default(),
     );
@@ -2359,7 +2359,7 @@ fn dump_the_frame_around_a_card() {
     let glass = crate::glass::Glass::new().expect("Direct2D");
     let theme = Theme::resolve(
         Preset::System,
-        Translucency::Balanced,
+        Translucency::DEFAULT,
         TextScale::Normal,
         SystemPreferences::default(),
     );
