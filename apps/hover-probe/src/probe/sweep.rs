@@ -22,6 +22,31 @@
 //! What it does not replace: a sweep does not know that a pixel holds prose
 //! rather than a button label. A person still spot-checks a few points per
 //! application. The sweep makes that a spot check instead of the whole method.
+//!
+//! # It loads the desktop it is measuring
+//!
+//! `top_level_windows` says this enumeration changes nothing, and that is true
+//! of window *state*. It is false of load, and the difference matters.
+//!
+//! Every grid point is a cross-process COM call, and the work happens on the
+//! **target application's UI thread**. Sweeping fifteen windows at a few
+//! hundred points each therefore makes Chrome, an Electron editor, Explorer
+//! and every other window do synchronous accessibility work, all at once. The
+//! machine's owner feels that as the whole desktop going sluggish, which is
+//! exactly what happened on 2026-08-05.
+//!
+//! It compounds: as applications slow down, each call takes longer, so the
+//! sweep runs longer, so the load lasts longer. Latencies during that session
+//! reached 8,328ms and a single call blocked for 45 seconds. Measured
+//! afterwards on the same machine at rest, the same calls run at **p50 3.9ms**.
+//!
+//! Two consequences worth keeping in mind:
+//!
+//! - **A sweep's own latency figures are measured under a sweep's load.** They
+//!   are an upper bound on what a hover costs, not an estimate of it.
+//! - **Sweep one application at a time**, with `--only`. Sweeping everything
+//!   is what makes the desktop unusable, and the results are worse as well as
+//!   more expensive.
 
 use std::time::{Duration, Instant};
 
