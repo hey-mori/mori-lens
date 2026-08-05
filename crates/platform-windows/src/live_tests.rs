@@ -1591,7 +1591,7 @@ fn a_click_on_the_tray_icon_becomes_a_request() {
 ///
 /// So this asserts the two things only the alpha path can produce:
 ///
-/// - the window is **larger than the card**, by the shadow margin, and the
+/// - the window is **exactly the card**, plus the blank edge, and the
 ///   extra pixels are almost entirely transparent
 /// - the window's corner and its centre are **different**, which for a GDI card
 ///   filling its whole client area with one brush they cannot be
@@ -1612,7 +1612,18 @@ fn the_card_is_painted_with_per_pixel_alpha_and_not_a_flat_rectangle() {
          state for the product and not for this assertion.",
     );
 
-    let overlay = crate::Overlay::start().expect("overlay");
+    // **Deliberately not the default theme.** The claim under test is that the
+    // surface can be translucent while the text on it is not, and the default
+    // surface is opaque, which makes every assertion below trivially true. The
+    // guard at the end of this function says so; it is what caught this when
+    // the default changed and eight fixtures were repointed at it together.
+    let theme = Theme::resolve(
+        Preset::System,
+        Translucency::Clear,
+        TextScale::Normal,
+        SystemPreferences::default(),
+    );
+    let overlay = crate::Overlay::start_with(theme).expect("overlay");
     let anchor = ScreenRect::new(500, 400, 400, 22);
     let card = Card::translated(
         "The output files came back empty, so the suite produced nothing at all.",
@@ -1647,30 +1658,48 @@ fn the_card_is_painted_with_per_pixel_alpha_and_not_a_flat_rectangle() {
     // What the renderer says this card should be, so the comparison is against
     // the card that was drawn rather than against a fixed number. The card
     // fits its contents now, so a constant would only be right by accident.
-    let theme = Theme::resolve(
-        Preset::System,
-        Translucency::DEFAULT,
-        TextScale::Normal,
-        SystemPreferences::default(),
-    );
+    // **At the anchor's own scaling**, which this laid out at 1.0 while the
+    // window was drawn at whatever the monitor is. On a 125% display that made
+    // `laid` a fifth smaller than the window, and the width check below then
+    // passed for the wrong reason.
+    // SAFETY: read-only monitor and DPI queries.
+    let scale = unsafe { crate::overlay::scale_for(anchor.center()) };
     let glass = crate::glass::Glass::new().expect("Direct2D");
     let laid = glass
-        .lay_out(&second, &theme, crate::overlay::max_card_width(), 1.0)
+        .lay_out(
+            &second,
+            &theme,
+            (crate::overlay::max_card_width() as f32 * scale).round() as i32,
+            scale,
+        )
         .expect("layout");
     println!(
         "window {width}x{height}, card {}x{}",
         laid.width, laid.height
     );
 
-    // The shadow needs room, so the window has to be wider than the card. A
-    // window exactly the card's width means the Direct2D path did not draw
-    // this frame, which is what happened the first time: the window had
-    // `SetLayeredWindowAttributes` called on it at creation, which makes
-    // `UpdateLayeredWindow` fail, and every other overlay test stayed green.
+    // The window is the card plus its blank edge and nothing else. This is what
+    // says the Direct2D path drew the frame **on screen**, rather than an
+    // offscreen bitmap that happens to look right: the first time, the window
+    // had `SetLayeredWindowAttributes` called on it at creation, which makes
+    // `UpdateLayeredWindow` fail, and every other overlay test stayed green
+    // while nothing was drawn.
+    //
+    // It read `width > laid.width`, on the reasoning that the shadow needed
+    // room. The shadow is gone and that edge is two pixels, so the comparison
+    // stopped being evidence and started passing because `laid` was measured at
+    // the wrong scaling. The fallback painter takes the full allowed width, so
+    // being narrower than that is the thing a GDI frame cannot be.
+    let fallback_width = (crate::overlay::max_card_width() as f32 * scale).round() as i32;
     assert!(
-        width > laid.width,
-        "the window is {width}px wide and the card is {}px, so there is no \
-         shadow margin and this is the GDI fallback",
+        width < fallback_width,
+        "the window is {width}px wide, which is the whole {fallback_width}px the \
+         GDI fallback would take, so the frame on screen was not the Direct2D one",
+    );
+    assert!(
+        (width - laid.width).abs() <= 8,
+        "the window is {width}px and the card laid out at {}px, so what is on \
+         screen is not the frame this measured",
         laid.width,
     );
     assert!(overlay.hide());
