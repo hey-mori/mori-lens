@@ -46,9 +46,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIconIndirect, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon,
     DestroyMenu, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, GetSystemMetrics,
     PostMessageW, PostThreadMessageW, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow,
-    TrackPopupMenu, TranslateMessage, HICON, ICONINFO, MF_SEPARATOR, MF_STRING, MSG, SM_CXSMICON,
-    TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WM_APP,
-    WM_LBUTTONUP, WM_NULL, WM_QUIT, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
+    TrackPopupMenu, TranslateMessage, HICON, ICONINFO, MF_CHECKED, MF_SEPARATOR, MF_STRING, MSG,
+    SM_CXSMICON, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE,
+    WM_APP, WM_LBUTTONUP, WM_NULL, WM_QUIT, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
 };
 
 /// The message `Shell_NotifyIconW` sends back when the user touches the icon.
@@ -64,6 +64,8 @@ const WM_TRAY_REFRESH: u32 = WM_APP + 0x21;
 /// returns to mean "dismissed without choosing".
 const ID_TOGGLE: usize = 1;
 const ID_QUIT: usize = 2;
+const ID_SETTINGS: usize = 3;
+const ID_AUTOSTART: usize = 4;
 
 /// The icon's own id within this process. One icon, so one id.
 const ICON_ID: u32 = 1;
@@ -76,12 +78,27 @@ pub enum TrayEvent {
     TogglePause,
     /// Quit. A tray application with no way out of it is a hostage situation.
     Quit,
+    /// Open the settings file in whatever edits `.conf` here.
+    ///
+    /// The file's path is printed at startup, which a user who double-clicked
+    /// the binary never sees. Without this the only way to find it is to know
+    /// where `%APPDATA%` is.
+    OpenSettings,
+    /// Start with Windows, or stop doing so.
+    ToggleAutostart,
 }
 
 /// What the loop asks the tray to do.
 enum Command {
     SetState { glyph: Glyph, tip: String },
 }
+
+/// What the menu says, which depends on what is currently true.
+///
+/// Shared rather than passed at click time: the click arrives on the tray's own
+/// thread, and asking the hover loop a question from there would mean blocking
+/// one on the other.
+static PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// A live tray icon on its own thread.
 pub struct Tray {
@@ -156,6 +173,7 @@ impl Tray {
     /// disagree. A tray icon that still looks live while the product is paused
     /// is worse than none, because it is confidently wrong.
     pub fn set_state(&self, glyph: Glyph, tip: &str) -> bool {
+        PAUSED.store(glyph == Glyph::Paused, std::sync::atomic::Ordering::Relaxed);
         self.commands
             .send(Command::SetState {
                 glyph,
@@ -468,7 +486,36 @@ unsafe fn show_menu(window: HWND) -> Option<TrayEvent> {
         let menu = CreatePopupMenu().ok()?;
         // Korean, because this is product UI rather than a repository
         // artifact (`docs/git-workflow.md` §7).
-        let _ = AppendMenuW(menu, MF_STRING, ID_TOGGLE, w!("일시정지 · 다시 시작"));
+        //
+        // The first item says what clicking it will do, not what is currently
+        // true. A menu entry reading "일시정지" while already paused is the
+        // classic ambiguity, and it is the item users reach for most.
+        let paused = PAUSED.load(std::sync::atomic::Ordering::Relaxed);
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING,
+            ID_TOGGLE,
+            if paused {
+                w!("다시 시작")
+            } else {
+                w!("일시정지")
+            },
+        );
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+        let _ = AppendMenuW(menu, MF_STRING, ID_SETTINGS, w!("설정 파일 열기"));
+        // Checked, because this one *is* a state rather than an action, and
+        // its state is read from the registry each time the menu opens rather
+        // than remembered: something else may have changed it.
+        let _ = AppendMenuW(
+            menu,
+            if crate::autostart::is_enabled() {
+                MF_STRING | MF_CHECKED
+            } else {
+                MF_STRING
+            },
+            ID_AUTOSTART,
+            w!("Windows 시작 시 실행"),
+        );
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
         let _ = AppendMenuW(menu, MF_STRING, ID_QUIT, w!("종료"));
 
@@ -498,6 +545,8 @@ unsafe fn show_menu(window: HWND) -> Option<TrayEvent> {
 
         match chosen.0 as usize {
             ID_TOGGLE => Some(TrayEvent::TogglePause),
+            ID_SETTINGS => Some(TrayEvent::OpenSettings),
+            ID_AUTOSTART => Some(TrayEvent::ToggleAutostart),
             ID_QUIT => Some(TrayEvent::Quit),
             _ => None,
         }
