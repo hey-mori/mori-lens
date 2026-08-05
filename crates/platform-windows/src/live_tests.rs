@@ -2343,3 +2343,62 @@ fn measure_what_a_capture_sees_through_the_card() {
     // rather than reasoning about what the composite will contain.
     let _ = flat.contains(&wanted);
 }
+
+/// What a card's frame actually contains, pixel by pixel.
+///
+/// **Draws no window.** It renders to a bitmap and reads it, which is the only
+/// honest way to answer "why is there a box around it" without asking somebody
+/// to stare at their screen again.
+#[test]
+#[ignore = "renders to a bitmap; no window, run manually"]
+fn dump_the_frame_around_a_card() {
+    use lens_core::card::Card;
+    use lens_core::theme::{Preset, SystemPreferences, TextScale, Theme, Translucency};
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    let glass = crate::glass::Glass::new().expect("Direct2D");
+    let theme = Theme::resolve(
+        Preset::System,
+        Translucency::Balanced,
+        TextScale::Normal,
+        SystemPreferences::default(),
+    );
+    let card = Card::translated(
+        "This reveals a genuine contradiction between the two documents.",
+        &QuickTranslation {
+            text: "이것은 두 문서 사이의 진짜 모순을 드러냅니다.".to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "qwen2.5-coder:7b".to_owned(),
+            latency_ms: 3400,
+            cached: false,
+        },
+    );
+    let laid = glass
+        .lay_out(&card, &theme, crate::overlay::max_card_width(), 1.0)
+        .expect("layout");
+    // SAFETY: renders into its own bitmap and releases it.
+    let (width, height, pixels) = unsafe { glass.pixels(&laid, &theme) }.expect("pixels");
+
+    let at = |x: i32, y: i32| pixels[(y * width + x) as usize];
+    let middle = height / 2;
+
+    println!(
+        "frame {width}x{height}, card {}x{}",
+        laid.width, laid.height
+    );
+    println!("surface_alpha asked for: {}", theme.surface_alpha);
+
+    // A horizontal slice from the bitmap's edge into the card.
+    println!("left edge inwards (x: argb):");
+    for x in 0..28.min(width) {
+        let p = at(x, middle);
+        println!("  {x:>3}  a={:>3}  rgb={:06x}", p >> 24, p & 0x00ff_ffff);
+    }
+
+    // And the top-left corner diagonally, which is where a box shows first.
+    println!("corner diagonal (n: argb):");
+    for n in 0..14 {
+        let p = at(n, n);
+        println!("  {n:>3}  a={:>3}  rgb={:06x}", p >> 24, p & 0x00ff_ffff);
+    }
+}
