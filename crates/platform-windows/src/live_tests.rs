@@ -815,3 +815,118 @@ fn a_click_on_the_card_passes_through_to_what_is_underneath() {
 
     assert!(overlay.hide());
 }
+
+/// Can a window be measured without being brought to the front?
+///
+/// The matrix has been gated on the operator raising each application in turn,
+/// because `ElementFromPoint` answers with whatever is topmost. That is a
+/// property of the *entry point*, not of UI Automation: `ElementFromHandle`
+/// takes a window handle and no coordinate at all.
+///
+/// If that works on an occluded window, the compatibility matrix stops needing
+/// a human to arrange the desktop, and it gains something better than the grid
+/// sweep: **ground truth**. The grid guesses where text might be. A tree walk
+/// knows exactly which elements hold text and where each one is, so a
+/// resolution can be checked against the element it should have hit.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn what_a_window_exposes_without_raising_it() {
+    use windows::core::Interface;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+    use windows::Win32::System::Variant::VARIANT;
+    use windows::Win32::UI::Accessibility::{
+        CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern,
+        TreeScope_Descendants, UIA_IsTextPatternAvailablePropertyId, UIA_TextPatternId,
+    };
+
+    let _com = crate::com::ComScope::enter();
+    // SAFETY: creating the documented automation co-class in-process.
+    let automation: IUIAutomation =
+        unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
+            .expect("automation");
+
+    let mut any = false;
+    for window in crate::top_level_windows() {
+        let name = window.process_name.clone().unwrap_or_else(|| "?".into());
+        // SAFETY: read-only automation queries on a handle just enumerated.
+        let report = unsafe {
+            let hwnd = HWND(window.id as *mut _);
+            let Ok(element) = automation.ElementFromHandle(hwnd) else {
+                continue;
+            };
+            // Every descendant that offers text, regardless of what covers it.
+            let Ok(condition) = automation.CreatePropertyCondition(
+                UIA_IsTextPatternAvailablePropertyId,
+                &VARIANT::from(true),
+            ) else {
+                continue;
+            };
+            let Ok(found) = element.FindAll(TreeScope_Descendants, &condition) else {
+                continue;
+            };
+            let count = found.Length().unwrap_or(0);
+            if count == 0 {
+                continue;
+            }
+
+            // How much text, and how localised. A window whose text lives in
+            // one enormous element is the blob case; many small ones is what
+            // a hover can aim at.
+            let mut with_text = 0usize;
+            let mut chars = 0usize;
+            let mut smallest = i32::MAX;
+            for index in 0..count.min(200) {
+                let Ok(child): Result<IUIAutomationElement, _> = found.GetElement(index) else {
+                    continue;
+                };
+                let Ok(pattern) = child.GetCurrentPattern(UIA_TextPatternId) else {
+                    continue;
+                };
+                let Ok(pattern) = pattern.cast::<IUIAutomationTextPattern>() else {
+                    continue;
+                };
+                let Ok(range) = pattern.DocumentRange() else {
+                    continue;
+                };
+                let text = range
+                    .GetText(400)
+                    .map(|t| t.to_string())
+                    .unwrap_or_default();
+                if text.trim().is_empty() {
+                    continue;
+                }
+                with_text += 1;
+                chars += text.chars().count();
+                if let Ok(rect) = child.CurrentBoundingRectangle() {
+                    let height = rect.bottom - rect.top;
+                    if height > 0 {
+                        smallest = smallest.min(height);
+                    }
+                }
+            }
+            (count, with_text, chars, smallest)
+        };
+
+        let (elements, with_text, chars, smallest) = report;
+        if with_text == 0 {
+            continue;
+        }
+        any = true;
+        println!(
+            "{name:<18} {elements:>4} text elements, {with_text:>3} with content, \
+             {chars:>6} chars, smallest {}px",
+            if smallest == i32::MAX {
+                "?".to_owned()
+            } else {
+                smallest.to_string()
+            },
+        );
+    }
+
+    assert!(
+        any,
+        "no window exposed text through ElementFromHandle, so this route is \
+         not an alternative to raising windows",
+    );
+}

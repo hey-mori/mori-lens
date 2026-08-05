@@ -18,6 +18,7 @@
 
 mod appearance;
 mod com;
+mod inventory;
 pub mod overlay;
 mod uia;
 mod window;
@@ -28,6 +29,7 @@ mod live_tests;
 mod protected_harness;
 
 pub use appearance::system_preferences;
+pub use inventory::{text_inventory, WindowTextInventory};
 pub use overlay::Overlay;
 pub use uia::UiaTextAcquirer;
 pub use window::{
