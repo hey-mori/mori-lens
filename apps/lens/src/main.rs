@@ -32,6 +32,7 @@ use lens_core::icon::Glyph;
 use lens_core::language::{decide, Decision};
 use lens_core::policy::{AppPolicy, AppTier};
 use lens_core::session::{HoverSession, InputState, Resolution};
+use lens_core::settings::{self, Problem, Settings};
 use lens_core::theme::{Preset, TextScale, Theme, Translucency};
 use lens_core::translate::{QuickRequest, Translator};
 use lens_platform_windows::{
@@ -79,8 +80,10 @@ USAGE
 
 OPTIONS
     --auto              Translate in every application, not only while Alt is
-                        held. Off by default: a tool that reads everything from
-                        first launch has to earn that.
+                        held, for this run. The lasting version of this is
+                        `default = allow` in the settings file.
+    --settings <path>   Use this settings file instead of the one in %APPDATA%.
+                        Written with every option in it on first run.
     --language <name>   Target language. Default Korean.
     --model <name>      Ollama model. Default: whichever suitable one is
                         installed.
@@ -94,78 +97,95 @@ OPTIONS
     -h, --help          This text.
 ";
 
+/// What the product runs with, once the file and the flags have been combined.
 struct Options {
     selftest: bool,
     preset: Preset,
     translucency: Translucency,
     text: TextScale,
-    automatic: bool,
     language: String,
     model: Option<String>,
     dwell: Duration,
+    policy: AppPolicy,
+    /// Where the settings came from, and anything wrong with them. Printed at
+    /// startup: a file the product silently ignored is worse than no file.
+    source: SettingsSource,
 }
 
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            selftest: false,
-            preset: Preset::System,
-            translucency: Translucency::Balanced,
-            text: TextScale::Normal,
-            automatic: false,
-            language: "Korean".to_owned(),
-            model: None,
-            dwell: HoverConfig::default().dwell,
-        }
+/// Where the settings were read from, for the startup banner.
+struct SettingsSource {
+    path: std::path::PathBuf,
+    state: &'static str,
+    problems: Vec<Problem>,
+}
+
+/// Only what was actually typed. Everything unset falls through to the file,
+/// and everything the file does not set falls through to the defaults.
+#[derive(Default)]
+struct Flags {
+    selftest: bool,
+    settings: Option<std::path::PathBuf>,
+    /// `--auto` is a shortcut for `default = allow`, kept because a one-off
+    /// run should not need the file edited and put back.
+    auto: bool,
+    language: Option<String>,
+    model: Option<String>,
+    dwell_ms: Option<u64>,
+    theme: Option<String>,
+    translucency: Option<String>,
+    text: Option<String>,
+}
+
+fn preset_named(name: &str) -> Result<Preset, String> {
+    match name {
+        "system" => Ok(Preset::System),
+        "forest" => Ok(Preset::Forest),
+        "night-lake" => Ok(Preset::NightLake),
+        "paper" => Ok(Preset::Paper),
+        other => Err(format!("unknown theme: {other}")),
     }
 }
 
-fn parse() -> Result<Options, String> {
-    let mut options = Options::default();
+fn translucency_named(name: &str) -> Result<Translucency, String> {
+    match name {
+        "clear" => Ok(Translucency::Clear),
+        "balanced" => Ok(Translucency::Balanced),
+        "solid" => Ok(Translucency::Solid),
+        other => Err(format!("unknown translucency: {other}")),
+    }
+}
+
+fn text_named(name: &str) -> Result<TextScale, String> {
+    match name {
+        "small" => Ok(TextScale::Small),
+        "normal" => Ok(TextScale::Normal),
+        "large" => Ok(TextScale::Large),
+        "larger" => Ok(TextScale::Larger),
+        other => Err(format!("unknown text size: {other}")),
+    }
+}
+
+fn parse_flags() -> Result<Flags, String> {
+    let mut flags = Flags::default();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
+        let mut value = |name: &str| args.next().ok_or(format!("{name} needs a value"));
         match arg.as_str() {
             "-h" | "--help" => {
                 print!("{USAGE}");
                 std::process::exit(0);
             }
-            "--auto" => options.automatic = true,
-            "--selftest" => options.selftest = true,
-            "--theme" => {
-                let name = args.next().ok_or("--theme needs a name")?;
-                options.preset = match name.as_str() {
-                    "system" => Preset::System,
-                    "forest" => Preset::Forest,
-                    "night-lake" => Preset::NightLake,
-                    "paper" => Preset::Paper,
-                    other => return Err(format!("unknown theme: {other}")),
-                };
-            }
-            "--translucency" => {
-                let name = args.next().ok_or("--translucency needs a value")?;
-                options.translucency = match name.as_str() {
-                    "clear" => Translucency::Clear,
-                    "balanced" => Translucency::Balanced,
-                    "solid" => Translucency::Solid,
-                    other => return Err(format!("unknown translucency: {other}")),
-                };
-            }
-            "--text" => {
-                let name = args.next().ok_or("--text needs a size")?;
-                options.text = match name.as_str() {
-                    "small" => TextScale::Small,
-                    "normal" => TextScale::Normal,
-                    "large" => TextScale::Large,
-                    "larger" => TextScale::Larger,
-                    other => return Err(format!("unknown text size: {other}")),
-                };
-            }
-            "--language" => options.language = args.next().ok_or("--language needs a name")?,
-            "--model" => options.model = Some(args.next().ok_or("--model needs a name")?),
+            "--auto" => flags.auto = true,
+            "--selftest" => flags.selftest = true,
+            "--settings" => flags.settings = Some(value("--settings")?.into()),
+            "--theme" => flags.theme = Some(value("--theme")?),
+            "--translucency" => flags.translucency = Some(value("--translucency")?),
+            "--text" => flags.text = Some(value("--text")?),
+            "--language" => flags.language = Some(value("--language")?),
+            "--model" => flags.model = Some(value("--model")?),
             "--dwell" => {
-                options.dwell = Duration::from_millis(
-                    args.next()
-                        .ok_or("--dwell needs milliseconds")?
+                flags.dwell_ms = Some(
+                    value("--dwell")?
                         .parse()
                         .map_err(|_| "--dwell needs milliseconds")?,
                 );
@@ -173,7 +193,94 @@ fn parse() -> Result<Options, String> {
             other => return Err(format!("unknown argument: {other}")),
         }
     }
-    Ok(options)
+    Ok(flags)
+}
+
+/// Where the settings file lives when nobody said otherwise.
+///
+/// `%APPDATA%` rather than beside the executable: a user should not need write
+/// access to wherever they unzipped this, and a settings file next to a binary
+/// is lost the first time the binary is replaced.
+fn default_settings_path() -> std::path::PathBuf {
+    let base = std::env::var("APPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    base.join("Mori Lens").join("settings.conf")
+}
+
+/// Read the settings file, writing the template the first time.
+///
+/// A missing file is the normal first run, not an error. Writing the template
+/// means the answer to "how do I configure this" is a file that already exists
+/// with every option in it, rather than documentation.
+///
+/// A file that cannot be written is also not an error. It means this run uses
+/// defaults and says so.
+fn load_settings(path: &std::path::Path) -> (Settings, SettingsSource) {
+    match std::fs::read_to_string(path) {
+        Ok(text) => {
+            let (settings, problems) = Settings::parse(&text);
+            (
+                settings,
+                SettingsSource {
+                    path: path.to_owned(),
+                    state: "read",
+                    problems,
+                },
+            )
+        }
+        Err(_) => {
+            let wrote = path
+                .parent()
+                .map(|parent| std::fs::create_dir_all(parent).is_ok())
+                .unwrap_or(false)
+                && std::fs::write(path, settings::TEMPLATE).is_ok();
+            (
+                Settings::default(),
+                SettingsSource {
+                    path: path.to_owned(),
+                    state: if wrote {
+                        "written with the defaults, edit it and restart"
+                    } else {
+                        "not readable and not writable, so this run is the defaults"
+                    },
+                    problems: Vec::new(),
+                },
+            )
+        }
+    }
+}
+
+/// The file first, then anything typed on the command line over the top.
+fn parse() -> Result<Options, String> {
+    let flags = parse_flags()?;
+    let path = flags.settings.clone().unwrap_or_else(default_settings_path);
+    let (settings, source) = load_settings(&path);
+
+    let mut policy = settings.policy();
+    if flags.auto {
+        // Only the default tier. A `deny` a user wrote for one application is
+        // theirs and a convenience flag does not get to overrule it, and the
+        // password-manager floor survives either way.
+        policy.set_default(AppTier::Allow);
+    }
+
+    Ok(Options {
+        selftest: flags.selftest,
+        preset: preset_named(flags.theme.as_ref().unwrap_or(&settings.theme))?,
+        translucency: translucency_named(
+            flags
+                .translucency
+                .as_ref()
+                .unwrap_or(&settings.translucency),
+        )?,
+        text: text_named(flags.text.as_ref().unwrap_or(&settings.text))?,
+        language: flags.language.unwrap_or(settings.language),
+        model: flags.model.or(settings.model),
+        dwell: Duration::from_millis(flags.dwell_ms.unwrap_or(settings.dwell_ms)),
+        policy,
+        source,
+    })
 }
 
 fn main() -> std::process::ExitCode {
@@ -202,17 +309,20 @@ fn main() -> std::process::ExitCode {
     };
 
     println!("Mori Lens");
+    println!(
+        "  settings  {} · {}",
+        options.source.path.display(),
+        options.source.state
+    );
+    for problem in &options.source.problems {
+        // Loud, and on its own line. A setting that was ignored has to be
+        // visible or the user concludes the product does not work.
+        println!("            line {}: {}", problem.line, problem.message);
+    }
     println!("  target    {}", options.language);
     println!("  engine    {engine_line}");
     println!("  dwell     {}ms", options.dwell.as_millis());
-    println!(
-        "  mode      {}",
-        if options.automatic {
-            "automatic in every application"
-        } else {
-            "hold Alt"
-        }
-    );
+    println!("  mode      {}", options.policy.describe());
     println!(
         "  dpi       {}",
         if dpi {
@@ -399,11 +509,7 @@ fn main() -> std::process::ExitCode {
         }
     );
 
-    let mut policy = AppPolicy::new(if options.automatic {
-        AppTier::Allow
-    } else {
-        AppTier::Modifier
-    });
+    let mut policy = options.policy.clone();
     // Without this Lens reads its own card and translates its own translation.
     policy.deny_self("lens");
 
