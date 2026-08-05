@@ -21,6 +21,7 @@ pub mod autostart;
 mod com;
 mod glass;
 mod inventory;
+pub mod ocr_spike;
 pub mod overlay;
 pub mod tray;
 mod uia;
