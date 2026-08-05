@@ -132,9 +132,9 @@ const MIN_CARD_WIDTH: i32 = 220;
 const LINE_HEIGHT: f32 = 1.38;
 
 /// Gap under the original, before the translation.
-const GAP_AFTER_ORIGINAL: f32 = 7.0;
+const GAP_AFTER_ORIGINAL: f32 = 6.0;
 /// Gap under the translation, before the footer.
-const GAP_BEFORE_FOOTER: f32 = 9.0;
+const GAP_BEFORE_FOOTER: f32 = 7.0;
 
 /// How much fully opaque ink the last presented frame carried.
 ///
@@ -286,7 +286,7 @@ impl Glass {
             CardBody::Waiting(status) => (status, theme.footer, false, theme.small_pt),
         };
         push(body, points, weight, colour);
-        push(&card.footer, theme.small_pt, false, theme.footer);
+        push(&card.footer, theme.footer_pt, false, theme.footer);
 
         // The original is the first run pushed, when there is one at all.
         // `push` skips empty text, so a card with no original has the answer
@@ -310,6 +310,7 @@ impl Glass {
         // each run is. Measuring height at one width and drawing at another is
         // how a card ends up with its last line clipped.
         let mut y = padding;
+        let last = runs.len().saturating_sub(1);
         for (index, run) in runs.iter_mut().enumerate() {
             // SAFETY: documented calls on a layout this function owns.
             let height = unsafe {
@@ -322,8 +323,12 @@ impl Glass {
             };
             run.y = y;
             y += height;
-            // The gaps belong between the runs, not after the last one.
-            if index + 1 < 3 {
+            // The gaps belong between the runs, not after the last one, and
+            // **there are not always three**. A card with no original has two,
+            // and this counted to a constant: the footer was followed by a gap
+            // it was the last thing before, so those cards carried empty space
+            // along the bottom edge that nothing was separating.
+            if index < last {
                 y += if index == 0 {
                     GAP_AFTER_ORIGINAL * scale
                 } else {
