@@ -278,9 +278,16 @@ impl Glass {
         // translation of the end of a sentence beside the start of it.
         push(&card.original, theme.small_pt, false, theme.original);
 
+        // **Not bold.** The answer was semibold at a size above the original,
+        // which is three signals (weight, size, colour) saying one thing, and a
+        // reader called it too heavy and too large in the same sentence. Two
+        // carry it: the answer is the darkest ink on the card and a point
+        // larger than the original. Bold Hangul is also heavier than bold Latin
+        // at the same weight, because the glyphs fill more of their box, so the
+        // emphasis that looked measured in English did not stay measured here.
         let (body, colour, weight, points) = match &card.body {
-            CardBody::Translation(text) => (text, theme.body, true, theme.body_pt),
-            CardBody::Problem(text) => (text, theme.problem, true, theme.body_pt),
+            CardBody::Translation(text) => (text, theme.body, false, theme.body_pt),
+            CardBody::Problem(text) => (text, theme.problem, false, theme.body_pt),
             // Quiet, and at the footer's colour and size: it is a status, not
             // an answer, and it must not read as one for the second it is up.
             CardBody::Waiting(status) => (status, theme.footer, false, theme.small_pt),
