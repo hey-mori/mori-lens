@@ -265,12 +265,31 @@ impl OllamaTranslator {
             ),
             (
                 "options",
-                // Deterministic and short. A translation is not a place for the
-                // model to be creative, and an unbounded reply is how a hover
-                // turns into a four-second wait.
-                json::Value::Raw("{\"temperature\":0,\"num_predict\":256}"),
+                // Deterministic, and no longer than the question deserves. A
+                // translation is not a place for the model to be creative, an
+                // unbounded reply is how a hover turns into a four-second
+                // wait, and a flat budget let `OK` come back as forty-one
+                // characters of explanation.
+                json::Value::RawOwned(format!(
+                    "{{\"temperature\":0,\"num_predict\":{}}}",
+                    lens_core::translate::token_budget(request.source_text.chars().count()),
+                )),
             ),
         ])
+    }
+
+    /// One more attempt after an empty answer, without streaming.
+    ///
+    /// Not streamed, because the point is to get *an* answer rather than to
+    /// show it arriving: the reader has already waited a whole translation for
+    /// nothing.
+    fn retry_once(&self, request: &QuickRequest) -> Result<QuickTranslation, TranslateError> {
+        match self.quick(request) {
+            Ok(answer) => Ok(answer),
+            // Report the original failure, not the retry's: the first attempt
+            // is what the taxonomy should record.
+            Err(_) => Err(TranslateError::Malformed),
+        }
     }
 
     /// Map an Ollama error body onto the taxonomy.
@@ -376,7 +395,17 @@ impl Translator for OllamaTranslator {
 
         let text = accumulated.trim().to_owned();
         if text.is_empty() {
-            return Err(TranslateError::Malformed);
+            // A model that answers nothing usually answers the next time, and
+            // the alternative on screen is `번역 결과를 이해할 수 없습니다`, which
+            // reads as the product being broken rather than as one blank reply.
+            // Seen once against a live Chrome window during a selftest and not
+            // reproduced in ten samples afterwards, so it is rare and not
+            // rare enough to show a reader an error.
+            //
+            // Once, not in a loop. A model that answers nothing twice is
+            // telling us something, and a hover is not the place to keep
+            // asking.
+            return self.retry_once(request);
         }
 
         Ok(QuickTranslation {

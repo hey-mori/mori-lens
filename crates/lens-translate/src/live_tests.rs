@@ -260,3 +260,66 @@ fn measure_time_to_first_visible_text() {
         "{partials} redraws is shimmer, not streaming",
     );
 }
+
+/// How often a real hover comes back empty.
+///
+/// The selftest hit `번역 결과를 이해할 수 없습니다` on a sentence taken off a
+/// live Chrome window, which on the card is the product looking broken. That
+/// error means the model produced **nothing at all**, not that anything failed
+/// to parse, so the question is how common it is and on what.
+///
+/// Measured rather than asserted: this records the model's behaviour, and an
+/// assertion here would turn a finding about qwen2.5:3b into a failing test the
+/// day it is swapped.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn measure_how_often_a_translation_comes_back_empty() {
+    let Some(translator) = live() else {
+        return;
+    };
+
+    // The kinds of thing a pointer actually lands on, including the ones that
+    // are not sentences: a heading, a button, a fragment, a path.
+    let samples = [
+        "The output files came back empty, so the full test suite produced nothing.",
+        "Sign in",
+        "This page isn't working right now.",
+        "Settings",
+        "Accessibility",
+        "A pointer resting on a word should cost one accessibility call, not forty.",
+        "OK",
+        "Learn more about how we use cookies and similar technologies.",
+        "404",
+        "Continue with Google",
+    ];
+
+    let mut empty = 0usize;
+    for source in samples {
+        let request = QuickRequest::new(source, "Korean");
+        // The streaming path, because that is the one the product uses and the
+        // one the selftest failed on. `quick` and `quick_streaming` accumulate
+        // differently and only one of them is on the hover path.
+        let mut partials = 0usize;
+        let mut on_partial = |_: &str| partials += 1;
+        match translator.quick_streaming(&request, &mut on_partial) {
+            Ok(answer) => println!(
+                "{:>3} chars in  -> {:>3} chars out  ({}ms, {partials} partials)",
+                source.chars().count(),
+                answer.text.chars().count(),
+                answer.latency_ms,
+            ),
+            Err(error) => {
+                if error == TranslateError::Malformed {
+                    empty += 1;
+                }
+                println!(
+                    "{:>3} chars in  -> {}  [{}]",
+                    source.chars().count(),
+                    error.user_message(),
+                    error.reason(),
+                );
+            }
+        }
+    }
+    println!("\n{empty} of {} came back empty", samples.len());
+}

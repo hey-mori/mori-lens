@@ -50,6 +50,33 @@ impl QuickRequest {
     }
 }
 
+/// How many tokens an answer to this much text is allowed.
+///
+/// A fixed budget is wrong in both directions. 256 tokens for the word `OK`
+/// let a 3B model return forty-one characters of explanation, which on a card
+/// is noise the reader has to filter; and a budget large enough for a
+/// paragraph is paid for in latency on every short hover.
+///
+/// So it scales with the question. Generously, because a translation cut off
+/// mid-sentence is worse than a wordy one: three tokens per source character
+/// is far more than any language pair needs.
+///
+/// **It does not make a small model terse**, and it was measured rather than
+/// assumed: at 32 tokens `OK` still came back as 43 characters against 41 at
+/// 256. What it does is bound the worst case and the latency that goes with
+/// it. A short hover no longer pays for a budget it cannot use.
+///
+/// The floor exists because a very short source still needs room for a
+/// complete sentence in a language that may express it at length.
+pub fn token_budget(source_chars: usize) -> u32 {
+    const FLOOR: u32 = 32;
+    const CEILING: u32 = 256;
+    let scaled = source_chars.saturating_mul(3).saturating_add(24);
+    u32::try_from(scaled)
+        .unwrap_or(CEILING)
+        .clamp(FLOOR, CEILING)
+}
+
 /// A finished quick translation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuickTranslation {
@@ -272,6 +299,26 @@ mod tests {
     fn a_cancelled_hover_offers_no_advice() {
         assert_eq!(TranslateError::Stale.remedy(), None);
         assert_eq!(TranslateError::NotWorthTranslating.remedy(), None);
+    }
+
+    #[test]
+    fn a_short_label_asks_for_far_less_than_a_paragraph() {
+        assert_eq!(token_budget(2), 32);
+        assert!(token_budget("Sign in".chars().count()) < 64);
+    }
+
+    #[test]
+    fn a_sentence_is_given_room_to_finish() {
+        // A translation cut off mid-sentence is worse than a wordy one, so the
+        // budget stays generous for anything sentence-sized.
+        let sentence = "The output files came back empty, so the full test suite                         produced nothing.";
+        assert!(token_budget(sentence.chars().count()) >= 200);
+    }
+
+    #[test]
+    fn a_paragraph_cannot_ask_for_an_unbounded_reply() {
+        assert_eq!(token_budget(100_000), 256);
+        assert_eq!(token_budget(usize::MAX), 256);
     }
 
     #[test]
