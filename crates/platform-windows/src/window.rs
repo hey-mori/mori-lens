@@ -19,9 +19,9 @@ use windows::Win32::UI::HiDpi::{
     SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetAncestor, GetClientRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
-    IsWindowVisible, SendMessageTimeoutW, WindowFromPoint, GA_ROOT, OBJID_CLIENT, SMTO_ABORTIFHUNG,
-    WM_GETOBJECT,
+    EnumWindows, GetAncestor, GetClientRect, GetForegroundWindow, GetWindowTextW,
+    GetWindowThreadProcessId, IsIconic, IsWindowVisible, SendMessageTimeoutW, WindowFromPoint,
+    GA_ROOT, OBJID_CLIENT, SMTO_ABORTIFHUNG, WM_GETOBJECT,
 };
 
 /// Opt into per-monitor DPI awareness v2.
@@ -261,6 +261,26 @@ pub struct WindowInfo {
     /// title bar or the resize border. Sampling the whole window rectangle
     /// would spend a third of a sweep on chrome that holds no text.
     pub client_bounds: ScreenRect,
+}
+
+/// The window the user is actually looking at, if it has a client area.
+///
+/// Needed by the OCR probe and by nothing else so far. A capture reads pixels,
+/// and the pixels inside a covered window's rectangle belong to whatever is
+/// covering it, so an OCR measurement of a window that is not in front measures
+/// the wrong application and reports it under the right name. Rather than
+/// raising windows, which would rearrange the desktop being measured, the probe
+/// measures whatever the operator has put in front.
+pub fn foreground_window() -> Option<WindowInfo> {
+    // SAFETY: a read-only query for a handle, which is then described by the
+    // same code that describes every other window.
+    let handle = unsafe { GetForegroundWindow() };
+    if handle.is_invalid() {
+        return None;
+    }
+    top_level_windows()
+        .into_iter()
+        .find(|window| window.id == handle.0 as i64)
 }
 
 /// Every visible, non-minimised top-level window with a client area.
