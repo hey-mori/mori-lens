@@ -106,6 +106,14 @@ pub struct PassStats {
     /// The shape of the misses, which is what settles question 8 in the
     /// research brief.
     pub off_target: OffTargetShape,
+    /// Distinct rectangles among the hits that landed on their target.
+    ///
+    /// The number that answers "can it tell which message the pointer is on".
+    /// A chat window whose forty on-target samples resolve to two rectangles
+    /// is one blob with a pointer somewhere in it; one that resolves to twenty
+    /// has twenty separable things to explain. The on-target *rate* says
+    /// nothing about this: a single huge correct target scores 100%.
+    pub distinct_targets: std::collections::BTreeSet<(i32, i32, i32, i32)>,
     /// Points inside the window's rectangle that another window covers.
     ///
     /// Not sampled, and not counted as anything else. Without this check the
@@ -132,6 +140,10 @@ impl PassStats {
                     self.distances.push(distance);
                     if distance == 0.0 {
                         self.on_target += 1;
+                        if let Some(rect) = point.rect {
+                            self.distinct_targets
+                                .insert((rect.x, rect.y, rect.width, rect.height));
+                        }
                     } else if let (Some(rect), Some(sample)) = (point.rect, point.sample) {
                         self.off_target.record(sample, rect, point.within_gate);
                     }
@@ -444,7 +456,14 @@ pub fn print_report(rows: &[WindowRow]) {
     println!("  acquired   is NOT a provider quality score. A uniform grid lands mostly on");
     println!("             chrome, margins, and images, where `unsupported` is the correct");
     println!("             answer. It measures how much of this window is text.");
-    println!("  on-target  is the one to watch. It is the share of acquisitions whose word");
+    println!(
+        "  separable  how many distinct things the window exposes. A window whose
+             on-target hits all resolve to one rectangle is a single blob:
+             the pointer is in it, but there is no telling which sentence.
+             The on-target rate cannot see this, because one huge correct
+             target scores 100%.
+  on-target  is the one to watch. It is the share of acquisitions whose word"
+    );
     println!("             rectangle contains the sample point. A low rate with a large");
     println!("             distance means RangeFromPoint answered with the nearest text");
     println!("             rather than the text under the point, which is what a distance");
@@ -492,6 +511,15 @@ fn print_pass(label: &str, stats: &PassStats) {
             sorted.last().copied().unwrap_or(0.0),
         );
     }
+    if stats.on_target > 0 {
+        println!(
+            "           separable {} distinct targets among {} on-target hits ({:.1} hits each)",
+            stats.distinct_targets.len(),
+            stats.on_target,
+            stats.on_target as f64 / stats.distinct_targets.len().max(1) as f64,
+        );
+    }
+
     let shape = &stats.off_target;
     if shape.total() > 0 {
         println!(
