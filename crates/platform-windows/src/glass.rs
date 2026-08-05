@@ -230,11 +230,19 @@ impl Glass {
             y += original + GAP_AFTER_ORIGINAL * scale;
         }
 
-        let (body, colour) = match &card.body {
-            CardBody::Translation(text) => (text, theme.body),
-            CardBody::Problem(text) => (text, theme.problem),
+        let waiting = Card::WAITING_TEXT.to_owned();
+        let (body, colour, weight) = match &card.body {
+            CardBody::Translation(text) => (text, theme.body, true),
+            CardBody::Problem(text) => (text, theme.problem, true),
+            // Quiet, and at the footer's colour and size: it is a status, not
+            // an answer, and it must not read as one for the second it is up.
+            CardBody::Waiting => (&waiting, theme.footer, false),
         };
-        y += place(body, y, theme.body_pt, true, colour, true) + GAP_BEFORE_FOOTER * scale;
+        let body_pt = match &card.body {
+            CardBody::Waiting => theme.small_pt,
+            _ => theme.body_pt,
+        };
+        y += place(body, y, body_pt, weight, colour, true) + GAP_BEFORE_FOOTER * scale;
         y += place(&card.footer, y, theme.small_pt, false, theme.footer, true);
 
         Some(Laid {

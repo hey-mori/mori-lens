@@ -31,6 +31,14 @@ pub enum CardBody {
     Translation(String),
     /// A sentence the user can act on, never a code.
     Problem(String),
+    /// The answer is on its way.
+    ///
+    /// A quick translation measures about a second and a half from the pointer
+    /// settling, and for most of that the screen shows nothing at all. A user
+    /// cannot tell that from a product that did not notice them, so they move
+    /// the pointer, which cancels the hover, which means it really does show
+    /// nothing. This is the state that breaks that loop.
+    Waiting,
 }
 
 impl Card {
@@ -86,6 +94,34 @@ impl Card {
         }
     }
 
+    /// A card that says the sentence was read and the answer is coming.
+    ///
+    /// Deliberately carries the original and nothing else. The reader gets
+    /// confirmation that Lens is looking at the sentence they meant, which is
+    /// the other thing they cannot otherwise tell, and gets it about a second
+    /// before the translation could arrive.
+    ///
+    /// It is not shown the moment a hover settles. See the delay in
+    /// `apps/lens/src/lifecycle.rs`: a cached sentence answers in microseconds
+    /// and flashing this first would be worse than the wait it replaces.
+    pub fn waiting(original: impl Into<String>) -> Self {
+        Self {
+            original: original.into(),
+            body: CardBody::Waiting,
+            footer: String::new(),
+        }
+    }
+
+    /// What a waiting card shows in place of a translation.
+    ///
+    /// Words rather than an ellipsis. A lone "…" is read as an application
+    /// that has stopped responding; the point of this card is the opposite.
+    ///
+    /// Static, deliberately. An animated indicator would need a timer, and
+    /// this product does not run one (`CLAUDE.md`); it would also be the first
+    /// thing to ignore the system's reduced-motion setting.
+    pub const WAITING_TEXT: &str = "번역 중";
+
     /// A card for text that could not be read at all.
     pub fn not_acquired(error: AcquireError) -> Self {
         Self {
@@ -110,6 +146,9 @@ impl Card {
                 !text.trim().is_empty() && !self.original.trim().is_empty()
             }
             CardBody::Problem(text) => !text.trim().is_empty(),
+            // The original is the whole card, so the rule that a translation
+            // never appears without one is what makes this showable at all.
+            CardBody::Waiting => !self.original.trim().is_empty(),
         }
     }
 }
@@ -310,5 +349,27 @@ mod tests {
             work,
         );
         assert_eq!(placed.y, work.y, "{placed:?}");
+    }
+}
+
+#[cfg(test)]
+mod waiting_tests {
+    use super::*;
+
+    #[test]
+    fn a_waiting_card_shows_the_sentence_it_is_working_on() {
+        let card = Card::waiting("The output files came back empty.");
+        assert!(card.is_showable());
+        assert_eq!(card.body, CardBody::Waiting);
+        // No engine has answered, so there is nothing true to put here. An
+        // invented latency would be the one number on the card that lied.
+        assert!(card.footer.is_empty());
+    }
+
+    /// The same rule as a translation, for the same reason: a card with no
+    /// original cannot be checked by the reader against what they pointed at.
+    #[test]
+    fn a_waiting_card_with_no_original_is_refused() {
+        assert!(!Card::waiting("   ").is_showable());
     }
 }
