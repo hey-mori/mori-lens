@@ -109,11 +109,25 @@ both work; Lens never recognises its own overlay; no captured image
 reaches disk; and VS Code and KakaoTalk, the two applications that
 prompted the swap, are measured again with it.
 
-**Open before any of it is written**: `Windows.Media.Ocr` documents a
-package identity requirement for desktop applications, and Lens ships as
-a single unpackaged `lens.exe`. Whether that holds is a spike, and it
-comes first, because a fallback that cannot be delivered the way this
-product is delivered is not a fallback.
+**Answered, 2026-08-05** ([#62](https://github.com/swarea/mori-lens/issues/62)).
+`Windows.Media.Ocr` documents a package identity requirement for desktop
+applications, and Lens ships as a single unpackaged `lens.exe`. Measured
+from a binary built the same way:
+
+```
+engine available: true
+languages: ["en-US", "ko"]
+recognised:   "The output files came back empty."
+korean text:  "출력 파일이 비어 있었습니다."
+```
+
+Both exact, both from a bitmap this repository drew rather than
+captured. The backend is viable and costs the delivery model nothing.
+
+What that does **not** settle is accuracy on real screen content: small
+text, dark themes, and the code editor that prompted the swap. That is
+milestone work, and it needs the capture path this spike deliberately
+avoided.
 
 ## M5 · Deep analysis
 
