@@ -128,6 +128,10 @@ State which of code, test, or a live run is the basis for each claim.
   acquired. A debug build may opt in behind an explicit flag; a release
   build may not.
 - Write a screen capture to disk. Ever, including for debugging.
+- Print what a screen capture contained, including from a test. A live
+  check did, and what it printed was the desktop behind a translucent
+  card. Report shape: lines, words, characters, and whether an expected
+  string was there. Never the string, unless this repository wrote it.
 - Extract a shared package with Mori. See
   [ADR-0006](docs/decisions/ADR-0006-no-shared-package-yet.md).
 - Skip hooks (`--no-verify`) or bypass signing.
