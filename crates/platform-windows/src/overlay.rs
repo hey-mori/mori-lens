@@ -56,6 +56,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// Card geometry, in physical pixels at 100%. Deliberately fixed for now: a
 /// card that resizes to its content on every hover flickers, and the sizing
 /// rules are a design question rather than a plumbing one.
+/// The widest a card may be, in pixels at 100% scaling.
+///
+/// Scaled per monitor like everything else on the card. It was not, and the
+/// result was a card whose text grew with the display while its box did not:
+/// on a 150% screen the same sentence wrapped onto more lines inside the same
+/// number of pixels, so the card was physically narrower and taller than the
+/// one beside it on a 100% screen.
 const CARD_WIDTH: i32 = 420;
 const MAX_HEIGHT: i32 = 420;
 
@@ -323,12 +330,21 @@ unsafe fn show_card(window: HWND, card: Card, anchor: ScreenRect, glass: Option<
     // line clipped.
     // SAFETY: read-only monitor query.
     let scale = unsafe { scale_for(anchor.center()) };
-    let laid = glass.and_then(|glass| glass.lay_out(&card, &theme, CARD_WIDTH, scale));
+    let widest = (CARD_WIDTH as f32 * scale).round() as i32;
+    let laid = glass.and_then(|glass| glass.lay_out(&card, &theme, widest, scale));
 
-    let height = match &laid {
-        Some(laid) => laid.height.clamp(80, MAX_HEIGHT),
+    // The card is as wide as its contents need, up to the limit. A fixed box
+    // holding one short line is mostly empty, which reads as something that
+    // failed to load rather than as an answer.
+    let (width, height) = match &laid {
+        Some(laid) => (laid.width, laid.height.clamp(80, MAX_HEIGHT)),
+        // The fallback painter has no way to measure a natural width, so it
+        // keeps the full one. A machine without Direct2D gets the old card.
         // SAFETY: measuring against the window's own device context.
-        None => unsafe { measure(window, &card) }.clamp(80, MAX_HEIGHT),
+        None => (
+            widest,
+            unsafe { measure(window, &card) }.clamp(80, MAX_HEIGHT),
+        ),
     };
 
     if let Ok(mut slot) = CONTENT.lock() {
@@ -338,7 +354,7 @@ unsafe fn show_card(window: HWND, card: Card, anchor: ScreenRect, glass: Option<
     let placed = lens_core::card::place_card(
         anchor,
         anchor.center(),
-        (CARD_WIDTH, height),
+        (width, height),
         // The monitor the text is on, not the primary one.
         // SAFETY: read-only monitor queries.
         unsafe { work_area_for(anchor.center()) },
@@ -776,12 +792,10 @@ pub fn forget_last_frame() {
     crate::glass::forget_last_frame();
 }
 
-/// The card's own width, without the shadow the window adds around it.
+/// The widest a card may be at 100% scaling, before the shadow around it.
 ///
-/// Exposed for the live check that tells the Direct2D card from the GDI one:
-/// a window exactly this wide has no shadow margin and therefore did not come
-/// from the alpha path.
-pub fn card_width() -> i32 {
+/// Exposed for the live checks, which lay a card out themselves and compare.
+pub fn max_card_width() -> i32 {
     CARD_WIDTH
 }
 
