@@ -1,5 +1,6 @@
 //! The probe loop, Windows.
 
+mod inventory;
 mod pointer;
 mod report;
 mod sweep;
@@ -47,6 +48,7 @@ hover-probe · Mori Lens Milestone 1 measurement instrument
 USAGE
     hover-probe [OPTIONS]           follow the pointer
     hover-probe sweep [OPTIONS]     measure whole windows, pointer untouched
+    hover-probe inventory [--only x] ask each window what text it holds
 
 FOLLOW MODE
     Rest the pointer on text. One line is printed per resolved hover.
@@ -73,6 +75,17 @@ SWEEP MODE
     --budget <s>        Seconds allowed per window pass. Default 20.
     --no-wake           Skip the second pass, measuring cold behaviour only.
 
+INVENTORY MODE
+    Asks each window's provider what text it holds, by handle rather than by
+    coordinate, so a covered window answers too. Reports how many text
+    elements exist, how localised they are, and whether a point at an
+    element's own centre resolves back into that element.
+
+    Far cheaper than a sweep, and it is the only mode with ground truth: the
+    element is known before the question is asked.
+
+    --only <text>       Only windows whose process name contains this.
+
     -h, --help          This text.
 ";
 
@@ -80,6 +93,9 @@ SWEEP MODE
 #[derive(Debug)]
 enum Mode {
     Follow(Options),
+    Inventory {
+        only: Option<String>,
+    },
     Sweep {
         options: sweep::SweepOptions,
         only: Option<String>,
@@ -88,6 +104,22 @@ enum Mode {
 
 fn parse_args() -> Result<Mode, String> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|first| first == "inventory") {
+        args.remove(0);
+        let mut only = None;
+        let mut rest = args.into_iter();
+        while let Some(arg) = rest.next() {
+            match arg.as_str() {
+                "-h" | "--help" => {
+                    print!("{USAGE}");
+                    std::process::exit(0);
+                }
+                "--only" => only = Some(rest.next().ok_or("--only needs some text to match")?),
+                other => return Err(format!("unknown argument: {other}")),
+            }
+        }
+        return Ok(Mode::Inventory { only });
+    }
     if args.first().is_some_and(|first| first == "sweep") {
         args.remove(0);
         return parse_sweep(args).map(|(options, only)| Mode::Sweep { options, only });
@@ -201,6 +233,16 @@ pub fn run() -> ExitCode {
     match mode {
         Mode::Follow(options) => follow(acquirer, options, dpi_declared),
         Mode::Sweep { options, only } => run_sweep(acquirer, options, only, dpi_declared),
+        Mode::Inventory { only } => {
+            println!(
+                "hover-probe inventory · build {}
+",
+                build_stamp()
+            );
+            let found = inventory::run(only.as_deref());
+            inventory::print_report(&found);
+            ExitCode::SUCCESS
+        }
     }
 }
 
