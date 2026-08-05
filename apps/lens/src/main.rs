@@ -303,9 +303,17 @@ fn main() -> std::process::ExitCode {
     // Resolved once at startup rather than per hover, so the first hover does
     // not pay for a listing, and so an absent Ollama is reported now instead of
     // as a mysteriously empty card later.
+    // Carries the remedy, not just the failure. This string reaches three
+    // places: the banner, the tray tooltip, and nowhere else a first-time user
+    // would look. Someone who unzipped Lens without Ollama and double-clicked
+    // it never sees a terminal, so the tooltip is the only thing standing
+    // between them and a product that silently does nothing.
     let engine_line = match translator.resolve_model() {
         Ok(model) => model.to_owned(),
-        Err(error) => format!("{} ({})", error.user_message(), error.reason()),
+        Err(error) => match error.remedy() {
+            Some(remedy) => format!("{} · {remedy}", error.user_message()),
+            None => error.user_message(),
+        },
     };
 
     println!("Mori Lens");

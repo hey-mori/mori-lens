@@ -74,7 +74,14 @@ impl Card {
     pub fn not_translated(original: impl Into<String>, error: &TranslateError) -> Self {
         Self {
             original: original.into(),
-            body: CardBody::Problem(error.user_message()),
+            // The remedy goes in the body, beside what went wrong, rather
+            // than in the footer. The footer is the quiet line carrying the
+            // model and the latency; a user who cannot see a translation at
+            // all is not reading the quiet line.
+            body: CardBody::Problem(match error.remedy() {
+                Some(remedy) => format!("{} · {remedy}", error.user_message()),
+                None => error.user_message(),
+            }),
             footer: error.reason().to_owned(),
         }
     }
