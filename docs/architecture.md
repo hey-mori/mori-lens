@@ -23,15 +23,16 @@ Segmentation          lens-core::text         built
   word · sentence · paragraph around the pointer
   │
   ▼
-Language routing      (M3)                    planned
+Language routing      (M3)                    not built
   script detection, language id, engine choice
+  the target language is a flag; nothing detects the source
   │
   ▼
-Translation           (M3)                    planned
+Translation           (M3)                    shipped
   cache → quick model → degraded state
   │
   ▼
-Overlay               (M2)                    planned
+Overlay               (M2)                    shipped
   passive tooltip · interactive card
 ```
 
@@ -48,13 +49,24 @@ crates/lens-core/          no OS dependencies, no async runtime
   text.rs                  TextTarget and word/sentence/paragraph spans
   acquire.rs               the TextAcquirer trait and AcquireError
   policy.rs                per-application allow / modifier / deny
+  translate.rs             the Translator trait and TranslateError
+  cache.rs                 what has already been translated
+  card.rs                  what a card says, and where it sits
+  theme.rs                 what a card looks like, as data
+
+crates/lens-translate/     the Ollama client, no HTTP or JSON dependency
+  http.rs                  just enough HTTP/1.1 for a loopback socket
+  json.rs                  just enough JSON, with the escaping that matters
 
 crates/platform-windows/   the Windows implementation of TextAcquirer
   com.rs                   apartment handling for a call
-  window.rs                foreground window, process name, DPI
+  window.rs                foreground window, process name, DPI, monitors
   uia.rs                   ElementFromPoint → RangeFromPoint → ranges
+  overlay.rs               the card: a layered, click-through, no-activate window
+  appearance.rs            what Windows says the interface should look like
 
 apps/hover-probe/          the M1 measurement instrument
+apps/lens/                 the product
 ```
 
 The dependency arrow only ever points from an adapter to the core. A
@@ -123,7 +135,11 @@ foreign application must not be able to block that decision.
   makes a later split possible is the trait boundary, and that already
   exists.
 - **No async runtime.** Acquisition is synchronous on a worker thread.
-  An async runtime enters with the HTTP client in M3, not before.
-- **No storage layer.** Nothing is persisted. SQLite enters with the
-  translation cache in M3, opt-in.
+  No async runtime entered with the HTTP client: it is a hand-written
+  loopback client on blocking sockets, and translation runs on a worker
+  thread rather than a runtime.
+- **No storage layer.** Nothing is persisted. The translation cache is
+  in memory and dies with the process. A durable one would be a record of
+  what the user read, so it stays a separate opt-in with its own
+  decision rather than arriving as a performance detail.
 - **No settings UI.** Configuration is command-line flags on the probe.

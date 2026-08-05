@@ -25,7 +25,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use lens_core::cache::{CacheKey, TranslationCache};
-use lens_core::card::{pointer_left_the_card, Card};
+use lens_core::card::Card;
 use lens_core::geometry::ScreenRect;
 use lens_core::hover::{Generation, HoverConfig, HoverEvent};
 use lens_core::policy::{AppPolicy, AppTier};
@@ -35,6 +35,7 @@ use lens_core::translate::{QuickRequest, Translator};
 use lens_platform_windows::{declare_dpi_awareness, system_preferences, Overlay, UiaTextAcquirer};
 use lens_translate::OllamaTranslator;
 
+mod lifecycle;
 mod pause;
 mod pointer;
 
@@ -384,16 +385,18 @@ fn main() -> std::process::ExitCode {
 
     pointer::install_stop_handler();
     let started = Instant::now();
-    let mut current = Generation(0);
-    // The rectangle the visible card explains, and when the pointer left it.
-    let mut card_anchor: Option<ScreenRect> = None;
-    let mut left_anchor_at: Option<Duration> = None;
+    // When the card appears, stays, and goes. Extracted so the decisions can
+    // be played through in a test instead of only on a desktop: this was the
+    // one part of the product with no coverage, and the only bug a user has
+    // reported here lived in it. See lifecycle.rs.
+    let mut life = lifecycle::CardLifecycle::new();
 
     while !pointer::stopping() {
         if pause.poll() {
             if pause.is_paused() {
-                overlay.hide();
-                card_anchor = None;
+                if life.dismiss_now() == lifecycle::Action::Hide {
+                    overlay.hide();
+                }
                 println!("paused · the pointer is not being sampled");
             } else {
                 println!("resumed");
@@ -423,7 +426,7 @@ fn main() -> std::process::ExitCode {
         let sample = session.sample(position, now, input, process_name.as_deref());
 
         if let Some(HoverEvent::Settled { generation, point }) = session.observe(sample) {
-            current = generation;
+            life.hover_settled(generation);
             match session.resolve(generation, point, now, input) {
                 Resolution::Presented(target) => {
                     let sentence = target.segmented.sentence_text().trim().to_owned();
@@ -449,49 +452,19 @@ fn main() -> std::process::ExitCode {
             }
         }
 
-        // A card is retired when the pointer leaves the text it explains, not
-        // when the pointer moves.
-        //
-        // The first version compared the pointer against the anchor's centre
-        // with the hover machine's 6px radius, which dismissed the card on the
-        // very next 25ms tick: a pointer resting on a word is rarely within
-        // 6px of that word's centre. Combined with streaming, every partial
-        // answer re-showed a card that was hidden again immediately, which is
-        // what the flicker was.
-        //
-        // The rule now: stay while the pointer is anywhere near the anchor
-        // rectangle, and give a grace period after it leaves so that crossing
-        // a gap between two words does not dismiss anything.
-        if let Some(anchor) = card_anchor {
-            if pointer_left_the_card(anchor, position) {
-                match left_anchor_at {
-                    None => left_anchor_at = Some(now),
-                    Some(since)
-                        if now.saturating_sub(since) >= HoverConfig::default().hide_grace =>
-                    {
-                        overlay.hide();
-                        card_anchor = None;
-                        left_anchor_at = None;
-                    }
-                    Some(_) => {}
-                }
-            } else {
-                // Back inside before the grace ran out.
-                left_anchor_at = None;
-            }
+        if life.pointer_moved(position, now) == lifecycle::Action::Hide {
+            overlay.hide();
         }
 
         while let Ok(answer) = answers_rx.try_recv() {
-            if answer.generation != current {
-                // The pointer moved on. Never draw this.
-                continue;
-            }
             if answer.final_answer {
                 log_card(&answer.card);
             }
-            if overlay.show(answer.card, answer.anchor) {
-                card_anchor = Some(answer.anchor);
-                left_anchor_at = None;
+            // The generation check lives in the lifecycle, so an answer for a
+            // hover the reader has left is dropped in one place rather than at
+            // each call site that might forget.
+            if life.answer_arrived(answer.generation, answer.anchor) == lifecycle::Action::Show {
+                overlay.show(answer.card, answer.anchor);
             }
         }
 
