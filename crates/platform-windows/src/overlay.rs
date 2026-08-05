@@ -27,6 +27,7 @@
 
 use std::sync::mpsc::{self, Sender};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use crate::glass::Glass;
 use lens_core::card::{Card, CardBody};
@@ -408,6 +409,11 @@ unsafe fn show_card(
         unsafe { work_area_for(anchor.center()) },
     );
 
+    // A card arriving, rather than one growing. A streamed answer calls this
+    // several times a second and only the first of them is an entrance: the
+    // rest would be a card that flashes once per word.
+    let arriving = holding.is_none();
+
     // Same hover: keep where it already is, and only let it grow downwards.
     // Re-placing on every partial is what put the same card in three places.
     if let Some(previous) = holding {
@@ -424,8 +430,13 @@ unsafe fn show_card(
     // The Direct2D path positions, sizes and paints in one call, so none of
     // the GDI dance below applies to it.
     if let (Some(glass), Some(laid)) = (glass, laid) {
-        // SAFETY: the window is this thread's own and is WS_EX_LAYERED.
-        let drawn = unsafe { glass.present(window, &laid, &theme, placed) };
+        let drawn = if arriving && theme.animate {
+            // SAFETY: the window is this thread's own and is WS_EX_LAYERED.
+            unsafe { rise(glass, window, &laid, &theme, placed) }
+        } else {
+            // SAFETY: as above.
+            unsafe { glass.present(window, &laid, &theme, placed) }
+        };
         if drawn {
             // SAFETY: NOACTIVATE is what keeps focus where it was.
             unsafe {
@@ -856,6 +867,68 @@ pub fn forget_last_frame() {
 /// The tallest a card may be, for the live check that measures against it.
 pub fn max_card_height() -> i32 {
     MAX_HEIGHT
+}
+
+/// How long a card takes to arrive.
+///
+/// Short. This is a reading tool and the card is an answer to a question the
+/// reader already asked, so the entrance is there to stop it appearing from
+/// nowhere, not to be watched. Anything longer reads as latency.
+const ENTRANCE: Duration = Duration::from_millis(110);
+
+/// How many frames that takes. Seven at 110ms is about 16ms apart, which is a
+/// display's own refresh and as smooth as this can usefully be.
+const ENTRANCE_FRAMES: u32 = 7;
+
+/// How far the card rises as it arrives, in pixels at 100% scaling.
+///
+/// Small on purpose. A card that flies in from anywhere draws the eye to the
+/// movement rather than to the words, and the words are the product.
+const ENTRANCE_RISE: f32 = 7.0;
+
+/// Fade a card in while it settles the last few pixels upwards.
+///
+/// # Safety
+/// `window` must be a live `WS_EX_LAYERED` window owned by this thread.
+unsafe fn rise(
+    glass: &Glass,
+    window: HWND,
+    laid: &crate::glass::Laid,
+    theme: &Theme,
+    placed: ScreenRect,
+) -> bool {
+    let frame = ENTRANCE / ENTRANCE_FRAMES;
+    let rise = ENTRANCE_RISE * laid.scale();
+
+    for step in 1..=ENTRANCE_FRAMES {
+        let progress = f32::from(step as u16) / ENTRANCE_FRAMES as f32;
+        // Ease out cubic: fastest at the start, settling rather than stopping.
+        // Linear movement over a distance this small reads as a jump.
+        let eased = 1.0 - (1.0 - progress).powi(3);
+        let offset = (rise * (1.0 - eased)).round() as i32;
+        let at = ScreenRect::new(placed.x, placed.y + offset, placed.width, placed.height);
+
+        // SAFETY: the caller's guarantee, and the fade is the window's own
+        // constant alpha rather than the bitmap's, so the drawn frame stays
+        // fully inked and the flicker checks keep meaning what they mean.
+        let drawn =
+            unsafe { glass.present_faded(window, laid, theme, at, (eased * 255.0).round() as u8) };
+        if !drawn {
+            return false;
+        }
+        if step == 1 {
+            // Shown only once the first frame exists. Showing an empty window
+            // first is a flash of nothing, which is the thing being avoided.
+            // SAFETY: NOACTIVATE is what keeps focus where it was.
+            unsafe {
+                let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
+            }
+        }
+        if step < ENTRANCE_FRAMES {
+            std::thread::sleep(frame);
+        }
+    }
+    true
 }
 
 /// The widest a card may be at 100% scaling, before the shadow around it.
