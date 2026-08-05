@@ -37,11 +37,11 @@ use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, W
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreateSolidBrush,
-    DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, FrameRect, GetDC, GetMonitorInfoW,
-    InvalidateRect, MonitorFromPoint, ReleaseDC, SelectObject, SetBkMode, SetTextColor,
-    DEFAULT_CHARSET, DEFAULT_PITCH, DT_CALCRECT, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX,
-    DT_WORDBREAK, FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD, HBRUSH, HFONT, MONITORINFO,
-    MONITOR_DEFAULTTONEAREST, PAINTSTRUCT, SRCCOPY, TRANSPARENT,
+    DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, FrameRect, GetDC, GetDeviceCaps,
+    GetMonitorInfoW, InvalidateRect, MonitorFromPoint, ReleaseDC, SelectObject, SetBkMode,
+    SetTextColor, DEFAULT_CHARSET, DEFAULT_PITCH, DT_CALCRECT, DT_END_ELLIPSIS, DT_LEFT,
+    DT_NOPREFIX, DT_WORDBREAK, FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD, HBRUSH, HFONT, LOGPIXELSY,
+    MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT, SRCCOPY, TRANSPARENT,
 };
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -418,7 +418,7 @@ unsafe fn text_height(
         return 0;
     }
     // SAFETY: creates a font this function owns and deletes below.
-    let font = unsafe { font(point_size, false) };
+    let font = unsafe { font(logical_height(dc, point_size), false) };
     // SAFETY: the font is selected, used, and restored before deletion.
     unsafe {
         let previous = SelectObject(dc, font.into());
@@ -441,15 +441,35 @@ unsafe fn text_height(
     }
 }
 
+/// Convert a point size to the logical height `CreateFontW` expects.
+///
+/// `CreateFontW`'s height is in **logical units**, so passing a point size
+/// straight in produces text whose size depends on the display's density.
+/// Microsoft's own formula is `-MulDiv(points, LOGPIXELSY, 72)`, and the DC
+/// here belongs to the card's window, so on a per-monitor-aware process it
+/// carries the DPI of the monitor the card is on.
+///
+/// Before this, a `19` labelled as points was 19 logical units, which on this
+/// desk meant different text on the 125% monitor and the 100% one.
+///
+/// # Safety
+/// `dc` must be a valid device context.
+unsafe fn logical_height(dc: windows::Win32::Graphics::Gdi::HDC, points: i32) -> i32 {
+    // SAFETY: a read-only capability query.
+    let dpi = unsafe { GetDeviceCaps(Some(dc), LOGPIXELSY) };
+    let dpi = if dpi > 0 { dpi } else { 96 };
+    -((points * dpi) / 72)
+}
+
 /// # Safety
 /// The returned font must be deleted by the caller.
-unsafe fn font(point_size: i32, semibold: bool) -> HFONT {
+unsafe fn font(height: i32, semibold: bool) -> HFONT {
     // Malgun Gothic carries Hangul; Segoe UI does not. A card whose target
     // language is Korean rendered in a Latin-only face shows boxes.
     // SAFETY: a documented font creation with a static face name.
     unsafe {
         CreateFontW(
-            -point_size,
+            height,
             0,
             0,
             0,
@@ -606,7 +626,7 @@ unsafe fn draw(
     }
     // SAFETY: the font is selected, used, restored, and deleted.
     unsafe {
-        let font = font(point_size, semibold);
+        let font = font(logical_height(dc, point_size), semibold);
         let previous = SelectObject(dc, font.into());
         SetTextColor(dc, colour);
 

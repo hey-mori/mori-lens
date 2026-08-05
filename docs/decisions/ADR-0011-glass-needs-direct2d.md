@@ -68,10 +68,17 @@ renderer first.**
    that cost nothing: rounded corners, and per-theme colour. It gets
    `DWMSBT_TRANSIENTWINDOW` only when its painting can survive it.
 
-4. **Glass arrives with Direct2D and DirectWrite**, as its own change,
-   behind the same `Theme`. Until then a theme's `translucency` is
-   honoured by the uniform window alpha, which is a weaker effect
-   honestly labelled rather than a fake one.
+4. **Glass arrives with an alpha-correct renderer**, as its own change,
+   behind the same `Theme`. Direct2D with DirectWrite is the leading
+   candidate and not the only one: Direct2D and GDI interoperate through
+   a shared surface, so the card's text could move without the whole
+   painter being replaced. Which of those is right is a question for
+   that change, not this one.
+
+   Until then a theme's `translucency` is honoured by the uniform window
+   alpha. That is a **weaker effect than glass and a different one**: it
+   fades the text along with the surface, which is why every contrast
+   figure in `lens-core::theme` composites the ink as well.
 
 5. **The system's accessibility settings win over any preset.**
    Transparency-reduced, high-contrast, and animation-reduced are read
