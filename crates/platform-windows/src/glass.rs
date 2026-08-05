@@ -94,7 +94,7 @@ use windows::Win32::UI::WindowsAndMessaging::{UpdateLayeredWindow, ULW_ALPHA};
 /// The window is this much larger than the card on every side, and those extra
 /// pixels are almost transparent. It is the single change that makes a panel
 /// read as floating above the page rather than pasted onto it.
-const SHADOW_REACH: f32 = 14.0;
+const SHADOW_REACH: f32 = 17.0;
 
 /// How dark the shadow is directly under the card's edge.
 ///
@@ -102,9 +102,10 @@ const SHADOW_REACH: f32 = 14.0;
 /// sentence next to the one being explained has made the page harder to read in
 /// order to look better.
 ///
-/// 0.30 was too heavy on a light desktop and a user said so: the card sat in a
-/// visible grey box rather than above the page.
-const SHADOW_STRENGTH: f32 = 0.13;
+/// This is the **peak**, right against the card, and it falls away smoothly
+/// from there. It used to be the strength of a 2px ring at the same place,
+/// which is a different thing wearing the same number.
+const SHADOW_STRENGTH: f32 = 0.16;
 
 /// How far down the shadow is offset. Light from above, as every other panel on
 /// this desktop assumes.
@@ -113,23 +114,12 @@ const SHADOW_DROP: f32 = 3.0;
 /// Corner radius in pixels at 100% scaling.
 const CORNER: f32 = 10.0;
 
-/// Rings drawn to fake a gaussian falloff.
+/// How much of the margin the shadow fades across.
 ///
-/// Direct2D can blur properly, through an effect graph on a device context.
-/// That needs a Direct3D device, which needs a DXGI swap chain or a bitmap
-/// surface, which is a great deal of machinery for a shadow on a card that is
-/// three hundred pixels wide. Concentric rounded rectangles with a quadratic
-/// falloff are indistinguishable at this size.
-const SHADOW_RINGS: i32 = 18;
-
-/// How much of the margin the shadow is allowed to use.
-///
-/// **Not all of it.** The outermost ring used to be drawn at exactly the
-/// bitmap's edge, where it was clipped rather than faded, and the result was a
-/// visible rectangle around a rounded card: the one thing a soft shadow must
-/// never produce. Leaving a fifth of the margin clear lets it reach nothing
-/// before it runs out of room.
-const SHADOW_USES: f32 = 0.8;
+/// Not all of it: it has to reach nothing before it runs out of bitmap, or the
+/// last of it is clipped rather than faded and the result is a visible
+/// rectangle around a rounded card.
+const SHADOW_USES: f32 = 0.85;
 
 /// The typeface. Segoe UI is the system's own, and DirectWrite falls back to an
 /// installed Hangul face for runs it cannot cover, which is the behaviour that
@@ -457,7 +447,15 @@ impl Glass {
             let drawn = self.draw(dc, laid, theme, width, height, margin as f32);
             if drawn {
                 let pixels =
-                    std::slice::from_raw_parts(bits.cast::<u32>(), (width * height) as usize);
+                    std::slice::from_raw_parts_mut(bits.cast::<u32>(), (width * height) as usize);
+                cast_shadow(
+                    pixels,
+                    width,
+                    height,
+                    margin as f32,
+                    CORNER * laid.scale,
+                    laid.scale,
+                );
                 let ink = pixels.iter().filter(|pixel| (*pixel >> 24) == 255).count();
                 LAST_FRAME_INK.store(ink, std::sync::atomic::Ordering::Relaxed);
             }
@@ -581,50 +579,6 @@ impl Glass {
             };
             let radius = CORNER * laid.scale;
 
-            // The shadow, outermost ring first so the darker inner ones land on
-            // top.
-            let drop = SHADOW_DROP * laid.scale;
-            for ring in (1..=SHADOW_RINGS).rev() {
-                let spread = margin * SHADOW_USES * ring as f32 / SHADOW_RINGS as f32;
-                // Quadratic falloff. Linear reads as a grey halo with an edge.
-                let fade = 1.0 - ring as f32 / SHADOW_RINGS as f32;
-                let alpha = SHADOW_STRENGTH * fade * fade;
-                let Ok(brush) = target.CreateSolidColorBrush(
-                    &D2D1_COLOR_F {
-                        r: 0.0,
-                        g: 0.0,
-                        b: 0.0,
-                        a: alpha,
-                    },
-                    None,
-                ) else {
-                    continue;
-                };
-                // Stroked, not filled. A filled rounded rectangle covers the
-                // card as well as the space around it, so fourteen of them
-                // stack underneath a translucent surface and darken it: the
-                // card measured 250 alpha where the theme asked for 236. A
-                // stroke paints only its own ring, so the surface is drawn at
-                // the opacity the theme actually chose.
-                target.DrawRoundedRectangle(
-                    &D2D1_ROUNDED_RECT {
-                        rect: D2D_RECT_F {
-                            left: card.left - spread,
-                            top: card.top - spread + drop,
-                            right: card.right + spread,
-                            bottom: card.bottom + spread + drop,
-                        },
-                        radiusX: radius + spread,
-                        radiusY: radius + spread,
-                    },
-                    &brush,
-                    // Wide enough that consecutive rings overlap rather than
-                    // leaving gaps between them, which reads as banding.
-                    (margin * SHADOW_USES / SHADOW_RINGS as f32) * 2.4,
-                    None,
-                );
-            }
-
             // The surface. Translucent by the theme's own figure, and the only
             // thing here that is.
             let surface_alpha = f32::from(theme.surface_alpha) / 255.0;
@@ -645,11 +599,12 @@ impl Glass {
             // outline instead of straddling it and coming out two pixels of
             // grey.
             //
-            // Quiet. At 0.9 it read as a second edge just inside the shadow's,
-            // and two edges around one card is a box. Its job is to keep the
-            // card's boundary legible against a page of the same colour, and
-            // that takes very little.
-            if let Ok(brush) = target.CreateSolidColorBrush(&colour(theme.border, 0.45), None) {
+            // Very quiet. Two things used to draw an edge here, this and the
+            // shadow's innermost ring, and a user called the result a weird box
+            // twice. The ring is gone; this stays only to keep the card's
+            // boundary legible against a page of nearly its own colour, which
+            // takes almost nothing.
+            if let Ok(brush) = target.CreateSolidColorBrush(&colour(theme.border, 0.30), None) {
                 target.DrawRoundedRectangle(
                     &D2D1_ROUNDED_RECT {
                         rect: D2D_RECT_F {
@@ -739,6 +694,76 @@ unsafe fn text_width(layout: &IDWriteTextLayout) -> Option<f32> {
     }
 }
 
+/// Darken what is outside the card, under whatever is already there.
+///
+/// **Not drawn with Direct2D, and the reason is what a shadow is.** It was
+/// eighteen stroked rounded rectangles with a falling alpha, and a user
+/// screenshotted the result twice and called it a weird box both times. They
+/// were right: the innermost stroke is a 2px ring at nearly full strength
+/// hugging the card, which is not a shadow, it is a second border. Softening it
+/// only moved the line outwards.
+///
+/// A shadow is **black**, so compositing one underneath changes nothing but the
+/// alpha channel: with the card's premultiplied colour `c` over shadow alpha
+/// `s`, the result is `c` with alpha `a + s(1 - a)`. That is exact, it needs no
+/// geometry, and it goes correctly under the card's own antialiased edge
+/// instead of leaving a seam beside it.
+///
+/// One pass over about sixty thousand pixels, which is well under a millisecond
+/// and happens once per presented frame.
+fn cast_shadow(pixels: &mut [u32], width: i32, height: i32, margin: f32, radius: f32, scale: f32) {
+    let reach = margin * SHADOW_USES;
+    if reach <= 0.0 {
+        return;
+    }
+    let drop = SHADOW_DROP * scale;
+
+    // The card, as the shadow sees it: its own shape, shifted down.
+    let left = margin;
+    let top = margin + drop;
+    let right = width as f32 - margin;
+    let bottom = height as f32 - margin + drop;
+    let (half_width, half_height) = ((right - left) / 2.0, (bottom - top) / 2.0);
+    let (centre_x, centre_y) = (left + half_width, top + half_height);
+    let inner_x = (half_width - radius).max(0.0);
+    let inner_y = (half_height - radius).max(0.0);
+
+    for y in 0..height {
+        for x in 0..width {
+            let index = (y * width + x) as usize;
+            let existing = pixels[index] >> 24;
+            // Already solid: nothing can go under it, and skipping is most of
+            // the card.
+            if existing == 255 {
+                continue;
+            }
+
+            // Distance to the rounded rectangle, negative inside it.
+            let dx = (f64::from(x) as f32 + 0.5 - centre_x).abs() - inner_x;
+            let dy = (f64::from(y) as f32 + 0.5 - centre_y).abs() - inner_y;
+            let outside = dx.max(0.0).hypot(dy.max(0.0));
+            let distance = outside + dx.max(dy).min(0.0) - radius;
+            if distance >= reach {
+                continue;
+            }
+
+            // Smoothstep rather than a power: it leaves the card at full
+            // strength and arrives at nothing with no edge, which is the whole
+            // difference between a shadow and an outline.
+            let t = (distance.max(0.0) / reach).clamp(0.0, 1.0);
+            let falloff = 1.0 - t * t * (3.0 - 2.0 * t);
+            let shade = (SHADOW_STRENGTH * falloff).clamp(0.0, 1.0);
+            if shade <= 0.0 {
+                continue;
+            }
+
+            let under = (shade * 255.0).round() as u32;
+            let combined = existing + (under * (255 - existing)) / 255;
+            pixels[index] = (pixels[index] & 0x00ff_ffff) | (combined.min(255) << 24);
+        }
+    }
+}
+
 /// A colour Direct2D understands, with straight alpha. Direct2D premultiplies
 /// on the way into a premultiplied target, so this must not be premultiplied
 /// here as well.
@@ -788,5 +813,109 @@ unsafe fn surface(
         };
         let previous = SelectObject(dc, bitmap.into());
         Some((dc, bitmap, previous, bits))
+    }
+}
+
+#[cfg(test)]
+mod shadow {
+    use super::*;
+
+    /// A card 200x80 inside a 20px margin, no scaling.
+    fn frame() -> (Vec<u32>, i32, i32, f32, f32) {
+        let (margin, radius) = (20.0f32, 10.0f32);
+        let (width, height) = (200 + 40, 80 + 40);
+        let mut pixels = vec![0u32; (width * height) as usize];
+        // The card itself, opaque, so the pass has something to go under.
+        for y in margin as i32..height - margin as i32 {
+            for x in margin as i32..width - margin as i32 {
+                pixels[(y * width + x) as usize] = 0xffff_ffff;
+            }
+        }
+        (pixels, width, height, margin, radius)
+    }
+
+    fn alpha(pixels: &[u32], width: i32, x: i32, y: i32) -> u32 {
+        pixels[(y * width + x) as usize] >> 24
+    }
+
+    /// The whole point. A card sitting on its own shadow measured 250 where the
+    /// theme asked for 236 the last time this was drawn underneath it.
+    #[test]
+    fn the_card_itself_is_never_darkened() {
+        let (mut pixels, width, height, margin, radius) = frame();
+        let inside = pixels.clone();
+        cast_shadow(&mut pixels, width, height, margin, radius, 1.0);
+        for y in margin as i32 + 2..height - margin as i32 - 2 {
+            for x in margin as i32 + 2..width - margin as i32 - 2 {
+                let at = (y * width + x) as usize;
+                assert_eq!(pixels[at], inside[at], "the card changed at ({x}, {y})");
+            }
+        }
+    }
+
+    /// Darkest against the card and gone before the edge of the bitmap, with
+    /// nothing in between that a reader could point at and call a line.
+    #[test]
+    fn the_shadow_falls_off_without_an_edge() {
+        let (mut pixels, width, height, margin, radius) = frame();
+        cast_shadow(&mut pixels, width, height, margin, radius, 1.0);
+
+        let middle = height / 2;
+        let strip: Vec<u32> = (0..margin as i32)
+            .map(|x| alpha(&pixels, width, x, middle))
+            .collect();
+
+        // Monotonic outwards: every step towards the edge is no darker than
+        // the last. A ring would break this, which is what it looked like.
+        for pair in strip.windows(2) {
+            assert!(
+                pair[0] <= pair[1],
+                "alpha rises then falls across the margin: {strip:?}",
+            );
+        }
+        assert_eq!(
+            strip[0], 0,
+            "the bitmap's own edge must be clear: {strip:?}"
+        );
+        assert!(
+            *strip.last().expect("a strip") > 0,
+            "nothing was cast beside the card: {strip:?}",
+        );
+    }
+
+    /// No step in the falloff big enough to read as a band.
+    #[test]
+    fn no_single_step_is_a_visible_band() {
+        let (mut pixels, width, height, margin, radius) = frame();
+        cast_shadow(&mut pixels, width, height, margin, radius, 1.0);
+        let middle = height / 2;
+        let mut worst = 0u32;
+        for x in 1..margin as i32 {
+            let a = alpha(&pixels, width, x - 1, middle);
+            let b = alpha(&pixels, width, x, middle);
+            worst = worst.max(b.abs_diff(a));
+        }
+        assert!(worst <= 6, "a {worst}/255 step between neighbouring pixels");
+    }
+
+    /// The corner of the bitmap is further from the card than the shadow
+    /// reaches, so it stays fully transparent and the window has no box.
+    #[test]
+    fn the_corners_of_the_frame_stay_empty() {
+        let (mut pixels, width, height, margin, radius) = frame();
+        cast_shadow(&mut pixels, width, height, margin, radius, 1.0);
+        assert_eq!(alpha(&pixels, width, 0, 0), 0);
+        assert_eq!(alpha(&pixels, width, width - 1, 0), 0);
+    }
+
+    /// Light falls from above, so there is more of it below than above.
+    #[test]
+    fn the_shadow_sits_below_the_card_rather_than_around_it() {
+        let (mut pixels, width, height, margin, radius) = frame();
+        cast_shadow(&mut pixels, width, height, margin, radius, 1.0);
+        let x = width / 2;
+        let above = alpha(&pixels, width, x, margin as i32 - 4);
+        let below = alpha(&pixels, width, x, height - margin as i32 + 3);
+        assert!(below > above, "above {above}, below {below}");
     }
 }
