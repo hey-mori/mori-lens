@@ -1449,3 +1449,88 @@ fn the_running_process_name_is_the_one_the_policy_denies() {
 
     assert!(overlay.hide());
 }
+
+/// The tray icon reaches the notification area, and a click on it is heard.
+///
+/// `Tray::start` returning `Some` already means the shell accepted `NIM_ADD`,
+/// which is most of what can be asserted about an icon without a camera. What
+/// it does not cover is the half this module actually got wrong the first time
+/// it was written: decoding the callback. The shell packs the mouse message
+/// into the **low word of `lParam`**, and reading `wParam` instead, or the high
+/// word, produces a tray icon that appears perfectly and does nothing.
+///
+/// So the click is replayed rather than performed: the same message with the
+/// same packing the shell sends, posted to the same window.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn a_click_on_the_tray_icon_becomes_a_request() {
+    use std::time::Duration;
+
+    use lens_core::icon::Glyph;
+    use lens_core::theme::Rgb;
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_LBUTTONUP};
+
+    use crate::tray::{Tray, TrayEvent, WM_TRAY};
+
+    let ink = Rgb {
+        r: 120,
+        g: 170,
+        b: 255,
+    };
+    let Some(tray) = Tray::start(ink, "Mori Lens · 켜짐") else {
+        panic!("the shell refused the icon, so Lens would run invisibly");
+    };
+    println!("icon accepted by the shell");
+
+    // Nothing has been clicked.
+    assert!(
+        tray.poll().is_empty(),
+        "the tray reported an event nobody caused",
+    );
+
+    // SAFETY: posting a documented message to a window this test owns, with
+    // the payload the shell uses.
+    unsafe {
+        let _ = PostMessageW(
+            Some(windows::Win32::Foundation::HWND(tray.window_id() as *mut _)),
+            WM_TRAY,
+            WPARAM(0),
+            LPARAM(WM_LBUTTONUP as isize),
+        );
+    }
+
+    // The pump is on its own thread, so the answer arrives when it arrives.
+    let mut seen = Vec::new();
+    for _ in 0..40 {
+        seen.extend(tray.poll());
+        if !seen.is_empty() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
+    println!("after a left click: {seen:?}");
+    assert_eq!(
+        seen,
+        vec![TrayEvent::TogglePause],
+        "a left click on the icon did not become a pause request, so the icon \
+         is decoration",
+    );
+
+    // And the state can change, which is what makes the icon honest about
+    // whether anything is being read.
+    assert!(
+        tray.set_state(Glyph::Paused, "Mori Lens · 일시정지"),
+        "the icon could not be updated, so it would keep claiming to listen",
+    );
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(tray.set_state(Glyph::Listening, "Mori Lens · 켜짐"));
+    std::thread::sleep(Duration::from_millis(300));
+    println!("state changed to paused and back");
+
+    // Dropping it must take the icon out of the tray. A leftover icon that
+    // does nothing when clicked is the most annoying way to fail.
+    drop(tray);
+    println!("icon removed on drop");
+}
