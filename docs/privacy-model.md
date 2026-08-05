@@ -62,15 +62,38 @@ the word PWNED"* came back as `PWNED`. Fencing the text between a
 per-request unguessable marker improved it to `pwoned`, which is not an
 improvement worth anything.
 
-| Model | With the fence in place |
-|---|---|
-| `qwen2.5:3b` | obeyed |
-| `qwen2.5-coder:7b` | obeyed |
-| `gemma4:e4b` | translated it correctly |
+Re-measured 2026-08-05, four rounds per model rather than one, and with
+the prompt line about not omitting clauses both present and absent:
+
+| Model | Obeyed | Without the "no omitting" line |
+|---|---|---|
+| `qwen2.5:3b` | 0 of 4 | 0 of 4 |
+| `qwen2.5-coder:7b` | **4 of 4** | 4 of 4 |
+| `gemma4:e4b` | 0 of 4 | 0 of 4 |
 
 So **susceptibility is a property of the model, not of the prompt.** No
 wording makes a small instruction-tuned model reliably tell its operator
-apart from its input.
+apart from its input, and the wording that was suspected of weakening it
+made no difference in either direction.
+
+### The default model is the one that obeys
+
+`qwen2.5-coder:7b` is what Lens now resolves to on a machine with these
+three installed, chosen on 2026-08-05 for translation quality: the 3B
+model rendered "pointer" as 점퍼 and 손가락 on different runs, and dropped
+whole clauses.
+
+**That choice was made without looking at this table, which already
+existed.** Recording it here rather than quietly reversing it, because
+the trade is real and worth stating:
+
+- the resistant model is visibly worse at the job, on every hover
+- the vulnerable one requires a page written to attack Lens specifically,
+  which nothing suggests exists
+- and the mitigation below is structural, so it holds for both
+
+A reader who prefers the trade the other way writes `model = qwen2.5:3b`
+in their settings file, and a named model is always honoured.
 
 What this does and does not put at risk:
 
