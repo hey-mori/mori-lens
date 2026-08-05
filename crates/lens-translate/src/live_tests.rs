@@ -746,3 +746,138 @@ fn residency_is_reported_correctly_before_and_after_a_load() {
 
     translator.release();
 }
+
+/// The sentence a user watched come back untranslated.
+///
+/// A card showed the English original and, below it in bold, **the same
+/// English**. Not a bad translation: no translation.
+///
+/// Three candidate wordings, three rounds each, over three sentences. What is
+/// measured is hangul: a translation into Korean containing no Korean is the
+/// defect, whatever else it is.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn measure_the_sentence_that_came_back_in_english() {
+    let Some(translator) = live() else {
+        return;
+    };
+
+    let sentences = [
+        "For the mechanics: I'd dump the two schemas and history table from the current \
+         database, create a fresh `orbbase` database owned by `orbbase_app`, restore those \
+         objects into it, repoint the engine, verify everything works, then drop the old \
+         schemas after a grace period.",
+        "The build failed because `cargo fmt --check` found a difference in src/main.rs.",
+        "Rest the pointer on a word and the card explains it without any clicking.",
+    ];
+
+    let shipped = "Translate every clause. Do not summarise, shorten, or leave anything \
+                   out.\nKeep code identifiers, file paths, and URLs unchanged.";
+
+    let candidates: [(&str, &str); 3] = [
+        ("shipped", shipped),
+        (
+            "target-first",
+            "Your entire output must be in Korean. Never repeat the fenced text back: an \
+             output in the same language as the input is a failure.\nTranslate every \
+             clause. Do not summarise, shorten, or leave anything out.\nCode identifiers, \
+             file paths and URLs stay verbatim; every word around them is translated.",
+        ),
+        (
+            "no-identifier-line",
+            "Your entire output must be in Korean. Never repeat the fenced text back: an \
+             output in the same language as the input is a failure.\nTranslate every \
+             clause. Do not summarise, shorten, or leave anything out.",
+        ),
+    ];
+
+    for (label, replacement) in candidates {
+        let mut hangul_total = 0usize;
+        let mut echoes = 0usize;
+        for source in sentences {
+            for _ in 0..3 {
+                let request = QuickRequest::new(source, "Korean");
+                // Matched in the *escaped* form. The body is JSON, so the
+                // newlines in these literals appear there as two characters and
+                // a plain replace silently matches nothing: the first run of
+                // this returned byte-identical figures for all three
+                // candidates, which is what gave it away.
+                let wanted = shipped.replace('\n', "\\n");
+                let body = translator
+                    .body_for(&request, false)
+                    .replace(&wanted, &replacement.replace('\n', "\\n"));
+                assert!(
+                    label == "shipped" || !body.contains(&wanted),
+                    "candidate {label} replaced nothing",
+                );
+                let text = match crate::http::post(
+                    crate::DEFAULT_ENDPOINT,
+                    "/api/generate",
+                    &body,
+                    Duration::from_secs(120),
+                ) {
+                    Ok(reply) => crate::json::string_value_of_key(&reply, "response")
+                        .unwrap_or_default()
+                        .trim()
+                        .to_owned(),
+                    Err(_) => String::new(),
+                };
+                let hangul = text
+                    .chars()
+                    .filter(|c| ('\u{AC00}'..='\u{D7A3}').contains(c))
+                    .count();
+                hangul_total += hangul;
+                if hangul * 6 < text.chars().count() {
+                    echoes += 1;
+                }
+            }
+        }
+        println!("{label:<20} untranslated {echoes}/9 · hangul {hangul_total}");
+    }
+}
+
+/// The whole path, on the sentence that failed in front of a user.
+///
+/// `measure_the_sentence_that_came_back_in_english` compares wordings by
+/// building bodies by hand. This runs `quick`, so it also exercises the retry
+/// and the refusal, which is what the product actually does.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn the_sentence_that_echoed_now_comes_back_in_korean() {
+    let Some(translator) = live() else {
+        return;
+    };
+
+    let source = "For the mechanics: I'd dump the two schemas and history table from the \
+                  current database, create a fresh `orbbase` database owned by `orbbase_app`, \
+                  restore those objects into it, repoint the engine, verify everything works, \
+                  then drop the old schemas after a grace period.";
+
+    for round in 1..=3 {
+        match translator.quick(&QuickRequest::new(source, "Korean")) {
+            Ok(translation) => {
+                let hangul = translation
+                    .text
+                    .chars()
+                    .filter(|c| ('\u{AC00}'..='\u{D7A3}').contains(c))
+                    .count();
+                println!(
+                    "round {round}: {}ms · {hangul} hangul · {} chars",
+                    translation.latency_ms,
+                    translation.text.chars().count(),
+                );
+                assert!(
+                    !lens_core::translate::reads_as_the_source(source, &translation.text),
+                    "quick() returned the source text as a translation",
+                );
+                assert!(hangul >= 20, "expected Korean, got {hangul} hangul");
+            }
+            Err(TranslateError::NotTranslated) => {
+                // The honest failure. Better than the card that caused all this,
+                // and still a failure worth seeing in the output.
+                println!("round {round}: refused, model would not translate");
+            }
+            Err(other) => panic!("round {round}: {other}"),
+        }
+    }
+}
