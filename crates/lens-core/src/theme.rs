@@ -182,6 +182,13 @@ pub struct Theme {
     pub surface_alpha: u8,
     /// Body text height in **points**, not pixels.
     ///
+    /// 11pt at the normal scale. Windows' own UI font is 9pt, so the
+    /// translation sits a little above the interface around it without
+    /// becoming a heading. The first version said 14, which is a heading, and
+    /// it was picked while the number was still being passed to `CreateFontW`
+    /// as a logical height: converting it to real points then grew the text by
+    /// a fifth on a 125% display, where it was reported as too large.
+    ///
     /// Points because a card is read at arm's length on displays of different
     /// densities, and a pixel height means two sizes on a desk with a 125%
     /// monitor beside a 100% one. The adapter converts using the DPI of the
@@ -313,8 +320,8 @@ impl Theme {
             footer,
             problem,
             surface_alpha: translucency.alpha(),
-            body_pt: (14.0 * factor).round() as i32,
-            small_pt: (11.0 * factor).round() as i32,
+            body_pt: (11.0 * factor).round() as i32,
+            small_pt: (9.0 * factor).round() as i32,
             padding: 14,
             corner_radius: 10,
         }
@@ -567,6 +574,39 @@ mod tests {
             dark,
         );
         assert_eq!(night_in_light.surface, night_in_dark.surface);
+    }
+
+    /// A guard against the number drifting into heading territory again.
+    #[test]
+    fn the_body_stays_in_the_range_a_card_wants() {
+        // Windows' UI font is 9pt. A translation should read a little larger
+        // than the interface around it and never like a headline: 14pt was
+        // reported as excessive on a 125% display, where it renders at 23px.
+        let theme = Theme::resolve(
+            Preset::System,
+            Translucency::Balanced,
+            TextScale::Normal,
+            SystemPreferences::default(),
+        );
+        assert!(
+            (10..=12).contains(&theme.body_pt),
+            "body is {}pt, which is outside what a card wants",
+            theme.body_pt,
+        );
+        assert!(
+            (8..=10).contains(&theme.small_pt),
+            "small is {}pt",
+            theme.small_pt,
+        );
+        // Even at the largest scale a reader chose, it stays readable rather
+        // than becoming a poster.
+        let largest = Theme::resolve(
+            Preset::System,
+            Translucency::Balanced,
+            TextScale::Larger,
+            SystemPreferences::default(),
+        );
+        assert!(largest.body_pt <= 18, "largest is {}pt", largest.body_pt);
     }
 
     #[test]

@@ -400,7 +400,10 @@ unsafe fn measure(window: HWND, card: &Card) -> i32 {
         };
         let original = text_height(dc, &card.original, inner, theme.small_pt);
         let translated = text_height(dc, body, inner, theme.body_pt);
-        let footer = theme.small_pt + 4;
+        // Measured like the others rather than guessed from the point size.
+        // The previous `small_pt + 4` mixed points into a sum of pixels, so
+        // the card was the wrong height by a different amount on each monitor.
+        let footer = text_height(dc, &card.footer, inner, theme.small_pt);
         ReleaseDC(Some(window), dc);
         theme.padding * 2 + original + 8 + translated + 10 + footer
     }
