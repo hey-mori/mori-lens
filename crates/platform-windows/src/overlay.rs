@@ -28,6 +28,7 @@
 use std::sync::mpsc::{self, Sender};
 use std::sync::Mutex;
 
+use crate::glass::Glass;
 use lens_core::card::{Card, CardBody};
 use lens_core::geometry::ScreenPoint;
 use lens_core::geometry::ScreenRect;
@@ -47,9 +48,9 @@ use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
     PostThreadMessageW, RegisterClassW, SetLayeredWindowAttributes, SetWindowPos, ShowWindow,
-    HWND_TOPMOST, LWA_ALPHA, MSG, SWP_NOACTIVATE, SW_HIDE, SW_SHOWNOACTIVATE, WM_PAINT, WM_QUIT,
-    WM_USER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-    WS_EX_TRANSPARENT, WS_POPUP,
+    HWND_TOPMOST, LWA_ALPHA, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE,
+    SW_SHOWNOACTIVATE, WM_PAINT, WM_QUIT, WM_USER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
 /// Card geometry, in physical pixels at 100%. Deliberately fixed for now: a
@@ -244,13 +245,20 @@ unsafe fn create_window() -> Option<HWND> {
         )
         .ok()?;
 
-        let theme = current_theme();
-        let _ = SetLayeredWindowAttributes(window, COLORREF(0), theme.surface_alpha, LWA_ALPHA);
+        // Note what is *not* here: `SetLayeredWindowAttributes`. It and
+        // `UpdateLayeredWindow` are two mutually exclusive ways of using
+        // `WS_EX_LAYERED`, and a window that has had the first called on it
+        // makes the second fail with an invalid parameter. Setting it here
+        // "just in case" is what made the Direct2D path silently fall back to
+        // GDI on its first run, with every other overlay test still green
+        // because they cannot tell the two apart.
+        //
+        // The fallback sets it in `pump`, once, and only when there is no
+        // Direct2D.
 
-        // Rounded corners cost nothing and are the one piece of the Windows 11
-        // material language a GDI window can have today. The full backdrop
-        // needs a renderer that can paint with alpha
-        // (docs/decisions/ADR-0011-glass-needs-direct2d.md).
+        // Only for the fallback. The Direct2D card draws its own rounded
+        // outline into the alpha channel, which is sharper than the system's
+        // and is the same shape on every build.
         //
         // Failure is ignored on purpose: this is Windows 11 build 22000 and
         // later, and a square card on an older build is not worth a branch.
@@ -269,6 +277,20 @@ unsafe fn create_window() -> Option<HWND> {
 /// # Safety
 /// `window` must be owned by this thread.
 unsafe fn pump(window: HWND, commands: &mpsc::Receiver<Command>) {
+    // Created here rather than passed in: Direct2D's single-threaded factory
+    // belongs to the thread that made it, and that is this one.
+    //
+    // `None` is not an error state. A machine where Direct2D cannot start keeps
+    // the GDI painter, because a plain card is a product and no card is not.
+    let glass = Glass::new();
+    if glass.is_none() {
+        // SAFETY: a documented call on this thread's own window. Only on this
+        // path: see `create_window`.
+        unsafe {
+            let theme = current_theme();
+            let _ = SetLayeredWindowAttributes(window, COLORREF(0), theme.surface_alpha, LWA_ALPHA);
+        }
+    }
     let mut message = MSG::default();
     // SAFETY: the standard message loop for a window owned by this thread.
     unsafe {
@@ -278,7 +300,9 @@ unsafe fn pump(window: HWND, commands: &mpsc::Receiver<Command>) {
             // instruction instead of queueing a card per sample.
             while let Ok(command) = commands.try_recv() {
                 match command {
-                    Command::Show(card, anchor) => show_card(window, *card, anchor),
+                    Command::Show(card, anchor) => {
+                        show_card(window, *card, anchor, glass.as_ref());
+                    }
                     Command::Hide => {
                         let _ = ShowWindow(window, SW_HIDE);
                     }
@@ -291,11 +315,20 @@ unsafe fn pump(window: HWND, commands: &mpsc::Receiver<Command>) {
 
 /// # Safety
 /// `window` must be owned by this thread.
-unsafe fn show_card(window: HWND, card: Card, anchor: ScreenRect) {
-    let height = {
+unsafe fn show_card(window: HWND, card: Card, anchor: ScreenRect, glass: Option<&Glass>) {
+    let theme = current_theme();
+
+    // Laid out once, by whichever renderer is going to draw it. Measuring with
+    // one engine and drawing with another is how a card ends up with its last
+    // line clipped.
+    // SAFETY: read-only monitor query.
+    let scale = unsafe { scale_for(anchor.center()) };
+    let laid = glass.and_then(|glass| glass.lay_out(&card, &theme, CARD_WIDTH, scale));
+
+    let height = match &laid {
+        Some(laid) => laid.height.clamp(80, MAX_HEIGHT),
         // SAFETY: measuring against the window's own device context.
-        let measured = unsafe { measure(window, &card) };
-        measured.clamp(80, MAX_HEIGHT)
+        None => unsafe { measure(window, &card) }.clamp(80, MAX_HEIGHT),
     };
 
     if let Ok(mut slot) = CONTENT.lock() {
@@ -310,6 +343,31 @@ unsafe fn show_card(window: HWND, card: Card, anchor: ScreenRect) {
         // SAFETY: read-only monitor queries.
         unsafe { work_area_for(anchor.center()) },
     );
+
+    // The Direct2D path positions, sizes and paints in one call, so none of
+    // the GDI dance below applies to it.
+    if let (Some(glass), Some(laid)) = (glass, laid) {
+        // SAFETY: the window is this thread's own and is WS_EX_LAYERED.
+        let drawn = unsafe { glass.present(window, &laid, &theme, placed) };
+        if drawn {
+            // SAFETY: NOACTIVATE is what keeps focus where it was.
+            unsafe {
+                let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
+                let _ = SetWindowPos(
+                    window,
+                    Some(HWND_TOPMOST),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+                );
+            }
+            return;
+        }
+        // Fell through: the frame was not drawn, so the GDI painter below
+        // still has a card to show rather than the user seeing nothing.
+    }
 
     // SAFETY: NOACTIVATE on every call is what keeps focus where it was.
     unsafe {
@@ -339,6 +397,40 @@ unsafe fn show_card(window: HWND, card: Card, anchor: ScreenRect) {
         // `false`: the whole client area is painted every time, so letting
         // Windows erase it first only guarantees a frame of blank card.
         let _ = InvalidateRect(Some(window), None, false);
+    }
+}
+
+/// The monitor's scaling at a point, as a multiplier on 96 DPI.
+///
+/// Per monitor, for the same reason the work area is: a desk with a 150%
+/// display beside a 100% one would otherwise get one physical card size on one
+/// screen and a different one on the other.
+///
+/// # Safety
+/// Read-only monitor and DPI queries.
+unsafe fn scale_for(point: ScreenPoint) -> f32 {
+    // SAFETY: `MONITOR_DEFAULTTONEAREST` always yields a monitor.
+    unsafe {
+        let monitor = MonitorFromPoint(
+            windows::Win32::Foundation::POINT {
+                x: point.x,
+                y: point.y,
+            },
+            MONITOR_DEFAULTTONEAREST,
+        );
+        let mut dpi_x = 96u32;
+        let mut dpi_y = 96u32;
+        if windows::Win32::UI::HiDpi::GetDpiForMonitor(
+            monitor,
+            windows::Win32::UI::HiDpi::MDT_EFFECTIVE_DPI,
+            &mut dpi_x,
+            &mut dpi_y,
+        )
+        .is_err()
+        {
+            return 1.0;
+        }
+        dpi_x as f32 / 96.0
     }
 }
 
@@ -664,6 +756,29 @@ unsafe fn draw(
         let _ = DeleteObject(font.into());
         measure_rect.bottom - measure_rect.top
     }
+}
+
+/// Opaque pixels in the last card frame handed to the compositor.
+///
+/// The live checks' only honest view of what was drawn, now that the card is a
+/// layered window whose content the window itself no longer holds. See
+/// `glass::last_frame_ink`.
+pub fn last_frame_ink() -> usize {
+    crate::glass::last_frame_ink()
+}
+
+/// Discard that count, so a check measures the frame it is waiting for.
+pub fn forget_last_frame() {
+    crate::glass::forget_last_frame();
+}
+
+/// The card's own width, without the shadow the window adds around it.
+///
+/// Exposed for the live check that tells the Direct2D card from the GDI one:
+/// a window exactly this wide has no shadow margin and therefore did not come
+/// from the alpha path.
+pub fn card_width() -> i32 {
+    CARD_WIDTH
 }
 
 /// Whether the overlay class is registered with the styles it must have.
