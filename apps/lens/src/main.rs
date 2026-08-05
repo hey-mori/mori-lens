@@ -28,6 +28,7 @@ use lens_core::cache::{CacheKey, TranslationCache};
 use lens_core::card::Card;
 use lens_core::geometry::ScreenRect;
 use lens_core::hover::{Generation, HoverConfig, HoverEvent};
+use lens_core::language::{decide, Decision};
 use lens_core::policy::{AppPolicy, AppTier};
 use lens_core::session::{HoverSession, InputState, Resolution};
 use lens_core::theme::{Preset, TextScale, Theme, Translucency};
@@ -430,6 +431,14 @@ fn main() -> std::process::ExitCode {
             match session.resolve(generation, point, now, input) {
                 Resolution::Presented(target) => {
                     let sentence = target.segmented.sentence_text().trim().to_owned();
+                    // Text already in the reader's language costs nothing and
+                    // shows nothing. Without this a Korean reader hovering
+                    // over Korean waits a second and a half for a card that
+                    // re-words their own sentence, which on a mostly-Korean
+                    // screen is most hovers.
+                    if decide(&sentence, &options.language) == Decision::AlreadyInTarget {
+                        continue;
+                    }
                     let anchor = target
                         .anchor()
                         .unwrap_or(ScreenRect::new(point.x, point.y, 1, 1));
@@ -531,6 +540,14 @@ fn selftest(
     // Find a point, in any visible window, that yields a real sentence. A
     // sentence rather than any text, because a two-character label proves the
     // plumbing and not the product.
+    //
+    // Bounded, because it is a diagnostic. A desktop-spanning window is eight
+    // thousand grid points at roughly 10ms each, so an unbudgeted scan of a
+    // screen with no prose on it runs for minutes and looks like a hang. It
+    // did exactly that once, which is why the budget is here.
+    const SCAN_BUDGET: Duration = Duration::from_secs(20);
+    let scan_started = Instant::now();
+    let mut probed = 0usize;
     let mut found = None;
     'outer: for window in top_level_windows() {
         let bounds = window.client_bounds;
@@ -539,6 +556,10 @@ fn selftest(
         while y < bounds.bottom() - 8 {
             let mut x = bounds.x + 8;
             while x < bounds.right() - 8 {
+                if scan_started.elapsed() > SCAN_BUDGET {
+                    break 'outer;
+                }
+                probed += 1;
                 let point = ScreenPoint::new(x, y);
                 if root_window_at(point) == Some(window.id) {
                     if let Ok(target) = acquirer.acquire(point, &context) {
@@ -561,7 +582,15 @@ fn selftest(
     }
 
     let Some((app, sentence, word, anchor)) = found else {
-        println!("No window on screen exposed a sentence to read.");
+        println!(
+            "No window on screen exposed a sentence to read. {probed} points probed in {}ms{}.",
+            scan_started.elapsed().as_millis(),
+            if scan_started.elapsed() > SCAN_BUDGET {
+                ", stopped at the budget"
+            } else {
+                ""
+            },
+        );
         println!("Open something with prose in it and run this again.");
         return std::process::ExitCode::from(1);
     };
@@ -575,6 +604,24 @@ fn selftest(
         anchor.width, anchor.height, anchor.x, anchor.y
     );
     println!("   focused    {}", word.as_deref().unwrap_or("(none)"));
+
+    let decision = decide(&sentence, language);
+    println!(
+        "   language   {}",
+        match decision {
+            Decision::AlreadyInTarget => "already in the target language, nothing to translate",
+            Decision::Translate => "a different script from the target, translating",
+            Decision::Undecidable =>
+                "same script as the target, so undecidable without a classifier; translating",
+        },
+    );
+    if decision == Decision::AlreadyInTarget {
+        println!(
+            "
+selftest passed: the text on screen needed no translation, and none was made."
+        );
+        return std::process::ExitCode::SUCCESS;
+    }
 
     let mut request = QuickRequest::new(&sentence, language);
     if let Some(word) = &word {
