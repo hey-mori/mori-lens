@@ -302,6 +302,7 @@ unsafe fn pump(window: HWND, commands: &mpsc::Receiver<Command>) {
     // `None` is not an error state. A machine where Direct2D cannot start keeps
     // the GDI painter, because a plain card is a product and no card is not.
     let glass = Glass::new();
+    let mut shown = Shown::default();
     if glass.is_none() {
         // SAFETY: a documented call on this thread's own window. Only on this
         // path: see `create_window`.
@@ -320,10 +321,13 @@ unsafe fn pump(window: HWND, commands: &mpsc::Receiver<Command>) {
             while let Ok(command) = commands.try_recv() {
                 match command {
                     Command::Show(card, anchor) => {
-                        show_card(window, *card, anchor, glass.as_ref());
+                        show_card(window, *card, anchor, glass.as_ref(), &mut shown);
                     }
                     Command::Hide => {
                         let _ = ShowWindow(window, SW_HIDE);
+                        // The next card is a new hover and places itself
+                        // afresh, wherever the reader has moved to.
+                        shown = Shown::default();
                     }
                 }
             }
@@ -334,7 +338,31 @@ unsafe fn pump(window: HWND, commands: &mpsc::Receiver<Command>) {
 
 /// # Safety
 /// `window` must be owned by this thread.
-unsafe fn show_card(window: HWND, card: Card, anchor: ScreenRect, glass: Option<&Glass>) {
+/// The card currently on screen, so a streamed answer does not move it.
+///
+/// A translation arrives a few words at a time. Each partial is a whole card,
+/// and a card fitted to each of those changes width several times a second;
+/// placement derives its x from the width, so it slides sideways as well. The
+/// first screenshot of a real hover showed the same card in three places.
+///
+/// So the geometry is decided once per hover and held: the width is pinned and
+/// the height only grows. A card that gets taller as an answer arrives reads as
+/// the answer arriving. One that moves reads as a fault.
+#[derive(Debug, Default)]
+struct Shown {
+    anchor: Option<ScreenRect>,
+    placed: Option<ScreenRect>,
+}
+
+/// # Safety
+/// `window` must be owned by this thread.
+unsafe fn show_card(
+    window: HWND,
+    card: Card,
+    anchor: ScreenRect,
+    glass: Option<&Glass>,
+    shown: &mut Shown,
+) {
     let theme = current_theme();
 
     // Laid out once, by whichever renderer is going to draw it. Measuring with
@@ -343,7 +371,15 @@ unsafe fn show_card(window: HWND, card: Card, anchor: ScreenRect, glass: Option<
     // SAFETY: read-only monitor query.
     let scale = unsafe { scale_for(anchor.center()) };
     let widest = (CARD_WIDTH as f32 * scale).round() as i32;
-    let laid = glass.and_then(|glass| glass.lay_out(&card, &theme, widest, scale));
+    // Still the same hover, so the card keeps the width it already has.
+    let holding = (shown.anchor == Some(anchor))
+        .then_some(shown.placed)
+        .flatten();
+    let range = match holding {
+        Some(previous) => (previous.width, previous.width),
+        None => (0, widest),
+    };
+    let laid = glass.and_then(|glass| glass.lay_out_between(&card, &theme, range, scale));
 
     // The card is as wide as its contents need, up to the limit. A fixed box
     // holding one short line is mostly empty, which reads as something that
@@ -363,7 +399,7 @@ unsafe fn show_card(window: HWND, card: Card, anchor: ScreenRect, glass: Option<
         *slot = Some(card);
     }
 
-    let placed = lens_core::card::place_card(
+    let mut placed = lens_core::card::place_card(
         anchor,
         anchor.center(),
         (width, height),
@@ -371,6 +407,19 @@ unsafe fn show_card(window: HWND, card: Card, anchor: ScreenRect, glass: Option<
         // SAFETY: read-only monitor queries.
         unsafe { work_area_for(anchor.center()) },
     );
+
+    // Same hover: keep where it already is, and only let it grow downwards.
+    // Re-placing on every partial is what put the same card in three places.
+    if let Some(previous) = holding {
+        placed = ScreenRect::new(
+            previous.x,
+            previous.y,
+            previous.width,
+            placed.height.max(previous.height),
+        );
+    }
+    shown.anchor = Some(anchor);
+    shown.placed = Some(placed);
 
     // The Direct2D path positions, sizes and paints in one call, so none of
     // the GDI dance below applies to it.

@@ -192,9 +192,34 @@ impl Glass {
     /// `scale` is the monitor's DPI over 96, applied to every size here so a
     /// card on a 150% display is the same physical size as one on a 100%
     /// display beside it.
+    /// Lay a card out at whatever width its contents need, up to a limit.
+    ///
+    /// The product always uses [`Self::lay_out_between`], because a card on
+    /// screen has a width it must keep. This is the unconstrained case, which
+    /// is what the live checks measure.
+    #[cfg(test)]
     pub fn lay_out(&self, card: &Card, theme: &Theme, max_width: i32, scale: f32) -> Option<Laid> {
+        self.lay_out_between(card, theme, (0, max_width), scale)
+    }
+
+    /// Lay a card out somewhere between two widths.
+    ///
+    /// `narrowest` and `widest` are equal when the card is already on screen.
+    /// A streamed answer arrives a few words at a time, and a card that fits
+    /// itself to each of those is a card that changes width several times a
+    /// second. Placement derives its **x** from the width, so the card also
+    /// slides sideways while the reader is trying to read it. Pinning the
+    /// width for the life of one hover is what stops that.
+    pub fn lay_out_between(
+        &self,
+        card: &Card,
+        theme: &Theme,
+        (narrowest, max_width): (i32, i32),
+        scale: f32,
+    ) -> Option<Laid> {
         let padding = theme.padding as f32 * scale;
         let widest = (max_width as f32 - padding * 2.0).max(1.0);
+        let floor_px = (narrowest as f32 - padding * 2.0).max(1.0);
 
         // Every run, laid out at the widest the card is allowed to be. What
         // comes back is not how wide it *is*: `DWRITE_TEXT_METRICS::width` is
@@ -249,7 +274,7 @@ impl Glass {
             // SAFETY: metrics on a layout this function owns.
             .filter_map(|run| unsafe { text_width(&run.layout) })
             .fold(0.0f32, f32::max);
-        let floor = MIN_CARD_WIDTH as f32 * scale - padding * 2.0;
+        let floor = (MIN_CARD_WIDTH as f32 * scale - padding * 2.0).max(floor_px);
         let inner = natural.max(floor).min(widest).ceil();
 
         // Re-flow at the width actually chosen, and only now find out how tall
