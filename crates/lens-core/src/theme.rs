@@ -178,6 +178,12 @@ pub struct Theme {
     /// Model, engine, latency.
     pub footer: Rgb,
     /// A failure message.
+    ///
+    /// Amber in every preset, and it was blue in two of them and red in a
+    /// third. Blue is the one colour a card can use that promises something is
+    /// clickable, and this card passes every click through to the application
+    /// underneath; red is an alarm, and a translation that did not arrive is
+    /// not one. Amber is the colour for "look at this, nothing is broken".
     pub problem: Rgb,
     pub surface_alpha: u8,
     /// Body text height in **points**, not pixels.
@@ -248,7 +254,7 @@ impl Theme {
                 Rgb::new(0xe8, 0xf0, 0xfa),
                 Rgb::new(0x93, 0xa6, 0xbd),
                 Rgb::new(0x70, 0x82, 0x97),
-                Rgb::new(0x8f, 0xc2, 0xff),
+                Rgb::new(0xe8, 0xb3, 0x6a),
             ),
             Preset::Forest => (
                 Rgb::new(0xf2, 0xf4, 0xef),
@@ -256,7 +262,7 @@ impl Theme {
                 Rgb::new(0x1e, 0x2b, 0x22),
                 Rgb::new(0x53, 0x66, 0x59),
                 Rgb::new(0x60, 0x6f, 0x65),
-                Rgb::new(0x2f, 0x5d, 0x3f),
+                Rgb::new(0x7d, 0x4f, 0x14),
             ),
             Preset::Paper => (
                 Rgb::new(0xfb, 0xfb, 0xf9),
@@ -272,7 +278,7 @@ impl Theme {
                 Rgb::new(0xf2, 0xf2, 0xf5),
                 Rgb::new(0x98, 0x98, 0x9e),
                 Rgb::new(0x83, 0x83, 0x87),
-                Rgb::new(0x82, 0xb1, 0xff),
+                Rgb::new(0xe0, 0xa9, 0x5c),
             ),
             Preset::System => (
                 Rgb::new(0xf7, 0xf7, 0xf8),
@@ -280,7 +286,7 @@ impl Theme {
                 Rgb::new(0x18, 0x18, 0x1a),
                 Rgb::new(0x55, 0x55, 0x5a),
                 Rgb::new(0x6e, 0x6e, 0x74),
-                Rgb::new(0x1a, 0x4f, 0xb0),
+                Rgb::new(0x8a, 0x55, 0x0c),
             ),
         };
 
@@ -658,5 +664,44 @@ mod tests {
         );
         assert_eq!(theme.effective_surface(BLACK), theme.surface);
         assert_eq!(theme.effective_surface(WHITE), theme.surface);
+    }
+}
+
+#[cfg(test)]
+mod problem_colour {
+    use super::*;
+
+    /// Amber in every preset, and it was blue in two and red in a third.
+    ///
+    /// Blue is the one colour a card can use that promises something is
+    /// clickable, and this card passes every click through to whatever is
+    /// underneath (ADR-0004). A user reported the card and the blue read as a
+    /// link on it.
+    #[test]
+    fn a_problem_is_never_drawn_in_a_colour_that_looks_like_a_link() {
+        for preset in [
+            Preset::System,
+            Preset::Forest,
+            Preset::NightLake,
+            Preset::Paper,
+        ] {
+            for dark in [false, true] {
+                let theme = Theme::resolve(
+                    preset,
+                    Translucency::Balanced,
+                    TextScale::Normal,
+                    SystemPreferences {
+                        dark,
+                        ..SystemPreferences::default()
+                    },
+                );
+                let problem = theme.problem;
+                assert!(
+                    problem.r > problem.b && problem.g > problem.b,
+                    "{preset:?} dark={dark} draws a problem in {problem:?}, which is \
+                     bluer than it is warm",
+                );
+            }
+        }
     }
 }
