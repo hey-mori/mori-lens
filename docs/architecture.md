@@ -16,7 +16,7 @@ Hover intent          lens-core::hover        built
   ▼
 Text acquisition      lens-core::acquire      trait, built
   ├─ accessibility    platform-windows        built (Windows)
-  └─ OCR fallback     (M5)                    planned
+  └─ OCR fallback     (M4)                    planned
   │
   ▼
 Segmentation          lens-core::text         built
@@ -53,6 +53,9 @@ crates/lens-core/          no OS dependencies, no async runtime
   cache.rs                 what has already been translated
   card.rs                  what a card says, and where it sits
   theme.rs                 what a card looks like, as data
+  settings.rs              what the user chose, parsed from their file
+  icon.rs                  the tray glyph, computed rather than shipped
+  cache.rs                 the same sentence twice costs nothing
 
 crates/lens-translate/     the Ollama client, no HTTP or JSON dependency
   http.rs                  just enough HTTP/1.1 for a loopback socket
@@ -62,11 +65,19 @@ crates/platform-windows/   the Windows implementation of TextAcquirer
   com.rs                   apartment handling for a call
   window.rs                foreground window, process name, DPI, monitors
   uia.rs                   ElementFromPoint → RangeFromPoint → ranges
-  overlay.rs               the card: a layered, click-through, no-activate window
+  inventory.rs             what a window holds, asked by handle not coordinate
+  overlay.rs               the card window: layered, click-through, no-activate
+  glass.rs                 what is painted on it, with per-pixel alpha
+  tray.rs                  the notification area icon and its menu
+  autostart.rs             the per-user run key, off unless asked
   appearance.rs            what Windows says the interface should look like
 
-apps/hover-probe/          the M1 measurement instrument
+apps/hover-probe/          the measurement instrument
 apps/lens/                 the product
+  lifecycle.rs             when a card appears, stays, and goes
+  refresh.rs               noticing an edited settings file and dark mode
+  silence.rs               why no card appeared
+  console.rs               where the banner goes when there is no console
 ```
 
 The dependency arrow only ever points from an adapter to the core. A

@@ -68,8 +68,8 @@ not written), **out of v1** (deliberately excluded).
 | Native overlay (Windows) | **shipped** · never takes focus, paints without a blank or hidden frame while streaming, clicks pass through, and lands on the monitor its text is on |
 | Failure messages that say what to do | **shipped** · an absent Ollama names ollama.com, a missing model names the `ollama pull` command, on the card and in the tray tooltip |
 | Quick translation via Ollama | **shipped** · warm median around 1.6s, streamed, cached in memory, model resolved at startup |
-| Deep analysis (grammar, structure) | planned · M4 |
-| Manual OCR fallback (Windows) | planned · M5 |
+| Deep analysis (grammar, structure) | planned · M5 |
+| Manual OCR fallback (Windows) | planned · **M4**, swapped ahead of deep analysis because VS Code and KakaoTalk expose almost nothing |
 | macOS acquisition | planned · M6 |
 | macOS overlay and Vision OCR | planned · M7 |
 | Saved vocabulary and sentences | planned · M8 |
