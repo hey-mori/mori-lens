@@ -200,6 +200,15 @@ impl HoverMachine {
     }
 
     /// Feed one pointer observation. At most one event comes back per sample.
+    /// Change the dwell and the radii without discarding the current hover.
+    ///
+    /// The state machine's state is deliberately kept. A dwell changed from
+    /// 320ms to 400ms should apply to the next hover, not cancel the one the
+    /// reader is looking at.
+    pub fn reconfigure(&mut self, config: HoverConfig) {
+        self.config = config;
+    }
+
     pub fn observe(&mut self, sample: PointerSample) -> Option<HoverEvent> {
         if sample.cancels() {
             return self.abandon();
