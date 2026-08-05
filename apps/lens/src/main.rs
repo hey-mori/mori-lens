@@ -266,7 +266,9 @@ fn main() -> std::process::ExitCode {
                 error.reason()
             ),
         }
-        return selftest(&overlay, &translator, &options.language);
+        let code = selftest(&overlay, &translator, &options.language);
+        translator.release();
+        return code;
     }
 
     let (jobs_tx, jobs_rx) = mpsc::channel::<Job>();
@@ -275,6 +277,8 @@ fn main() -> std::process::ExitCode {
     let language = options.language.clone();
     let mut cache = TranslationCache::new(CACHE_ENTRIES);
     let warm_translator = translator.clone();
+    // Kept for the exit path: the worker takes ownership of the translator.
+    let releaser = translator.clone();
     // Off the main thread so the window and the pointer loop come up
     // immediately; a user should not wait on a model to see the app start.
     std::thread::spawn(move || {
@@ -481,10 +485,11 @@ fn main() -> std::process::ExitCode {
     }
 
     overlay.hide();
-    println!(
-        "
-stopped"
-    );
+    // Hand the model back. Without this the runtime holds it for the rest of
+    // the lease, so a tool that has exited goes on occupying gigabytes of
+    // somebody's memory.
+    releaser.release();
+    println!("\nstopped, and the model released");
     std::process::ExitCode::SUCCESS
 }
 

@@ -108,8 +108,9 @@ impl OllamaTranslator {
             ("prompt", json::Value::Str("ok")),
             ("stream", json::Value::Raw("false")),
             ("options", json::Value::Raw("{\"num_predict\":1}")),
-            // Keep it resident long enough to cover a reading session rather
-            // than the few minutes Ollama defaults to.
+            // Long enough to cover a reading session rather than the few
+            // minutes Ollama defaults to. Released on exit, so the lease never
+            // outlives the process that took it.
             ("keep_alive", json::Value::Str("30m")),
         ]);
         let started = Instant::now();
@@ -122,6 +123,34 @@ impl OllamaTranslator {
             Duration::from_secs(180),
         )?;
         Ok(started.elapsed())
+    }
+
+    /// Let the runtime release the model.
+    ///
+    /// Lens holds a model resident while it runs, which is the whole point of
+    /// [`Self::prewarm`]. It must not go on holding it afterwards: a tool that
+    /// exits and leaves 2.2GB pinned for half an hour is not the light thing
+    /// it claims to be, and with a larger model it is 9.6GB.
+    ///
+    /// Measured on 2026-08-05, after a session: `qwen2.5:3b` was still
+    /// resident with twenty minutes left on its lease, on a machine its owner
+    /// was finding too slow to work on.
+    ///
+    /// Best effort and deliberately quiet. Ollama may already have released
+    /// it, may not be running, and the process is on its way out either way.
+    pub fn release(&self) {
+        let body = json::object(&[
+            ("model", json::Value::Str(&self.model)),
+            ("keep_alive", json::Value::Raw("0")),
+        ]);
+        let _ = http::post(
+            &self.endpoint,
+            "/api/generate",
+            &body,
+            // Short: nobody is waiting, and an exit that hangs on a wedged
+            // runtime is worse than a model left resident.
+            Duration::from_secs(3),
+        );
     }
 
     /// Pick a model that is actually installed.
