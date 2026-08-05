@@ -200,6 +200,25 @@ operator is reading real prose and cannot name every word in advance.
 Application identity in logs is a stable hash, not a process name, so a
 log file does not enumerate what the user runs.
 
+### The rule applies to the checks as well
+
+A live check written on 2026-08-05 captured a region of the screen,
+recognised it, and **printed what it read**. What it read was the desktop
+behind a translucent card: an editor, a conversation, a window title.
+
+It was measuring something real, that a card drawn with per-pixel alpha
+lets the desktop through and so must be hidden before anything under it
+is captured. The measurement was worth having. Printing it was not.
+
+Checks now report shape for anything recognised off the screen: how many
+lines, how many words, how many characters, and whether an expected
+string was among them. Never the string itself unless this repository
+wrote it.
+
+`crates/platform-windows/src/capture.rs` is the only file that reads
+pixels the user did not offer, and it is the one to read first when
+changing any of this.
+
 ## 4. Permissions, asked late
 
 | Permission | When it is requested | For what |

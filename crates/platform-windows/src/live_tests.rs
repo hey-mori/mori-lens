@@ -2317,9 +2317,24 @@ fn measure_what_a_capture_sees_through_the_card() {
 
     let flat: String = read.text().chars().filter(|c| !c.is_whitespace()).collect();
     let wanted: String = KOREAN.chars().filter(|c| !c.is_whitespace()).collect();
+    // Shape only. The first version of this printed what it read, and what it
+    // read was the desktop behind the card: an editor, a conversation. A check
+    // is not exempt from `docs/privacy-model.md` §3 for being a check, and
+    // this is the single most likely place in the repository to break it.
     println!(
-        "through the card: {:?} · card's own text recovered: {}",
-        read.text().replace('\n', " / "),
+        "through the card: {} lines, {} words, {} characters · the card's own \
+         text recovered: {}",
+        read.lines.len(),
+        read.lines
+            .iter()
+            .map(|line| line.words.len())
+            .sum::<usize>(),
+        flat.chars().count(),
         flat.contains(&wanted),
+    );
+    assert!(
+        !flat.contains(&wanted),
+        "the card's own text came back, so it is opaque after all and the \
+         milestone would not need to hide it before capturing underneath",
     );
 }
