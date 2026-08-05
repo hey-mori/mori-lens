@@ -509,7 +509,7 @@ unsafe fn show_card(
 ///
 /// # Safety
 /// Read-only monitor and DPI queries.
-unsafe fn scale_for(point: ScreenPoint) -> f32 {
+pub(crate) unsafe fn scale_for(point: ScreenPoint) -> f32 {
     // SAFETY: `MONITOR_DEFAULTTONEAREST` always yields a monitor.
     unsafe {
         let monitor = MonitorFromPoint(
