@@ -27,11 +27,11 @@ Language routing      (M3)                    planned
   script detection, language id, engine choice
   │
   ▼
-Translation           (M3)                    planned
+Translation           (M3)                    shipped
   cache → quick model → degraded state
   │
   ▼
-Overlay               (M2)                    planned
+Overlay               (M2)                    shipped
   passive tooltip · interactive card
 ```
 
@@ -123,7 +123,10 @@ foreign application must not be able to block that decision.
   makes a later split possible is the trait boundary, and that already
   exists.
 - **No async runtime.** Acquisition is synchronous on a worker thread.
-  An async runtime enters with the HTTP client in M3, not before.
+  No async runtime entered with the HTTP client: it is a hand-written
+  loopback client on blocking sockets, and translation runs on a worker
+  thread rather than a runtime.
 - **No storage layer.** Nothing is persisted. SQLite enters with the
-  translation cache in M3, opt-in.
+  translation cache is in memory and mandatory; a durable one would be a
+  record of what was read and stays a separate opt-in.
 - **No settings UI.** Configuration is command-line flags on the probe.
