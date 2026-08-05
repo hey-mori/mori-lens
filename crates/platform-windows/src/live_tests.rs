@@ -2427,17 +2427,48 @@ fn measure_how_much_of_the_page_a_card_covers() {
         SystemPreferences::default(),
     );
 
-    let card = Card::translated(
+    let make = |original: &str, translation: &str| {
+        Card::translated(
+            original,
+            &QuickTranslation {
+                text: translation.to_owned(),
+                engine: EngineId::LocalOllama,
+                model: "qwen2.5-coder:7b".to_owned(),
+                latency_ms: 1500,
+                cached: false,
+            },
+        )
+    };
+    let card = make(
         "So deploying is what makes yesterday's work real, and that's the safe, obvious \
          first step.",
-        &QuickTranslation {
-            text: "어제의 일은 배포로 현실화되며, 이것이 안전하고 명백한 첫 단계입니다.".to_owned(),
-            engine: EngineId::LocalOllama,
-            model: "qwen2.5-coder:7b".to_owned(),
-            latency_ms: 1500,
-            cached: false,
-        },
+        "어제의 일은 배포로 현실화되며, 이것이 안전하고 명백한 첫 단계입니다.",
     );
+
+    // Four lines each side, from a screenshot whose footer sat on the card's
+    // bottom edge with no padding under it.
+    let tall = make(
+        "The bigger structural question is understanding how the base and datasheet \
+         starters relate to each other, whether one depends on the other or if they're \
+         independent.",
+        "기본 구조적 질문은 기본과 데이터시트 시작자가 서로 어떻게 관련되어 있는지 이해하는 \
+         것입니다. 하나가 다른 것에 의존하는지 아니면 독립적인지.",
+    );
+    for scale in [1.0f32, 1.5] {
+        let widest = (crate::overlay::max_card_width() as f32 * scale).round() as i32;
+        let laid = glass.lay_out(&tall, &theme, widest, scale).expect("layout");
+        let window = crate::overlay::card_height_for(laid.height, scale);
+        println!(
+            "tall  scale {scale}: laid {}x{}, window height {window}, {}",
+            laid.width,
+            laid.height,
+            if window < laid.height {
+                "CLIPPED"
+            } else {
+                "fits"
+            },
+        );
+    }
 
     for scale in [1.0f32, 1.5] {
         // Scaled, as `show_card` scales it. Passing the 100% figure at 150%
