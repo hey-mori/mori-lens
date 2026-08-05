@@ -189,6 +189,16 @@ impl HoverMachine {
     }
 
     /// The generation any in-flight work should be checked against.
+    /// Take the next generation without a hover having settled.
+    ///
+    /// For work a keypress starts rather than a pointer: manual OCR. It has to
+    /// be cancellable the same way, which means it needs a generation, and
+    /// taking one correctly makes every hover in flight stale.
+    pub fn take_generation(&mut self) -> Generation {
+        self.generation = Generation(self.generation.0 + 1);
+        self.generation
+    }
+
     pub fn generation(&self) -> Generation {
         self.generation
     }

@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 
 use lens_core::cache::{CacheKey, TranslationCache};
 use lens_core::card::Card;
-use lens_core::geometry::ScreenRect;
+use lens_core::geometry::{ScreenPoint, ScreenRect};
 use lens_core::hover::{Generation, HoverConfig, HoverEvent};
 use lens_core::icon::Glyph;
 use lens_core::language::{decide, Decision};
@@ -42,12 +42,14 @@ use lens_core::settings::{self, Problem, Settings};
 use lens_core::theme::{Preset, TextScale, Theme, Translucency};
 use lens_core::translate::{QuickRequest, Translator};
 use lens_platform_windows::{
-    declare_dpi_awareness, system_preferences, Overlay, Tray, TrayEvent, UiaTextAcquirer,
+    declare_dpi_awareness, monitor_scale_at, ocr, system_preferences, Overlay, Tray, TrayEvent,
+    UiaTextAcquirer,
 };
 use lens_translate::OllamaTranslator;
 
 mod console;
 mod lifecycle;
+mod manual_ocr;
 mod pause;
 mod pointer;
 mod refresh;
@@ -96,6 +98,8 @@ OPTIONS
                         held, for this run. The lasting version of this is
                         `default = allow` in the settings file.
     --settings <path>   Use this settings file instead of the one in %APPDATA%.
+                        Ctrl+Alt+O reads under the pointer with OCR, for the
+                        applications that expose no text at all.
                         Written with every option in it on first run.
     --language <name>   Target language. Default Korean.
     --model <name>      Ollama model. Default: whichever suitable one is
@@ -363,6 +367,19 @@ fn main() -> std::process::ExitCode {
         } else {
             "UNAVAILABLE: Ctrl+Alt+L is taken by another application"
         }
+    );
+    println!(
+        "  ocr       {}",
+        if !pause.ocr_is_registered() {
+            "UNAVAILABLE: Ctrl+Alt+O is taken by another application".to_owned()
+        } else if ocr::available_languages().is_empty() {
+            "Ctrl+Alt+O, but this system has no recognisers installed".to_owned()
+        } else {
+            format!(
+                "Ctrl+Alt+O reads under the pointer with OCR · {}",
+                ocr::available_languages().join(", "),
+            )
+        },
     );
     // The one line that tells a first-time user what to do, so it has to
     // agree with the policy above it. It said "Rest the pointer on a sentence"
@@ -632,8 +649,12 @@ fn main() -> std::process::ExitCode {
                 }
             }
         }
-        if pause.poll() {
-            pause_changed = true;
+        let mut read_with_ocr = false;
+        for press in pause.poll() {
+            match press {
+                pause::Pressed::PauseChanged => pause_changed = true,
+                pause::Pressed::ReadWithOcr => read_with_ocr = true,
+            }
         }
         if pause_changed {
             if pause.is_paused() {
@@ -722,6 +743,51 @@ fn main() -> std::process::ExitCode {
                 appearance.dark,
                 session.policy_summary(),
             );
+        }
+
+        if read_with_ocr && !pause.is_paused() {
+            // A deliberate act, so it runs on this thread and the reader waits
+            // for it. Roughly a tenth of a second, against the second and a
+            // half the translation after it will take.
+            let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
+            // SAFETY-free: a read-only monitor query.
+            let scale = monitor_scale_at(at);
+            let generation = session.next_generation();
+            life.hover_settled(generation);
+            match manual_ocr::read_around(&overlay, at, scale) {
+                Ok(reading) => {
+                    println!(
+                        "ocr   {} chars on the line, focus {} chars",
+                        reading.sentence.chars().count(),
+                        reading.word.chars().count(),
+                    );
+                    if decide(&reading.sentence, &language) == Decision::AlreadyInTarget {
+                        overlay.show(
+                            Card::not_readable("이미 읽을 수 있는 언어입니다"),
+                            reading.anchor,
+                        );
+                    } else {
+                        life.job_dispatched(generation, reading.anchor, started.elapsed());
+                        pending_original = reading.sentence.clone();
+                        let _ = jobs_tx.send(Job {
+                            generation,
+                            original: reading.sentence,
+                            focused_word: Some(reading.word),
+                            anchor: reading.anchor,
+                            language: language.clone(),
+                        });
+                    }
+                }
+                Err(refusal) => {
+                    // On the card, not only in a terminal nobody is looking
+                    // at: the user pressed a key and is owed an answer.
+                    println!("ocr   no reading [{}]", refusal.reason());
+                    overlay.show(
+                        Card::not_readable(refusal.user_message()),
+                        ScreenRect::new(at.x, at.y, 1, 1),
+                    );
+                }
+            }
         }
 
         if pause.is_paused() {
