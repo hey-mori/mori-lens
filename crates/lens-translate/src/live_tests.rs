@@ -508,3 +508,107 @@ fn show_the_request_and_reply_for_a_model_that_fails() {
         Err(error) => println!("--- transport failed: {}", error.reason()),
     }
 }
+
+/// Does telling the model which word the reader is on help or hurt?
+///
+/// A real hover produced a translation beginning `참고로` ("for reference"),
+/// a phrase with no counterpart anywhere in the English. The prompt carries an
+/// extra sentence naming the word under the pointer, and that sentence is the
+/// only thing in the request that is not the text itself.
+///
+/// Measured rather than argued: the same sentences, with and without.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn measure_whether_naming_the_focused_word_helps() {
+    let Some(translator) = live() else {
+        return;
+    };
+
+    let cases = [
+        (
+            "Loosening the assertion was the other option and the wrong one: the claim it \
+             makes would fail on every attempt if it were false.",
+            "assertion",
+        ),
+        (
+            "The bank of the river had eroded after a week of rain.",
+            "bank",
+        ),
+        (
+            "I need to verify that the insertion point is actually nested within each class \
+             definition, not after it.",
+            "nested",
+        ),
+    ];
+
+    for (source, word) in cases {
+        println!("\n--- {source}");
+        for focus in [None, Some(word)] {
+            let mut request = QuickRequest::new(source, "Korean");
+            if let Some(word) = focus {
+                request = request.with_focus(word);
+            }
+            match translator.quick(&request) {
+                Ok(answer) => println!(
+                    "  focus={:<10} {}ms  {}",
+                    focus.unwrap_or("(none)"),
+                    answer.latency_ms,
+                    answer.text,
+                ),
+                Err(error) => println!(
+                    "  focus={:<10} FAILED [{}]",
+                    focus.unwrap_or("(none)"),
+                    error.reason(),
+                ),
+            }
+        }
+    }
+}
+
+/// Can the prompt stop a model dropping half a sentence?
+///
+/// Measured: for a two-clause English sentence, `qwen2.5-coder:7b` returned
+/// only the second clause, with and without the focused-word hint. A reader
+/// gets a fluent Korean sentence with no sign that half the original is
+/// missing, which is worse than a failure.
+///
+/// The system prompt says "output the translation and nothing else", which
+/// guards against a model adding. Nothing in it guards against a model
+/// omitting.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn measure_whether_the_prompt_can_stop_clauses_being_dropped() {
+    let Some(translator) = live() else {
+        return;
+    };
+
+    // Two clauses, joined by a colon. The first is the one that went missing.
+    let source = "Loosening the assertion was the other option and the wrong one: the claim \
+                  it makes would fail on every attempt if it were false.";
+
+    let extra = [
+        ("as shipped", ""),
+        (
+            "no omitting",
+            "\nTranslate every clause. Do not summarise, shorten, or leave anything out.",
+        ),
+    ];
+
+    for (label, addition) in extra {
+        // Built by hand so the addition lands in the system prompt exactly
+        // where a change to `system_prompt` would put it.
+        let body = translator.body_for_with_extra(&QuickRequest::new(source, "Korean"), addition);
+        match crate::http::post(
+            crate::DEFAULT_ENDPOINT,
+            "/api/generate",
+            &body,
+            std::time::Duration::from_secs(120),
+        ) {
+            Ok(reply) => {
+                let text = crate::json::string_value_of_key(&reply, "response").unwrap_or_default();
+                println!("{label:<12} {}", text.trim());
+            }
+            Err(error) => println!("{label:<12} FAILED [{}]", error.reason()),
+        }
+    }
+}
