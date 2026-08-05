@@ -1,6 +1,7 @@
 # Windows application compatibility
 
-**Status · started. Seven windows measured across three sessions.**
+**Status · Chrome, Edge, Word, Notepad, VS Code and an Electron messenger
+measured. Windows Settings and the Edge PDF viewer remain.**
 
 The full set is the gate on Milestone 2
 ([ADR-0008](../decisions/ADR-0008-probe-before-product.md)). Nothing here is filled
@@ -239,6 +240,73 @@ So the honest summary of "does it know what you pointed at":
 **Which window** is not in doubt anywhere: `ElementFromPoint` performs the same
 hit test that decides where a click goes, and the probe verifies the owning
 window per point, which is how the occlusion bug was caught.
+
+### Inventory, 2026-08-05: every window at once, nothing raised
+
+Taken with `hover-probe inventory`, which asks each window's provider by handle
+rather than by coordinate, so a covered window answers. The whole desktop in
+about three seconds, against minutes of grid sweeping that needed each
+application brought to the front.
+
+```
+application          elements  withtext    chars  smallest  on-target
+WINWORD                   248       191    12658      19px        7/7
+msedge                    143       142     5492      13px      11/12   1 not rendered
+chrome                    138       133     4761      16px       5/12   2 not rendered, 5 mislocated 46-270px
+claude                    680       199     3762      18px      12/12
+msedge                     31        30     2178      20px      12/12
+chrome                     86        86     1444      20px      12/12
+SourceTree                  4         2      800     206px          -   no rendered text to probe
+WindowsTerminal             2         2      425      16px        2/2
+chrome                      5         5      397      24px        5/5
+KakaoTalk                   2         2       40      20px        1/1
+EXCEL                       9         8       24      19px        8/8
+explorer                    5         3       16      15px        3/3
+```
+
+**Word is the best result this project has measured.** 248 text elements,
+12,658 characters, and every probe resolving onto its own text. The document
+case, which the grid sweep made look like the hard one, is not hard at all when
+the question is asked properly.
+
+**Edge works**, on both windows, and was measured without anyone touching it.
+So were Word, Excel and Explorer.
+
+**One Chrome window out of four is the genuine outlier**: five probes
+mislocated by 46 to 270px. Page-dependent rather than a Chromium property,
+since the other three Chrome windows score 5/5, 12/12 and 11/12.
+
+**SourceTree has no rendered text to probe.** Its two text elements report
+content but no rectangles, which is a window scrolled or collapsed rather than
+a resolution failure.
+
+**KakaoTalk resolves correctly and has almost nothing to resolve**: 40
+characters in two elements. That is the finding, and it is not the one the grid
+sweep suggested.
+
+#### What this measurement is, and is not
+
+It asks each element's own text pattern. It does **not** exercise the product's
+entry point, which is `ElementFromPoint` at a pointer position, and a covered
+window still fails there. What it settles is the prior question: whether there
+is text at all, whether it is in pieces a pointer could aim at, and whether the
+provider locates it correctly when asked about a point that is provably on a
+glyph.
+
+Three corrections were needed before these numbers meant anything, and each was
+a real error rather than a tuning choice:
+
+1. Probing the **centre of an element's bounding box**, which is padding or an
+   empty scroll area often enough to score one window 4 of 12 where the
+   corrected probe scores 12 of 12. The point now comes from the text's own
+   rendered rectangles.
+2. Judging by **strict containment**, the mistake
+   [ADR-0009](../decisions/ADR-0009-pointer-distance-gate.md) already corrected
+   for the product. The instrument now gates on a line height, as the product
+   does.
+3. Counting **text that resolved but is not rendered** as a miss. It is not:
+   unrendered is scrolled out of view, not mislocated, and the product treats
+   it the same way.
 
 ### KakaoTalk, 2026-08-05: the case the product is for, and it is the bad one
 

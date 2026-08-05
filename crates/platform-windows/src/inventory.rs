@@ -38,8 +38,23 @@ pub struct WindowTextInventory {
     pub smallest_height: Option<i32>,
     /// Elements a resolution was checked against.
     pub probed: usize,
-    /// How many of those resolved back into the element they were taken from.
+    /// How many of those resolved back onto the text they were taken from.
     pub resolved_into_element: usize,
+    /// Probes whose resolution came back with no rectangle at all.
+    ///
+    /// Not a miss. Text that resolved but is not rendered is scrolled out of
+    /// view, and the product treats that as on target for the same reason:
+    /// `TextTarget::is_on_target` returns true when there is no rectangle,
+    /// because unrendered is not the same as mislocated. Counted separately so
+    /// the instrument and the product answer alike and neither hides it.
+    pub unlocated: usize,
+    /// How far each miss landed from its probe point, in pixels.
+    ///
+    /// Kept rather than reduced to a count, because the two kinds of miss are
+    /// different facts: a few pixels is glyph-box slack, and hundreds is the
+    /// provider answering with text somewhere else entirely. Collapsing them
+    /// is the mistake ADR-0009 exists to correct.
+    pub miss_distances: Vec<f64>,
 }
 
 /// How many elements to walk per window.
@@ -134,10 +149,17 @@ unsafe fn inventory_of(
                 // element whose text is scrolled out of view has no rendered
                 // rectangle, and scoring that as a miss would blame the
                 // provider for the window's scroll position.
-                if let Some(correct) = resolves_onto_its_own_text(&pattern) {
+                if let Some(located) = resolves_onto_its_own_text(&pattern) {
                     inventory.probed += 1;
-                    if correct {
-                        inventory.resolved_into_element += 1;
+                    match located {
+                        // The product's rule, not strict containment: a
+                        // resolution within about a line of the point is the
+                        // text the pointer is on (ADR-0009).
+                        Some(distance) if distance <= f64::from(height.max(1)) => {
+                            inventory.resolved_into_element += 1;
+                        }
+                        Some(distance) => inventory.miss_distances.push(distance),
+                        None => inventory.unlocated += 1,
                     }
                 }
             }
@@ -165,7 +187,7 @@ unsafe fn inventory_of(
 ///
 /// # Safety
 /// `pattern` must belong to a live element.
-unsafe fn resolves_onto_its_own_text(pattern: &IUIAutomationTextPattern) -> Option<bool> {
+unsafe fn resolves_onto_its_own_text(pattern: &IUIAutomationTextPattern) -> Option<Option<f64>> {
     // SAFETY: read-only queries against a pattern this element owns.
     unsafe {
         let document = pattern.DocumentRange().ok()?;
@@ -186,7 +208,7 @@ unsafe fn resolves_onto_its_own_text(pattern: &IUIAutomationTextPattern) -> Opti
         line.ExpandToEnclosingUnit(windows::Win32::UI::Accessibility::TextUnit_Line)
             .ok()?;
         let bounds = line.GetBoundingRectangles().ok()?;
-        Some(contains_point(&bounds, point))
+        Some(distance_to_nearest(&bounds, point))
     }
 }
 
@@ -221,7 +243,13 @@ unsafe fn first_rect(
     }
 }
 
-/// Whether any rectangle in a `SAFEARRAY` of doubles contains the point.
+/// How far a point is from the nearest rectangle, zero when inside one.
+///
+/// A distance rather than a yes or no. Strict containment was already wrong
+/// once: it discarded a fifth of good hits over a few pixels of glyph-box
+/// slack, which is why the product gates on a line height rather than on
+/// containment (ADR-0009). Measuring the same way here keeps the instrument
+/// and the product asking the same question.
 ///
 /// `GetBoundingRectangles` returns a flat array of left, top, width, height in
 /// fours. Reading it as anything else silently produces plausible rectangles,
@@ -229,10 +257,10 @@ unsafe fn first_rect(
 ///
 /// # Safety
 /// `array` must be a `SAFEARRAY` of `f64` from `GetBoundingRectangles`.
-unsafe fn contains_point(
+unsafe fn distance_to_nearest(
     array: &*mut windows::Win32::System::Com::SAFEARRAY,
     point: windows::Win32::Foundation::POINT,
-) -> bool {
+) -> Option<f64> {
     use windows::Win32::System::Ole::{
         SafeArrayAccessData, SafeArrayGetLBound, SafeArrayGetUBound, SafeArrayUnaccessData,
     };
@@ -242,26 +270,25 @@ unsafe fn contains_point(
         let lower = SafeArrayGetLBound(*array, 1).unwrap_or(0);
         let upper = SafeArrayGetUBound(*array, 1).unwrap_or(-1);
         if upper < lower {
-            return false;
+            return None;
         }
         let len = (upper - lower + 1) as usize;
         let mut data: *mut core::ffi::c_void = std::ptr::null_mut();
         if SafeArrayAccessData(*array, &mut data).is_err() {
-            return false;
+            return None;
         }
         let values = std::slice::from_raw_parts(data.cast::<f64>(), len);
 
-        let mut inside = false;
+        let (x, y) = (f64::from(point.x), f64::from(point.y));
+        let mut nearest = f64::INFINITY;
         for chunk in values.chunks_exact(4) {
             let (left, top, width, height) = (chunk[0], chunk[1], chunk[2], chunk[3]);
-            let (x, y) = (f64::from(point.x), f64::from(point.y));
-            if x >= left && x <= left + width && y >= top && y <= top + height {
-                inside = true;
-                break;
-            }
+            let dx = (left - x).max(0.0).max(x - (left + width));
+            let dy = (top - y).max(0.0).max(y - (top + height));
+            nearest = nearest.min(dx.hypot(dy));
         }
         let _ = SafeArrayUnaccessData(*array);
-        inside
+        nearest.is_finite().then_some(nearest)
     }
 }
 
