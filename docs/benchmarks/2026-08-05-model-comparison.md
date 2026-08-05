@@ -32,11 +32,15 @@ cargo test -p lens-translate -- --ignored --nocapture compare_every
 
 ## Result
 
-| Model | Mean | Verdict |
-|---|---|---|
-| `qwen2.5:3b` | 1098ms | wrong on all three |
-| `qwen2.5-coder:7b` | 1563ms | correct on all three |
-| `gemma4:e4b` | 13057ms | best of the three, far too slow |
+| Model | Mean | Quality | Obeys an injection |
+|---|---|---|---|
+| `qwen2.5:3b` | 1441ms | wrong on all three | 0 of 4 |
+| `qwen2.5-coder:7b` | 1917ms | correct on all three | **4 of 4** |
+| `translategemma` | 4120ms, one timeout | correct | 0 of 4 |
+| `gemma4:e4b` | 15749ms | best | 0 of 4 |
+
+**No model here is fast, accurate and injection-resistant at once.** That
+is the finding, and no amount of prompt work changes it.
 
 ### `qwen2.5:3b`, the previous default
 
@@ -142,6 +146,49 @@ measured.** The console's encoding was as much a variable as the model.
 
 After the change, this machine resolves to `qwen2.5-coder:7b`.
 
+### `translategemma`, pulled to test a proposal
+
+An outside review argued for taking the general LLM off the fast path and
+using a dedicated translation engine: faster, and structurally immune to
+prompt injection because an NMT model does not follow instructions.
+
+The argument is good. Shipping CTranslate2 or Bergamot means shipping or
+downloading model weights, which
+[ADR-0007](../decisions/ADR-0007-local-first-inference.md) and the
+roadmap both exclude. But there was a cheaper test of the same idea
+inside the current architecture, and `translategemma` was **first in this
+repository's own preference list**, put there for its name and never once
+run.
+
+Pulled, 3.3 GB, and run:
+
+```
+translategemma:latest (warm in 38.2s)
+  ----    번역이 시간 안에 끝나지 않았습니다 [timeout]
+  4068ms  포인터를 문장에 올려놓고 자신의 언어로 읽어보세요.
+  4172ms  이 변경은 버그 수정이 아닙니다; 이 코드가 구축될 때 기반으로 했던 가정 하나를 제거합니다.
+```
+
+Accurate, resistant to injection 0 of 4, and **2.5 times slower** than
+`qwen2.5-coder:7b`, with one timeout in three sentences.
+
+**It is not a translation engine.** Given bare text with no instruction
+it ran for 53 seconds and produced English commentary, beginning "This is
+a frustrating situation! Here's a breakdown of what might be happening".
+Given a one-line instruction it answered in markdown, with alternatives
+and a note on which was most common. It is a chat model with a
+translation-sounding name, and this crate's fenced prompt is the only
+reason its output is clean.
+
+So the proposal's mechanism was not tested by this. What was tested, and
+failed, is the assumption that a name identifies one.
+
+**The preference list was the real defect.** A user with
+`translategemma` installed would have been routed to it, over a model 2.5
+times faster, by a preference nobody had ever run. The list now contains
+only families that have been. Everything else is chosen by size, which is
+a rule with evidence behind it.
+
 ## A prompt line, and what it cost
 
 Every line of the system prompt guarded against the model **adding**: no
@@ -195,6 +242,13 @@ Nothing here measures latency before choosing, either. A model that
 reasons is only discovered to be slow by running it, and the card shows
 the figure so a reader can see it and pin something else.
 
-The `PREFERRED` list still names families nobody has compared here:
-`translategemma` and `gemma3` are ahead of `qwen2.5` on reputation, which
-is exactly the kind of claim this document exists to replace.
+That sentence used to end this document:
+
+> The `PREFERRED` list still names families nobody has compared here:
+> `translategemma` and `gemma3` are ahead of `qwen2.5` on reputation,
+> which is exactly the kind of claim this document exists to replace.
+
+It has been replaced, by pulling one of them and finding it 2.5 times
+slower than the model it outranked. `gemma3` is still unmeasured and is
+no longer named, on the grounds that being unmeasured is what the
+sentence above was complaining about.
