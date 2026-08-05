@@ -489,6 +489,7 @@ unsafe fn measure(window: HWND, card: &Card) -> i32 {
         let inner = CARD_WIDTH - theme.padding * 2;
         let body = match &card.body {
             CardBody::Translation(text) | CardBody::Problem(text) => text,
+            CardBody::Waiting => Card::WAITING_TEXT,
         };
         let original = text_height(dc, &card.original, inner, theme.small_pt);
         let translated = text_height(dc, body, inner, theme.body_pt);
@@ -663,8 +664,11 @@ unsafe fn paint(window: HWND) {
             }
 
             let (body, colour) = match &card.body {
-                CardBody::Translation(text) => (text, theme.body),
-                CardBody::Problem(text) => (text, theme.problem),
+                CardBody::Translation(text) => (text.as_str(), theme.body),
+                CardBody::Problem(text) => (text.as_str(), theme.problem),
+                // A status rather than an answer, so it takes the footer's
+                // colour and must not be mistaken for a translation.
+                CardBody::Waiting => (Card::WAITING_TEXT, theme.footer),
             };
             y += draw(
                 target,

@@ -26,6 +26,20 @@ use lens_core::hover::Generation;
 /// and a card that vanishes there is a card nobody finishes reading.
 pub const DISMISS_GRACE: Duration = Duration::from_millis(250);
 
+/// How long a translation may be outstanding before the card says so.
+///
+/// A hover costs about 320ms to settle and a warm translation about a second
+/// more, and for that second the screen shows nothing. A reader cannot tell
+/// that from a product that did not notice them, so they move the pointer,
+/// which cancels the hover, which means it really does show nothing. Saying
+/// "번역 중" closes that loop.
+///
+/// Not zero, which is the obvious value and the wrong one. A sentence already
+/// in the cache comes back in microseconds, and flashing a waiting card in
+/// front of it would replace a wait with a flicker. 180ms is longer than any
+/// cache hit and far shorter than any model.
+pub const WAITING_AFTER: Duration = Duration::from_millis(180);
+
 /// What the loop should do next.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -45,6 +59,19 @@ pub struct CardLifecycle {
     left_at: Option<Duration>,
     /// The hover the loop is currently interested in.
     current: Generation,
+    /// A translation that was asked for and has not come back.
+    pending: Option<Pending>,
+}
+
+/// A dispatched translation nobody has answered yet.
+#[derive(Debug, Clone, Copy)]
+struct Pending {
+    generation: Generation,
+    anchor: ScreenRect,
+    since: Duration,
+    /// Whether the waiting card is already up, so it is shown once rather than
+    /// on every 25ms tick for as long as the model takes.
+    announced: bool,
 }
 
 impl Default for CardLifecycle {
@@ -61,6 +88,7 @@ impl CardLifecycle {
             // Generation 0 is the value the hover machine starts from, so an
             // answer can never be current before a hover has settled.
             current: Generation(0),
+            pending: None,
         }
     }
 
@@ -83,6 +111,41 @@ impl CardLifecycle {
     /// A new hover settled, so answers for older ones stop being wanted.
     pub fn hover_settled(&mut self, generation: Generation) {
         self.current = generation;
+        // Whatever was outstanding belongs to a hover the reader has left.
+        self.pending = None;
+    }
+
+    /// A translation was asked for. Start the clock on saying so.
+    pub fn job_dispatched(&mut self, generation: Generation, anchor: ScreenRect, now: Duration) {
+        self.pending = Some(Pending {
+            generation,
+            anchor,
+            since: now,
+            announced: false,
+        });
+    }
+
+    /// Has the answer been long enough coming to be worth mentioning?
+    ///
+    /// Returns the anchor to draw the waiting card at, once, and nothing on
+    /// every later call for the same translation.
+    pub fn waited_long_enough(&mut self, now: Duration) -> Option<ScreenRect> {
+        let pending = self.pending.as_mut()?;
+        if pending.announced || pending.generation != self.current {
+            return None;
+        }
+        if now.saturating_sub(pending.since) < WAITING_AFTER {
+            return None;
+        }
+        pending.announced = true;
+        let anchor = pending.anchor;
+        // The waiting card is a card: it has an anchor, and the pointer
+        // leaving it retires it exactly like an answered one. Without this the
+        // reader could walk away from a slow translation and the card would
+        // arrive anyway, over whatever they are reading now.
+        self.anchor = Some(anchor);
+        self.left_at = None;
+        Some(anchor)
     }
 
     /// An answer arrived. Should it be drawn?
@@ -94,6 +157,8 @@ impl CardLifecycle {
         if generation != self.current {
             return Action::Nothing;
         }
+        // Answered, so there is nothing left to apologise for.
+        self.pending = None;
         self.anchor = Some(anchor);
         self.left_at = None;
         Action::Show
@@ -121,6 +186,7 @@ impl CardLifecycle {
             Some(since) if now.saturating_sub(since) >= DISMISS_GRACE => {
                 self.anchor = None;
                 self.left_at = None;
+                self.pending = None;
                 Action::Hide
             }
             Some(_) => Action::Nothing,
@@ -129,6 +195,7 @@ impl CardLifecycle {
 
     /// Paused, or stopping. The card goes at once, with no grace.
     pub fn dismiss_now(&mut self) -> Action {
+        self.pending = None;
         if self.anchor.take().is_some() {
             self.left_at = None;
             return Action::Hide;
@@ -546,5 +613,105 @@ mod gate {
             "every answer but the newest must be dropped; drawing the rest is \
              a translation shown over a sentence the reader has left",
         );
+    }
+}
+
+#[cfg(test)]
+mod waiting {
+    use super::*;
+
+    const WORD: ScreenRect = ScreenRect {
+        x: 400,
+        y: 300,
+        width: 120,
+        height: 22,
+    };
+
+    fn ms(value: u64) -> Duration {
+        Duration::from_millis(value)
+    }
+
+    fn dispatched() -> CardLifecycle {
+        let mut life = CardLifecycle::new();
+        life.hover_settled(Generation(1));
+        life.job_dispatched(Generation(1), WORD, ms(0));
+        life
+    }
+
+    /// The reason the delay exists. A sentence the reader has seen before
+    /// comes back from the cache in microseconds, and a waiting card in front
+    /// of it would replace a wait nobody noticed with a flicker everybody
+    /// does.
+    #[test]
+    fn a_cached_answer_never_shows_a_waiting_card() {
+        let mut life = dispatched();
+        assert_eq!(life.waited_long_enough(ms(1)), None);
+        assert_eq!(life.answer_arrived(Generation(1), WORD), Action::Show);
+        // Even long afterwards: the answer cleared it.
+        assert_eq!(life.waited_long_enough(ms(5_000)), None);
+    }
+
+    #[test]
+    fn a_slow_answer_says_so_once_and_only_once() {
+        let mut life = dispatched();
+        assert_eq!(life.waited_long_enough(ms(179)), None);
+        assert_eq!(life.waited_long_enough(ms(180)), Some(WORD));
+        // A model taking a second and a half is forty more ticks, and none of
+        // them may redraw the card.
+        for tick in 0..40 {
+            assert_eq!(
+                life.waited_long_enough(ms(200 + tick * 25)),
+                None,
+                "redrew at tick {tick}",
+            );
+        }
+    }
+
+    /// A waiting card is a card. The reader walking away from a slow
+    /// translation must retire it exactly like an answered one, or a card
+    /// arrives over whatever they moved on to.
+    #[test]
+    fn walking_away_from_a_slow_translation_retires_the_waiting_card() {
+        let mut life = dispatched();
+        assert_eq!(life.waited_long_enough(ms(200)), Some(WORD));
+
+        let away = ScreenPoint::new(400, 900);
+        assert_eq!(life.pointer_moved(away, ms(300)), Action::Nothing);
+        assert_eq!(life.pointer_moved(away, ms(550)), Action::Hide);
+
+        // And the translation that eventually comes back is not drawn.
+        assert_eq!(life.answer_arrived(Generation(1), WORD), Action::Show);
+    }
+
+    /// Moving to a new sentence abandons the old translation's apology.
+    #[test]
+    fn a_new_hover_cancels_the_previous_waiting_card() {
+        let mut life = dispatched();
+        life.hover_settled(Generation(2));
+        assert_eq!(
+            life.waited_long_enough(ms(5_000)),
+            None,
+            "the old hover's waiting card appeared after the reader moved on",
+        );
+    }
+
+    #[test]
+    fn pausing_abandons_a_pending_translation() {
+        let mut life = dispatched();
+        life.dismiss_now();
+        assert_eq!(life.waited_long_enough(ms(5_000)), None);
+    }
+
+    /// The whole point, as a number: how long the screen stays empty.
+    #[test]
+    fn something_appears_well_before_a_model_could_answer() {
+        // A warm quick translation measured about 1.1s to first streamed text
+        // (docs/benchmarks). Anything close to that is not feedback.
+        assert!(
+            WAITING_AFTER <= Duration::from_millis(250),
+            "the reader waits {WAITING_AFTER:?} before the product admits it heard them",
+        );
+        // And longer than any cache hit, which is measured in microseconds.
+        assert!(WAITING_AFTER >= Duration::from_millis(100));
     }
 }

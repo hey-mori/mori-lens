@@ -1688,3 +1688,35 @@ fn a_longer_card_is_taller_and_the_renderer_is_the_one_that_says_so() {
         "the card ignored the display scaling",
     );
 }
+
+/// Autostart writes, reads back, and removes cleanly.
+///
+/// **Against a scratch key, never the run key.** A test that switched on
+/// autostart to prove it could would leave a machine starting Lens at login
+/// because somebody ran the suite, which is exactly what
+/// `crate::autostart` refuses to do without being asked.
+///
+/// What it covers is the part that is actually easy to get wrong: the size
+/// query, the second call with the allocated buffer, and the UTF-16 that comes
+/// back with its terminator still on it.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn autostart_writes_reads_and_removes_its_own_value() {
+    let (written, read_back, deleted) = crate::autostart::round_trip_against_a_scratch_key();
+    println!("written {written} · read back {read_back} · deleted {deleted}");
+
+    assert!(written, "the value could not be written");
+    assert!(
+        read_back,
+        "the value came back different from what was written, which for a \
+         command line means Windows would run something else at login",
+    );
+    assert!(deleted, "the value could not be removed");
+    assert!(
+        crate::autostart::scratch_is_gone(),
+        "the scratch value is still there after being deleted",
+    );
+
+    // And the real setting is untouched by all of that.
+    println!("autostart is currently {}", crate::autostart::is_enabled());
+}
