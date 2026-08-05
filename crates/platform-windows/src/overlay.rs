@@ -27,6 +27,7 @@
 
 use std::sync::mpsc::{self, Sender};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use crate::glass::Glass;
 use lens_core::card::{Card, CardBody};
@@ -63,7 +64,15 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// on a 150% screen the same sentence wrapped onto more lines inside the same
 /// number of pixels, so the card was physically narrower and taller than the
 /// one beside it on a 100% screen.
-const CARD_WIDTH: i32 = 420;
+const CARD_WIDTH: i32 = 300;
+/// The tallest a card may be, in pixels at 100% scaling.
+///
+/// Scaled per monitor, and it was not. That is the same defect the width above
+/// records as fixed, left behind in the line underneath it: on a 150% display a
+/// card's content is half again as tall while this ceiling stayed at 420
+/// physical pixels, so the point at which a long answer gets its last lines cut
+/// off arrived a third earlier than on a 100% one. Nothing clamps the drawing,
+/// so a card over the ceiling is not shortened, it is clipped.
 const MAX_HEIGHT: i32 = 420;
 
 /// `DWMWCP_ROUND`. Windows 11 rounded corners.
@@ -92,7 +101,7 @@ fn current_theme() -> Theme {
     THEME.lock().ok().and_then(|slot| *slot).unwrap_or_else(|| {
         Theme::resolve(
             lens_core::theme::Preset::System,
-            lens_core::theme::Translucency::Balanced,
+            lens_core::theme::Translucency::DEFAULT,
             lens_core::theme::TextScale::Normal,
             lens_core::theme::SystemPreferences::default(),
         )
@@ -381,18 +390,23 @@ unsafe fn show_card(
     };
     let laid = glass.and_then(|glass| glass.lay_out_between(&card, &theme, range, scale));
 
-    // The card is as wide as its contents need, up to the limit. A fixed box
-    // holding one short line is mostly empty, which reads as something that
-    // failed to load rather than as an answer.
+    // The card is as wide and as tall as its contents need, up to the limit. A
+    // fixed box holding one short line is mostly empty, which reads as
+    // something that failed to load rather than as an answer.
+    let ceiling = card_height_ceiling(scale);
     let (width, height) = match &laid {
-        Some(laid) => (laid.width, laid.height.clamp(80, MAX_HEIGHT)),
+        // **No floor.** There was one, at 80 physical pixels, and a card that
+        // laid out shorter than that got a window taller than its contents:
+        // empty space along the bottom edge of exactly the cards that had least
+        // in them. The renderer measures what it drew, and that measurement is
+        // the answer.
+        Some(laid) => (laid.width, laid.height.min(ceiling)),
         // The fallback painter has no way to measure a natural width, so it
-        // keeps the full one. A machine without Direct2D gets the old card.
+        // keeps the full one. A machine without Direct2D gets the old card, and
+        // the floor with it: `measure` is a GDI estimate rather than a layout,
+        // and it is the one caller that can come back with too small a number.
         // SAFETY: measuring against the window's own device context.
-        None => (
-            widest,
-            unsafe { measure(window, &card) }.clamp(80, MAX_HEIGHT),
-        ),
+        None => (widest, unsafe { measure(window, &card) }.clamp(80, ceiling)),
     };
 
     if let Ok(mut slot) = CONTENT.lock() {
@@ -407,6 +421,11 @@ unsafe fn show_card(
         // SAFETY: read-only monitor queries.
         unsafe { work_area_for(anchor.center()) },
     );
+
+    // A card arriving, rather than one growing. A streamed answer calls this
+    // several times a second and only the first of them is an entrance: the
+    // rest would be a card that flashes once per word.
+    let arriving = holding.is_none();
 
     // Same hover: keep where it already is, and only let it grow downwards.
     // Re-placing on every partial is what put the same card in three places.
@@ -424,8 +443,13 @@ unsafe fn show_card(
     // The Direct2D path positions, sizes and paints in one call, so none of
     // the GDI dance below applies to it.
     if let (Some(glass), Some(laid)) = (glass, laid) {
-        // SAFETY: the window is this thread's own and is WS_EX_LAYERED.
-        let drawn = unsafe { glass.present(window, &laid, &theme, placed) };
+        let drawn = if arriving && theme.animate {
+            // SAFETY: the window is this thread's own and is WS_EX_LAYERED.
+            unsafe { rise(glass, window, &laid, &theme, placed) }
+        } else {
+            // SAFETY: as above.
+            unsafe { glass.present(window, &laid, &theme, placed) }
+        };
         if drawn {
             // SAFETY: NOACTIVATE is what keeps focus where it was.
             unsafe {
@@ -485,7 +509,7 @@ unsafe fn show_card(
 ///
 /// # Safety
 /// Read-only monitor and DPI queries.
-unsafe fn scale_for(point: ScreenPoint) -> f32 {
+pub(crate) unsafe fn scale_for(point: ScreenPoint) -> f32 {
     // SAFETY: `MONITOR_DEFAULTTONEAREST` always yields a monitor.
     unsafe {
         let monitor = MonitorFromPoint(
@@ -858,11 +882,86 @@ pub fn max_card_height() -> i32 {
     MAX_HEIGHT
 }
 
+/// How long a card takes to arrive.
+///
+/// Short. This is a reading tool and the card is an answer to a question the
+/// reader already asked, so the entrance is there to stop it appearing from
+/// nowhere, not to be watched. Anything longer reads as latency.
+const ENTRANCE: Duration = Duration::from_millis(110);
+
+/// How many frames that takes. Seven at 110ms is about 16ms apart, which is a
+/// display's own refresh and as smooth as this can usefully be.
+const ENTRANCE_FRAMES: u32 = 7;
+
+/// How far the card rises as it arrives, in pixels at 100% scaling.
+///
+/// Small on purpose. A card that flies in from anywhere draws the eye to the
+/// movement rather than to the words, and the words are the product.
+const ENTRANCE_RISE: f32 = 7.0;
+
+/// Fade a card in while it settles the last few pixels upwards.
+///
+/// # Safety
+/// `window` must be a live `WS_EX_LAYERED` window owned by this thread.
+unsafe fn rise(
+    glass: &Glass,
+    window: HWND,
+    laid: &crate::glass::Laid,
+    theme: &Theme,
+    placed: ScreenRect,
+) -> bool {
+    let frame = ENTRANCE / ENTRANCE_FRAMES;
+    let rise = ENTRANCE_RISE * laid.scale();
+
+    for step in 1..=ENTRANCE_FRAMES {
+        let progress = f32::from(step as u16) / ENTRANCE_FRAMES as f32;
+        // Ease out cubic: fastest at the start, settling rather than stopping.
+        // Linear movement over a distance this small reads as a jump.
+        let eased = 1.0 - (1.0 - progress).powi(3);
+        let offset = (rise * (1.0 - eased)).round() as i32;
+        let at = ScreenRect::new(placed.x, placed.y + offset, placed.width, placed.height);
+
+        // SAFETY: the caller's guarantee, and the fade is the window's own
+        // constant alpha rather than the bitmap's, so the drawn frame stays
+        // fully inked and the flicker checks keep meaning what they mean.
+        let drawn =
+            unsafe { glass.present_faded(window, laid, theme, at, (eased * 255.0).round() as u8) };
+        if !drawn {
+            return false;
+        }
+        if step == 1 {
+            // Shown only once the first frame exists. Showing an empty window
+            // first is a flash of nothing, which is the thing being avoided.
+            // SAFETY: NOACTIVATE is what keeps focus where it was.
+            unsafe {
+                let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
+            }
+        }
+        if step < ENTRANCE_FRAMES {
+            std::thread::sleep(frame);
+        }
+    }
+    true
+}
+
 /// The widest a card may be at 100% scaling, before the shadow around it.
 ///
 /// Exposed for the live checks, which lay a card out themselves and compare.
 pub fn max_card_width() -> i32 {
     CARD_WIDTH
+}
+
+/// The window height a card of this laid-out height gets.
+///
+/// Exposed so a diagnostic can ask whether a card fits the window it is drawn
+/// into, which is a question no screenshot answers reliably.
+pub fn card_height_for(laid_height: i32, scale: f32) -> i32 {
+    laid_height.min(card_height_ceiling(scale))
+}
+
+/// The tallest a card may be on a display at this scaling.
+fn card_height_ceiling(scale: f32) -> i32 {
+    (MAX_HEIGHT as f32 * scale).round() as i32
 }
 
 /// Whether the overlay class is registered with the styles it must have.

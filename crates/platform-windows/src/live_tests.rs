@@ -1591,7 +1591,7 @@ fn a_click_on_the_tray_icon_becomes_a_request() {
 ///
 /// So this asserts the two things only the alpha path can produce:
 ///
-/// - the window is **larger than the card**, by the shadow margin, and the
+/// - the window is **exactly the card**, plus the blank edge, and the
 ///   extra pixels are almost entirely transparent
 /// - the window's corner and its centre are **different**, which for a GDI card
 ///   filling its whole client area with one brush they cannot be
@@ -1612,7 +1612,18 @@ fn the_card_is_painted_with_per_pixel_alpha_and_not_a_flat_rectangle() {
          state for the product and not for this assertion.",
     );
 
-    let overlay = crate::Overlay::start().expect("overlay");
+    // **Deliberately not the default theme.** The claim under test is that the
+    // surface can be translucent while the text on it is not, and the default
+    // surface is opaque, which makes every assertion below trivially true. The
+    // guard at the end of this function says so; it is what caught this when
+    // the default changed and eight fixtures were repointed at it together.
+    let theme = Theme::resolve(
+        Preset::System,
+        Translucency::Clear,
+        TextScale::Normal,
+        SystemPreferences::default(),
+    );
+    let overlay = crate::Overlay::start_with(theme).expect("overlay");
     let anchor = ScreenRect::new(500, 400, 400, 22);
     let card = Card::translated(
         "The output files came back empty, so the suite produced nothing at all.",
@@ -1647,30 +1658,48 @@ fn the_card_is_painted_with_per_pixel_alpha_and_not_a_flat_rectangle() {
     // What the renderer says this card should be, so the comparison is against
     // the card that was drawn rather than against a fixed number. The card
     // fits its contents now, so a constant would only be right by accident.
-    let theme = Theme::resolve(
-        Preset::System,
-        Translucency::Balanced,
-        TextScale::Normal,
-        SystemPreferences::default(),
-    );
+    // **At the anchor's own scaling**, which this laid out at 1.0 while the
+    // window was drawn at whatever the monitor is. On a 125% display that made
+    // `laid` a fifth smaller than the window, and the width check below then
+    // passed for the wrong reason.
+    // SAFETY: read-only monitor and DPI queries.
+    let scale = unsafe { crate::overlay::scale_for(anchor.center()) };
     let glass = crate::glass::Glass::new().expect("Direct2D");
     let laid = glass
-        .lay_out(&second, &theme, crate::overlay::max_card_width(), 1.0)
+        .lay_out(
+            &second,
+            &theme,
+            (crate::overlay::max_card_width() as f32 * scale).round() as i32,
+            scale,
+        )
         .expect("layout");
     println!(
         "window {width}x{height}, card {}x{}",
         laid.width, laid.height
     );
 
-    // The shadow needs room, so the window has to be wider than the card. A
-    // window exactly the card's width means the Direct2D path did not draw
-    // this frame, which is what happened the first time: the window had
-    // `SetLayeredWindowAttributes` called on it at creation, which makes
-    // `UpdateLayeredWindow` fail, and every other overlay test stayed green.
+    // The window is the card plus its blank edge and nothing else. This is what
+    // says the Direct2D path drew the frame **on screen**, rather than an
+    // offscreen bitmap that happens to look right: the first time, the window
+    // had `SetLayeredWindowAttributes` called on it at creation, which makes
+    // `UpdateLayeredWindow` fail, and every other overlay test stayed green
+    // while nothing was drawn.
+    //
+    // It read `width > laid.width`, on the reasoning that the shadow needed
+    // room. The shadow is gone and that edge is two pixels, so the comparison
+    // stopped being evidence and started passing because `laid` was measured at
+    // the wrong scaling. The fallback painter takes the full allowed width, so
+    // being narrower than that is the thing a GDI frame cannot be.
+    let fallback_width = (crate::overlay::max_card_width() as f32 * scale).round() as i32;
     assert!(
-        width > laid.width,
-        "the window is {width}px wide and the card is {}px, so there is no \
-         shadow margin and this is the GDI fallback",
+        width < fallback_width,
+        "the window is {width}px wide, which is the whole {fallback_width}px the \
+         GDI fallback would take, so the frame on screen was not the Direct2D one",
+    );
+    assert!(
+        (width - laid.width).abs() <= 8,
+        "the window is {width}px and the card laid out at {}px, so what is on \
+         screen is not the frame this measured",
         laid.width,
     );
     assert!(overlay.hide());
@@ -1736,7 +1765,7 @@ fn a_longer_card_is_taller_and_the_renderer_is_the_one_that_says_so() {
     let glass = crate::glass::Glass::new().expect("Direct2D");
     let theme = Theme::resolve(
         Preset::System,
-        Translucency::Balanced,
+        Translucency::DEFAULT,
         TextScale::Normal,
         SystemPreferences::default(),
     );
@@ -1837,7 +1866,7 @@ fn a_short_answer_gets_a_narrow_card_and_a_long_one_gets_a_wide_card() {
     let glass = crate::glass::Glass::new().expect("Direct2D");
     let theme = Theme::resolve(
         Preset::System,
-        Translucency::Balanced,
+        Translucency::DEFAULT,
         TextScale::Normal,
         SystemPreferences::default(),
     );
@@ -1909,7 +1938,7 @@ fn the_same_card_is_the_same_physical_size_on_a_scaled_display() {
     let glass = crate::glass::Glass::new().expect("Direct2D");
     let theme = Theme::resolve(
         Preset::System,
-        Translucency::Balanced,
+        Translucency::DEFAULT,
         TextScale::Normal,
         SystemPreferences::default(),
     );
@@ -2052,7 +2081,7 @@ fn a_theme_set_at_runtime_changes_the_next_card() {
     let theme_at = |scale| {
         Theme::resolve(
             Preset::System,
-            Translucency::Balanced,
+            Translucency::DEFAULT,
             scale,
             SystemPreferences::default(),
         )
@@ -2111,7 +2140,7 @@ fn measure_what_a_long_paragraph_does_to_the_card() {
     let glass = crate::glass::Glass::new().expect("Direct2D");
     let theme = Theme::resolve(
         Preset::System,
-        Translucency::Balanced,
+        Translucency::DEFAULT,
         TextScale::Normal,
         SystemPreferences::default(),
     );
@@ -2342,4 +2371,157 @@ fn measure_what_a_capture_sees_through_the_card() {
     // trustworthy, so the milestone hides the card before capturing under it
     // rather than reasoning about what the composite will contain.
     let _ = flat.contains(&wanted);
+}
+
+/// What a card's frame actually contains, pixel by pixel.
+///
+/// **Draws no window.** It renders to a bitmap and reads it, which is the only
+/// honest way to answer "why is there a box around it" without asking somebody
+/// to stare at their screen again.
+#[test]
+#[ignore = "renders to a bitmap; no window, run manually"]
+fn dump_the_frame_around_a_card() {
+    use lens_core::card::Card;
+    use lens_core::theme::{Preset, SystemPreferences, TextScale, Theme, Translucency};
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    let glass = crate::glass::Glass::new().expect("Direct2D");
+    let theme = Theme::resolve(
+        Preset::System,
+        Translucency::DEFAULT,
+        TextScale::Normal,
+        SystemPreferences::default(),
+    );
+    let card = Card::translated(
+        "This reveals a genuine contradiction between the two documents.",
+        &QuickTranslation {
+            text: "이것은 두 문서 사이의 진짜 모순을 드러냅니다.".to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "qwen2.5-coder:7b".to_owned(),
+            latency_ms: 3400,
+            cached: false,
+        },
+    );
+    let laid = glass
+        .lay_out(&card, &theme, crate::overlay::max_card_width(), 1.0)
+        .expect("layout");
+    // SAFETY: renders into its own bitmap and releases it.
+    let (width, height, pixels) = unsafe { glass.pixels(&laid, &theme) }.expect("pixels");
+
+    let at = |x: i32, y: i32| pixels[(y * width + x) as usize];
+    let middle = height / 2;
+
+    println!(
+        "frame {width}x{height}, card {}x{}",
+        laid.width, laid.height
+    );
+    println!("surface_alpha asked for: {}", theme.surface_alpha);
+
+    // A horizontal slice from the bitmap's edge into the card.
+    println!("left edge inwards (x: argb):");
+    for x in 0..28.min(width) {
+        let p = at(x, middle);
+        println!("  {x:>3}  a={:>3}  rgb={:06x}", p >> 24, p & 0x00ff_ffff);
+    }
+
+    // And the top-left corner diagonally, which is where a box shows first.
+    println!("corner diagonal (n: argb):");
+    for n in 0..14 {
+        let p = at(n, n);
+        println!("  {n:>3}  a={:>3}  rgb={:06x}", p >> 24, p & 0x00ff_ffff);
+    }
+}
+
+/// How much of the page a card actually takes.
+///
+/// A user called the card's presence too large, which is a judgement about
+/// area rather than about any one number in it. This prints the area, so the
+/// next change to padding, gaps or width is answerable with a figure instead of
+/// another screenshot.
+///
+/// The card is the one from that screenshot: two lines of English original, two
+/// of Korean answer, and the footer.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn measure_how_much_of_the_page_a_card_covers() {
+    use lens_core::card::Card;
+    use lens_core::theme::{Preset, SystemPreferences, TextScale, Theme, Translucency};
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    let glass = crate::glass::Glass::new().expect("Direct2D");
+    let theme = Theme::resolve(
+        Preset::System,
+        Translucency::DEFAULT,
+        TextScale::Normal,
+        SystemPreferences::default(),
+    );
+
+    let make = |original: &str, translation: &str| {
+        Card::translated(
+            original,
+            &QuickTranslation {
+                text: translation.to_owned(),
+                engine: EngineId::LocalOllama,
+                model: "qwen2.5-coder:7b".to_owned(),
+                latency_ms: 1500,
+                cached: false,
+            },
+        )
+    };
+    let card = make(
+        "So deploying is what makes yesterday's work real, and that's the safe, obvious \
+         first step.",
+        "어제의 일은 배포로 현실화되며, 이것이 안전하고 명백한 첫 단계입니다.",
+    );
+
+    // Four lines each side, from a screenshot whose footer sat on the card's
+    // bottom edge with no padding under it.
+    let tall = make(
+        "The bigger structural question is understanding how the base and datasheet \
+         starters relate to each other, whether one depends on the other or if they're \
+         independent.",
+        "기본 구조적 질문은 기본과 데이터시트 시작자가 서로 어떻게 관련되어 있는지 이해하는 \
+         것입니다. 하나가 다른 것에 의존하는지 아니면 독립적인지.",
+    );
+    for scale in [1.0f32, 1.5] {
+        let widest = (crate::overlay::max_card_width() as f32 * scale).round() as i32;
+        let laid = glass.lay_out(&tall, &theme, widest, scale).expect("layout");
+        let window = crate::overlay::card_height_for(laid.height, scale);
+        println!(
+            "tall  scale {scale}: laid {}x{}, window height {window}, {}",
+            laid.width,
+            laid.height,
+            if window < laid.height {
+                "CLIPPED"
+            } else {
+                "fits"
+            },
+        );
+    }
+
+    for scale in [1.0f32, 1.5] {
+        // Scaled, as `show_card` scales it. Passing the 100% figure at 150%
+        // measures a card a third narrower than the product draws, and the
+        // first run of this reported one: 350 wide and 251 tall, which is not a
+        // card that exists.
+        let widest = (crate::overlay::max_card_width() as f32 * scale).round() as i32;
+        let laid = glass.lay_out(&card, &theme, widest, scale).expect("layout");
+        println!(
+            "scale {scale}: {}x{} = {} px",
+            laid.width,
+            laid.height,
+            laid.width * laid.height,
+        );
+    }
+
+    // No assertion on the figures. What is small enough is the user's call and
+    // it changes; what this guarantees is that the answer is measured.
+    let laid = glass
+        .lay_out(&card, &theme, crate::overlay::max_card_width(), 1.0)
+        .expect("layout");
+    assert!(laid.width > 0 && laid.height > 0);
+    assert!(
+        laid.width <= crate::overlay::max_card_width(),
+        "a card may never be wider than it was offered",
+    );
 }

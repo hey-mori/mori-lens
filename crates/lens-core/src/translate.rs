@@ -77,6 +77,62 @@ pub fn token_budget(source_chars: usize) -> u32 {
         .clamp(FLOOR, CEILING)
 }
 
+/// Whether an answer is just the question again.
+///
+/// A user hovered a long sentence and the card showed the English original
+/// with, underneath it in bold, the same English word for word. Every check in
+/// this crate passed: the reply was non-empty, well-formed, the right length,
+/// and no error field anywhere. The one thing wrong with it was the only thing
+/// that mattered, and nothing was looking.
+///
+/// Wording in the system prompt reduced it to nothing measurable on one model
+/// (`lens_translate::system_prompt`), but a prompt is a request and this is a
+/// guarantee. A different model, or the next release of the same one, gets to
+/// break the request; this catches it either way.
+///
+/// # What counts
+///
+/// The proportion of the source's words that survive verbatim in the answer.
+/// Not equality: a model echoes with a stray full stop or a dropped article and
+/// that is still an echo.
+///
+/// Two things keep it from firing on a real translation:
+///
+/// - **Short sources are exempt.** Translating `commit` into Korean may well
+///   leave `commit` standing, and one word out of one is a ratio of 1.0. Below
+///   [`ECHO_FLOOR`] words there is not enough evidence to accuse anyone.
+/// - **The bar is high.** A Korean translation of an identifier-heavy sentence
+///   legitimately keeps every backticked name, so some overlap is normal. What
+///   is not normal is nearly all of it.
+pub fn reads_as_the_source(source: &str, answer: &str) -> bool {
+    /// Fewest source words before this is willing to judge.
+    const ECHO_FLOOR: usize = 8;
+    /// How much of the source has to survive before it is an echo, not a
+    /// translation that kept the names in it.
+    const ECHO_RATIO: f32 = 0.8;
+
+    let words = |text: &str| -> Vec<String> {
+        text.split_whitespace()
+            .map(|word| {
+                word.trim_matches(|c: char| !c.is_alphanumeric() && c != '_')
+                    .to_lowercase()
+            })
+            .filter(|word| !word.is_empty())
+            .collect()
+    };
+
+    let source_words = words(source);
+    if source_words.len() < ECHO_FLOOR {
+        return false;
+    }
+    let answer_words = words(answer);
+    let kept = source_words
+        .iter()
+        .filter(|word| answer_words.contains(word))
+        .count();
+    kept as f32 / source_words.len() as f32 >= ECHO_RATIO
+}
+
 /// Names that mean a model cannot produce prose at all.
 ///
 /// Matched as substrings, case-insensitively. Short on purpose: it names what
@@ -289,6 +345,8 @@ pub enum TranslateError {
     Timeout,
     /// The engine answered with something that was not a translation.
     Malformed,
+    /// The engine answered with the question. See [`reads_as_the_source`].
+    NotTranslated,
     /// The pointer moved before this finished.
     Stale,
     /// Nothing worth translating: empty, or no letters in it.
@@ -302,6 +360,7 @@ impl TranslateError {
             Self::ModelMissing(_) => "model-missing",
             Self::Timeout => "timeout",
             Self::Malformed => "malformed",
+            Self::NotTranslated => "not-translated",
             Self::Stale => "stale",
             Self::NotWorthTranslating => "not-worth-translating",
         }
@@ -318,6 +377,10 @@ impl TranslateError {
             Self::ModelMissing(model) => format!("모델 {model}이(가) 설치되어 있지 않습니다"),
             Self::Timeout => "번역이 시간 안에 끝나지 않았습니다".to_owned(),
             Self::Malformed => "번역 결과를 이해할 수 없습니다".to_owned(),
+            // Deliberately says what happened rather than blaming the reader.
+            // The card cannot show the answer, because the answer is the
+            // sentence they are already looking at.
+            Self::NotTranslated => "모델이 번역하지 않고 원문을 그대로 돌려줬습니다".to_owned(),
             Self::Stale => "취소되었습니다".to_owned(),
             Self::NotWorthTranslating => "번역할 내용이 없습니다".to_owned(),
         }
@@ -345,6 +408,9 @@ impl TranslateError {
             Self::ModelMissing(model) => Some(format!("터미널에서 ollama pull {model}")),
             Self::Timeout => Some("더 작은 모델을 쓰거나 잠시 후 다시 시도해 주세요".to_owned()),
             Self::Malformed => Some("다른 모델로 바꿔 보세요".to_owned()),
+            // The same advice, and it is the right advice: this failure is a
+            // property of the model, and the user has others installed.
+            Self::NotTranslated => Some("다른 모델로 바꿔 보세요".to_owned()),
             Self::Stale | Self::NotWorthTranslating => None,
         }
     }
@@ -628,5 +694,48 @@ mod tests {
             error.user_message().contains("qwen2.5:3b"),
             "the user cannot act on a message that does not name the model",
         );
+    }
+}
+
+#[cfg(test)]
+mod echo_tests {
+    use super::reads_as_the_source;
+
+    const SOURCE: &str = "For the mechanics: I'd dump the two schemas and history table from                           the current database, create a fresh `insbase` database owned by                           `insbase_app`, then drop the old schemas after a grace period.";
+
+    #[test]
+    fn the_answer_that_was_the_question_is_caught() {
+        assert!(reads_as_the_source(SOURCE, SOURCE));
+    }
+
+    #[test]
+    fn an_echo_with_a_stray_edit_is_still_an_echo() {
+        let nearly = SOURCE
+            .replace("the current database", "the database")
+            .to_owned()
+            + " Thanks.";
+        assert!(reads_as_the_source(SOURCE, &nearly));
+    }
+
+    #[test]
+    fn a_korean_translation_that_keeps_the_identifiers_is_not_an_echo() {
+        // What a good answer to that sentence looks like: every name kept,
+        // every word around them replaced. This is the case the ratio has to
+        // survive, and it is why the bar is 0.8 rather than something lower.
+        let good = "구조적으로는 현재 데이터베이스에서 두 스키마와 이력 테이블을 덤프하고,                     `insbase_app`이 소유하는 새 `insbase` 데이터베이스를 만든 다음, 유예 기간이                     지나면 예전 스키마를 삭제합니다.";
+        assert!(!reads_as_the_source(SOURCE, good));
+    }
+
+    #[test]
+    fn a_short_source_is_never_accused() {
+        // One word in, the same word out, is an ordinary translation of a
+        // loanword and not evidence of anything.
+        assert!(!reads_as_the_source("commit", "commit"));
+        assert!(!reads_as_the_source("git push", "git push"));
+    }
+
+    #[test]
+    fn an_unrelated_answer_is_not_an_echo() {
+        assert!(!reads_as_the_source(SOURCE, "완전히 다른 문장입니다."));
     }
 }
