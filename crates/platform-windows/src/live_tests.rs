@@ -1187,9 +1187,7 @@ fn be_the_wedged_application() {
 /// *beside* the text it explains, on purpose. So this measures where placement
 /// puts a card, then works backwards to an anchor that lands the card on a
 /// point already known to read.
-#[test]
-#[ignore = "needs a live desktop session; run manually"]
-fn a_point_that_reads_text_still_reads_it_through_a_card_on_top() {
+fn one_attempt_at_reading_through_a_card() -> Result<String, String> {
     use std::time::{Duration, Instant};
 
     use lens_core::card::Card;
@@ -1235,12 +1233,7 @@ fn a_point_that_reads_text_still_reads_it_through_a_card_on_top() {
     }
 
     let Some(point) = anchored else {
-        // Not a pass. A test that cannot find text cannot answer the question,
-        // and reporting that as green is how a gate stops meaning anything.
-        panic!(
-            "no window on this desktop exposed text to read, so this test could \
-             not be run. Open something with prose in it and run it again."
-        );
+        return Err("no window on this desktop exposed text to read".to_owned());
     };
 
     let overlay = crate::Overlay::start().expect("overlay");
@@ -1295,13 +1288,14 @@ fn a_point_that_reads_text_still_reads_it_through_a_card_on_top() {
             .acquire(point, &context)
             .map(|target| target.segmented.context().to_owned())
     };
-    let baseline = read_point().expect("the point stopped reading between the search and the test");
+    let Ok(baseline) = read_point() else {
+        return Err("the point stopped reading between the search and the test".to_owned());
+    };
     if read_point().ok().as_deref() != Some(baseline.as_str()) {
-        // Not a pass and not a failure of the thing under test. Say which.
-        panic!(
-            "the text at ({}, {}) changed between two reads with no card              involved, so this run could not test anything. The desktop moved.",
+        return Err(format!(
+            "the text at ({}, {}) changed between two reads with no card involved",
             point.x, point.y,
-        );
+        ));
     }
 
     assert!(overlay.show(make_card(), aimed));
@@ -1315,21 +1309,21 @@ fn a_point_that_reads_text_still_reads_it_through_a_card_on_top() {
     let through = acquirer.acquire(point, &context);
     let _ = overlay.hide();
 
-    assert!(
-        covered,
-        "the card was aimed at ({}, {}) and landed at {:?}, so it did not cover \
-         the text and nothing was tested. Placement clamps to the work area, \
-         which is correct, but it means this point cannot be used.",
-        point.x,
-        point.y,
-        (placed.left, placed.top, placed.right, placed.bottom),
-    );
+    if !covered {
+        // Placement clamps into the work area, which is correct. It means this
+        // particular point cannot be used, not that anything is wrong.
+        return Err(format!(
+            "the card aimed at ({}, {}) landed at {:?} and did not cover it",
+            point.x,
+            point.y,
+            (placed.left, placed.top, placed.right, placed.bottom),
+        ));
+    }
 
-    let text = through
-        .expect("the point stopped reading once a card covered it")
-        .segmented
-        .context()
-        .to_owned();
+    let Ok(read) = through else {
+        return Err("the point stopped reading while the card was up".to_owned());
+    };
+    let text = read.segmented.context().to_owned();
 
     // Compared, never printed. This is the product's own card, and the rule
     // against logging captured text does not carve out exceptions.
@@ -1345,12 +1339,47 @@ fn a_point_that_reads_text_still_reads_it_through_a_card_on_top() {
          itself read",
     );
 
-    println!(
+    Ok(format!(
         "{} chars at ({}, {}), read identically with a card drawn over that \
          exact point, and none of it the card's",
         baseline.chars().count(),
         point.x,
         point.y,
+    ))
+}
+
+/// Milestone 2's gate condition, retried because the desktop is not ours.
+///
+/// The attempt above searches a live desktop for real text. A page that
+/// scrolls, a caret that blinks into the line, or another check's window
+/// appearing all change the answer for reasons that have nothing to do with the
+/// card. Measured: it passed three runs out of three on its own and failed
+/// about one full suite in three.
+///
+/// Retrying rather than loosening the assertions is the whole point. The claim
+/// this makes, that a card does not change what the accessibility layer sees,
+/// would fail on **every** attempt if it were false. A desktop that moved fails
+/// one attempt and passes the next.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn a_point_that_reads_text_still_reads_it_through_a_card_on_top() {
+    let mut reasons = Vec::new();
+    for attempt in 1..=4 {
+        match one_attempt_at_reading_through_a_card() {
+            Ok(found) => {
+                println!("{found} (attempt {attempt})");
+                return;
+            }
+            Err(reason) => {
+                println!("attempt {attempt}: {reason}");
+                reasons.push(reason);
+                std::thread::sleep(std::time::Duration::from_millis(400));
+            }
+        }
+    }
+    panic!(
+        "four attempts and none could be run, so nothing was tested:\n  {}",
+        reasons.join("\n  "),
     );
 }
 
@@ -1492,11 +1521,11 @@ fn a_click_on_the_tray_icon_becomes_a_request() {
     // And the state can change, which is what makes the icon honest about
     // whether anything is being read.
     assert!(
-        tray.set_state(Glyph::Paused, "Mori Lens · 일시정지"),
+        tray.set_state(Glyph::Paused, "Mori Lens · 일시정지", ink),
         "the icon could not be updated, so it would keep claiming to listen",
     );
     std::thread::sleep(Duration::from_millis(300));
-    assert!(tray.set_state(Glyph::Listening, "Mori Lens · 켜짐"));
+    assert!(tray.set_state(Glyph::Listening, "Mori Lens · 켜짐", ink));
     std::thread::sleep(Duration::from_millis(300));
     println!("state changed to paused and back");
 
@@ -1930,4 +1959,73 @@ fn the_process_under_the_pointer_is_cached_without_going_stale() {
         "{each:.1}us per lookup, so nothing is being cached and the loop is \
          paying for a process handle forty times a second",
     );
+}
+
+/// A theme set while the overlay is running reaches the next card.
+///
+/// `Overlay::set_theme` writing into a static is easy to believe and easy to
+/// get wrong: the painter resolves its theme when it draws, and if it read a
+/// copy taken at startup instead, this would store the new theme and go on
+/// painting the old one with nothing failing.
+///
+/// The signal is the card's **size**. A larger text scale is a taller card, so
+/// the window measured after the change says whether the painter saw it.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn a_theme_set_at_runtime_changes_the_next_card() {
+    use lens_core::card::Card;
+    use lens_core::geometry::ScreenRect;
+    use lens_core::theme::{Preset, SystemPreferences, TextScale, Theme, Translucency};
+    use lens_core::translate::{EngineId, QuickTranslation};
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+
+    let theme_at = |scale| {
+        Theme::resolve(
+            Preset::System,
+            Translucency::Balanced,
+            scale,
+            SystemPreferences::default(),
+        )
+    };
+
+    let overlay = crate::Overlay::start().expect("overlay");
+    let card = Card::translated(
+        "The output files came back empty, so the suite produced nothing at all.",
+        &QuickTranslation {
+            text: "출력 파일이 비어 있어서 테스트 스위트는 아무것도 만들지 않았습니다.".to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "qwen2.5:3b".to_owned(),
+            latency_ms: 900,
+        },
+    );
+    let anchor = ScreenRect::new(500, 300, 300, 22);
+
+    let measure = || {
+        // SAFETY: a read-only query on this process's own window.
+        unsafe {
+            let mut rect = RECT::default();
+            GetWindowRect(HWND(overlay.window_id() as *mut _), &mut rect).expect("window rect");
+            rect.bottom - rect.top
+        }
+    };
+
+    overlay.set_theme(theme_at(TextScale::Normal));
+    assert!(overlay.show(card.clone(), anchor));
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let normal = measure();
+
+    overlay.set_theme(theme_at(TextScale::Larger));
+    assert!(overlay.show(card, anchor));
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let larger = measure();
+
+    println!("normal {normal}px tall · larger {larger}px tall");
+    assert!(
+        larger > normal,
+        "the same card is {larger}px at the larger text scale and {normal}px at \
+         the normal one, so the painter never saw the new theme",
+    );
+
+    assert!(overlay.hide());
 }
