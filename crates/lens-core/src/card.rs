@@ -7,6 +7,26 @@ use crate::acquire::AcquireError;
 use crate::geometry::{ScreenPoint, ScreenRect};
 use crate::translate::{QuickTranslation, TranslateError};
 
+/// A partial answer cut back to its last complete word.
+///
+/// A streamed translation arrives a few characters at a time, so a redraw
+/// lands mid-word about as often as not: a real hover showed `삽입 스크`, which
+/// is a word broken in half and reads as a rendering fault rather than as text
+/// still arriving.
+///
+/// Only for partials. The finished answer is shown exactly as the engine gave
+/// it, because cutting *that* back would silently drop the last word.
+///
+/// Text with no space in it yet is returned whole: two characters of an answer
+/// are better than none, and a language that does not space its words would
+/// otherwise never show anything until it finished.
+fn whole_words(text: &str) -> String {
+    match text.trim_end().rsplit_once(char::is_whitespace) {
+        Some((whole, _)) => whole.to_owned(),
+        None => text.trim_end().to_owned(),
+    }
+}
+
 /// The contents of one card.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Card {
@@ -75,7 +95,7 @@ impl Card {
     pub fn partial(original: impl Into<String>, so_far: impl Into<String>) -> Self {
         Self {
             original: original.into(),
-            body: CardBody::Translation(so_far.into()),
+            body: CardBody::Translation(whole_words(&so_far.into())),
             footer: "번역 중".to_owned(),
         }
     }
@@ -378,5 +398,53 @@ mod waiting_tests {
     #[test]
     fn a_waiting_card_with_no_original_is_refused() {
         assert!(!Card::waiting("   ").is_showable());
+    }
+}
+
+#[cfg(test)]
+mod streaming_tests {
+    use super::*;
+
+    fn body_of(card: &Card) -> String {
+        match &card.body {
+            CardBody::Translation(text) => text.clone(),
+            other => panic!("expected a translation, got {other:?}"),
+        }
+    }
+
+    /// The half-word a real hover showed.
+    #[test]
+    fn a_partial_is_cut_back_to_its_last_whole_word() {
+        let card = Card::partial("original", "나는 다른 다섯 개의 파일에서 삽입 스크");
+        assert_eq!(body_of(&card), "나는 다른 다섯 개의 파일에서 삽입");
+    }
+
+    /// Before the first space there is nothing to cut back to, and two
+    /// characters of an answer are better than none.
+    #[test]
+    fn a_partial_with_no_space_yet_is_shown_whole() {
+        assert_eq!(body_of(&Card::partial("original", "나는")), "나는");
+    }
+
+    #[test]
+    fn a_partial_that_is_only_whitespace_shows_nothing() {
+        assert_eq!(body_of(&Card::partial("original", "   ")), "");
+    }
+
+    /// The finished answer is never trimmed. Doing so would drop its last
+    /// word, every time, silently.
+    #[test]
+    fn a_finished_translation_keeps_its_last_word() {
+        let finished = Card::translated(
+            "original",
+            &QuickTranslation {
+                text: "나는 다른 파일에서 삽입 스크립트를".to_owned(),
+                engine: crate::translate::EngineId::LocalOllama,
+                model: "m".to_owned(),
+                latency_ms: 900,
+                cached: false,
+            },
+        );
+        assert_eq!(body_of(&finished), "나는 다른 파일에서 삽입 스크립트를");
     }
 }
