@@ -48,15 +48,18 @@ not written), **out of v1** (deliberately excluded).
 
 | Capability | Status |
 |------------|--------|
-| Hover intent state machine (dwell, radius, cooldown, stale discard) | built, unverified · covered by unit tests, never driven through a real reading session |
+| Hover intent state machine (dwell, radius, cooldown, stale discard) | built, unverified · unit tested, and the card lifetime it feeds now has its own tests |
 | Windows UI Automation text acquisition under the pointer | **shipped** · measured on 3 windows, 2026-08-04 |
 | Word / sentence / paragraph segmentation | built, unverified · unit tested, no human has confirmed a resolved word is the intended one |
 | Secure-field refusal | **shipped** · fires as `Protected(Declared)` against a real `ES_PASSWORD` control, and discriminates from a plain one |
 | Hover probe, follow mode | built, unverified |
+| Card themes | **shipped** · four presets, contrast checked against the composite over a white page and a black one |
+| Pause control | **shipped** · Ctrl+Alt+L, and paused means the pointer is not sampled |
+| Translation cache | **shipped** · in memory, keyed on model and prompt version |
 | Hover probe, sweep mode | **shipped** · produced the 2026-08-04 measurements |
 | Per-application compatibility matrix | in progress · 4 of 8 target applications |
-| Native overlay (Windows) | planned · M2 |
-| Quick translation via Ollama | planned · M3 |
+| Native overlay (Windows) | **shipped** · never takes focus, paints without a blank or hidden frame while streaming, clicks pass through, and lands on the monitor its text is on |
+| Quick translation via Ollama | **shipped** · warm median around 1.6s, streamed, cached in memory, model resolved at startup |
 | Deep analysis (grammar, structure) | planned · M4 |
 | Manual OCR fallback (Windows) | planned · M5 |
 | macOS acquisition | planned · M6 |
@@ -73,8 +76,8 @@ recorded in
 [`compatibility/windows-app-matrix.md`](compatibility/windows-app-matrix.md).
 That gate is [ADR-0008](decisions/ADR-0008-probe-before-product.md).
 
-Two capabilities passed it on 2026-08-04. The rest have unit tests,
-which prove the logic and prove nothing about a desktop.
+Eight capabilities have passed it. The rest have unit tests, which
+prove the logic and prove nothing about a desktop.
 
 **What the measurement found, since it changes what "works" means
 here:** acquisition succeeds, at p50 10ms, and returns the *right* text
@@ -85,6 +88,18 @@ therefore solved and *targeting* is not
 ([`benchmarks/2026-08-04-acquisition-sweep.md`](benchmarks/2026-08-04-acquisition-sweep.md)).
 No overlay should be built until that has an answer, because a card
 placed on the wrong sentence is worse than no card.
+
+**The wiring now has tests too.** The decisions in
+`apps/lens/src/main.rs` about when a card appears, stays, and goes are
+extracted into `lifecycle.rs`, which decides without acting so a whole
+reading session can be played through it in microseconds. The one bug a
+user has reported in this product lived there and survived a green
+suite; it is now a test.
+
+What is still untested in that loop is the part that is genuinely I/O:
+sampling the pointer, sending a job, and receiving an answer. Those are
+thin, and they are exercised by `--selftest` and the live checks rather
+than by anything automatic.
 
 **The second measurement session found a harder problem than targeting.**
 VS Code returned 7 acquisitions across 247 sampled points, all of them
