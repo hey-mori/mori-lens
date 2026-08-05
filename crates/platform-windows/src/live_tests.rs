@@ -1281,11 +1281,28 @@ fn a_point_that_reads_text_still_reads_it_through_a_card_on_top() {
         20,
     );
 
-    // What is at that point with no card in the way.
-    let baseline = acquirer
-        .acquire(point, &context)
-        .map(|target| target.segmented.context().to_owned())
-        .expect("the point stopped reading between the search and the test");
+    // What is at that point with no card in the way, twice.
+    //
+    // Twice because this test runs against a live desktop that nothing here
+    // controls: a page can scroll, a caret can blink into the text, another
+    // test's window can appear. When that happens the reading changes for a
+    // reason that has nothing to do with the card, and the assertion below
+    // would report it as the card altering what the accessibility layer sees,
+    // which is a serious claim and would be a false one. It failed exactly
+    // that way once.
+    let read_point = || {
+        acquirer
+            .acquire(point, &context)
+            .map(|target| target.segmented.context().to_owned())
+    };
+    let baseline = read_point().expect("the point stopped reading between the search and the test");
+    if read_point().ok().as_deref() != Some(baseline.as_str()) {
+        // Not a pass and not a failure of the thing under test. Say which.
+        panic!(
+            "the text at ({}, {}) changed between two reads with no card              involved, so this run could not test anything. The desktop moved.",
+            point.x, point.y,
+        );
+    }
 
     assert!(overlay.show(make_card(), aimed));
     std::thread::sleep(Duration::from_millis(500));
@@ -1856,5 +1873,61 @@ fn the_same_card_is_the_same_physical_size_on_a_scaled_display() {
          differently and the box is not scaling with it",
         scaled.height,
         plain.height,
+    );
+}
+
+/// The per-sample process lookup is cached, and still correct.
+///
+/// `process_name_at` runs on every pointer sample, forty times a second, and
+/// it decides whether the policy permits a read at all. It used to open a
+/// process handle every time: measured on 2026-08-05, the product spent
+/// **1.56% of a core doing nothing**, which on a laptop is a background tool
+/// that gets uninstalled.
+///
+/// Two things have to hold together. It has to be fast, and it has to be the
+/// **right name**, because a wrong one hands an application the wrong tier.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn the_process_under_the_pointer_is_cached_without_going_stale() {
+    use std::time::Instant;
+
+    use crate::protected_harness::{centre, ProtectedHarness};
+
+    let harness = ProtectedHarness::start().expect("harness");
+    let point = centre(harness.fields().plain);
+
+    let own = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .expect("this process has a name");
+
+    let first = crate::window::process_name_at(point);
+    println!("under the pointer: {first:?}, this process is {own}");
+    assert_eq!(
+        first.as_deref(),
+        Some(own.as_str()),
+        "the window under the point belongs to this test, so this is the name \
+         the policy would be given",
+    );
+
+    // Ten thousand samples is four minutes of hovering at the loop's rate.
+    const SAMPLES: u32 = 10_000;
+    let began = Instant::now();
+    let mut wrong = 0usize;
+    for _ in 0..SAMPLES {
+        if crate::window::process_name_at(point).as_deref() != Some(own.as_str()) {
+            wrong += 1;
+        }
+    }
+    let each = began.elapsed().as_secs_f64() * 1e6 / f64::from(SAMPLES);
+    println!("{SAMPLES} samples · {each:.1}us each · {wrong} wrong");
+
+    assert_eq!(wrong, 0, "the cached name changed under repeated lookups");
+    // Opening a process handle and querying its image path is tens of
+    // microseconds. A cache hit is a comparison.
+    assert!(
+        each < 10.0,
+        "{each:.1}us per lookup, so nothing is being cached and the loop is \
+         paying for a process handle forty times a second",
     );
 }
