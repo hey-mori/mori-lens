@@ -48,14 +48,20 @@ impl Card {
             original: original.into(),
             body: CardBody::Translation(translation.text.clone()),
             footer: format!(
-                "{} · {} · {}ms",
+                "{} · {} · {}",
                 translation.model,
                 if translation.engine.leaves_the_machine() {
                     "외부"
                 } else {
                     "로컬"
                 },
-                translation.latency_ms,
+                // A sentence read twice is answered from memory, and saying
+                // "0ms" for that reads as a broken clock. It says so instead.
+                if translation.cached {
+                    "캐시".to_owned()
+                } else {
+                    format!("{}ms", translation.latency_ms)
+                },
             ),
         }
     }
@@ -221,6 +227,7 @@ mod tests {
             engine: EngineId::LocalOllama,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 900,
+            cached: false,
         }
     }
 

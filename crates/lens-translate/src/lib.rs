@@ -49,6 +49,15 @@ pub const DEFAULT_ENDPOINT: &str = "127.0.0.1:11434";
 /// installed; the router picks whatever is actually there.
 pub const DEFAULT_MODEL: &str = "qwen2.5:3b";
 
+/// What a retry may spend after an empty answer.
+///
+/// Generous, and fixed rather than scaled. A model that reasons before it
+/// answers spends most of a budget on reasoning, and the size of the question
+/// says nothing about how much of that it will do: `gemma4:e4b` used 316 tokens
+/// to produce thirteen characters. It is paid only after a first attempt came
+/// back with nothing, so an ordinary hover never sees it.
+const GENEROUS_BUDGET: u32 = 1024;
+
 /// A translator backed by an Ollama HTTP endpoint.
 #[derive(Debug, Clone)]
 pub struct OllamaTranslator {
@@ -254,6 +263,14 @@ impl OllamaTranslator {
     /// separately maintained prompts would drift, and the one that drifted
     /// would be the one carrying the injection defence.
     fn body_for(&self, request: &QuickRequest, streaming: bool) -> String {
+        self.body_with_budget(
+            request,
+            streaming,
+            lens_core::translate::token_budget(request.source_text.chars().count()),
+        )
+    }
+
+    fn body_with_budget(&self, request: &QuickRequest, streaming: bool, budget: u32) -> String {
         let fence = fence_for(&request.source_text);
         // The fence is concatenated with the text on purpose, which is the one
         // place instructions and screen text meet. It is safe only because the
@@ -286,37 +303,68 @@ impl OllamaTranslator {
                 // unbounded reply is how a hover turns into a four-second
                 // wait, and a flat budget let `OK` come back as forty-one
                 // characters of explanation.
-                json::Value::RawOwned(format!(
-                    "{{\"temperature\":0,\"num_predict\":{}}}",
-                    lens_core::translate::token_budget(request.source_text.chars().count()),
-                )),
+                json::Value::RawOwned(format!("{{\"temperature\":0,\"num_predict\":{budget}}}")),
             ),
         ])
     }
 
-    /// One more attempt after an empty answer, without streaming.
+    /// One more attempt after an empty answer, unstreamed and with room.
     ///
     /// Not streamed, because the point is to get *an* answer rather than to
     /// show it arriving: the reader has already waited a whole translation for
     /// nothing.
+    ///
+    /// **And with a much larger budget**, because the commonest cause of an
+    /// empty answer turned out to be the budget itself. Measured on
+    /// `gemma4:e4b`: it reasons before it answers, and spent **316 tokens**
+    /// producing a thirteen-character translation. At the 123 its source text
+    /// earned, the reply came back `done_reason: length` with nothing in it,
+    /// every time, and Lens told the reader the result could not be understood.
     fn retry_once(&self, request: &QuickRequest) -> Result<QuickTranslation, TranslateError> {
-        match self.quick(request) {
-            Ok(answer) => Ok(answer),
-            // Report the original failure, not the retry's: the first attempt
-            // is what the taxonomy should record.
-            Err(_) => Err(TranslateError::Malformed),
+        let body = self.body_with_budget(request, false, GENEROUS_BUDGET);
+        let started = Instant::now();
+        let Ok(response) = http::post(&self.endpoint, "/api/generate", &body, self.timeout) else {
+            return Err(TranslateError::Malformed);
+        };
+        if let Some(error) = self.error_in(&response) {
+            return Err(error);
         }
+        let text = json::string_value_of_key(&response, "response")
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        if text.is_empty() {
+            // Twice, with room. That is the model saying something, and a
+            // hover is not the place to keep asking.
+            return Err(TranslateError::Malformed);
+        }
+        Ok(QuickTranslation {
+            text,
+            engine: EngineId::LocalOllama,
+            model: self.model.clone(),
+            latency_ms: started.elapsed().as_millis(),
+            cached: false,
+        })
     }
 
     /// Map an Ollama error body onto the taxonomy.
+    ///
+    /// **Reads the `error` field, rather than searching for the word.** The
+    /// first version asked whether the body contained `"error"` anywhere, and
+    /// a streamed reply is one JSON object per token: translating a sentence
+    /// containing the word *error* produces the chunk
+    /// `{"response":"error","done":false}`, whose text contains that exact
+    /// substring, quotes and all.
+    ///
+    /// So Lens reported a failed translation for any sentence with the word
+    /// error in it, which on a developer's screen is most of the failures they
+    /// would want translated. It was found on a Spring error page.
     fn error_in(&self, response: &str) -> Option<TranslateError> {
-        if !response.contains("\"error\"") {
-            return None;
-        }
+        let message = json::string_value_of_key(response, "error")?;
         // Ollama answers with a message naming the model when it is not
         // pulled. Distinguishing that from "no engine" is the difference
         // between two very different sentences on screen.
-        if response.contains("not found") || response.contains("try pulling") {
+        if message.contains("not found") || message.contains("try pulling") {
             return Some(TranslateError::ModelMissing(self.model.clone()));
         }
         Some(TranslateError::Malformed)
@@ -344,7 +392,9 @@ impl Translator for OllamaTranslator {
             .to_owned();
 
         if text.is_empty() {
-            return Err(TranslateError::Malformed);
+            // Same reason as the streamed path: the likeliest cause is a
+            // budget too small for a model that reasons before it answers.
+            return self.retry_once(request);
         }
 
         Ok(QuickTranslation {
@@ -352,6 +402,7 @@ impl Translator for OllamaTranslator {
             engine: EngineId::LocalOllama,
             model: self.model.clone(),
             latency_ms,
+            cached: false,
         })
     }
 
@@ -429,6 +480,7 @@ impl Translator for OllamaTranslator {
             engine: EngineId::LocalOllama,
             model: self.model.clone(),
             latency_ms: started.elapsed().as_millis(),
+            cached: false,
         })
     }
 }
@@ -533,5 +585,60 @@ mod without_ollama {
             body.contains("ollama.com"),
             "the card names the problem and not the fix: {body}",
         );
+    }
+}
+
+#[cfg(test)]
+mod error_detection {
+    use super::*;
+
+    fn engine() -> OllamaTranslator {
+        OllamaTranslator::new("127.0.0.1:1", "qwen2.5-coder:7b")
+    }
+
+    /// The bug, as a test. A streamed reply is one object per token, so a
+    /// sentence containing the word *error* produces exactly this chunk.
+    #[test]
+    fn a_translated_token_that_is_the_word_error_is_not_a_failure() {
+        let chunk = r#"{"model":"m","response":"error","done":false}"#;
+        assert_eq!(engine().error_in(chunk), None);
+    }
+
+    /// And the same for the text that surrounds it.
+    #[test]
+    fn a_sentence_about_errors_is_not_a_failure() {
+        let chunk = r#"{"response":"There was an unexpected error","done":false}"#;
+        assert_eq!(engine().error_in(chunk), None);
+    }
+
+    /// The `/error` path from the page this was found on.
+    #[test]
+    fn a_url_path_named_error_is_not_a_failure() {
+        let chunk = r#"{"response":"no explicit mapping for /error","done":false}"#;
+        assert_eq!(engine().error_in(chunk), None);
+    }
+
+    /// A real failure is still a failure.
+    #[test]
+    fn an_actual_error_field_is_still_read() {
+        let body = r#"{"error":"something went wrong"}"#;
+        assert_eq!(engine().error_in(body), Some(TranslateError::Malformed));
+    }
+
+    #[test]
+    fn a_model_that_is_not_pulled_is_still_told_apart() {
+        let body = r#"{"error":"model 'x' not found, try pulling it first"}"#;
+        assert!(matches!(
+            engine().error_in(body),
+            Some(TranslateError::ModelMissing(_)),
+        ));
+    }
+
+    /// The distinction the old check could not make: the same words, in the
+    /// text being translated rather than in the field reporting a failure.
+    #[test]
+    fn the_same_words_in_a_translation_are_not_a_missing_model() {
+        let chunk = r#"{"response":"the model was not found, try pulling it","done":false}"#;
+        assert_eq!(engine().error_in(chunk), None);
     }
 }
