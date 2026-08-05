@@ -434,3 +434,59 @@ mod tests {
         assert_eq!(translator.quick(&request), Err(TranslateError::Unavailable));
     }
 }
+
+#[cfg(test)]
+mod without_ollama {
+    use super::*;
+    use lens_core::card::{Card, CardBody};
+
+    /// What someone who installed Lens and not Ollama actually gets.
+    ///
+    /// The most likely first experience of this product, and until the remedy
+    /// existed it ended at "Ollama에 연결할 수 없습니다": the name of something
+    /// they have never heard of, and no next step.
+    ///
+    /// Not an ignored live test. Nothing listens on port 1, so the connection
+    /// is refused immediately and deterministically, which is exactly the
+    /// state being modelled. Pointing this at the real endpoint and asking
+    /// someone to stop their Ollama would be a worse test and a ruder one.
+    const NOTHING_LISTENS: &str = "127.0.0.1:1";
+
+    #[test]
+    fn a_first_run_with_no_ollama_says_where_to_get_it() {
+        let mut translator = OllamaTranslator::new(NOTHING_LISTENS, "qwen2.5:3b");
+        let error = translator
+            .resolve_model()
+            .expect_err("something answered on a port nothing should be listening on");
+
+        assert_eq!(error, TranslateError::Unavailable);
+        let remedy = error.remedy().expect("a remedy");
+        assert!(remedy.contains("ollama.com"), "{remedy}");
+    }
+
+    /// And the card says it too, since a user who double-clicked the binary
+    /// never sees a terminal.
+    #[test]
+    fn the_card_carries_the_next_step_and_still_shows_the_sentence() {
+        let translator = OllamaTranslator::new(NOTHING_LISTENS, "qwen2.5:3b");
+        let sentence = "The output files came back empty.";
+        let error = translator
+            .quick(&QuickRequest::new(sentence, "Korean"))
+            .expect_err("a translation succeeded with no server");
+
+        let card = Card::not_translated(sentence, &error);
+        assert!(card.is_showable());
+        assert_eq!(
+            card.original, sentence,
+            "the sentence must survive a failure"
+        );
+
+        let CardBody::Problem(body) = &card.body else {
+            panic!("a failed translation produced a translation card");
+        };
+        assert!(
+            body.contains("ollama.com"),
+            "the card names the problem and not the fix: {body}",
+        );
+    }
+}

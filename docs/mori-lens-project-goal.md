@@ -62,6 +62,7 @@ not written), **out of v1** (deliberately excluded).
 | Hover probe, sweep mode | **shipped** · produced the 2026-08-04 measurements |
 | Per-application compatibility matrix | **shipped** · all 8 target applications, 2026-08-05 |
 | Native overlay (Windows) | **shipped** · never takes focus, paints without a blank or hidden frame while streaming, clicks pass through, and lands on the monitor its text is on |
+| Failure messages that say what to do | **shipped** · an absent Ollama names ollama.com, a missing model names the `ollama pull` command, on the card and in the tray tooltip |
 | Quick translation via Ollama | **shipped** · warm median around 1.6s, streamed, cached in memory, model resolved at startup |
 | Deep analysis (grammar, structure) | planned · M4 |
 | Manual OCR fallback (Windows) | planned · M5 |
@@ -82,9 +83,8 @@ That gate is [ADR-0008](decisions/ADR-0008-probe-before-product.md).
 Twelve capabilities have passed it. The rest have unit tests, which
 prove the logic and prove nothing about a desktop.
 
-What is still missing before this is something a person installs: a
-first run that says what to do when Ollama is absent, and a way to start
-with Windows.
+What is still missing before this is something a person installs: a way
+to start with Windows, and an installer.
 
 **What the measurement found, since it changes what "works" means
 here:** acquisition succeeds, at p50 10ms, and returns the *right* text

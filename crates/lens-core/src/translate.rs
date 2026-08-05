@@ -135,6 +135,32 @@ impl TranslateError {
             Self::NotWorthTranslating => "번역할 내용이 없습니다".to_owned(),
         }
     }
+
+    /// What the user should do about it, when there is anything to do.
+    ///
+    /// [`Self::user_message`] says what went wrong. That is enough for a
+    /// reader who already has the product working and hit a hiccup, and it is
+    /// a dead end for the person this matters most to: someone who installed
+    /// Lens, has no Ollama, hovers over a sentence, and is told that Ollama
+    /// cannot be reached. They now know a name they have never heard and no
+    /// next step.
+    ///
+    /// `None` for the two states that are not the user's problem to fix. A
+    /// cancelled hover with advice attached would be noise on a card that
+    /// should barely register.
+    pub fn remedy(&self) -> Option<String> {
+        match self {
+            Self::Unavailable => {
+                Some("ollama.com 에서 Ollama를 설치한 뒤 실행해 주세요".to_owned())
+            }
+            // Names the command, because the alternative is a user searching
+            // for how to install a model they did not choose.
+            Self::ModelMissing(model) => Some(format!("터미널에서 ollama pull {model}")),
+            Self::Timeout => Some("더 작은 모델을 쓰거나 잠시 후 다시 시도해 주세요".to_owned()),
+            Self::Malformed => Some("다른 모델로 바꿔 보세요".to_owned()),
+            Self::Stale | Self::NotWorthTranslating => None,
+        }
+    }
 }
 
 impl std::fmt::Display for TranslateError {
@@ -219,6 +245,33 @@ mod tests {
     fn a_local_engine_does_not_send_text_off_the_machine() {
         assert!(!EngineId::LocalOllama.leaves_the_machine());
         assert!(EngineId::External.leaves_the_machine());
+    }
+
+    /// The two states a first-time user meets are the two that must carry a
+    /// next step. Everything else may.
+    #[test]
+    fn the_failures_a_new_user_meets_say_what_to_do_about_them() {
+        let unreachable = TranslateError::Unavailable.remedy().expect("a remedy");
+        assert!(
+            unreachable.contains("ollama.com"),
+            "a user told only that Ollama is unreachable has nowhere to go: {unreachable}",
+        );
+
+        let missing = TranslateError::ModelMissing("qwen2.5:3b".to_owned())
+            .remedy()
+            .expect("a remedy");
+        assert!(
+            missing.contains("ollama pull qwen2.5:3b"),
+            "the remedy must be the command, not a description of it: {missing}",
+        );
+    }
+
+    /// A cancelled hover is not a problem the user caused or can fix, and
+    /// advice on that card would be noise.
+    #[test]
+    fn a_cancelled_hover_offers_no_advice() {
+        assert_eq!(TranslateError::Stale.remedy(), None);
+        assert_eq!(TranslateError::NotWorthTranslating.remedy(), None);
     }
 
     #[test]
