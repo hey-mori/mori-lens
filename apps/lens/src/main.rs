@@ -735,8 +735,13 @@ fn main() -> std::process::ExitCode {
                     if decide(&sentence, &language) == Decision::AlreadyInTarget {
                         continue;
                     }
+                    // The region the card must not cover, which is the
+                    // paragraph when that is near enough and the pointer's own
+                    // line when it is not. Anchoring on the word put the
+                    // answer on top of the rest of what was being read.
                     let anchor = target
-                        .anchor()
+                        .card_anchor(point)
+                        .or_else(|| target.anchor())
                         .unwrap_or(ScreenRect::new(point.x, point.y, 1, 1));
                     narrator.card_shown();
                     if !sentence.is_empty() {
