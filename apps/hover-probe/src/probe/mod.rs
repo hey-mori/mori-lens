@@ -230,6 +230,14 @@ pub fn run() -> ExitCode {
         }
     };
 
+    if !acquirer.calls_are_bounded() {
+        // Loud, because it changes what a latency number means: an unbounded
+        // client can record a 45-second acquire and call it a measurement.
+        println!(
+            "  guard     UNBOUNDED: no per-call limit, so one wedged application can stall a run"
+        );
+    }
+
     match mode {
         Mode::Follow(options) => follow(acquirer, options, dpi_declared),
         Mode::Sweep { options, only } => run_sweep(acquirer, options, only, dpi_declared),

@@ -20,6 +20,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::ffi::c_void;
 use std::ptr;
+use std::time::{Duration, Instant};
 
 use lens_core::acquire::{
     AcquireContext, AcquireError, AcquisitionSource, ExpandedUnit, ProtectedReason, ProviderInfo,
@@ -27,8 +28,8 @@ use lens_core::acquire::{
 };
 use lens_core::geometry::{ScreenPoint, ScreenRect};
 use lens_core::text::{self, SegmentedText};
-use windows::core::Interface;
-use windows::Win32::Foundation::POINT;
+use windows::core::{Interface, HRESULT};
+use windows::Win32::Foundation::{POINT, RPC_E_TIMEOUT};
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER, SAFEARRAY};
 // The SafeArray helpers live under Ole, not Com, despite operating on a type
 // declared in Com.
@@ -37,9 +38,9 @@ use windows::Win32::System::Ole::{
     SafeArrayUnaccessData,
 };
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern,
-    IUIAutomationTextRange, TextPatternRangeEndpoint_Start, TextUnit_Line, TextUnit_Paragraph,
-    TextUnit_Word, UIA_TextPatternId,
+    CUIAutomation, CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationElement,
+    IUIAutomationTextPattern, IUIAutomationTextRange, TextPatternRangeEndpoint_Start,
+    TextUnit_Line, TextUnit_Paragraph, TextUnit_Word, UIA_TextPatternId, UIA_E_TIMEOUT,
 };
 
 use crate::com::ComScope;
@@ -53,6 +54,90 @@ use crate::window;
 /// on a keypress.
 const WAKE_SETTLE_MS: u64 = 140;
 
+/// How long UI Automation may wait for one cross-process call to come back.
+///
+/// **The default is two minutes.** That is the number behind the 45-second
+/// `acquire` in issue #28: nothing in this file was slow, the provider simply
+/// never answered and UI Automation was content to wait. A hover is not a
+/// two-minute operation, so the client says so.
+///
+/// 800ms against a measured p95 of 20ms, so it is a guard rather than a budget:
+/// an application that trips this is wedged, not busy.
+const TRANSACTION_TIMEOUT_MS: u32 = 800;
+
+/// How long to wait to reach a provider at all, default two seconds.
+///
+/// Separate from the transaction because it fails for a different reason: a
+/// process that is not answering its message pump has nothing to time out, it
+/// has nothing to connect to.
+const CONNECTION_TIMEOUT_MS: u32 = 300;
+
+/// How long the whole chain of calls may take before it gives up.
+///
+/// [`TRANSACTION_TIMEOUT_MS`] bounds one call. It cannot bound eight of them,
+/// and a provider answering every call in 700ms is under the per-call limit
+/// while still stalling the caller for most of a second. This bounds the sum.
+///
+/// The two guards catch different failures and neither replaces the other.
+const CHAIN_BUDGET: Duration = Duration::from_millis(400);
+
+/// The clock one pass of the chain runs against.
+///
+/// A deadline rather than a timeout: it cannot interrupt a call already in
+/// flight, it only refuses to start the next one. That is the honest bound, and
+/// it is why the per-call limit above exists as well.
+#[derive(Debug, Clone, Copy)]
+struct Deadline {
+    started: Instant,
+    budget: Duration,
+}
+
+impl Deadline {
+    fn new(budget: Duration) -> Self {
+        Self {
+            started: Instant::now(),
+            budget,
+        }
+    }
+
+    fn spent(&self) -> Duration {
+        self.started.elapsed()
+    }
+
+    /// `Err(Timeout)` once the budget is gone, so a call site can use `?`.
+    fn still_worth_it(&self) -> Result<(), AcquireError> {
+        if self.spent() >= self.budget {
+            return Err(AcquireError::Timeout);
+        }
+        Ok(())
+    }
+}
+
+/// Is this failure the provider being slow rather than the provider saying no?
+///
+/// It matters because every call site in the chain maps its error to a
+/// site-specific meaning: a failed `GetCurrentPattern` means `Unsupported`, a
+/// failed `RangeFromPoint` means `Empty`. Reporting a timed-out call that way
+/// would put "this application exposes no text" in the compatibility matrix for
+/// an application that exposes plenty and answered too slowly once. Distinguishing
+/// failure reasons is the whole output of Milestone 1 (`CLAUDE.md`).
+///
+/// Three codes because three layers can be the one that gives up: UI Automation
+/// itself, the COM runtime underneath it, and Win32 under that.
+fn is_timeout(code: HRESULT) -> bool {
+    const WIN32_ERROR_TIMEOUT: HRESULT = HRESULT(0x8007_05B4_u32 as i32);
+    code == HRESULT(UIA_E_TIMEOUT as i32) || code == RPC_E_TIMEOUT || code == WIN32_ERROR_TIMEOUT
+}
+
+/// Map a COM failure to this call site's meaning, unless it was a timeout.
+fn because(error: &windows::core::Error, otherwise: AcquireError) -> AcquireError {
+    if is_timeout(error.code()) {
+        AcquireError::Timeout
+    } else {
+        otherwise
+    }
+}
+
 /// Reads text under a screen point through UI Automation.
 ///
 /// Not `Send`: it holds COM interfaces bound to the apartment it was created
@@ -65,6 +150,13 @@ pub struct UiaTextAcquirer {
     /// is harmless: handles are not reused often enough to matter, and the worst
     /// case is one skipped wake on a cold tree.
     woken: RefCell<HashSet<isize>>,
+    /// Whether the per-call limits were actually accepted.
+    ///
+    /// Recorded rather than assumed. `IUIAutomation2` is Windows 8 and later,
+    /// and a client that silently fell back to the two-minute default while
+    /// reporting a bounded one would be worse than no guard at all: the
+    /// operator would stop looking for the freeze.
+    bounded: bool,
     /// Held for the acquirer's lifetime so the apartment outlives the
     /// interfaces created inside it.
     _com: ComScope,
@@ -87,43 +179,76 @@ impl UiaTextAcquirer {
     /// than a property of any application.
     pub fn new() -> Result<Self, AcquireError> {
         let com = ComScope::enter();
-        // SAFETY: creating the documented UI Automation co-class in-process.
-        let automation: IUIAutomation =
-            unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
-                .map_err(|_| AcquireError::Unavailable)?;
+        // `CUIAutomation8` rather than `CUIAutomation`, and the difference is
+        // the entire point of this constructor. The original co-class predates
+        // `IUIAutomation2`, so a client built from it cannot be given a
+        // per-call limit: the cast fails and every call inherits the
+        // two-minute default. That is not a documented deprecation, it is a
+        // silent one, and the first build of this guard reported UNBOUNDED on
+        // Windows 11 because of it.
+        //
+        // The old class is still the fallback, because a client with no limits
+        // reads text and a missing client reads nothing.
+        //
+        // SAFETY: creating a documented UI Automation co-class in-process.
+        let automation: IUIAutomation = unsafe {
+            CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)
+                .or_else(|_| CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER))
+        }
+        .map_err(|_| AcquireError::Unavailable)?;
+
+        let bounded = bound_calls(&automation);
 
         Ok(Self {
             automation,
             woken: RefCell::new(HashSet::new()),
+            bounded,
             _com: com,
         })
     }
 
+    /// Whether a single wedged provider is bounded, or can still hold this
+    /// thread for the UI Automation default of two minutes.
+    ///
+    /// Public so the product can say which it is at startup instead of leaving
+    /// a user to discover it during a freeze.
+    pub fn calls_are_bounded(&self) -> bool {
+        self.bounded
+    }
+
     /// One pass of the chain, with no waking and no retry.
     fn read_once(&self, point: POINT, context: &AcquireContext) -> Result<Reading, AcquireError> {
+        let deadline = Deadline::new(CHAIN_BUDGET);
+
         // SAFETY: `ElementFromPoint` returns an owned interface or an error, and
         // the target is allowed to disappear mid-call.
         let element = unsafe { self.automation.ElementFromPoint(point) }
-            .map_err(|_| AcquireError::ElementGone)?;
+            .map_err(|error| because(&error, AcquireError::ElementGone))?;
 
         // Before anything is read. A password field's contents must never exist
         // as a Rust value, not even briefly (`docs/privacy-model.md` §1).
-        if let Some(reason) = protected_reason(&element) {
-            return Err(AcquireError::Protected(reason));
-        }
+        may_be_read(&element)?;
 
         let control_id = control_type(&element);
+
+        // Checked here rather than after every call. These four are the ones
+        // that go to another process and can each cost real time; the property
+        // reads above are cheap, and a check between them would be noise.
+        deadline.still_worth_it()?;
 
         // SAFETY: a provider that does not implement the pattern returns an
         // error rather than a null this could dereference.
         let pattern = unsafe { element.GetCurrentPattern(UIA_TextPatternId) }
-            .map_err(|_| AcquireError::Unsupported)?
+            .map_err(|error| because(&error, AcquireError::Unsupported))?
             .cast::<IUIAutomationTextPattern>()
             .map_err(|_| AcquireError::Unsupported)?;
 
+        deadline.still_worth_it()?;
         // SAFETY: returns the range nearest the point, or an error.
-        let hit = unsafe { pattern.RangeFromPoint(point) }.map_err(|_| AcquireError::Empty)?;
+        let hit = unsafe { pattern.RangeFromPoint(point) }
+            .map_err(|error| because(&error, AcquireError::Empty))?;
 
+        deadline.still_worth_it()?;
         let word_range = expanded(&hit, ExpandUnit::Word)?;
         // Paragraph is the useful context; a provider that does not support it
         // normalises to something else, so line is tried as a narrower answer
@@ -131,6 +256,7 @@ impl UiaTextAcquirer {
         let context_range =
             expanded(&hit, ExpandUnit::Paragraph).or_else(|_| expanded(&hit, ExpandUnit::Line))?;
 
+        deadline.still_worth_it()?;
         let context_text = range_text(&context_range, context.max_context_chars)?;
         if context_text.trim().is_empty() {
             return Err(AcquireError::Empty);
@@ -252,19 +378,27 @@ impl TextAcquirer for UiaTextAcquirer {
     }
 }
 
-/// Whether the element is protected, and how we know.
+/// Refuse before reading anything, when protection is declared or unprovable.
 ///
 /// A failed check yields `Unprovable` rather than "not protected". Unreadable
 /// means unprovable, and unprovable is treated as secure
 /// (`docs/privacy-model.md` §1). `ProtectedReason` exists so the probe can count
 /// the two separately: if `Unprovable` turns out to be common, the strict rule
 /// is costing real coverage and that is a decision to revisit with evidence.
-fn protected_reason(element: &IUIAutomationElement) -> Option<ProtectedReason> {
+fn may_be_read(element: &IUIAutomationElement) -> Result<(), AcquireError> {
     // SAFETY: reading a documented property off a live automation element.
     match unsafe { element.CurrentIsPassword() } {
-        Ok(value) if value.as_bool() => Some(ProtectedReason::Declared),
-        Ok(_) => None,
-        Err(_) => Some(ProtectedReason::Unprovable),
+        Ok(value) if value.as_bool() => Err(AcquireError::Protected(ProtectedReason::Declared)),
+        Ok(_) => Ok(()),
+        // A timeout here says nothing about protection, and calling it
+        // `Unprovable` would put a privacy signal in the matrix for an
+        // application that was merely wedged. Both answers refuse, so the
+        // guarantee is identical and only the recorded reason differs; the
+        // accurate one is the one that keeps the taxonomy worth reading.
+        Err(error) => Err(because(
+            &error,
+            AcquireError::Protected(ProtectedReason::Unprovable),
+        )),
     }
 }
 
@@ -291,14 +425,15 @@ fn expanded(
     unit: ExpandUnit,
 ) -> Result<IUIAutomationTextRange, AcquireError> {
     // SAFETY: `Clone` returns an owned range or an error.
-    let cloned = unsafe { range.Clone() }.map_err(|_| AcquireError::Empty)?;
+    let cloned = unsafe { range.Clone() }.map_err(|error| because(&error, AcquireError::Empty))?;
     let native = match unit {
         ExpandUnit::Word => TextUnit_Word,
         ExpandUnit::Line => TextUnit_Line,
         ExpandUnit::Paragraph => TextUnit_Paragraph,
     };
     // SAFETY: expanding an owned range in place.
-    unsafe { cloned.ExpandToEnclosingUnit(native) }.map_err(|_| AcquireError::Unsupported)?;
+    unsafe { cloned.ExpandToEnclosingUnit(native) }
+        .map_err(|error| because(&error, AcquireError::Unsupported))?;
     Ok(cloned)
 }
 
@@ -309,8 +444,26 @@ fn expanded(
 fn range_text(range: &IUIAutomationTextRange, max_chars: usize) -> Result<String, AcquireError> {
     let cap = i32::try_from(max_chars).unwrap_or(i32::MAX);
     // SAFETY: `GetText` returns an owned BSTR or an error.
-    let text = unsafe { range.GetText(cap) }.map_err(|_| AcquireError::Empty)?;
+    let text =
+        unsafe { range.GetText(cap) }.map_err(|error| because(&error, AcquireError::Empty))?;
     Ok(text.to_string())
+}
+
+/// Tell the client not to wait two minutes for one call.
+///
+/// Returns whether the limits were accepted. `IUIAutomation2` is Windows 8 and
+/// later, so a `false` here on a supported system means something refused, and
+/// that is worth surfacing rather than swallowing.
+fn bound_calls(automation: &IUIAutomation) -> bool {
+    let Ok(client) = automation.cast::<IUIAutomation2>() else {
+        return false;
+    };
+    // SAFETY: setting two documented properties on an interface just obtained
+    // by a successful cast. Both return an error rather than failing silently.
+    unsafe {
+        client.SetTransactionTimeout(TRANSACTION_TIMEOUT_MS).is_ok()
+            && client.SetConnectionTimeout(CONNECTION_TIMEOUT_MS).is_ok()
+    }
 }
 
 /// The byte offset of the **pointer** within the context text.
@@ -432,4 +585,61 @@ unsafe fn read_rect_array(array: *mut SAFEARRAY) -> Vec<ScreenRect> {
     };
 
     rects
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The mapping is pure, so it is the one part of this file `cargo test` can
+    /// hold to account. Everything around it needs a live desktop.
+    #[test]
+    fn the_three_layers_that_can_give_up_are_all_recognised() {
+        assert!(is_timeout(HRESULT(UIA_E_TIMEOUT as i32)), "UI Automation");
+        assert!(is_timeout(RPC_E_TIMEOUT), "the COM runtime");
+        assert!(is_timeout(HRESULT(0x8007_05B4_u32 as i32)), "Win32");
+    }
+
+    #[test]
+    fn a_provider_that_says_no_is_not_reported_as_slow() {
+        // UIA_E_ELEMENTNOTAVAILABLE, the ordinary "it went away" answer.
+        let gone = windows::core::Error::from_hresult(HRESULT(0x8004_0201_u32 as i32));
+        assert_eq!(
+            because(&gone, AcquireError::Unsupported),
+            AcquireError::Unsupported,
+        );
+    }
+
+    #[test]
+    fn a_timed_out_call_keeps_its_own_name_rather_than_the_call_sites() {
+        let slow = windows::core::Error::from_hresult(RPC_E_TIMEOUT);
+        // The point of the whole mapping: without it this application would be
+        // recorded as exposing no text.
+        assert_eq!(
+            because(&slow, AcquireError::Unsupported),
+            AcquireError::Timeout,
+        );
+    }
+
+    #[test]
+    fn a_spent_deadline_refuses_the_next_call() {
+        let deadline = Deadline::new(Duration::ZERO);
+        assert_eq!(deadline.still_worth_it(), Err(AcquireError::Timeout));
+    }
+
+    #[test]
+    fn a_fresh_deadline_allows_the_chain_to_start() {
+        assert_eq!(Deadline::new(CHAIN_BUDGET).still_worth_it(), Ok(()));
+    }
+
+    /// A guard rather than a budget: it must sit far enough above measured
+    /// behaviour that tripping it means wedged, not busy. p95 was 20ms.
+    #[test]
+    fn the_budget_is_a_guard_not_a_deadline_ordinary_hovers_race() {
+        assert!(CHAIN_BUDGET >= Duration::from_millis(200));
+        assert!(
+            u128::from(TRANSACTION_TIMEOUT_MS) < CHAIN_BUDGET.as_millis() * 4,
+            "one wedged call must not be able to outlast several budgets",
+        );
+    }
 }
