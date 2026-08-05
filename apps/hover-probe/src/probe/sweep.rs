@@ -262,6 +262,11 @@ pub struct WindowRow {
 
 /// Sample a grid inside `bounds`, inset so the outermost pixels of a client
 /// area do not dominate a small window.
+#[cfg(test)]
+pub(super) fn grid_len(bounds: ScreenRect, target_points: usize) -> usize {
+    grid(bounds, target_points).len()
+}
+
 fn grid(bounds: ScreenRect, target_points: usize) -> Vec<ScreenPoint> {
     let inset = 4;
     let width = (bounds.width - inset * 2).max(1);
