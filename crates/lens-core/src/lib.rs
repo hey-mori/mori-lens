@@ -27,6 +27,7 @@ pub mod cache;
 pub mod card;
 pub mod geometry;
 pub mod hover;
+pub mod icon;
 pub mod language;
 pub mod policy;
 pub mod session;

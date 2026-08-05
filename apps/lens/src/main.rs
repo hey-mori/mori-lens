@@ -28,12 +28,15 @@ use lens_core::cache::{CacheKey, TranslationCache};
 use lens_core::card::Card;
 use lens_core::geometry::ScreenRect;
 use lens_core::hover::{Generation, HoverConfig, HoverEvent};
+use lens_core::icon::Glyph;
 use lens_core::language::{decide, Decision};
 use lens_core::policy::{AppPolicy, AppTier};
 use lens_core::session::{HoverSession, InputState, Resolution};
 use lens_core::theme::{Preset, TextScale, Theme, Translucency};
 use lens_core::translate::{QuickRequest, Translator};
-use lens_platform_windows::{declare_dpi_awareness, system_preferences, Overlay, UiaTextAcquirer};
+use lens_platform_windows::{
+    declare_dpi_awareness, system_preferences, Overlay, Tray, TrayEvent, UiaTextAcquirer,
+};
 use lens_translate::OllamaTranslator;
 
 mod lifecycle;
@@ -250,6 +253,18 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::from(1);
     };
 
+    // The only part of Lens a user can see while it works. Without it the
+    // product is invisible: no window, no taskbar entry, and no way to stop it
+    // that does not involve finding this terminal again.
+    let tray = Tray::start(theme.body, &tooltip(&options.language, &engine_line, false));
+    println!(
+        "  tray      {}",
+        match tray {
+            Some(_) => "click to pause, right-click for the menu",
+            None => "UNAVAILABLE: no icon, so Ctrl+C here is the only way to stop",
+        },
+    );
+
     if options.selftest {
         // Synchronous here, unlike the normal path: the point of the selftest
         // is to measure the chain, and a cold load landing in the middle of it
@@ -409,8 +424,28 @@ fn main() -> std::process::ExitCode {
     // reported here lived in it. See lifecycle.rs.
     let mut life = lifecycle::CardLifecycle::new();
 
-    while !pointer::stopping() {
+    // Pause has three entrances now: the hotkey, the tray icon, and the tray
+    // menu. They set the same flag rather than each doing their own thing,
+    // because a product where the icon and the hotkey disagree about whether it
+    // is paused is worse than one with neither.
+    let mut quitting = false;
+    while !pointer::stopping() && !quitting {
+        let mut pause_changed = false;
+        if let Some(tray) = &tray {
+            for event in tray.poll() {
+                match event {
+                    TrayEvent::TogglePause => {
+                        pause.toggle();
+                        pause_changed = true;
+                    }
+                    TrayEvent::Quit => quitting = true,
+                }
+            }
+        }
         if pause.poll() {
+            pause_changed = true;
+        }
+        if pause_changed {
             if pause.is_paused() {
                 if life.dismiss_now() == lifecycle::Action::Hide {
                     overlay.hide();
@@ -418,6 +453,18 @@ fn main() -> std::process::ExitCode {
                 println!("paused · the pointer is not being sampled");
             } else {
                 println!("resumed");
+            }
+            if let Some(tray) = &tray {
+                // The icon is dimmed rather than swapped, and the tooltip says
+                // it in words, because a dimmed ring alone is a guess.
+                tray.set_state(
+                    if pause.is_paused() {
+                        Glyph::Paused
+                    } else {
+                        Glyph::Listening
+                    },
+                    &tooltip(&options.language, &engine_line, pause.is_paused()),
+                );
             }
         }
         if pause.is_paused() {
@@ -498,12 +545,29 @@ fn main() -> std::process::ExitCode {
     }
 
     overlay.hide();
+    drop(tray);
     // Hand the model back. Without this the runtime holds it for the rest of
     // the lease, so a tool that has exited goes on occupying gigabytes of
     // somebody's memory.
     releaser.release();
     println!("\nstopped, and the model released");
     std::process::ExitCode::SUCCESS
+}
+
+/// What the tray icon says when the pointer rests on it.
+///
+/// The two facts a user wants without opening anything: whether it is
+/// listening, and what is doing the translating. Korean, because this is
+/// product UI rather than a repository artifact (`docs/git-workflow.md` §7).
+///
+/// The engine line can be an error message when Ollama is absent, and that is
+/// the case this matters most for: a Lens that silently shows no cards because
+/// no model is installed looks identical to one that is broken.
+fn tooltip(language: &str, engine: &str, paused: bool) -> String {
+    format!(
+        "Mori Lens · {}\n{language} · {engine}",
+        if paused { "일시정지" } else { "켜짐" },
+    )
 }
 
 /// One line per card, shape only.
