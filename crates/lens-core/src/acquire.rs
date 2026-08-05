@@ -246,6 +246,53 @@ impl TextTarget {
         bounding_box(&self.word_bounds).or_else(|| bounding_box(&self.context_bounds))
     }
 
+    /// How many line heights of paragraph a card will step over to avoid
+    /// covering it.
+    ///
+    /// A card placed under the word it explains lands on top of the rest of
+    /// the paragraph, which is the text the reader was in the middle of. A
+    /// card placed under the whole paragraph never does, and for a long one it
+    /// ends up far from the pointer and from the sentence it belongs to.
+    ///
+    /// Six lines is the compromise, and it is in line heights rather than
+    /// pixels so it means the same thing at every font size and display
+    /// scaling.
+    pub const CLEAR_PARAGRAPH_WITHIN_LINES: f64 = 6.0;
+
+    /// Where a card should sit so that it covers as little of the reading as
+    /// possible.
+    ///
+    /// **Not the word.** `anchor` returns the word's own rectangle, and a card
+    /// placed below that sits on top of the following lines: the reader hovers
+    /// a sentence in a paragraph and the answer hides the rest of it.
+    ///
+    /// This returns the region a card should clear. For a paragraph within
+    /// [`Self::CLEAR_PARAGRAPH_WITHIN_LINES`] of the pointer's line, that is
+    /// the whole paragraph. For a longer one it is the line under the pointer,
+    /// because a card at the foot of a forty-line block is out of sight of the
+    /// sentence it explains.
+    pub fn card_anchor(&self, point: ScreenPoint) -> Option<ScreenRect> {
+        let line = self.nearest_rect_to(point)?;
+        let Some(block) = bounding_box(&self.context_bounds) else {
+            return Some(line);
+        };
+
+        let reach = f64::from(line.height.max(1)) * Self::CLEAR_PARAGRAPH_WITHIN_LINES;
+        if f64::from(block.bottom() - line.bottom()) > reach {
+            return Some(line);
+        }
+
+        // The block, from the pointer's line down. Starting at the line rather
+        // than at the top of the paragraph keeps the card's left edge on the
+        // text column the reader is in.
+        Some(ScreenRect::new(
+            block.x.min(line.x),
+            line.y,
+            block.width.max(line.width),
+            (block.bottom() - line.y).max(line.height),
+        ))
+    }
+
     /// How far the resolved word is from where the user actually pointed.
     ///
     /// `RangeFromPoint` answers with the *nearest* text even when the pointer is
@@ -484,5 +531,95 @@ mod tests {
             ..Default::default()
         };
         assert_ne!(chrome.log_id(), code.log_id());
+    }
+}
+
+#[cfg(test)]
+mod card_anchor_tests {
+    use super::*;
+    use crate::text;
+
+    fn target(word: ScreenRect, lines: &[ScreenRect]) -> TextTarget {
+        TextTarget {
+            app: AppIdentity {
+                process_name: Some("chrome".to_owned()),
+                window_title: None,
+            },
+            source: AcquisitionSource::Accessibility,
+            provider: ProviderInfo::default(),
+            segmented: text::segment("A sentence in a paragraph.", 0),
+            word_bounds: vec![word],
+            context_bounds: lines.to_vec(),
+        }
+    }
+
+    /// Three lines of prose, the pointer on the first. The card must clear all
+    /// three, or it lands on the two the reader has not read yet.
+    #[test]
+    fn a_short_paragraph_is_cleared_entirely() {
+        let lines = [
+            ScreenRect::new(100, 200, 400, 20),
+            ScreenRect::new(100, 222, 400, 20),
+            ScreenRect::new(100, 244, 400, 20),
+        ];
+        let anchor = target(ScreenRect::new(150, 200, 60, 20), &lines)
+            .card_anchor(ScreenPoint::new(160, 210))
+            .expect("an anchor");
+
+        assert_eq!(anchor.bottom(), 264, "the card would cover the last line");
+        assert_eq!(anchor.y, 200, "it should start at the pointer's line");
+    }
+
+    /// Forty lines, and clearing all of them would put the answer at the foot
+    /// of the block, out of sight of the sentence it explains.
+    #[test]
+    fn a_long_paragraph_is_not_cleared_and_the_card_stays_near_the_pointer() {
+        let lines: Vec<ScreenRect> = (0..40)
+            .map(|row| ScreenRect::new(100, 200 + row * 22, 400, 20))
+            .collect();
+        let anchor = target(ScreenRect::new(150, 200, 60, 20), &lines)
+            .card_anchor(ScreenPoint::new(160, 210))
+            .expect("an anchor");
+
+        assert_eq!(
+            anchor.bottom(),
+            220,
+            "the card was pushed to the bottom of a forty-line block",
+        );
+    }
+
+    /// A button label, a tab title, a single line: nothing to clear.
+    #[test]
+    fn one_line_of_text_anchors_on_itself() {
+        let line = ScreenRect::new(100, 200, 80, 20);
+        let anchor = target(line, &[line])
+            .card_anchor(ScreenPoint::new(110, 210))
+            .expect("an anchor");
+        assert_eq!(anchor, line);
+    }
+
+    /// Text scrolled out of view has no rectangle, and a card cannot be
+    /// anchored to something with no position.
+    #[test]
+    fn text_with_no_rectangle_has_no_anchor() {
+        assert_eq!(
+            target(ScreenRect::new(0, 0, 0, 0), &[]).card_anchor(ScreenPoint::new(10, 10)),
+            None,
+        );
+    }
+
+    /// The card's left edge follows the text column, not the word, so an
+    /// answer to a word in the middle of a line is not indented to it.
+    #[test]
+    fn the_anchor_spans_the_text_column_rather_than_the_word() {
+        let lines = [
+            ScreenRect::new(100, 200, 400, 20),
+            ScreenRect::new(100, 222, 400, 20),
+        ];
+        let anchor = target(ScreenRect::new(380, 200, 40, 20), &lines)
+            .card_anchor(ScreenPoint::new(390, 210))
+            .expect("an anchor");
+        assert_eq!(anchor.x, 100);
+        assert_eq!(anchor.width, 400);
     }
 }
