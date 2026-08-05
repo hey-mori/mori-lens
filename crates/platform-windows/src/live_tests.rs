@@ -2029,3 +2029,53 @@ fn a_theme_set_at_runtime_changes_the_next_card() {
 
     assert!(overlay.hide());
 }
+
+/// What a very long sentence does to the card.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn measure_what_a_long_paragraph_does_to_the_card() {
+    use lens_core::card::Card;
+    use lens_core::theme::{Preset, SystemPreferences, TextScale, Theme, Translucency};
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    let glass = crate::glass::Glass::new().expect("Direct2D");
+    let theme = Theme::resolve(
+        Preset::System,
+        Translucency::Balanced,
+        TextScale::Normal,
+        SystemPreferences::default(),
+    );
+
+    let long = "The accessibility layer is the first path Mori Lens tries, because it \
+                returns the characters an application already knows it is drawing rather \
+                than a guess recovered from pixels, and that difference is the whole \
+                reason the OCR fallback is a fallback rather than the design. A second \
+                sentence exists so that expansion to an enclosing unit has somewhere to \
+                stop, and a third so the paragraph is genuinely longer than any card \
+                could hold at a readable size.";
+    let card = Card::translated(
+        long,
+        &QuickTranslation {
+            text: "접근성 계층은 Mori Lens가 가장 먼저 시도하는 경로입니다. 픽셀에서 \
+                   복원한 추측이 아니라 애플리케이션이 이미 그리고 있다고 알고 있는 문자를 \
+                   돌려주기 때문이고, 그 차이가 OCR 대체 경로를 설계가 아니라 대체 경로로 \
+                   만드는 이유입니다. 두 번째 문장은 둘러싸는 단위로의 확장이 멈출 곳을 \
+                   갖도록 존재하고, 세 번째 문장은 문단이 어떤 카드보다도 길어지도록 \
+                   존재합니다."
+                .to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "qwen2.5:3b".to_owned(),
+            latency_ms: 900,
+        },
+    );
+
+    let laid = glass
+        .lay_out(&card, &theme, crate::overlay::max_card_width(), 1.0)
+        .expect("layout");
+    println!(
+        "a {}-character paragraph lays out {}px tall; the card's limit is {}px",
+        long.chars().count(),
+        laid.height,
+        crate::overlay::max_card_height(),
+    );
+}

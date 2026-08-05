@@ -51,6 +51,7 @@ mod lifecycle;
 mod pause;
 mod pointer;
 mod refresh;
+mod silence;
 
 /// What the worker is asked to translate.
 struct Job {
@@ -363,7 +364,11 @@ fn main() -> std::process::ExitCode {
             "UNAVAILABLE: Ctrl+Alt+L is taken by another application"
         }
     );
-    println!("\nRest the pointer on a sentence. Ctrl+C to quit.\n");
+    // The one line that tells a first-time user what to do, so it has to
+    // agree with the policy above it. It said "Rest the pointer on a sentence"
+    // while the mode line two rows up said "hold Alt", and the first person to
+    // run the release build did exactly that and got nothing.
+    println!("\n{}\n", how_to_use(&options.policy));
 
     let mut system = system_preferences();
     let theme = Theme::resolve(options.preset, options.translucency, options.text, system);
@@ -389,7 +394,10 @@ fn main() -> std::process::ExitCode {
     // The only part of Lens a user can see while it works. Without it the
     // product is invisible: no window, no taskbar entry, and no way to stop it
     // that does not involve finding this terminal again.
-    let tray = Tray::start(theme.body, &tooltip(&options.language, &engine_line, false));
+    let tray = Tray::start(
+        theme.body,
+        &tooltip(&options.language, &engine_line, false, &options.policy),
+    );
     println!(
         "  tray      {}",
         match tray {
@@ -561,6 +569,10 @@ fn main() -> std::process::ExitCode {
     // The sentence the outstanding translation belongs to, so a waiting card
     // can show it. One at a time: a second hover replaces the first.
     let mut pending_original = String::new();
+    // Why no card appeared, said once per distinct reason. Holding the
+    // modifier over a window that exposes no text used to look exactly like a
+    // product that had crashed.
+    let mut narrator = silence::Narrator::default();
 
     // Pause has three entrances now: the hotkey, the tray icon, and the tray
     // menu. They set the same flag rather than each doing their own thing,
@@ -616,7 +628,7 @@ fn main() -> std::process::ExitCode {
                     } else {
                         Glyph::Listening
                     },
-                    &tooltip(&language, &engine_line, pause.is_paused()),
+                    &tooltip(&language, &engine_line, pause.is_paused(), session.policy()),
                     theme.body,
                 );
             }
@@ -675,7 +687,7 @@ fn main() -> std::process::ExitCode {
                     } else {
                         Glyph::Listening
                     },
-                    &tooltip(&language, &engine_line, pause.is_paused()),
+                    &tooltip(&language, &engine_line, pause.is_paused(), session.policy()),
                     theme.body,
                 );
             }
@@ -726,6 +738,7 @@ fn main() -> std::process::ExitCode {
                     let anchor = target
                         .anchor()
                         .unwrap_or(ScreenRect::new(point.x, point.y, 1, 1));
+                    narrator.card_shown();
                     if !sentence.is_empty() {
                         // Remembered before the job is sent, so the loop can
                         // tell the reader it was heard if the answer is slow.
@@ -740,13 +753,19 @@ fn main() -> std::process::ExitCode {
                         });
                     }
                 }
-                // Every one of these means "no new card". They are separate
-                // variants because the probe counts them; the product only has
-                // to not draw anything.
-                Resolution::OffTarget(_)
-                | Resolution::Failed(_)
-                | Resolution::Duplicate(_)
-                | Resolution::Stale => {}
+                // None of these draws a card, and until now none of them said
+                // anything either. A user holding Alt over a window that
+                // exposes no text saw an application doing nothing, which is
+                // indistinguishable from a broken one. It is the first thing
+                // the first person to run a release build asked about.
+                //
+                // Never the text: the length, the reason, and the application
+                // (`docs/privacy-model.md` §3).
+                other => {
+                    if let Some(line) = narrator.line_for(&other, process_name.as_deref()) {
+                        println!("{line}");
+                    }
+                }
             }
         }
 
@@ -820,11 +839,48 @@ fn open_in_editor(path: &std::path::Path) {
 /// The engine line can be an error message when Ollama is absent, and that is
 /// the case this matters most for: a Lens that silently shows no cards because
 /// no model is installed looks identical to one that is broken.
-fn tooltip(language: &str, engine: &str, paused: bool) -> String {
+fn tooltip(language: &str, engine: &str, paused: bool, policy: &AppPolicy) -> String {
     format!(
-        "Mori Lens · {}\n{language} · {engine}",
+        "Mori Lens · {}\n{}\n{language} · {engine}",
         if paused { "일시정지" } else { "켜짐" },
+        if paused {
+            "다시 켜려면 클릭".to_owned()
+        } else {
+            korean_how_to(policy)
+        },
     )
+}
+
+/// How to make a card appear, in one line, for whatever the policy is.
+///
+/// Two versions of the same sentence, because the two places it appears have
+/// different readers: the banner is seen by someone at a terminal, the tooltip
+/// by someone who double-clicked a binary and has never seen a terminal.
+///
+/// Both exist because the banner used to contradict itself. `mode  hold Alt`
+/// two lines above `Rest the pointer on a sentence` is not an instruction, it
+/// is a puzzle, and the first person to run a release build hovered without Alt
+/// and reported that nothing happened.
+fn how_to_use(policy: &AppPolicy) -> String {
+    let action = match policy.default_tier() {
+        AppTier::Allow => "Rest the pointer on a sentence.".to_owned(),
+        AppTier::Modifier => "Hold Alt and rest the pointer on a sentence.".to_owned(),
+        // Nothing will happen anywhere the user has not allowed by name, so
+        // saying "rest the pointer" would be false.
+        AppTier::Deny => format!(
+            "Nothing is read by default. {} applications have a rule of their own.",
+            policy.rule_count(),
+        ),
+    };
+    format!("{action} Ctrl+C to quit.")
+}
+
+fn korean_how_to(policy: &AppPolicy) -> String {
+    match policy.default_tier() {
+        AppTier::Allow => "문장 위에 포인터를 올려 두세요".to_owned(),
+        AppTier::Modifier => "Alt를 누른 채 문장 위에 포인터를 올려 두세요".to_owned(),
+        AppTier::Deny => "허용한 앱에서만 동작합니다".to_owned(),
+    }
 }
 
 /// One line per card, shape only.
