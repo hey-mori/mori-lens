@@ -39,7 +39,7 @@ Standing, 2026-08-05:
 | Condition | State |
 |---|---|
 | Notepad, Chrome, Edge, VS Code, Word, Electron messenger | measured |
-| Windows Settings, Edge PDF viewer | **open**; they need only to be running, not raised |
+| Windows Settings, Edge PDF viewer | measured 2026-08-05; Edge on HTML measured too, which the earlier run had not been |
 | correct-word judgement by a person | **open**; the on-target rate is a proxy and no human has confirmed a resolved word |
 | no runaway calls on fast movement | measured: a pointer crossing a monitor costs zero calls, a resting hand costs one |
 | no crash from a closed window's element | measured: a typed error in 153ms, and twenty further reads survive |
