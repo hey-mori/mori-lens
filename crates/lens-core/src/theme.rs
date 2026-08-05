@@ -144,9 +144,12 @@ pub struct SystemPreferences {
     pub dark: bool,
     pub reduced_transparency: bool,
     pub high_contrast: bool,
-    /// Read, and currently unused: nothing here animates yet. It is carried so
-    /// the platform reader and the theme agree on what has been observed, and
-    /// there is deliberately no `entrance_ms` field pretending to act on it.
+    /// Whether the user has asked for less movement.
+    ///
+    /// This was carried and unused for a while, with a note saying there was
+    /// deliberately no field pretending to act on it. There is one now, below,
+    /// because the card animates its entrance and that is exactly the kind of
+    /// movement this setting is about.
     pub reduced_motion: bool,
     /// The user's own colours, when high contrast is on.
     ///
@@ -186,6 +189,12 @@ pub struct Theme {
     /// not one. Amber is the colour for "look at this, nothing is broken".
     pub problem: Rgb,
     pub surface_alpha: u8,
+    /// Whether a card may animate its arrival.
+    ///
+    /// False when the system asks for reduced motion, and then the card simply
+    /// appears. An entrance is the one piece of movement this product has, so
+    /// this is the whole of what that setting means here.
+    pub animate: bool,
     /// Body text height in **points**, not pixels.
     ///
     /// 11pt at the normal scale. Windows' own UI font is 9pt, so the
@@ -326,6 +335,10 @@ impl Theme {
             footer,
             problem,
             surface_alpha: translucency.alpha(),
+            // The system's answer wins, exactly as it does for transparency
+            // and contrast above. A card that slides in for somebody who has
+            // asked their whole machine to stop moving is not a nice touch.
+            animate: !system.reduced_motion,
             body_pt: (11.0 * factor).round() as i32,
             small_pt: (9.0 * factor).round() as i32,
             padding: 14,
@@ -702,6 +715,49 @@ mod problem_colour {
                      bluer than it is warm",
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod motion {
+    use super::*;
+
+    #[test]
+    fn a_card_animates_by_default() {
+        assert!(
+            Theme::resolve(
+                Preset::System,
+                Translucency::Balanced,
+                TextScale::Normal,
+                SystemPreferences::default(),
+            )
+            .animate
+        );
+    }
+
+    /// The one piece of movement this product has, and the setting that turns
+    /// it off. Asserted for every preset, because a preset that kept its own
+    /// answer would be overriding an accessibility setting with a preference,
+    /// which is the mistake the transparency rule above already made once.
+    #[test]
+    fn reduced_motion_stops_every_preset_animating() {
+        for preset in [
+            Preset::System,
+            Preset::Forest,
+            Preset::NightLake,
+            Preset::Paper,
+        ] {
+            let theme = Theme::resolve(
+                preset,
+                Translucency::Balanced,
+                TextScale::Normal,
+                SystemPreferences {
+                    reduced_motion: true,
+                    ..SystemPreferences::default()
+                },
+            );
+            assert!(!theme.animate, "{} kept animating", preset.as_str());
         }
     }
 }
