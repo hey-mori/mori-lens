@@ -72,6 +72,20 @@ impl Narrator {
         Some(line)
     }
 
+    /// The same, for a hover the loop declined before it asked anything.
+    ///
+    /// Text already in the reader's language never reaches a `Resolution`,
+    /// because the loop stops before the translator is involved. It was the
+    /// one quiet outcome with no explanation attached.
+    pub fn line_for_skip(&mut self, reason: &str, app: Option<&str>) -> Option<String> {
+        let line = format!("no card: {reason} [{}]", app.unwrap_or("?"));
+        if line == self.last {
+            return None;
+        }
+        self.last = line.clone();
+        Some(line)
+    }
+
     /// A card appeared, so the next quiet hover is worth reporting again.
     pub fn card_shown(&mut self) {
         self.last.clear();
@@ -174,6 +188,22 @@ mod tests {
         assert!(
             narrator.line_for(&resolution, Some("code")).is_some(),
             "after a card, the same silence is news again",
+        );
+    }
+
+    /// Text already in the reader's language is the one quiet outcome that
+    /// never reaches a `Resolution`, and it was the one with nothing to say.
+    #[test]
+    fn a_sentence_already_in_the_readers_language_is_explained_once() {
+        let mut narrator = Narrator::default();
+        let line = narrator
+            .line_for_skip("already in Korean", Some("chrome"))
+            .expect("a line");
+        assert!(line.contains("already in Korean"), "{line}");
+        assert!(line.contains("[chrome]"), "{line}");
+        assert_eq!(
+            narrator.line_for_skip("already in Korean", Some("chrome")),
+            None
         );
     }
 }
