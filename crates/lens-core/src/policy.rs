@@ -65,6 +65,31 @@ impl AppPolicy {
         policy
     }
 
+    /// Change the tier for everything with no rule of its own.
+    ///
+    /// The `--auto` flag's entire effect. It moves the floor and leaves every
+    /// explicit rule alone, so a `deny` a user wrote survives a convenience
+    /// flag, and so does the built-in password-manager list.
+    pub fn set_default(&mut self, tier: AppTier) -> &mut Self {
+        self.default_tier = tier;
+        self
+    }
+
+    /// One line saying what this policy does, for the startup banner.
+    ///
+    /// A user who set `default = deny` and sees "hold Alt" would reasonably
+    /// conclude the file was ignored, so the banner reports the policy rather
+    /// than the flag that was typed.
+    pub fn describe(&self) -> String {
+        let base = match self.default_tier {
+            AppTier::Allow => "automatic in every application",
+            AppTier::Modifier => "hold Alt",
+            AppTier::Deny => "nothing is read unless an application says otherwise",
+        };
+        let listed = self.rules.len();
+        format!("{base} · {listed} application rules")
+    }
+
     /// Set the tier for a process name substring. A later call for the same
     /// needle replaces the earlier one rather than stacking, so a rule list
     /// cannot end up with two answers for one application.
