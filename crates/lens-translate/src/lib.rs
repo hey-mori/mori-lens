@@ -44,10 +44,18 @@ pub const DEFAULT_ENDPOINT: &str = "127.0.0.1:11434";
 
 /// The model used when the caller does not choose.
 ///
-/// The smallest generally useful model likely to be present. TranslateGemma
-/// would be the better answer and is not something Lens may assume is
-/// installed; the router picks whatever is actually there.
-pub const DEFAULT_MODEL: &str = "qwen2.5:3b";
+/// The model named when **nothing at all** is installed.
+///
+/// It is not a choice and never overrides one: whenever anything is installed
+/// the router picks from that. Its only job is to appear in
+/// `터미널에서 ollama pull …`, which is the first instruction a user with
+/// Ollama and no models ever gets.
+///
+/// So it names a model worth pulling rather than the smallest that would work.
+/// It said `qwen2.5:3b`, which is the one measured on 2026-08-05 rendering
+/// "pointer" as 점퍼 and 손가락 on different runs, so the product's own first
+/// instruction pointed at the model its own benchmark advises against.
+pub const DEFAULT_MODEL: &str = "qwen2.5:7b";
 
 /// What a retry may spend after an empty answer.
 ///
