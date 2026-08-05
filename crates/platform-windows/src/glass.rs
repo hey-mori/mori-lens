@@ -41,6 +41,21 @@
 //! shadowed. The preset names must not promise the material before it exists,
 //! which ADR-0011 also says.
 //!
+//! # The original is never shortened
+//!
+//! It was capped at two lines once, to make the card smaller, and it was wrong
+//! within a day. A user screenshotted a card whose visible original read
+//! "…which module owns these migrations in areabase to confirm they're stripped
+//! during the build proce…" beside a translation beginning "이것은 중요한
+//! 발견입니다: 공유 데이터베이스 토폴로지의 격리가…". Both correct, and **from
+//! different halves of the same sentence**: the answer covered text the ellipsis
+//! had hidden.
+//!
+//! The original is on the card so a reader can check the answer belongs to what
+//! they pointed at (`docs/privacy-model.md` §1). A truncated one does not make
+//! that harder, it makes it impossible, and it reads as a mismatched pair. Size
+//! has to come from somewhere that is not the evidence.
+//!
 //! # Failure
 //!
 //! Every entry point returns an `Option`. A machine where Direct2D cannot be
@@ -64,7 +79,7 @@ use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteTextLayout, DWRITE_FACTORY_TYPE_SHARED,
     DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_NORMAL,
     DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_LINE_SPACING_METHOD_UNIFORM, DWRITE_TEXT_METRICS,
-    DWRITE_TRIMMING, DWRITE_TRIMMING_GRANULARITY_CHARACTER, DWRITE_WORD_WRAPPING_WRAP,
+    DWRITE_WORD_WRAPPING_WRAP,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{
@@ -128,15 +143,6 @@ const LOCALE: PCWSTR = windows::core::w!("");
 /// produces a card the size of a tooltip, with the footer wrapping onto three
 /// lines beneath it.
 const MIN_CARD_WIDTH: i32 = 220;
-
-/// How many lines of the original a card shows before eliding it.
-///
-/// Two. Enough for a reader to see it is the sentence they pointed at, which is
-/// the whole reason it is on the card
-/// (`docs/privacy-model.md` §1), and not so many that the answer is pushed out
-/// of the first glance. A user with a three-line original said the card was too
-/// big, and they were right: most of it was English they had already read.
-const ORIGINAL_LINES: u32 = 2;
 
 /// Line spacing, as a multiple of the font size.
 ///
@@ -289,11 +295,8 @@ impl Glass {
         // Quieter by colour, not by opacity. Fading it was the old renderer's
         // only way to say "secondary" and it cost legibility to say it.
         //
-        // **Capped**, because a paragraph of English above the answer is most
-        // of the card's height and the least of its value: the reader can see
-        // it is the sentence they pointed at from the first line, which is the
-        // whole reason it is there. Uncapped, a three-line original pushed the
-        // translation out of the first glance.
+        // Never capped. See ORIGINAL_LINES: an elided original put a
+        // translation of the end of a sentence beside the start of it.
         push(&card.original, theme.small_pt, false, theme.original);
 
         let (body, colour, weight, points) = match &card.body {
@@ -309,7 +312,6 @@ impl Glass {
         // The original is the first run pushed, when there is one at all.
         // `push` skips empty text, so a card with no original has the answer
         // first and nothing to cap.
-        let capped = (!card.original.trim().is_empty()).then_some(0usize);
 
         // Fit the card to what is in it. A fixed 420px box holding one short
         // line is mostly empty, which reads as a window that failed to load
@@ -330,37 +332,14 @@ impl Glass {
         // how a card ends up with its last line clipped.
         let mut y = padding;
         for (index, run) in runs.iter_mut().enumerate() {
-            let cap = capped == Some(index);
             // SAFETY: documented calls on a layout this function owns.
             let height = unsafe {
                 if run.layout.SetMaxWidth(inner).is_err() {
                     return None;
                 }
-                if cap {
-                    // Two lines and an ellipsis. DirectWrite does the cutting,
-                    // so it lands on a cluster boundary rather than mid-glyph,
-                    // which matters for Hangul and for anything combining.
-                    let line = theme.small_pt as f32 * scale * 96.0 / 72.0 * LINE_HEIGHT;
-                    let _ = run.layout.SetMaxHeight(line * ORIGINAL_LINES as f32 + 1.0);
-                    if let Some(sign) = ellipsis_for(&run.layout) {
-                        let _ = run.layout.SetTrimming(
-                            &DWRITE_TRIMMING {
-                                granularity: DWRITE_TRIMMING_GRANULARITY_CHARACTER,
-                                delimiter: 0,
-                                delimiterCount: 0,
-                            },
-                            &sign,
-                        );
-                    }
-                }
                 let mut metrics = DWRITE_TEXT_METRICS::default();
                 run.layout.GetMetrics(&mut metrics).ok()?;
-                if cap {
-                    let line = theme.small_pt as f32 * scale * 96.0 / 72.0 * LINE_HEIGHT;
-                    metrics.height.min(line * ORIGINAL_LINES as f32)
-                } else {
-                    metrics.height
-                }
+                metrics.height
             };
             run.y = y;
             y += height;
@@ -757,26 +736,6 @@ unsafe fn text_width(layout: &IDWriteTextLayout) -> Option<f32> {
         let mut metrics = DWRITE_TEXT_METRICS::default();
         layout.GetMetrics(&mut metrics).ok()?;
         Some(metrics.width)
-    }
-}
-
-/// The `…` a trimmed run ends with, in that run's own font.
-///
-/// # Safety
-/// `layout` must be live.
-unsafe fn ellipsis_for(
-    layout: &IDWriteTextLayout,
-) -> Option<windows::Win32::Graphics::DirectWrite::IDWriteInlineObject> {
-    // SAFETY: documented read-only queries and a factory call.
-    unsafe {
-        let format: windows::Win32::Graphics::DirectWrite::IDWriteTextFormat =
-            windows::core::Interface::cast(layout).ok()?;
-        let factory: windows::Win32::Graphics::DirectWrite::IDWriteFactory =
-            windows::Win32::Graphics::DirectWrite::DWriteCreateFactory(
-                windows::Win32::Graphics::DirectWrite::DWRITE_FACTORY_TYPE_SHARED,
-            )
-            .ok()?;
-        factory.CreateEllipsisTrimmingSign(&format).ok()
     }
 }
 
