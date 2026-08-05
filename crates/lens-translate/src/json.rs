@@ -21,6 +21,13 @@ pub enum Value<'a> {
     /// Emitted verbatim. Only ever used with literals written in this crate,
     /// never with anything that came off the screen.
     Raw(&'a str),
+    /// Emitted verbatim, owned.
+    ///
+    /// Same rule as [`Value::Raw`] and worth restating because this one can
+    /// hold a computed string: whatever is in it is written into the body
+    /// **unescaped**, so it may only ever be built from numbers and literals
+    /// this crate wrote. Nothing that came off the screen goes in here.
+    RawOwned(String),
 }
 
 /// Build a JSON object from ordered pairs.
@@ -36,6 +43,7 @@ pub fn object(fields: &[(&str, Value<'_>)]) -> String {
             Value::Str(text) => escape_into(text, &mut out),
             Value::Owned(text) => escape_into(text, &mut out),
             Value::Raw(text) => out.push_str(text),
+            Value::RawOwned(text) => out.push_str(text),
         }
     }
     out.push('}');
