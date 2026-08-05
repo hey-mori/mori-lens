@@ -8,6 +8,12 @@
 //! cargo test -p lens-platform-windows -- --ignored --nocapture
 //! ```
 //!
+//! **They take over the screen while they run.** Harness windows appear on
+//! top, cards are drawn and hidden, a tray icon comes and goes. That is
+//! unavoidable: these exist because the things they check cannot be seen any
+//! other way. It does mean the suite is not something to run in a loop while
+//! somebody is using the machine, and it was, and they noticed.
+//!
 //! They exist because two claims in this project could not be checked any other
 //! way. The privacy model promises that a protected field is refused before it
 //! is read, and the compatibility matrix wants to know whether a plain Win32

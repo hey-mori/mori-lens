@@ -705,3 +705,44 @@ fn measure_whether_the_no_omitting_line_weakened_the_fence() {
         translator.release();
     }
 }
+
+/// Can Lens tell a loaded model from an unloaded one?
+///
+/// A cold load measured thirteen seconds on this machine, and for all of it the
+/// card said only "번역 중". That reads as a hung application. Telling the two
+/// waits apart is the whole basis for saying which one is happening.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn residency_is_reported_correctly_before_and_after_a_load() {
+    let Some(mut translator) = live() else {
+        return;
+    };
+    // Not the shared default: this releases the model at the end, and doing
+    // that to whatever the machine happens to be using would be rude.
+    let model = translator
+        .resolve_model()
+        .unwrap_or("qwen2.5:3b")
+        .to_owned();
+    let translator = OllamaTranslator::new(crate::DEFAULT_ENDPOINT, &model)
+        .with_timeout(Duration::from_secs(120));
+
+    translator.release();
+    std::thread::sleep(Duration::from_millis(500));
+    let cold = translator.is_resident();
+
+    let began = std::time::Instant::now();
+    let warmed = translator.prewarm();
+    let load_ms = began.elapsed().as_millis();
+    let warm = translator.is_resident();
+
+    println!("{model}: resident before {cold}, after {warm}, load {load_ms}ms ({warmed:?})");
+
+    assert!(
+        !cold,
+        "a model just released still reports as resident, so Lens can never \
+         tell a reader that it is loading one",
+    );
+    assert!(warm, "a model just loaded does not report as resident");
+
+    translator.release();
+}

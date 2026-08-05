@@ -115,6 +115,10 @@ State which of code, test, or a live run is the basis for each claim.
 ## Do not
 
 - Push to the remote unless explicitly asked.
+- Run the live suite in a loop while somebody is using the machine. It
+  puts windows on top, draws and hides cards, and adds and removes a tray
+  icon; a user watching that happen every few minutes reported it before
+  anyone thought to mention it. Run it once, before a merge.
 - Poll the screen, subscribe to UI Automation events, or capture frames
   on a timer. The pointer is the only trigger.
 - Read a field after `IsPassword` is true, or after the check itself

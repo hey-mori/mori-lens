@@ -131,6 +131,28 @@ impl OllamaTranslator {
         Ok(json::string_values_of_key(&body, "name"))
     }
 
+    /// Is the chosen model in memory right now?
+    ///
+    /// A cold load measured 13 seconds on this machine for a 7B model, and
+    /// during it the card says only that a translation is in progress. Thirteen
+    /// seconds of that reads as a hung application; thirteen seconds of "the
+    /// model is loading" reads as a machine doing something.
+    ///
+    /// Ollama's lease is thirty minutes and every request resets it, so this
+    /// question only needs asking after a long gap. It costs about 8ms, which
+    /// is worth avoiding on a hover that does not need it.
+    pub fn is_resident(&self) -> bool {
+        let Ok(body) = http::get(&self.endpoint, "/api/ps", Duration::from_secs(2)) else {
+            // Unreachable is not the same as unloaded, and the caller's next
+            // move on a false is to show a "loading" card. Saying yes here
+            // means the ordinary failure path reports the real problem.
+            return true;
+        };
+        json::string_values_of_key(&body, "name")
+            .iter()
+            .any(|name| name == &self.model)
+    }
+
     /// Load the model into memory before anyone waits on it.
     ///
     /// A cold load is not a small tax. Measured on this machine: the first

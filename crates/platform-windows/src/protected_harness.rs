@@ -33,8 +33,9 @@ use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
     GetMessageW, PostMessageW, PostThreadMessageW, RegisterClassW, SetForegroundWindow,
-    TranslateMessage, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_QUIT, WNDCLASSW, WS_CHILD,
-    WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    SetWindowPos, TranslateMessage, HWND_TOPMOST, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_QUIT, WNDCLASSW, WS_CHILD, WS_EX_TOPMOST,
+    WS_OVERLAPPEDWINDOW, WS_VISIBLE,
 };
 
 /// The message that makes the window's thread stop dispatching.
@@ -140,6 +141,16 @@ impl ProtectedHarness {
         // condition UI Automation does not expose.
         std::thread::sleep(std::time::Duration::from_millis(250));
 
+        // And it may not be on top. The desktop is shared with whatever else is
+        // running, and a window that appears in the meantime makes every check
+        // built on this harness read as a failed guarantee: about one full
+        // suite in five, `a_password_field_is_refused` reported that a password
+        // field had not been refused when it had never been reached.
+        //
+        // Raising it is not a workaround for a product defect. The harness owns
+        // this window and putting it back on top is what `start` promised.
+        raise_until_owned(window_id, fields);
+
         Some(Self {
             fields,
             window_id,
@@ -184,6 +195,35 @@ impl ProtectedHarness {
                 LPARAM(0),
             );
         }
+    }
+}
+
+/// Put the harness window back on top until it owns its own fields.
+///
+/// Gives up after a few attempts rather than looping: if something else is
+/// determinedly topmost, a check that says so is worth more than one that
+/// waits forever.
+fn raise_until_owned(window_id: i64, fields: HarnessFields) {
+    for _ in 0..6 {
+        if harness_owns(window_id, centre(fields.plain))
+            && harness_owns(window_id, centre(fields.password))
+        {
+            return;
+        }
+        // SAFETY: a documented z-order change on a window this harness owns.
+        // NOACTIVATE, so raising it does not take focus from the user.
+        unsafe {
+            let _ = SetWindowPos(
+                HWND(window_id as *mut _),
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(120));
     }
 }
 
