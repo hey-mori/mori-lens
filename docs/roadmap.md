@@ -79,7 +79,43 @@ latency are measured and recorded in
 never appears attached to the previous target; source text already in the
 target language is skipped.
 
-## M4 · Deep analysis
+## M4 · Windows manual OCR
+
+**Swapped with deep analysis on 2026-08-05.** The reason is in this
+repository's own measurements, not in a preference:
+
+| Application | Acquired | What that means |
+|---|---|---|
+| VS Code ([#14](https://github.com/swarea/mori-lens/issues/14)) | 7 of 247 points, all `50020` labels | the editing surface exposes nothing |
+| KakaoTalk ([#34](https://github.com/swarea/mori-lens/issues/34)) | 14 of 104, **1 separable target** | one blob, no way to aim inside it |
+
+Those are a code editor and a messenger: the two surfaces the first user
+spends the day in. Deep analysis explains a sentence Lens has already
+read, so building it first would deepen the product exactly where it
+already works and leave it blind where it does not.
+
+**Reach before depth.** Nothing in
+[ADR-0002](decisions/ADR-0002-accessibility-first-acquisition.md) is
+reversed by this: OCR remains the fallback, tried only after the
+accessibility path has failed or when the user asks. It arrives sooner,
+which is what that ADR always intended it for.
+
+The fallback: modifier-triggered small-crop capture, an OCR backend
+behind a trait, word polygons, pointer-to-word resolution, and the
+overlay exclusion.
+
+**Gate** · OCR never runs unasked; a scanned PDF and an image-text case
+both work; Lens never recognises its own overlay; no captured image
+reaches disk; and VS Code and KakaoTalk, the two applications that
+prompted the swap, are measured again with it.
+
+**Open before any of it is written**: `Windows.Media.Ocr` documents a
+package identity requirement for desktop applications, and Lens ships as
+a single unpackaged `lens.exe`. Whether that holds is a spike, and it
+comes first, because a fallback that cannot be delivered the way this
+product is delivered is not a fallback.
+
+## M5 · Deep analysis
 
 The second path: clause structure, grammar, lemma and part of speech,
 idiom, developer and exam profiles. Schema-constrained output, copy, and
@@ -89,16 +125,6 @@ save.
 benchmark; the analysis model is never called without a user action; a
 schema violation degrades instead of crashing; output is labelled as an
 AI explanation.
-
-## M5 · Windows manual OCR
-
-The fallback: modifier-triggered small-crop capture, an OCR backend
-behind a trait, word polygons, pointer-to-word resolution, and the
-overlay exclusion.
-
-**Gate** · OCR never runs unasked; a scanned PDF and an image-text case
-both work; Lens never recognises its own overlay; no captured image
-reaches disk.
 
 ## M6 · macOS acquisition
 

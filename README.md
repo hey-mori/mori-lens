@@ -33,26 +33,39 @@ be through a small documented process boundary, not by merging the code
 
 ## Current state
 
-**Milestone 1 · Windows Hover Probe.** The repository holds the
-verification instrument, not the product. Nothing translates yet, and
-no overlay is drawn yet.
+**Milestone 2 · Windows overlay.** The whole chain runs on Windows:
+hover, read, translate, card. `cargo build --release -p lens` produces
+something you can use today, and the section below says how.
 
-What runs today:
+What ships, each of it measured rather than asserted:
 
-- A console probe that follows the pointer, resolves the UI Automation
-  element under it, extracts the word and its surrounding context, and
-  records the screen rectangles, the latency, and the failure reason.
-- A pure hover state machine (dwell, movement radius, stale generation
-  discard, same-target cooldown) with unit tests and no platform types.
-- Word / sentence / paragraph segmentation over the extracted context.
-- A compatibility log format for recording what each application
-  actually returns.
+- **Hover to translation to card**, end to end. Acquisition p50 3-7ms, a
+  warm translation about 1.5s, a repeat of the same sentence from memory.
+- **All eight target applications measured**, in
+  [`docs/compatibility/windows-app-matrix.md`](docs/compatibility/windows-app-matrix.md),
+  including the two that fail: VS Code's editor exposes nothing without
+  a setting change, and KakaoTalk exposes 40 characters in total.
+- **A card drawn with per-pixel alpha**: translucent surface, opaque
+  text, rounded, shadowed, sized to its contents, on the monitor the
+  text is on, never taking focus, passing every click through.
+- **A tray icon**, a settings file that reloads while running, and
+  start-with-Windows.
+- **Secure fields refused before they are read**, checked against a real
+  password control.
 
-What does not exist yet: translation, Ollama, OCR, the overlay,
-macOS, saved vocabulary, settings UI. Those are sequenced in
-[docs/roadmap.md](docs/roadmap.md) and none of them start before the
-probe has measured a real success rate per application
-([docs/compatibility/windows-app-matrix.md](docs/compatibility/windows-app-matrix.md)).
+What does not exist yet: OCR, deep grammar analysis, macOS, saved
+vocabulary, and a settings window. Sequenced in
+[docs/roadmap.md](docs/roadmap.md).
+
+The authoritative list, capability by capability, is §4 of
+[`docs/mori-lens-project-goal.md`](docs/mori-lens-project-goal.md). This
+section is a summary of it and nothing more: when the two disagree, that
+file is right and this one is stale.
+
+**This section was stale for weeks.** It said "nothing translates yet,
+and no overlay is drawn yet" while both shipped, in a file that also
+carried instructions for installing and running the product. If you are
+reading this repository to work on it, start with the goal document.
 
 ## How it will work
 
@@ -75,21 +88,28 @@ common case stays fast: see
 ## Tech stack
 
 - Core: Rust, platform-neutral, no OS types in the domain crates
-- Windows: `windows-rs`, UI Automation, Win32
+- Windows: `windows-rs`, UI Automation, Win32, Direct2D and DirectWrite
+  for the card
 - macOS (later): a small Swift bridge over Accessibility, AppKit,
   ScreenCaptureKit, Vision
-- Local inference (later): Ollama over `127.0.0.1`, never bundled
+- Local inference: Ollama over `127.0.0.1`, never bundled
+  ([ADR-0007](docs/decisions/ADR-0007-local-first-inference.md)), spoken
+  to over hand-written HTTP with no client dependency
 - Storage (later): SQLite, opt-in history
 
 ## Layout
 
 ```
-crates/lens-core/          domain types, hover state machine, segmentation
-crates/platform-windows/   UI Automation text acquisition
-apps/hover-probe/          the Milestone 1 measurement instrument
-docs/decisions/                  the decisions that constrain everything else
+crates/lens-core/          domain types, hover machine, segmentation, theme,
+                           card layout, settings, model choice. No OS types.
+crates/lens-translate/     the Ollama client, HTTP and JSON by hand
+crates/platform-windows/   UI Automation, the Direct2D card, tray, autostart
+apps/lens/                 the product
+apps/hover-probe/          the measurement instrument
+docs/decisions/            the decisions that constrain everything else
 docs/research/             what was verified, and where the evidence is
 docs/compatibility/        per-application results, filled in by running
+docs/benchmarks/           latency, idle cost, and which model to use
 ```
 
 ## Use it
