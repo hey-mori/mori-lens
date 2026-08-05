@@ -382,3 +382,80 @@ fn a_target_carries_its_anchor_and_its_distance_from_the_pointer() {
         Some(441.0)
     );
 }
+
+/// A reader moving fast must not cost a single accessibility call.
+///
+/// One of Milestone 1's gate conditions, and it had never been tested: "no
+/// runaway UI Automation calls during fast pointer movement". Each call is a
+/// cross-process round trip whose work lands on the target application's UI
+/// thread, so a hover loop that resolved on every sample would make the
+/// desktop sluggish exactly the way a grid sweep does.
+///
+/// Driven through `HoverSession`, not the machine alone, because the property
+/// belongs to the composition: the machine can be right about dwell while a
+/// caller resolves anyway.
+#[test]
+fn a_pointer_crossing_the_screen_costs_no_accessibility_calls() {
+    let (accessibility, calls) = FakeAcquirer::reading(
+        AcquisitionSource::Accessibility,
+        "The suite produced nothing.",
+    );
+    let mut session = session(accessibility);
+
+    // 25ms sampling, 40px per sample: an ordinary flick across a monitor.
+    let mut settled = 0usize;
+    for tick in 0..80u64 {
+        let point = ScreenPoint::new(100 + (tick as i32) * 40, 400);
+        let at = ms(tick * 25);
+        if let Some(HoverEvent::Settled { generation, point }) =
+            session.observe(PointerSample::moved(point, at))
+        {
+            settled += 1;
+            let _ = session.resolve(generation, point, at, InputState::default());
+        }
+    }
+
+    assert_eq!(
+        settled, 0,
+        "the pointer settled {settled} times while moving"
+    );
+    assert_eq!(
+        calls.get(),
+        0,
+        "{} accessibility calls were made for a pointer that never rested",
+        calls.get(),
+    );
+}
+
+/// A hand that never quite stops must not resolve on every tick either.
+///
+/// The dwell threshold is not the whole guard: a pointer drifting slowly
+/// inside the movement radius settles once and then keeps sampling. If each of
+/// those samples resolved, a reader who rests their hand costs forty calls a
+/// second.
+#[test]
+fn resting_a_hand_on_one_word_costs_one_call_not_forty() {
+    let (accessibility, calls) = FakeAcquirer::reading(
+        AcquisitionSource::Accessibility,
+        "The suite produced nothing.",
+    );
+    let mut session = session(accessibility);
+
+    // Two seconds of a hand resting, jittering by a pixel.
+    for tick in 0..80u64 {
+        let jitter = i32::from(tick % 2 == 0);
+        let point = ScreenPoint::new(500 + jitter, 400);
+        let at = ms(tick * 25);
+        if let Some(HoverEvent::Settled { generation, point }) =
+            session.observe(PointerSample::moved(point, at))
+        {
+            let _ = session.resolve(generation, point, at, InputState::default());
+        }
+    }
+
+    assert!(
+        calls.get() <= 2,
+        "a resting hand cost {} accessibility calls over two seconds",
+        calls.get(),
+    );
+}
