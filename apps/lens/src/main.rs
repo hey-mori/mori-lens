@@ -368,7 +368,6 @@ fn main() -> std::process::ExitCode {
     // agree with the policy above it. It said "Rest the pointer on a sentence"
     // while the mode line two rows up said "hold Alt", and the first person to
     // run the release build did exactly that and got nothing.
-    println!("\n{}\n", how_to_use(&options.policy));
 
     let mut system = system_preferences();
     let theme = Theme::resolve(options.preset, options.translucency, options.text, system);
@@ -542,6 +541,11 @@ fn main() -> std::process::ExitCode {
     let mut policy = options.policy.clone();
     // Without this Lens reads its own card and translates its own translation.
     policy.deny_self("lens");
+
+    // Last, after every fact about how this run is configured. It is the line
+    // a first-time user acts on, and it sat in the middle of the banner with
+    // the mode line above it saying something else.
+    println!("\n{}\n", how_to_use(&policy, tray.is_some()));
 
     let mut session = HoverSession::new(
         HoverConfig {
@@ -866,7 +870,7 @@ fn tooltip(language: &str, engine: &str, paused: bool, policy: &AppPolicy) -> St
 /// two lines above `Rest the pointer on a sentence` is not an instruction, it
 /// is a puzzle, and the first person to run a release build hovered without Alt
 /// and reported that nothing happened.
-fn how_to_use(policy: &AppPolicy) -> String {
+fn how_to_use(policy: &AppPolicy, has_tray: bool) -> String {
     let action = match policy.default_tier() {
         AppTier::Allow => "Rest the pointer on a sentence.".to_owned(),
         AppTier::Modifier => "Hold Alt and rest the pointer on a sentence.".to_owned(),
@@ -877,7 +881,26 @@ fn how_to_use(policy: &AppPolicy) -> String {
             policy.rule_count(),
         ),
     };
-    format!("{action} Ctrl+C to quit.")
+    format!("{action} {}", how_to_quit(has_tray))
+}
+
+/// How to stop it, which stopped being Ctrl+C and went on saying Ctrl+C.
+///
+/// Lens is a Windows subsystem binary now, so a shell does not wait for it: the
+/// prompt comes straight back and Ctrl+C there goes to the shell, not to Lens.
+/// The banner said "Ctrl+C to quit" for a while after that stopped being true,
+/// and a user found out by being unable to stop it.
+///
+/// The console handler is still installed, because a console that *does* send
+/// a break should still be obeyed. It is no longer advertised as the way out.
+fn how_to_quit(has_tray: bool) -> &'static str {
+    if has_tray {
+        "Right-click the tray icon to quit."
+    } else {
+        // No icon and no console to interrupt. Saying so beats naming a key
+        // that will not work.
+        "No tray icon: stop it from Task Manager, or with Stop-Process."
+    }
 }
 
 fn korean_how_to(policy: &AppPolicy) -> String {
