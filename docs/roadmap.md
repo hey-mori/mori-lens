@@ -64,7 +64,8 @@ Standing, 2026-08-05:
 | Lens never reads its own overlay | measured: 193 characters read identically with a card drawn over that exact point |
 | more than one monitor | measured: a card anchored on the second monitor stays on it |
 | a full-screen application | **open** |
-| tray icon, per-application tiers | **not built** |
+| tray icon | built and measured: the shell accepts it, a click becomes a pause, and it leaves on exit |
+| per-application tiers | **not built**; the tiers exist in `lens-core`, nothing lets a user set one |
 
 ## M3 · Quick translation
 

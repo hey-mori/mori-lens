@@ -49,15 +49,16 @@ not written), **out of v1** (deliberately excluded).
 | Capability | Status |
 |------------|--------|
 | Hover intent state machine (dwell, radius, cooldown, stale discard) | built, unverified · unit tested, and the card lifetime it feeds now has its own tests |
-| Windows UI Automation text acquisition under the pointer | **shipped** · measured on 3 windows, 2026-08-04 |
+| Windows UI Automation text acquisition under the pointer | **shipped** · measured across all eight target applications, and a wedged one is abandoned after 800ms rather than after two minutes |
 | Word / sentence / paragraph segmentation | built, unverified · unit tested, no human has confirmed a resolved word is the intended one |
 | Secure-field refusal | **shipped** · fires as `Protected(Declared)` against a real `ES_PASSWORD` control, and discriminates from a plain one |
 | Hover probe, follow mode | built, unverified |
 | Card themes | **shipped** · four presets, contrast checked against the composite over a white page and a black one |
-| Pause control | **shipped** · Ctrl+Alt+L, and paused means the pointer is not sampled |
+| Pause control | **shipped** · Ctrl+Alt+L or the tray icon, and paused means the pointer is not sampled |
+| Tray icon | **shipped** · shows whether Lens is listening, pauses on a click, quits from its menu, and survives Explorer restarting |
 | Translation cache | **shipped** · in memory, keyed on model and prompt version |
 | Hover probe, sweep mode | **shipped** · produced the 2026-08-04 measurements |
-| Per-application compatibility matrix | in progress · 4 of 8 target applications |
+| Per-application compatibility matrix | **shipped** · all 8 target applications, 2026-08-05 |
 | Native overlay (Windows) | **shipped** · never takes focus, paints without a blank or hidden frame while streaming, clicks pass through, and lands on the monitor its text is on |
 | Quick translation via Ollama | **shipped** · warm median around 1.6s, streamed, cached in memory, model resolved at startup |
 | Deep analysis (grammar, structure) | planned · M4 |
@@ -76,8 +77,12 @@ recorded in
 [`compatibility/windows-app-matrix.md`](compatibility/windows-app-matrix.md).
 That gate is [ADR-0008](decisions/ADR-0008-probe-before-product.md).
 
-Eight capabilities have passed it. The rest have unit tests, which
-prove the logic and prove nothing about a desktop.
+Ten capabilities have passed it. The rest have unit tests, which prove
+the logic and prove nothing about a desktop.
+
+What is still missing before this is something a person installs:
+per-application tiers a user can set, settings that survive a restart,
+and a first run that says what to do when Ollama is absent.
 
 **What the measurement found, since it changes what "works" means
 here:** acquisition succeeds, at p50 10ms, and returns the *right* text
