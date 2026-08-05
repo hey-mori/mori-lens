@@ -13,8 +13,7 @@
 //! telling the truth about a weakness rather than describing a design.
 //!
 //! It also means the card can never be more than a rectangle. GDI has no
-//! alpha, so a rounded corner is a jagged one, and a shadow is not available at
-//! all.
+//! alpha, so a rounded corner is a jagged one.
 //!
 //! # What this does instead
 //!
@@ -22,11 +21,9 @@
 //! hands that bitmap to the compositor with its alpha channel intact. Every
 //! pixel carries its own opacity, so:
 //!
-//! - the **surface** is translucent and the **text on it is not**, which is
-//!   both more readable and more like the material it is imitating
+//! - the surface's opacity is the theme's to choose, and the **text on it is
+//!   never faded with it**
 //! - corners are round and antialiased rather than stepped
-//! - there is a soft shadow, which is most of what makes a floating panel read
-//!   as floating rather than as pasted on
 //!
 //! Text is DirectWrite rather than `DrawTextW`. That was the quieter half of
 //! ADR-0011's argument: this is a reading tool, and DirectWrite lays out a
@@ -37,9 +34,37 @@
 //! **Not blurred.** Real acrylic blurs what is behind the window, and the only
 //! ways to get that are a DWM backdrop, which requires giving up the layered
 //! window this needs, or sampling the screen, which this product does not do
-//! outside the OCR path. So "glass" here means translucent, rounded, and
-//! shadowed. The preset names must not promise the material before it exists,
-//! which ADR-0011 also says.
+//! outside the OCR path. The preset names must not promise the material before
+//! it exists, which ADR-0011 also says.
+//!
+//! **Not shadowed, any more.** There was a soft drop shadow here, on the usual
+//! argument that it is what makes a panel read as floating rather than as
+//! pasted on. It was rebuilt three times: as filled rings, as a distance field
+//! with a smoothstep falloff, then with a power curve, tuned down at every
+//! step. The same user called it a weird box every time, and the last screenshot
+//! came with the question of why any of it looked like that.
+//!
+//! Three rounds of tuning that never converged is the finding. A shadow spills
+//! onto the page **the reader is reading**, and it is the one element here whose
+//! job is decoration rather than legibility, so it is the one to remove rather
+//! than to keep tuning. What is left is a surface, one hairline, and a rounded
+//! corner, which is what the system's own tooltips are and is not mistakable for
+//! a box inside a box.
+//!
+//! # The original is never shortened
+//!
+//! It was capped at two lines once, to make the card smaller, and it was wrong
+//! within a day. A user screenshotted a card whose visible original read
+//! "…which module owns these migrations in areabase to confirm they're stripped
+//! during the build proce…" beside a translation beginning "이것은 중요한
+//! 발견입니다: 공유 데이터베이스 토폴로지의 격리가…". Both correct, and **from
+//! different halves of the same sentence**: the answer covered text the ellipsis
+//! had hidden.
+//!
+//! The original is on the card so a reader can check the answer belongs to what
+//! they pointed at (`docs/privacy-model.md` §1). A truncated one does not make
+//! that harder, it makes it impossible, and it reads as a mismatched pair. Size
+//! has to come from somewhere that is not the evidence.
 //!
 //! # Failure
 //!
@@ -63,7 +88,8 @@ use windows::Win32::Graphics::Direct2D::{
 use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteTextLayout, DWRITE_FACTORY_TYPE_SHARED,
     DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_NORMAL,
-    DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_METRICS, DWRITE_WORD_WRAPPING_WRAP,
+    DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_LINE_SPACING_METHOD_UNIFORM, DWRITE_TEXT_METRICS,
+    DWRITE_WORD_WRAPPING_WRAP,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{
@@ -73,35 +99,16 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{UpdateLayeredWindow, ULW_ALPHA};
 
-/// How far the shadow reaches beyond the card, in pixels at 100% scaling.
+/// Blank pixels kept around the card, in pixels at 100% scaling.
 ///
-/// The window is this much larger than the card on every side, and those extra
-/// pixels are almost transparent. It is the single change that makes a panel
-/// read as floating above the page rather than pasted onto it.
-const SHADOW_REACH: f32 = 14.0;
-
-/// How dark the shadow is directly under the card's edge.
-///
-/// Low, and deliberately so. A reading tool that drops a heavy shadow over the
-/// sentence next to the one being explained has made the page harder to read in
-/// order to look better.
-const SHADOW_STRENGTH: f32 = 0.30;
-
-/// How far down the shadow is offset. Light from above, as every other panel on
-/// this desktop assumes.
-const SHADOW_DROP: f32 = 3.0;
+/// Two, and only because a rounded corner is antialiased: drawn hard against
+/// the bitmap's edge its outermost pixels are clipped rather than blended, and
+/// a clipped antialiased curve is a stepped one. This is not a shadow margin.
+/// There is no shadow.
+const EDGE_MARGIN: f32 = 2.0;
 
 /// Corner radius in pixels at 100% scaling.
 const CORNER: f32 = 10.0;
-
-/// Rings drawn to fake a gaussian falloff.
-///
-/// Direct2D can blur properly, through an effect graph on a device context.
-/// That needs a Direct3D device, which needs a DXGI swap chain or a bitmap
-/// surface, which is a great deal of machinery for a shadow on a card that is
-/// three hundred pixels wide. Concentric rounded rectangles with a quadratic
-/// falloff are indistinguishable at this size.
-const SHADOW_RINGS: i32 = 14;
 
 /// The typeface. Segoe UI is the system's own, and DirectWrite falls back to an
 /// installed Hangul face for runs it cannot cover, which is the behaviour that
@@ -116,10 +123,18 @@ const LOCALE: PCWSTR = windows::core::w!("");
 /// lines beneath it.
 const MIN_CARD_WIDTH: i32 = 220;
 
+/// Line spacing, as a multiple of the font size.
+///
+/// 1.38 rather than the font's own, which is close to 1.2 for Segoe UI and
+/// tight for Hangul: Korean glyphs fill more of their box than Latin ones, so
+/// lines that look airy in English look packed in Korean. Every card here has
+/// both, one above the other, and the difference shows.
+const LINE_HEIGHT: f32 = 1.38;
+
 /// Gap under the original, before the translation.
-const GAP_AFTER_ORIGINAL: f32 = 7.0;
+const GAP_AFTER_ORIGINAL: f32 = 6.0;
 /// Gap under the translation, before the footer.
-const GAP_BEFORE_FOOTER: f32 = 9.0;
+const GAP_BEFORE_FOOTER: f32 = 7.0;
 
 /// How much fully opaque ink the last presented frame carried.
 ///
@@ -173,6 +188,14 @@ struct Run {
     colour: Rgb,
     /// Text is opaque even when the surface is not. That is the whole point.
     opaque: bool,
+}
+
+impl Laid {
+    /// The display scaling this was laid out for, so an animation moves the
+    /// same physical distance on every monitor.
+    pub fn scale(&self) -> f32 {
+        self.scale
+    }
 }
 
 impl Glass {
@@ -250,17 +273,31 @@ impl Glass {
         //
         // Quieter by colour, not by opacity. Fading it was the old renderer's
         // only way to say "secondary" and it cost legibility to say it.
+        //
+        // Never capped. See ORIGINAL_LINES: an elided original put a
+        // translation of the end of a sentence beside the start of it.
         push(&card.original, theme.small_pt, false, theme.original);
 
+        // **Not bold.** The answer was semibold at a size above the original,
+        // which is three signals (weight, size, colour) saying one thing, and a
+        // reader called it too heavy and too large in the same sentence. Two
+        // carry it: the answer is the darkest ink on the card and a point
+        // larger than the original. Bold Hangul is also heavier than bold Latin
+        // at the same weight, because the glyphs fill more of their box, so the
+        // emphasis that looked measured in English did not stay measured here.
         let (body, colour, weight, points) = match &card.body {
-            CardBody::Translation(text) => (text, theme.body, true, theme.body_pt),
-            CardBody::Problem(text) => (text, theme.problem, true, theme.body_pt),
+            CardBody::Translation(text) => (text, theme.body, false, theme.body_pt),
+            CardBody::Problem(text) => (text, theme.problem, false, theme.body_pt),
             // Quiet, and at the footer's colour and size: it is a status, not
             // an answer, and it must not read as one for the second it is up.
             CardBody::Waiting(status) => (status, theme.footer, false, theme.small_pt),
         };
         push(body, points, weight, colour);
-        push(&card.footer, theme.small_pt, false, theme.footer);
+        push(&card.footer, theme.footer_pt, false, theme.footer);
+
+        // The original is the first run pushed, when there is one at all.
+        // `push` skips empty text, so a card with no original has the answer
+        // first and nothing to cap.
 
         // Fit the card to what is in it. A fixed 420px box holding one short
         // line is mostly empty, which reads as a window that failed to load
@@ -280,6 +317,7 @@ impl Glass {
         // each run is. Measuring height at one width and drawing at another is
         // how a card ends up with its last line clipped.
         let mut y = padding;
+        let last = runs.len().saturating_sub(1);
         for (index, run) in runs.iter_mut().enumerate() {
             // SAFETY: documented calls on a layout this function owns.
             let height = unsafe {
@@ -292,8 +330,12 @@ impl Glass {
             };
             run.y = y;
             y += height;
-            // The gaps belong between the runs, not after the last one.
-            if index + 1 < 3 {
+            // The gaps belong between the runs, not after the last one, and
+            // **there are not always three**. A card with no original has two,
+            // and this counted to a constant: the footer was followed by a gap
+            // it was the last thing before, so those cards carried empty space
+            // along the bottom edge that nothing was separating.
+            if index < last {
                 y += if index == 0 {
                     GAP_AFTER_ORIGINAL * scale
                 } else {
@@ -338,6 +380,15 @@ impl Glass {
                 )
                 .ok()?;
             format.SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP).ok()?;
+            // Line spacing, set rather than left to the font's own metrics.
+            // A card is read at a glance and the default leading is tight for
+            // Hangul, whose glyphs fill more of their box than Latin does. The
+            // baseline is the conventional 80% of the line, which is what
+            // DirectWrite's own uniform mode uses.
+            let line = size_px * LINE_HEIGHT;
+            format
+                .SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, line, line * 0.8)
+                .ok()?;
 
             let wide: Vec<u16> = text.encode_utf16().collect();
             let layout = self
@@ -359,14 +410,31 @@ impl Glass {
     ///
     /// # Safety
     /// `window` must be a live `WS_EX_LAYERED` window owned by this thread.
-    pub unsafe fn present(
+    /// Paint the laid-out card and hand it to the compositor.
+    ///
+    /// `fade` is the whole window's opacity, for the entrance only. It is
+    /// **not** a way to make the card translucent: the surface's translucency
+    /// is per pixel and lives in the bitmap, which is the entire reason this
+    /// renderer exists. This multiplies everything including the text, which is
+    /// what a fade is and what a steady state must never be.
+    ///
+    /// It is also why the entrance fades the *window* rather than the pixels.
+    /// Fading the pixels would drop the bitmap's opaque-pixel count to zero for
+    /// the length of the animation, and that count is what the flicker checks
+    /// read: a polished entrance would have looked exactly like the bug those
+    /// checks exist to catch.
+    ///
+    /// # Safety
+    /// `window` must be a live `WS_EX_LAYERED` window owned by this thread.
+    pub unsafe fn present_faded(
         &self,
         window: HWND,
         laid: &Laid,
         theme: &Theme,
         card_rect: ScreenRect,
+        fade: u8,
     ) -> bool {
-        let margin = (SHADOW_REACH * laid.scale).ceil() as i32;
+        let margin = (EDGE_MARGIN * laid.scale).ceil() as i32;
         let width = laid.width + margin * 2;
         let height = laid.height + margin * 2;
 
@@ -399,10 +467,12 @@ impl Glass {
                 let blend = BLENDFUNCTION {
                     BlendOp: AC_SRC_OVER as u8,
                     BlendFlags: 0,
-                    // 255: the per-pixel alpha in the bitmap is the whole
-                    // story. A value below this would fade the text again,
-                    // which is the thing this renderer exists to stop.
-                    SourceConstantAlpha: 255,
+                    // 255 in the steady state: the per-pixel alpha in the
+                    // bitmap is the whole story, and a lower value here fades
+                    // the text with the surface, which is the thing this
+                    // renderer exists to stop. Below 255 only while a card is
+                    // arriving.
+                    SourceConstantAlpha: fade,
                     AlphaFormat: AC_SRC_ALPHA as u8,
                 };
                 sent = UpdateLayeredWindow(
@@ -426,6 +496,29 @@ impl Glass {
         }
     }
 
+    /// Paint a card at full opacity, which is every case but an entrance.
+    ///
+    /// # Safety
+    /// `window` must be a live `WS_EX_LAYERED` window owned by this thread.
+    pub unsafe fn present(
+        &self,
+        window: HWND,
+        laid: &Laid,
+        theme: &Theme,
+        card_rect: ScreenRect,
+    ) -> bool {
+        // SAFETY: the caller's guarantee, passed straight through.
+        unsafe { self.present_faded(window, laid, theme, card_rect, 255) }
+    }
+
+    /// Everything that makes a frame.
+    ///
+    /// **One path, used by both callers**, which is worth stating because it
+    /// once was not: a compositing pass ran only where a frame was presented,
+    /// so the entry point that renders a card for inspection produced a
+    /// different image from the one on screen. A diagnostic that does not draw
+    /// what the product draws is worse than none.
+    ///
     /// # Safety
     /// `dc` must hold a 32-bit top-down DIB of exactly `width` by `height`.
     unsafe fn draw(
@@ -487,50 +580,6 @@ impl Glass {
             };
             let radius = CORNER * laid.scale;
 
-            // The shadow, outermost ring first so the darker inner ones land on
-            // top.
-            let drop = SHADOW_DROP * laid.scale;
-            for ring in (1..=SHADOW_RINGS).rev() {
-                let spread = margin * ring as f32 / SHADOW_RINGS as f32;
-                // Quadratic falloff. Linear reads as a grey halo with an edge.
-                let fade = 1.0 - ring as f32 / SHADOW_RINGS as f32;
-                let alpha = SHADOW_STRENGTH * fade * fade;
-                let Ok(brush) = target.CreateSolidColorBrush(
-                    &D2D1_COLOR_F {
-                        r: 0.0,
-                        g: 0.0,
-                        b: 0.0,
-                        a: alpha,
-                    },
-                    None,
-                ) else {
-                    continue;
-                };
-                // Stroked, not filled. A filled rounded rectangle covers the
-                // card as well as the space around it, so fourteen of them
-                // stack underneath a translucent surface and darken it: the
-                // card measured 250 alpha where the theme asked for 236. A
-                // stroke paints only its own ring, so the surface is drawn at
-                // the opacity the theme actually chose.
-                target.DrawRoundedRectangle(
-                    &D2D1_ROUNDED_RECT {
-                        rect: D2D_RECT_F {
-                            left: card.left - spread,
-                            top: card.top - spread + drop,
-                            right: card.right + spread,
-                            bottom: card.bottom + spread + drop,
-                        },
-                        radiusX: radius + spread,
-                        radiusY: radius + spread,
-                    },
-                    &brush,
-                    // Wide enough that consecutive rings overlap rather than
-                    // leaving gaps between them, which reads as banding.
-                    (margin / SHADOW_RINGS as f32) * 2.2,
-                    None,
-                );
-            }
-
             // The surface. Translucent by the theme's own figure, and the only
             // thing here that is.
             let surface_alpha = f32::from(theme.surface_alpha) / 255.0;
@@ -547,10 +596,15 @@ impl Glass {
                 );
             }
 
-            // A hairline, inset by half a pixel so the stroke lands on the
-            // outline instead of straddling it and coming out two pixels of
-            // grey.
-            if let Ok(brush) = target.CreateSolidColorBrush(&colour(theme.border, 0.9), None) {
+            // The card's only edge, inset by half a pixel so the stroke lands
+            // on the outline instead of straddling it and coming out two pixels
+            // of grey.
+            //
+            // It carries the whole boundary now, so it is drawn properly rather
+            // than apologetically. It was faded to 0.30 while a shadow was also
+            // drawing an edge two pixels outside it, and two edges around one
+            // card is the box everybody kept seeing.
+            if let Ok(brush) = target.CreateSolidColorBrush(&colour(theme.border, 0.65), None) {
                 target.DrawRoundedRectangle(
                     &D2D1_ROUNDED_RECT {
                         rect: D2D_RECT_F {
@@ -608,7 +662,7 @@ impl Glass {
     /// Creates and releases its own GDI objects.
     #[cfg(test)]
     pub unsafe fn pixels(&self, laid: &Laid, theme: &Theme) -> Option<(i32, i32, Vec<u32>)> {
-        let margin = (SHADOW_REACH * laid.scale).ceil() as i32;
+        let margin = (EDGE_MARGIN * laid.scale).ceil() as i32;
         let width = laid.width + margin * 2;
         let height = laid.height + margin * 2;
 

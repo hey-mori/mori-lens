@@ -77,8 +77,15 @@ impl Card {
                 },
                 // A sentence read twice is answered from memory, and saying
                 // "0ms" for that reads as a broken clock. It says so instead.
+                //
+                // Seconds rather than milliseconds for anything over one: a
+                // reader is not timing the model, and `2779ms` is four glyphs
+                // longer than `2.8초` on the line that sets the card's minimum
+                // width.
                 if translation.cached {
                     "캐시".to_owned()
+                } else if translation.latency_ms >= 1000 {
+                    format!("{:.1}초", translation.latency_ms as f64 / 1000.0)
                 } else {
                     format!("{}ms", translation.latency_ms)
                 },
@@ -497,5 +504,50 @@ mod loading_tests {
     #[test]
     fn a_model_load_with_no_original_is_refused() {
         assert!(!Card::loading_model("  ").is_showable());
+    }
+}
+
+#[cfg(test)]
+mod footer_tests {
+    use super::*;
+    use crate::translate::EngineId;
+
+    fn card_at(latency_ms: u128, cached: bool) -> Card {
+        Card::translated(
+            "original",
+            &QuickTranslation {
+                text: "번역".to_owned(),
+                engine: EngineId::LocalOllama,
+                model: "qwen2.5-coder:7b".to_owned(),
+                latency_ms,
+                cached,
+            },
+        )
+    }
+
+    #[test]
+    fn a_slow_answer_is_reported_in_seconds() {
+        assert!(card_at(2779, false).footer.ends_with("2.8초"));
+    }
+
+    #[test]
+    fn a_fast_answer_keeps_its_milliseconds() {
+        assert!(card_at(840, false).footer.ends_with("840ms"));
+    }
+
+    #[test]
+    fn a_cached_answer_still_says_so() {
+        assert!(card_at(2779, true).footer.ends_with("캐시"));
+    }
+
+    /// The footer sets the card's minimum width, so its length is a size.
+    #[test]
+    fn the_footer_stays_short() {
+        let footer = card_at(2779, false).footer;
+        assert!(
+            footer.chars().count() <= 32,
+            "{footer:?} is {} chars",
+            footer.chars().count()
+        );
     }
 }

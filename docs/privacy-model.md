@@ -95,6 +95,22 @@ the trade is real and worth stating:
 A reader who prefers the trade the other way writes `model = qwen2.5:3b`
 in their settings file, and a named model is always honoured.
 
+**The original is shown in full, and is never shortened.**
+
+It was capped at two lines for one day, to make the card smaller. The
+argument was that a reader can tell it is the sentence they pointed at
+from the first line. That is true of a short sentence and false of a long
+one, and a screenshot showed why: the visible original ended
+`…during the build proce…` beside a translation that began
+`이것은 중요한 발견입니다: 공유 데이터베이스 토폴로지의 격리가…`. Both correct,
+and **from different halves of the same sentence**. The answer covered
+text the ellipsis had hidden.
+
+An elided original does not make the check harder. It makes it
+impossible, and it presents a pair that looks wrong even when it is
+right. If a card has to be smaller, it gets smaller somewhere that is not
+the evidence.
+
 What this does and does not put at risk:
 
 - **Not at risk:** anything being executed, opened, followed, typed into

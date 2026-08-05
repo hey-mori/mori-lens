@@ -254,10 +254,21 @@ impl TextTarget {
     /// card placed under the whole paragraph never does, and for a long one it
     /// ends up far from the pointer and from the sentence it belongs to.
     ///
-    /// Six lines is the compromise, and it is in line heights rather than
-    /// pixels so it means the same thing at every font size and display
-    /// scaling.
-    pub const CLEAR_PARAGRAPH_WITHIN_LINES: f64 = 6.0;
+    /// In line heights rather than pixels, so it means the same thing at every
+    /// font size and display scaling.
+    ///
+    /// **Two, and it was six.** Six lines of a normal paragraph is well over a
+    /// hundred pixels, and a reader said the card sat far below the pointer
+    /// more often than not. It does: any paragraph with six or fewer lines
+    /// under the pointer pushed the answer past all of them.
+    ///
+    /// The trade is real in both directions and it was decided by which side a
+    /// reader actually noticed. Nobody reported a card covering the lines below
+    /// the one they were reading, because while the card is up they are reading
+    /// the card; everybody notices an answer that appears a long way from where
+    /// they are looking. Two still clears the short blocks this was written
+    /// for, which are labels, list items and table cells.
+    pub const CLEAR_PARAGRAPH_WITHIN_LINES: f64 = 2.0;
 
     /// Where a card should sit so that it covers as little of the reading as
     /// possible.
@@ -277,7 +288,14 @@ impl TextTarget {
             return Some(line);
         };
 
-        let reach = f64::from(line.height.max(1)) * Self::CLEAR_PARAGRAPH_WITHIN_LINES;
+        // Measured in line **pitch**, not glyph height. Those differ by the
+        // leading, and using the smaller of the two meant the constant quietly
+        // cleared fewer lines than it said: at two, a three-line paragraph fell
+        // four pixels the wrong side of a forty-pixel reach.
+        let pitch = self
+            .line_pitch()
+            .unwrap_or_else(|| f64::from(line.height.max(1)));
+        let reach = pitch * Self::CLEAR_PARAGRAPH_WITHIN_LINES;
         if f64::from(block.bottom() - line.bottom()) > reach {
             return Some(line);
         }
@@ -291,6 +309,26 @@ impl TextTarget {
             block.width.max(line.width),
             (block.bottom() - line.y).max(line.height),
         ))
+    }
+
+    /// The vertical distance from one line of the block to the next.
+    ///
+    /// The smallest positive step between line tops, rather than the average:
+    /// a block whose last line is followed by a paragraph break has one large
+    /// step in it, and averaging lets that break inflate every measurement
+    /// taken from it.
+    ///
+    /// `None` when there is nothing to measure, which is a single line or a
+    /// block whose lines all sit at the same height.
+    fn line_pitch(&self) -> Option<f64> {
+        let mut tops: Vec<i32> = self.context_bounds.iter().map(|rect| rect.y).collect();
+        tops.sort_unstable();
+        tops.dedup();
+        tops.windows(2)
+            .map(|pair| f64::from(pair[1] - pair[0]))
+            .fold(None, |best: Option<f64>, step| {
+                Some(best.map_or(step, |best| best.min(step)))
+            })
     }
 
     /// How far the resolved word is from where the user actually pointed.
@@ -568,6 +606,51 @@ mod card_anchor_tests {
 
         assert_eq!(anchor.bottom(), 264, "the card would cover the last line");
         assert_eq!(anchor.y, 200, "it should start at the pointer's line");
+    }
+
+    /// Four lines, the pointer on the first. Three lie under it, which is one
+    /// more than a card will step over, so it anchors on the pointer's line.
+    ///
+    /// This is the case the reader complained about, at the size it used to
+    /// apply at: with six lines cleared, the card for any paragraph up to seven
+    /// lines appeared below all of them.
+    #[test]
+    fn a_paragraph_deeper_than_the_reach_anchors_on_the_pointers_line() {
+        let lines: Vec<ScreenRect> = (0..4)
+            .map(|row| ScreenRect::new(100, 200 + row * 22, 400, 20))
+            .collect();
+        let anchor = target(ScreenRect::new(150, 200, 60, 20), &lines)
+            .card_anchor(ScreenPoint::new(160, 210))
+            .expect("an anchor");
+
+        assert_eq!(
+            anchor.bottom(),
+            220,
+            "the card should sit under the pointer's line, not under the block",
+        );
+    }
+
+    /// The reach counts line pitch, so leading does not eat into it.
+    ///
+    /// Same three lines twice, once tightly set and once loosely. Both have two
+    /// lines under the pointer and both must clear, which they did not when the
+    /// reach was measured in glyph height: the loose one lost to its own
+    /// leading.
+    #[test]
+    fn the_reach_is_the_same_two_lines_at_any_leading() {
+        for pitch in [21, 22, 30, 40] {
+            let lines: Vec<ScreenRect> = (0..3)
+                .map(|row| ScreenRect::new(100, 200 + row * pitch, 400, 20))
+                .collect();
+            let anchor = target(ScreenRect::new(150, 200, 60, 20), &lines)
+                .card_anchor(ScreenPoint::new(160, 210))
+                .expect("an anchor");
+            assert_eq!(
+                anchor.bottom(),
+                220 + pitch * 2,
+                "at {pitch}px pitch the paragraph was not cleared",
+            );
+        }
     }
 
     /// Forty lines, and clearing all of them would put the answer at the foot
