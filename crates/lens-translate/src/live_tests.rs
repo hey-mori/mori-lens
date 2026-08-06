@@ -881,3 +881,183 @@ fn the_sentence_that_echoed_now_comes_back_in_korean() {
         }
     }
 }
+
+/// Sentences whose translation a reader has judged, side by side per model.
+///
+/// **This prints translations, and that is allowed here and nowhere near a
+/// hover.** Every source below was written into this repository or handed to it
+/// in a message; none came off a screen. `docs/privacy-model.md` forbids
+/// printing what was *read*, and a benchmark that cannot show its output is not
+/// a benchmark.
+///
+/// Judgement is the reader's. A machine score for translation quality would be
+/// another model's opinion dressed as a number, and the person this product is
+/// for reads Korean.
+///
+/// The set is chosen so the failures are different from each other: an adverb
+/// that carries the sentence, a word with a technical sense that is not its
+/// common one, a terse clause with no context to lean on, and a sentence whose
+/// subject is elided in natural Korean.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn compare_what_each_installed_model_makes_of_the_same_sentences() {
+    let probe = OllamaTranslator::default();
+    let installed = probe.installed_models().unwrap_or_default();
+    if installed.is_empty() {
+        println!("SKIPPED: no models installed");
+        return;
+    }
+
+    let sentences = [
+        // The one a reader called disappointing. The card dropped `correctly`
+        // and rendered `vacuously` as 비어있게.
+        "The test correctly refuses to pass vacuously.",
+        "Acquisition is solved and targeting is not.",
+        "A card placed on the wrong sentence is worse than no card.",
+        "The pointer must rest before anything is read, and neither path runs on \
+         a mouse move.",
+        "I would rather it failed loudly than passed for a reason nobody checked.",
+    ];
+
+    for source in sentences {
+        println!("\n────────────────────────────────────────────────────────────");
+        println!("EN  {source}");
+        for model in &installed {
+            let translator = OllamaTranslator::new(DEFAULT_ENDPOINT, model)
+                .with_timeout(Duration::from_secs(180));
+            match translator.quick(&QuickRequest::new(source, "Korean")) {
+                Ok(translation) => println!(
+                    "{:<22} {:>6}ms  {}",
+                    model,
+                    translation.latency_ms,
+                    translation.text.replace('\n', " "),
+                ),
+                Err(error) => println!("{model:<22} {:>6}    [{}]", "", error.reason()),
+            }
+        }
+    }
+}
+
+/// Whether the defences in the system prompt are costing prose quality.
+///
+/// The prompt a hover sends carries an unguessable fence, three sentences
+/// telling the model that everything inside it is data, a ban on preamble, a
+/// statement that the output language is not negotiable, an instruction not to
+/// drop clauses, and a rule about identifiers. Each is there for a defect this
+/// repository met. Together they are a great deal of instruction in front of a
+/// 7B model, and the question nobody has asked is what they cost the answer.
+///
+/// So: the same sentences, same model, through `quick` and through a prompt
+/// with nothing in it but the request. **The bare one is not a candidate** and
+/// must not be read as one: it has no injection defence at all, and this
+/// repository has measured a small model obeying screen text four times out of
+/// four. It is here to size the gap. If the gap is nothing, the defences are
+/// free and the disappointment is the model.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn measure_what_the_defended_prompt_costs_the_answer() {
+    let Some(translator) = live() else {
+        return;
+    };
+    let model = translator
+        .installed_models()
+        .unwrap_or_default()
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| crate::DEFAULT_MODEL.to_owned());
+
+    let sentences = [
+        "The test correctly refuses to pass vacuously.",
+        "Acquisition is solved and targeting is not.",
+        "I would rather it failed loudly than passed for a reason nobody checked.",
+    ];
+
+    for source in sentences {
+        println!("\n────────────────────────────────────────────────────────────");
+        println!("EN       {source}");
+        match translator.quick(&QuickRequest::new(source, "Korean")) {
+            Ok(translation) => println!(
+                "defended {:>6}ms  {}",
+                translation.latency_ms,
+                translation.text.replace('\n', " "),
+            ),
+            Err(error) => println!("defended        [{}]", error.reason()),
+        }
+
+        // Built with the crate's own escaper rather than by hand. A benchmark
+        // that hand-rolls its JSON is measuring a different request from the
+        // one the product sends the moment a source contains a quote.
+        let bare = crate::json::object(&[
+            ("model", crate::json::Value::Owned(model.clone())),
+            ("stream", crate::json::Value::Raw("false")),
+            (
+                "system",
+                crate::json::Value::Str(
+                    "Translate the user's text into Korean. Output only the translation.",
+                ),
+            ),
+            ("prompt", crate::json::Value::Str(source)),
+        ]);
+        let began = std::time::Instant::now();
+        match crate::http::post(
+            crate::DEFAULT_ENDPOINT,
+            "/api/generate",
+            &bare,
+            Duration::from_secs(120),
+        ) {
+            Ok(reply) => println!(
+                "bare     {:>6}ms  {}",
+                began.elapsed().as_millis(),
+                crate::json::string_value_of_key(&reply, "response")
+                    .unwrap_or_default()
+                    .trim()
+                    .replace('\n', " "),
+            ),
+            Err(error) => println!("bare            [{}]", error.reason()),
+        }
+    }
+}
+
+/// Warm latency for the two models worth choosing between.
+///
+/// The side-by-side comparison above loads a different model for every call,
+/// so its milliseconds are load times and say nothing about a hover. This warms
+/// each model first and then measures it, which is the number a reader waits.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn measure_warm_latency_of_the_two_candidates() {
+    let probe = OllamaTranslator::default();
+    let installed = probe.installed_models().unwrap_or_default();
+
+    let sentences = [
+        "The test correctly refuses to pass vacuously.",
+        "Acquisition is solved and targeting is not.",
+        "A card placed on the wrong sentence is worse than no card.",
+        "Rest the pointer on a word to see what it means.",
+        "The build failed because a check found a difference.",
+    ];
+
+    for model in ["qwen2.5-coder:7b", "gemma4:e4b"] {
+        if !installed.iter().any(|name| name == model) {
+            println!("{model:<20} not installed");
+            continue;
+        }
+        let translator =
+            OllamaTranslator::new(DEFAULT_ENDPOINT, model).with_timeout(Duration::from_secs(180));
+        // Two discarded runs: the first loads the weights, the second settles
+        // whatever the runtime caches after that.
+        for _ in 0..2 {
+            let _ = translator.quick(&QuickRequest::new(sentences[0], "Korean"));
+        }
+
+        let mut measured: Vec<u128> = Vec::new();
+        for sentence in sentences {
+            if let Ok(translation) = translator.quick(&QuickRequest::new(sentence, "Korean")) {
+                measured.push(translation.latency_ms);
+            }
+        }
+        measured.sort_unstable();
+        let median = measured.get(measured.len() / 2).copied().unwrap_or(0);
+        println!("{model:<20} median {median}ms   over {:?}", measured,);
+    }
+}

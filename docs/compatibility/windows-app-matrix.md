@@ -98,7 +98,7 @@ between them they cover where a user actually meets a second language.
 | Notepad | Document provider, measured | the simplest text case; measured, and it is **not** the Win32 `EDIT` family |
 | Chrome | Chromium | where most reading happens; needs the accessibility wake |
 | Edge | Chromium | measured on HTML, separately from its PDF viewer |
-| VS Code | Electron | code and documentation, a heavy renderer; measured, and the editor exposes nothing |
+| VS Code | Electron | code and documentation, a heavy renderer; the editor exposes nothing to accessibility and is readable by OCR, measured 2026-08-06 |
 | Word | Win32 / Office | the document case |
 | Edge PDF viewer | Chromium PDF | measured: a text PDF reads like a page |
 | Windows Settings | WinUI | measured: sparse, and correct wherever there is text |
@@ -562,6 +562,66 @@ warm-up and is not a latency measurement.
 
 The gate still needs deliberate hovering over real prose in the eight
 target applications.
+
+### OCR against VS Code, 2026-08-06: the M4 question, answered
+
+Build `563c9a2`, `hover-probe ocr --only Code --wait 6`, one window at
+100% scaling, 1440x900 client area, 260 grid points. Same grid rule as a
+sweep, so the two halves are over the same sample.
+
+```
+recognition  93 lines · 336 words · 1922 characters in 1652.1ms
+median word  28x10px
+grid         260 points, 260 over this window, 44 of those on a word
+
+accessibility, over the same points     cold    woken
+  acquired anything                       9       9
+  the point was inside what it read       9       9
+
+where OCR found a word (44 points)       cold    woken
+  acquired anything                       8       8
+  the point was inside what it read       8       8   18.2% woken
+
+latency      p50 5.1ms · p95 8.8ms   (accessibility)
+```
+
+**OCR reads this window and accessibility does not.** On the 44 points
+where there is text to read, accessibility could serve 8. The other 36
+are text a reader can see and Lens could not reach at all before this.
+
+Three things worth separating out.
+
+**The 9 accessibility hits are the same 9 the sweeps found.** Eight of
+them fall on points OCR also sees, so they are not a different set of
+text; they are the chrome and the labels, measured a third way. This is
+the third instrument to put VS Code's editor at zero.
+
+**Cold and woken are identical, to the point.** Two full passes, nine
+acquisitions each, the same nine. Consistent with the sweep's own note
+that this provider was never cold. Whatever Monaco is doing, no amount
+of contact wakes it, which is what `editor.accessibilitySupport = auto`
+predicts: it is waiting for a screen reader and Lens is not one.
+
+**The OCR rate of 16.9% is not a success rate**, and the report says so
+in the output rather than only here. `word_at` answers only when the
+point is inside a word, so that figure is the share of the window
+covered by text. Accessibility's `RangeFromPoint` answers with the
+nearest text from as far as 1,465px away, so its raw acquisition rate is
+closer to asking whether a provider exists. The comparable pair is the
+second table.
+
+**Recognition cost 1.65s for a whole 1440x900 window.** That is the
+instrument, not the product: `Ctrl+Alt+O` captures a 760x180 band, not a
+window. It bounds the cost of a hypothetical whole-window read, and it
+is why there is no such thing.
+
+Measured immediately afterwards, in the product: the card offering the
+fallback appeared once in VS Code, `Ctrl+Alt+O` over the editor read 44
+characters, and the translation came back in 1.7s. That is the whole
+path working in the application that prompted the milestone swap.
+
+Still open for the M4 gate: KakaoTalk (#34), a scanned PDF, and an
+image-text case.
 
 ## Known limitations, before measurement
 
