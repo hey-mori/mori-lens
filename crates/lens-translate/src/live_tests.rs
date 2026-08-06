@@ -1123,3 +1123,131 @@ fn measure_whether_named_identifiers_survive() {
     }
     println!("\n{kept} of {expected} identifiers survived");
 }
+
+/// What a real model says about a real sentence, through the deep path.
+///
+/// Ignored by default: it needs an Ollama with a model, which no test runner
+/// has. It is how the deep path is verified at all, since a schema that parses
+/// in a unit test proves the parser and nothing about what a model puts in it.
+///
+/// The sentences are English written in this repository, so printing them and
+/// their analyses is allowed exactly as the translation benchmark's are:
+/// `docs/privacy-model.md` forbids printing what was **read**.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn analyse_what_the_deep_path_says_about_a_sentence() {
+    use lens_core::analyse::{Analyser, DeepAnalysis, DeepRequest};
+
+    let mut translator = OllamaTranslator::choosing(DEFAULT_ENDPOINT);
+    let model = match translator.resolve_model() {
+        Ok(name) => name.to_owned(),
+        Err(error) => {
+            println!("no model: {}", error.reason());
+            return;
+        }
+    };
+    println!("\nmodel: {model}");
+    println!("label: {}\n", DeepAnalysis::LABEL);
+
+    let cases: Vec<(&str, &str, Option<&str>)> = vec![
+        (
+            "The pointer must rest before anything is read.",
+            "포인터가 멈춘 뒤에야 무엇이든 읽습니다.",
+            Some("rest"),
+        ),
+        (
+            "I would rather it failed loudly than passed for a reason nobody checked.",
+            "아무도 확인하지 않은 이유로 통과하는 것보다 크게 실패하는 편이 낫다.",
+            Some("passed"),
+        ),
+        (
+            "A card placed on the wrong sentence is worse than no card.",
+            "잘못된 문장에 놓인 카드는 카드가 없는 것보다 나쁘다.",
+            None,
+        ),
+        ("vacuously", "공허하게", Some("vacuously")),
+    ];
+
+    for (sentence, translation, word) in cases {
+        let mut request = DeepRequest::new(sentence, translation, "Korean");
+        if let Some(word) = word {
+            request = request.about_the_word(word);
+        }
+        println!("EN  {sentence}");
+        let answerable = request.answerable();
+        println!(
+            "    answerable: word={} structure={}",
+            answerable.the_word, answerable.the_structure
+        );
+        match translator.deep(&request) {
+            Ok(analysis) => {
+                println!("    {}ms", analysis.latency_ms);
+                for (heading, text) in analysis.lines() {
+                    println!("    {heading:<12} {text}");
+                }
+                // What the request said could not be answered must come back
+                // empty, or the prompt is being ignored and the reader is
+                // reading an invented answer.
+                if !answerable.the_structure {
+                    assert!(
+                        analysis.structure.is_empty(),
+                        "a single word came back with a clause structure: {}",
+                        analysis.structure,
+                    );
+                }
+                if !answerable.the_word {
+                    assert!(
+                        analysis.lemma.is_empty(),
+                        "a sentence with no pointed-at word came back with a lemma: {}",
+                        analysis.lemma,
+                    );
+                }
+            }
+            Err(error) => println!("    failed [{}]", error.reason()),
+        }
+        println!();
+    }
+}
+
+/// The deep path costs the quick path nothing.
+///
+/// The M5 gate's first clause. Measured rather than argued: a quick
+/// translation, then an analysis, then the same quick translation again, and
+/// the two quick numbers compared. They share a process and a model lease, so
+/// "separate paths" is a claim about behaviour and not only about modules.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn analyse_does_not_slow_the_quick_path() {
+    use lens_core::analyse::{Analyser, DeepRequest};
+
+    let mut translator = OllamaTranslator::choosing(DEFAULT_ENDPOINT);
+    if translator.resolve_model().is_err() {
+        println!("no model");
+        return;
+    }
+    let source = "Acquisition is solved and targeting is not.";
+    let quick = QuickRequest::new(source, "Korean");
+
+    // Warm, so the first number is not a model load.
+    let _ = translator.quick(&quick);
+
+    let before = translator.quick(&quick).expect("a translation");
+    let deep = translator
+        .deep(&DeepRequest::new(source, &before.text, "Korean").about_the_word("targeting"));
+    let after = translator.quick(&quick).expect("a translation");
+
+    println!("\nquick before  {}ms", before.latency_ms);
+    match &deep {
+        Ok(analysis) => println!("deep          {}ms", analysis.latency_ms),
+        Err(error) => println!("deep          failed [{}]", error.reason()),
+    }
+    println!("quick after   {}ms", after.latency_ms);
+    println!(
+        "the quick path {} after an analysis",
+        if after.latency_ms > before.latency_ms * 2 {
+            "SLOWED"
+        } else {
+            "held"
+        },
+    );
+}
