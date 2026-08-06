@@ -65,15 +65,23 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// number of pixels, so the card was physically narrower and taller than the
 /// one beside it on a 100% screen.
 const CARD_WIDTH: i32 = 300;
-/// The tallest a card may be, in pixels at 100% scaling.
+/// How much of the work area a card may take, at most.
 ///
-/// Scaled per monitor, and it was not. That is the same defect the width above
-/// records as fixed, left behind in the line underneath it: on a 150% display a
-/// card's content is half again as tall while this ceiling stayed at 420
-/// physical pixels, so the point at which a long answer gets its last lines cut
-/// off arrived a third earlier than on a 100% one. Nothing clamps the drawing,
-/// so a card over the ceiling is not shortened, it is clipped.
-const MAX_HEIGHT: i32 = 420;
+/// **A share of the screen rather than a constant, and that took two goes.**
+/// It was 420 physical pixels, then 420 scaled per monitor, and both are
+/// numbers about a card rather than about the screen it is on.
+///
+/// Nothing clamps the drawing, so a card over the ceiling is not shortened, it
+/// is **clipped**: the last lines of the answer vanish with nothing to say so.
+/// Measured on a text with no sentence boundary in it, which is what the
+/// segmenter returns for KakaoTalk's single region (issue #34): 182 pixels lost
+/// at 100% and 273 at 150%.
+///
+/// Two thirds of the work area holds both of those whole on any ordinary
+/// display, and still leaves a card that cannot cover the screen. A card this
+/// tall means a reader hovered a text this long, and showing them most of it is
+/// not better than showing them all of it.
+const MOST_OF_THE_SCREEN: f32 = 0.66;
 
 /// `DWMWCP_ROUND`. Windows 11 rounded corners.
 const DWMWCP_ROUND: i32 = 2;
@@ -441,12 +449,56 @@ unsafe fn show_card(
         Some(previous) => (previous.width, previous.width),
         None => (0, widest),
     };
-    let laid = glass.and_then(|glass| glass.lay_out_between(&card, &theme, range, scale));
+    // SAFETY: read-only monitor queries.
+    let ceiling = card_height_ceiling(unsafe { work_area_for(anchor.center()) });
+
+    // **Laid out, and cut to fit if it does not.** A card taller than its
+    // ceiling is clipped by the window, and what disappears is the end of the
+    // answer with nothing to say so. Cutting the answer and marking it is the
+    // same loss with the reader told about it, and the original stays whole
+    // because that is how they check what they are being told.
+    //
+    // Three times at most. Halving reaches an answer not worth showing in
+    // three rounds, and a loop that measured a layout on a hover path more
+    // often than that would be paying for a rare case on every ordinary one.
+    let mut card = card;
+    let mut laid = glass.and_then(|glass| glass.lay_out_between(&card, &theme, range, scale));
+    for _ in 0..3 {
+        if laid.as_ref().is_none_or(|laid| laid.height <= ceiling) {
+            break;
+        }
+        let answer = match &card.body {
+            CardBody::Translation(text) => text.chars().count(),
+            _ => break,
+        };
+        // The share that fitted, less a little, because the cut adds a marker
+        // and the lines do not divide evenly.
+        // **Halved, not estimated.** The first version scaled the answer by
+        // the share of the ceiling the card overflowed, which assumes the
+        // height is proportional to the answer's length. It is not: the
+        // original is a large fixed part of it, so that estimate converged at
+        // 903, 765, 709 against a ceiling of 634 and would have taken a dozen
+        // rounds. Halving reaches the floor in three, and the floor is a
+        // refusal rather than a clip.
+        let keep = answer / 2;
+        let shorter = card.clone().with_the_answer_cut_to(keep);
+        if shorter.body == card.body {
+            // The answer is as short as it usefully gets and the card still
+            // does not fit, which means the **original** is what does not fit.
+            // Clipping now would take the answer off the bottom and leave the
+            // reader their own source text, and cutting the original is the
+            // one thing `card.rs` forbids. So neither.
+            card = Card::too_long_to_show();
+            laid = glass.and_then(|glass| glass.lay_out_between(&card, &theme, range, scale));
+            break;
+        }
+        card = shorter;
+        laid = glass.and_then(|glass| glass.lay_out_between(&card, &theme, range, scale));
+    }
 
     // The card is as wide and as tall as its contents need, up to the limit. A
     // fixed box holding one short line is mostly empty, which reads as
     // something that failed to load rather than as an answer.
-    let ceiling = card_height_ceiling(scale);
     let (width, height) = match &laid {
         // **No floor.** There was one, at 80 physical pixels, and a card that
         // laid out shorter than that got a window taller than its contents:
@@ -931,9 +983,19 @@ pub fn forget_last_frame() {
     crate::glass::forget_last_frame();
 }
 
-/// The tallest a card may be, for the live check that measures against it.
-pub fn max_card_height() -> i32 {
-    MAX_HEIGHT
+/// The work area a point is on, for a check that needs the same answer the
+/// card placement uses.
+///
+/// # Safety
+/// Read-only monitor queries.
+pub unsafe fn work_area_at(point: ScreenPoint) -> ScreenRect {
+    // SAFETY: the caller's guarantee, passed straight through.
+    unsafe { work_area_for(point) }
+}
+
+/// The tallest a card may be on this work area, for a check measuring it.
+pub fn max_card_height(work_area: ScreenRect) -> i32 {
+    card_height_ceiling(work_area)
 }
 
 /// How long a card takes to arrive.
@@ -1005,17 +1067,20 @@ pub fn max_card_width() -> i32 {
     CARD_WIDTH
 }
 
-/// The window height a card of this laid-out height gets.
+/// The window height a card of this laid-out height gets, on this work area.
 ///
 /// Exposed so a diagnostic can ask whether a card fits the window it is drawn
 /// into, which is a question no screenshot answers reliably.
-pub fn card_height_for(laid_height: i32, scale: f32) -> i32 {
-    laid_height.min(card_height_ceiling(scale))
+pub fn card_height_for(laid_height: i32, work_area: ScreenRect) -> i32 {
+    laid_height.min(card_height_ceiling(work_area))
 }
 
-/// The tallest a card may be on a display at this scaling.
-fn card_height_ceiling(scale: f32) -> i32 {
-    (MAX_HEIGHT as f32 * scale).round() as i32
+/// The tallest a card may be on this work area.
+fn card_height_ceiling(work_area: ScreenRect) -> i32 {
+    // A floor as well, for a work area small enough that two thirds of it
+    // holds nothing: a card that cannot show a line is worse than one that
+    // covers a small screen.
+    ((work_area.height as f32 * MOST_OF_THE_SCREEN).round() as i32).max(200)
 }
 
 /// Whether the overlay class is registered with the styles it must have.
