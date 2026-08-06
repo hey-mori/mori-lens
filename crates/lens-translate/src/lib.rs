@@ -33,6 +33,7 @@ use lens_core::translate::{
     QUICK_TIMEOUT,
 };
 
+pub mod analyse;
 mod http;
 mod json;
 

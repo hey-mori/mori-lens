@@ -151,6 +151,22 @@ benchmark; the analysis model is never called without a user action; a
 schema violation degrades instead of crashing; output is labelled as an
 AI explanation.
 
+Standing, 2026-08-06. The model side is built and measured; nothing in
+the product calls it.
+
+| Condition | State |
+|---|---|
+| quick-path latency unchanged | measured: 1,607ms before an analysis and 1,668ms after, sharing one process, one endpoint and one model lease |
+| never called without a user action | held by construction: `lens-core::session` has no reference to an `Analyser` and there is no path from a settled hover to one. **Also vacuously true**, because nothing calls it at all yet |
+| a schema violation degrades | built: a missing field is an empty field, an answer that was not JSON says nothing, and an analysis that says nothing is a typed error rather than a card of headings over blanks |
+| output labelled as an AI explanation | built: `DeepAnalysis::LABEL`. **Unverified**, because no card shows it |
+| the explanations are right | **open**, and the reason the label exists. `passed` came back with 원형 `passed` rather than `pass` |
+
+Not started: copy, save, and the developer and exam profiles. The
+trigger and the card are the next piece, and the overlay passes clicks
+through ([ADR-0004](decisions/ADR-0004-passive-overlay.md)), so it is a
+key rather than a button.
+
 ## M6 · macOS acquisition
 
 The AX adapter behind the same `TextAcquirer` trait: point hit test,
