@@ -1159,7 +1159,12 @@ fn main() -> std::process::ExitCode {
             overlay.show(Card::waiting(&pending_original), anchor);
         }
 
-        if life.pointer_moved(position, now) == lifecycle::Action::Hide {
+        // With where the card is, so reading it does not dismiss it. The
+        // distance rule measures the pointer against the text, and the card
+        // sits below the text.
+        if life.pointer_moved(position, now, lens_platform_windows::overlay::card_rect())
+            == lifecycle::Action::Hide
+        {
             overlay.hide();
         }
 

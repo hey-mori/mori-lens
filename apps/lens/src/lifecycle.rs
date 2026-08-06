@@ -165,12 +165,26 @@ impl CardLifecycle {
     }
 
     /// The pointer moved. Should the card go?
-    pub fn pointer_moved(&mut self, point: ScreenPoint, now: Duration) -> Action {
+    ///
+    /// `card` is where the card actually is, when one is on screen. It matters
+    /// because the distance rule measures the pointer against the **text**,
+    /// and the card sits below that text: a card 174 pixels tall puts its own
+    /// middle 99 pixels from the anchor, which is past the 72 the rule allows.
+    /// So moving the pointer onto a card in order to read it dismissed it,
+    /// which is the failure `KEEP_CARD_WITHIN_PX` exists to prevent, arriving
+    /// by the other door.
+    pub fn pointer_moved(
+        &mut self,
+        point: ScreenPoint,
+        now: Duration,
+        card: Option<ScreenRect>,
+    ) -> Action {
         let Some(anchor) = self.anchor else {
             return Action::Nothing;
         };
 
-        if !pointer_left_the_card(anchor, point) {
+        let on_the_card = card.is_some_and(|card| card.contains(point));
+        if on_the_card || !pointer_left_the_card(anchor, point) {
             // Back inside, or never left. Any grace already spent is
             // forgiven, so a hand wobbling on the boundary does not
             // accumulate its way to a dismissal.
@@ -235,7 +249,7 @@ mod tests {
         // each partial re-showed a card that was hidden again immediately.
         let mut life = showing();
         for tick in 0..40 {
-            let action = life.pointer_moved(ScreenPoint::new(410, 310), ms(tick * 25));
+            let action = life.pointer_moved(ScreenPoint::new(410, 310), ms(tick * 25), None);
             assert_eq!(action, Action::Nothing, "retired at tick {tick}");
         }
         assert!(life.showing());
@@ -258,10 +272,10 @@ mod tests {
         let mut life = showing();
         let away = ScreenPoint::new(400, 900);
 
-        assert_eq!(life.pointer_moved(away, ms(0)), Action::Nothing);
-        assert_eq!(life.pointer_moved(away, ms(100)), Action::Nothing);
-        assert_eq!(life.pointer_moved(away, ms(249)), Action::Nothing);
-        assert_eq!(life.pointer_moved(away, ms(250)), Action::Hide);
+        assert_eq!(life.pointer_moved(away, ms(0), None), Action::Nothing);
+        assert_eq!(life.pointer_moved(away, ms(100), None), Action::Nothing);
+        assert_eq!(life.pointer_moved(away, ms(249), None), Action::Nothing);
+        assert_eq!(life.pointer_moved(away, ms(250), None), Action::Hide);
         assert!(!life.showing());
     }
 
@@ -271,24 +285,24 @@ mod tests {
         // anchor for a few frames. That must not dismiss anything.
         let mut life = showing();
         assert_eq!(
-            life.pointer_moved(ScreenPoint::new(400, 900), ms(0)),
+            life.pointer_moved(ScreenPoint::new(400, 900), ms(0), None),
             Action::Nothing
         );
         assert_eq!(
-            life.pointer_moved(ScreenPoint::new(410, 310), ms(100)),
+            life.pointer_moved(ScreenPoint::new(410, 310), ms(100), None),
             Action::Nothing
         );
         // The grace restarts, so the old departure cannot expire later.
         assert_eq!(
-            life.pointer_moved(ScreenPoint::new(400, 900), ms(200)),
+            life.pointer_moved(ScreenPoint::new(400, 900), ms(200), None),
             Action::Nothing
         );
         assert_eq!(
-            life.pointer_moved(ScreenPoint::new(400, 900), ms(300)),
+            life.pointer_moved(ScreenPoint::new(400, 900), ms(300), None),
             Action::Nothing
         );
         assert_eq!(
-            life.pointer_moved(ScreenPoint::new(400, 900), ms(450)),
+            life.pointer_moved(ScreenPoint::new(400, 900), ms(450), None),
             Action::Hide
         );
     }
@@ -305,7 +319,10 @@ mod tests {
             } else {
                 ScreenPoint::new(410, 310)
             };
-            assert_eq!(life.pointer_moved(point, ms(tick * 60)), Action::Nothing);
+            assert_eq!(
+                life.pointer_moved(point, ms(tick * 60), None),
+                Action::Nothing
+            );
         }
         assert!(life.showing());
     }
@@ -364,7 +381,7 @@ mod tests {
     fn the_pointer_moving_with_no_card_asks_for_nothing() {
         let mut life = CardLifecycle::new();
         assert_eq!(
-            life.pointer_moved(ScreenPoint::new(0, 0), ms(9_000)),
+            life.pointer_moved(ScreenPoint::new(0, 0), ms(9_000), None),
             Action::Nothing,
         );
     }
@@ -383,22 +400,26 @@ mod tests {
         // The reader reads it, moving a little.
         for tick in 0..10 {
             assert_eq!(
-                life.pointer_moved(ScreenPoint::new(430 + tick, 305), ms(tick as u64 * 25)),
+                life.pointer_moved(
+                    ScreenPoint::new(430 + tick, 305),
+                    ms(tick as u64 * 25),
+                    None
+                ),
                 Action::Nothing,
             );
         }
         // They look down at the card itself, which is below the text.
         assert_eq!(
-            life.pointer_moved(ScreenPoint::new(440, 360), ms(300)),
+            life.pointer_moved(ScreenPoint::new(440, 360), ms(300), None),
             Action::Nothing
         );
         // Then move away to another paragraph.
         assert_eq!(
-            life.pointer_moved(ScreenPoint::new(440, 800), ms(400)),
+            life.pointer_moved(ScreenPoint::new(440, 800), ms(400), None),
             Action::Nothing
         );
         assert_eq!(
-            life.pointer_moved(ScreenPoint::new(440, 800), ms(700)),
+            life.pointer_moved(ScreenPoint::new(440, 800), ms(700), None),
             Action::Hide
         );
         assert!(!life.showing());
@@ -523,7 +544,7 @@ mod gate {
                 }
             }
 
-            if life.pointer_moved(point, now) == Action::Hide {
+            if life.pointer_moved(point, now, None) == Action::Hide {
                 // Retiring a card is not spray; it is the opposite.
             }
         }
@@ -676,8 +697,8 @@ mod waiting {
         assert_eq!(life.waited_long_enough(ms(200)), Some(WORD));
 
         let away = ScreenPoint::new(400, 900);
-        assert_eq!(life.pointer_moved(away, ms(300)), Action::Nothing);
-        assert_eq!(life.pointer_moved(away, ms(550)), Action::Hide);
+        assert_eq!(life.pointer_moved(away, ms(300), None), Action::Nothing);
+        assert_eq!(life.pointer_moved(away, ms(550), None), Action::Hide);
 
         // And the translation that eventually comes back is not drawn.
         assert_eq!(life.answer_arrived(Generation(1), WORD), Action::Show);
@@ -713,5 +734,108 @@ mod waiting {
         );
         // And longer than any cache hit, which is measured in microseconds.
         assert!(WAITING_AFTER >= Duration::from_millis(100));
+    }
+}
+
+#[cfg(test)]
+mod reading_the_card_tests {
+    use super::*;
+
+    fn ms(value: u64) -> Duration {
+        Duration::from_millis(value)
+    }
+
+    /// A card at 150% is 174 pixels tall, and 72 is the distance rule. So the
+    /// middle of a card sits 99 pixels from the text it explains, which is
+    /// past the rule, and moving the pointer there is the ordinary way to read
+    /// something on screen.
+    fn a_card_below(anchor: ScreenRect) -> ScreenRect {
+        ScreenRect::new(anchor.x, anchor.bottom() + 12, 440, 174)
+    }
+
+    #[test]
+    fn reading_the_card_does_not_dismiss_it() {
+        let anchor = ScreenRect::new(400, 300, 300, 22);
+        let card = a_card_below(anchor);
+        let mut life = CardLifecycle::new();
+        life.hover_settled(Generation(1));
+        life.job_dispatched(Generation(1), anchor, ms(0));
+        assert_eq!(life.answer_arrived(Generation(1), anchor), Action::Show);
+
+        let middle = ScreenPoint::new(card.x + card.width / 2, card.y + card.height / 2);
+        assert!(
+            lens_core::card::pointer_left_the_card(anchor, middle),
+            "the fixture is wrong: this point is inside the distance rule already",
+        );
+        for tick in 0..40 {
+            assert_eq!(
+                life.pointer_moved(middle, ms(tick * 25), Some(card)),
+                Action::Nothing,
+                "the card was dismissed while the pointer was on it, at tick {tick}",
+            );
+        }
+    }
+
+    /// And leaving both still dismisses it.
+    #[test]
+    fn leaving_the_text_and_the_card_still_dismisses() {
+        let anchor = ScreenRect::new(400, 300, 300, 22);
+        let card = a_card_below(anchor);
+        let mut life = CardLifecycle::new();
+        life.hover_settled(Generation(1));
+        life.job_dispatched(Generation(1), anchor, ms(0));
+        assert_eq!(life.answer_arrived(Generation(1), anchor), Action::Show);
+
+        let far = ScreenPoint::new(1400, 900);
+        assert_eq!(life.pointer_moved(far, ms(0), Some(card)), Action::Nothing);
+        assert_eq!(
+            life.pointer_moved(far, ms(249), Some(card)),
+            Action::Nothing
+        );
+        assert_eq!(life.pointer_moved(far, ms(250), Some(card)), Action::Hide);
+    }
+
+    /// Moving from the card back to the text forgives the grace, as before.
+    #[test]
+    fn the_card_and_the_text_are_one_place_for_the_grace() {
+        let anchor = ScreenRect::new(400, 300, 300, 22);
+        let card = a_card_below(anchor);
+        let mut life = CardLifecycle::new();
+        life.hover_settled(Generation(1));
+        life.job_dispatched(Generation(1), anchor, ms(0));
+        assert_eq!(life.answer_arrived(Generation(1), anchor), Action::Show);
+
+        let far = ScreenPoint::new(1400, 900);
+        let on_card = ScreenPoint::new(card.x + 20, card.y + 20);
+        assert_eq!(life.pointer_moved(far, ms(0), Some(card)), Action::Nothing);
+        assert_eq!(
+            life.pointer_moved(on_card, ms(100), Some(card)),
+            Action::Nothing,
+        );
+        // The grace was forgiven by being on the card, so leaving again starts
+        // its own 250ms rather than finishing the first one.
+        assert_eq!(
+            life.pointer_moved(far, ms(200), Some(card)),
+            Action::Nothing
+        );
+        assert_eq!(
+            life.pointer_moved(far, ms(300), Some(card)),
+            Action::Nothing
+        );
+        assert_eq!(life.pointer_moved(far, ms(450), Some(card)), Action::Hide);
+    }
+
+    /// With no card on screen the rule is exactly what it was.
+    #[test]
+    fn no_card_means_the_old_behaviour() {
+        let anchor = ScreenRect::new(400, 300, 300, 22);
+        let mut life = CardLifecycle::new();
+        life.hover_settled(Generation(1));
+        life.job_dispatched(Generation(1), anchor, ms(0));
+        assert_eq!(life.answer_arrived(Generation(1), anchor), Action::Show);
+
+        let far = ScreenPoint::new(1400, 900);
+        assert_eq!(life.pointer_moved(far, ms(0), None), Action::Nothing);
+        assert_eq!(life.pointer_moved(far, ms(250), None), Action::Hide);
     }
 }
