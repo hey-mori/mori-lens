@@ -63,7 +63,7 @@ not written), **out of v1** (deliberately excluded).
 | One instance at a time | **shipped** · a named per-session mutex, claimed before anything else. A second copy says so on a card and exits with 0. Measured before it existed: two tray icons, two overlays racing for the same hover, and both hotkeys reported as taken by another application, which was a sentence about Lens naming something else |
 | No console window | **shipped** · a Windows subsystem binary that takes the launching terminal's console when there is one, guarded by a test that reads the PE header |
 | Waiting state | **shipped** · the card says it heard you after 180ms instead of leaving the screen empty for the second a model takes, and never for a cached sentence |
-| Start with Windows | **shipped** · off unless turned on from the tray menu, per-user run key, no elevation |
+| Start with Windows | **shipped** · off unless turned on from the tray menu, per-user run key, no elevation. The tick means *this* binary starts with Windows: a run-key entry pointing at a copy that has been moved reads as off, and turning it on again records the new location |
 | Tray icon | **shipped** · shows whether Lens is listening, pauses on a click, quits from its menu, and survives Explorer restarting |
 | Translation cache | **shipped** · in memory, keyed on model and prompt version |
 | Hover probe, sweep mode | **shipped** · produced the 2026-08-04 measurements |
