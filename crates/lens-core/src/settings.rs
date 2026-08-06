@@ -28,6 +28,22 @@
 
 use crate::policy::{AppPolicy, AppTier};
 
+/// Every key that belongs above `[applications]`.
+///
+/// Used only to give a better message when one turns up below it, so a missing
+/// entry costs a worse sentence rather than a wrong parse. Kept beside the
+/// match that handles them, which is the only way it stays right.
+const GLOBAL_KEYS: [&str; 8] = [
+    "language",
+    "model",
+    "dwell_ms",
+    "theme",
+    "translucency",
+    "endpoint",
+    "ocr",
+    "text",
+];
+
 /// A line the parser did not understand, and where it was.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Problem {
@@ -149,6 +165,22 @@ impl Settings {
             }
 
             if in_applications {
+                // **A setting written in the wrong half of the file.** The
+                // template puts the settings at the top, commented, and
+                // `[applications]` at the bottom, so somebody adding a line
+                // adds it at the end and lands in the wrong section. Told that
+                // `ocr must be allow, modifier, or deny` they would reasonably
+                // conclude they had the wrong value rather than the wrong
+                // place.
+                if GLOBAL_KEYS.contains(&key) {
+                    problems.push(Problem {
+                        line,
+                        message: format!(
+                            "{key} is a setting, not an application; move it above [applications]"
+                        ),
+                    });
+                    continue;
+                }
                 match tier(value) {
                     Some(tier) => settings.applications.push((value_key(key), tier)),
                     None => problems.push(Problem {
@@ -550,6 +582,68 @@ mod template_tests {
             assert_eq!(
                 stated, value,
                 "the template says {key} defaults to {stated:?} and it is {value:?}",
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod misplaced_tests {
+    use super::*;
+
+    /// The template puts the settings at the top and `[applications]` at the
+    /// bottom, so a person adding a line adds it at the end and lands in the
+    /// wrong section. This happened while testing something else.
+    #[test]
+    fn a_setting_below_the_applications_header_says_where_it_belongs() {
+        let (settings, problems) = Settings::parse("[applications]\nocr = automatic\n");
+        assert_eq!(problems.len(), 1);
+        assert!(
+            problems[0].message.contains("above [applications]"),
+            "{}",
+            problems[0].message,
+        );
+        // And it is not taken as a rule for an application called `ocr`.
+        assert!(settings.applications.is_empty());
+        assert_eq!(settings.ocr, Settings::default().ocr);
+    }
+
+    /// A real application rule is still a real application rule, including one
+    /// whose name happens to look like nothing in particular.
+    #[test]
+    fn an_application_rule_is_untouched() {
+        let (settings, problems) = Settings::parse("[applications]\nchrome = allow\n");
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(settings.applications.len(), 1);
+    }
+
+    /// And a bad tier still says so, which is the message this one had to be
+    /// told apart from.
+    #[test]
+    fn a_bad_tier_still_says_what_a_tier_is() {
+        let (_, problems) = Settings::parse("[applications]\nchrome = sometimes\n");
+        assert_eq!(problems.len(), 1);
+        assert!(
+            problems[0].message.contains("allow, modifier, or deny"),
+            "{}",
+            problems[0].message,
+        );
+    }
+
+    /// Every global key is in the list that produces the better message.
+    ///
+    /// Not a scan: the match below cannot be enumerated either. What this does
+    /// is fail when a key is added to one and not the other, by parsing each
+    /// name under the header and insisting the message names the section.
+    #[test]
+    fn every_global_key_is_in_the_list() {
+        for key in GLOBAL_KEYS {
+            let (_, problems) = Settings::parse(&format!("[applications]\n{key} = whatever\n"));
+            assert_eq!(problems.len(), 1, "{key}");
+            assert!(
+                problems[0].message.contains("above [applications]"),
+                "{key}: {}",
+                problems[0].message,
             );
         }
     }
