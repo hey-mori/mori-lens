@@ -178,6 +178,18 @@ impl UiaTextAcquirer {
     /// itself cannot be reached, which is a permission or policy problem rather
     /// than a property of any application.
     pub fn new() -> Result<Self, AcquireError> {
+        // **A precondition, not a courtesy.** This type's whole contract is
+        // rectangles in physical screen pixels, and UI Automation hands a
+        // process that has not declared awareness the same rectangles divided
+        // by the display scaling. It cannot honour its contract in a
+        // virtualised process, so it stops being possible to construct one
+        // there. Idempotent, and a no-op when a manifest has already set the
+        // context.
+        //
+        // Leaving this to the caller cost two days on issue #40: every tool
+        // that read through this and forgot was measuring plausible numbers in
+        // the wrong coordinate space. See `window::declare_dpi_awareness`.
+        window::declare_dpi_awareness();
         let com = ComScope::enter();
         // `CUIAutomation8` rather than `CUIAutomation`, and the difference is
         // the entire point of this constructor. The original co-class predates
@@ -641,5 +653,79 @@ mod tests {
             u128::from(TRANSACTION_TIMEOUT_MS) < CHAIN_BUDGET.as_millis() * 4,
             "one wedged call must not be able to outlast several budgets",
         );
+    }
+}
+
+/// What the element under a point actually is.
+///
+/// A diagnostic, and it exists because of a measurement that has not been
+/// explained. The same plain `EDIT` control answers `Empty` from inside its own
+/// process and, between runs, `Protected(Declared)` from another one, which
+/// means `CurrentIsPassword` returned true for a control that does not carry
+/// `ES_PASSWORD` (issue #40).
+///
+/// Both answers are fail-safe, so this is not a privacy defect: the refusal
+/// direction is the harmless one and no run has ever shown the reverse. It is a
+/// **correctness** problem for the only artifact Milestone 1 produces. An
+/// application recorded as exposing protected fields, when it exposes ordinary
+/// ones, is a wrong row in the compatibility matrix, and every real target Lens
+/// reads is another process.
+///
+/// The hypothesis this is built to test is the last one in that issue: that
+/// `CurrentIsPassword` is answering about a **different element** from the one
+/// under the point. If the element's own rectangle does not contain the point
+/// that produced it, the refusal is about something else.
+///
+/// **This changes no refusal.** `may_be_read` is untouched, and it must be: a
+/// declared password field is refused whatever this reports, because unreadable
+/// means unprovable and unprovable is treated as secure
+/// (`docs/privacy-model.md` §1). This only makes the record honest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ElementUnderPoint {
+    pub control_id: Option<i32>,
+    /// `None` when the property could not be read at all.
+    pub is_password: Option<bool>,
+    pub bounds: Option<ScreenRect>,
+    /// Whether the element's own rectangle contains the point it came from.
+    ///
+    /// `false` with a rectangle present is the finding this was built for.
+    pub contains_point: bool,
+}
+
+impl UiaTextAcquirer {
+    /// Describe the element under a point, without reading any text from it.
+    ///
+    /// No text pattern is requested and no range is expanded, so nothing a
+    /// protected field contains can reach a Rust value through here.
+    pub fn describe_element_at(&self, point: ScreenPoint) -> Option<ElementUnderPoint> {
+        let native = POINT {
+            x: point.x,
+            y: point.y,
+        };
+        // SAFETY: `ElementFromPoint` returns an owned interface or an error.
+        let element = unsafe { self.automation.ElementFromPoint(native) }.ok()?;
+
+        // SAFETY: reading documented properties off a live element.
+        let is_password = unsafe { element.CurrentIsPassword() }
+            .ok()
+            .map(|value| value.as_bool());
+        // SAFETY: as above; the rectangle is returned by value.
+        let bounds = unsafe { element.CurrentBoundingRectangle() }
+            .ok()
+            .map(|rect| {
+                ScreenRect::new(
+                    rect.left,
+                    rect.top,
+                    rect.right - rect.left,
+                    rect.bottom - rect.top,
+                )
+            });
+
+        Some(ElementUnderPoint {
+            control_id: control_type(&element),
+            is_password,
+            contains_point: bounds.is_some_and(|rect| rect.contains(point)),
+            bounds,
+        })
     }
 }

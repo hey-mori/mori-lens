@@ -33,6 +33,30 @@ use windows::Win32::UI::WindowsAndMessaging::{
 ///
 /// Failure is not fatal: the context can already be set by a manifest, and on
 /// a single 100 percent display nothing changes either way.
+///
+/// # What it cost to leave to the caller
+///
+/// This was documented and left to whoever built the process, and the product
+/// does call it. Nothing else did, and issue #40 is what that looked like: a
+/// plain `EDIT` control read as a declared password field from another process
+/// and as ordinary text from its own, intermittently, for two days.
+///
+/// The explanation is entirely here. `ProtectedHarness::start` calls this, so a
+/// test that builds the harness **and** reads it is aware on both sides and
+/// agrees with itself. A test that spawns a child to build the harness is aware
+/// only in the child: the parent asks UI Automation for rectangles and gets
+/// them divided by the scaling, so a point computed from the child's numbers
+/// lands on the control underneath the intended one. On a 125% display the
+/// plain field's centre landed inside the password field, which refused, 40
+/// times out of 40. Nothing was wrong with the refusal.
+///
+/// The intermittency was test ordering: whether some earlier test in the same
+/// binary had already built a harness and declared this on the parent's behalf.
+///
+/// So `UiaTextAcquirer::new` now calls this itself. Not as a courtesy: the
+/// acquirer's whole contract is rectangles in physical screen pixels, and it
+/// cannot honour that in a virtualised process. It is a precondition of the
+/// type existing, not a side effect of constructing it.
 pub fn declare_dpi_awareness() -> bool {
     // SAFETY: a process-wide, idempotent opt-in with no pointer arguments.
     unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).is_ok() }

@@ -623,6 +623,60 @@ path working in the application that prompted the milestone swap.
 Still open for the M4 gate: KakaoTalk (#34), a scanned PDF, and an
 image-text case.
 
+### Win32 `EDIT` across a process boundary, 2026-08-06
+
+Issue #40 recorded that a plain `EDIT` read as `Empty` from inside its own
+process and, between runs, as `Protected(Declared)` from another one. Both
+answers are fail-safe, so it was filed as a matrix-correctness problem
+rather than a privacy one, with three hypotheses and no explanation.
+
+The explanation is neither UI Automation nor the control. **It is two DPI
+coordinate spaces in one measurement.**
+
+`ProtectedHarness::start` declares per-monitor DPI awareness. A test that
+builds the harness and reads it is therefore aware on both sides and agrees
+with itself. A test that spawns a child to build the harness is aware only
+in the child: the parent asks UI Automation for rectangles and is handed
+them divided by the display scaling, because a process that has not declared
+awareness gets virtualised coordinates.
+
+On this 125% display that is a factor of 0.8, and the arithmetic is visible
+in the readings. The child reports its fields at `plain=(109,148 360x40)`
+and `password=(109,208 360x40)`. The parent, asking about the plain field's
+centre, was handed an element of `288x32`, which is `360x40` times 0.8, and
+a background pane `1536` wide, which is 1920 times 0.8. The point computed
+from the child's numbers landed inside the **password** field, which refused,
+**40 times out of 40**. Nothing was ever wrong with the refusal.
+
+The intermittency in the original report was test ordering: whether an
+earlier test in the same binary had already built a harness and declared
+awareness on the parent's behalf.
+
+`UiaTextAcquirer::new` now declares it. Not as a courtesy: the acquirer's
+contract is rectangles in physical screen pixels, and it cannot honour that
+in a virtualised process, so it is a precondition of the type existing.
+
+Measured after the change, one child process, same display:
+
+```
+plain EDIT, 40 readings from another process
+  acquired               40
+  element   control 50004, is_password false, (109,148 360x40), contains the point
+
+password EDIT, 8 readings from another process
+  protected               8
+  element   control 50004, is_password true, (109,208 360x40), contains the point
+```
+
+Both rectangles now match the child's own report exactly, and both controls
+answer the same way every time. The whole live suite passes on the corrected
+coordinate space: **34 passed, 0 failed.**
+
+Worth separating out, because it changes a row: the plain `EDIT` **acquired**
+here, forty times. This repository's earlier note, inherited from Mori, was
+that plain `EDIT` controls expose no text pattern at all. On this control, on
+this build, they do.
+
 ## Known limitations, before measurement
 
 Stated so a run does not rediscover them as bugs:

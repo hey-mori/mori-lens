@@ -2525,3 +2525,220 @@ fn measure_how_much_of_the_page_a_card_covers() {
         "a card may never be wider than it was offered",
     );
 }
+
+const READABLE_ENV: &str = "MORI_LENS_READABLE";
+const READABLE_TEST: &str = "live_tests::be_the_readable_application";
+
+/// The other half of the cross-process pair: a window that answers normally.
+///
+/// Started by `a_plain_edit_in_another_process_answers_the_same_way_every_time`
+/// and does nothing but exist. `be_the_wedged_application` cannot be reused,
+/// because it stops dispatching after two seconds and every reading after that
+/// would be a timeout rather than an answer.
+#[test]
+#[ignore = "spawned by another test; does nothing on its own"]
+fn be_the_readable_application() {
+    use std::io::Write;
+    use std::time::Duration;
+
+    use crate::protected_harness::{centre, ProtectedHarness};
+
+    if std::env::var(READABLE_ENV).is_err() {
+        println!("not the readable process; nothing to do");
+        return;
+    }
+
+    let harness = ProtectedHarness::start().expect("harness");
+    let fields = harness.fields();
+    let plain = centre(fields.plain);
+    let password = centre(fields.password);
+    println!(
+        "READABLE-READY {} {} {} {} {}",
+        plain.x,
+        plain.y,
+        password.x,
+        password.y,
+        harness.window_id(),
+    );
+    println!(
+        "READABLE-FIELDS plain=({},{} {}x{}) password=({},{} {}x{})",
+        fields.plain.x,
+        fields.plain.y,
+        fields.plain.width,
+        fields.plain.height,
+        fields.password.x,
+        fields.password.y,
+        fields.password.width,
+        fields.password.height,
+    );
+    let _ = std::io::stdout().flush();
+
+    // Long enough for the parent to take a few dozen readings, and bounded so
+    // an abandoned child cannot outlive the run.
+    std::thread::sleep(Duration::from_secs(30));
+}
+
+/// Does the same plain `EDIT` answer the same way, read from another process?
+///
+/// **Issue #40, as an instrument.** Read from inside its own process this
+/// control answers `Empty` every time. Read from another process it has
+/// answered `Empty` on one run and `Protected(Declared)` on another, which
+/// means `CurrentIsPassword` returned true for a control with no `ES_PASSWORD`.
+///
+/// One reading either way is an anecdote. This takes forty, on one control, in
+/// one child process, and prints the distribution. When a reading refuses, it
+/// also describes the element that refused: its control type, its rectangle,
+/// and whether that rectangle contains the point that produced it. If the
+/// refusals come from an element that does not contain the point, the answer is
+/// that `ElementFromPoint` is returning a neighbour and the protection check is
+/// about the wrong control.
+///
+/// The password field is read too, and it must refuse **every** time. That is
+/// the assertion; the plain field is measured rather than asserted, because
+/// what it does is the open question.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn a_plain_edit_in_another_process_answers_the_same_way_every_time() {
+    use std::io::{BufRead, BufReader};
+    use std::time::Duration;
+
+    use lens_core::acquire::{AcquireContext, AcquireError, ProtectedReason, TextAcquirer};
+    use lens_core::geometry::ScreenPoint;
+    use lens_core::hover::Generation;
+
+    let acquirer = UiaTextAcquirer::new().expect("UI Automation is unreachable");
+    let context = AcquireContext::new(Generation(1));
+
+    let mut child =
+        std::process::Command::new(std::env::current_exe().expect("this test binary has a path"))
+            .args(["--exact", READABLE_TEST, "--ignored", "--nocapture"])
+            .env(READABLE_ENV, "1")
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("could not spawn the readable process");
+
+    let mut lines = BufReader::new(child.stdout.take().expect("piped")).lines();
+    let mut ready = String::new();
+    for line in lines.by_ref().map_while(Result::ok) {
+        if line.starts_with("READABLE-FIELDS ") {
+            println!("child says: {line}");
+            break;
+        }
+        if line.starts_with("READABLE-READY ") {
+            ready = line;
+        }
+    }
+    assert!(!ready.is_empty(), "the child never reported a window");
+    let numbers: Vec<i32> = ready
+        .trim_start_matches("READABLE-READY ")
+        .split_whitespace()
+        .filter_map(|value| value.parse::<i64>().ok().map(|value| value as i32))
+        .collect();
+    let plain = ScreenPoint::new(numbers[0], numbers[1]);
+    let password = ScreenPoint::new(numbers[2], numbers[3]);
+    let window = numbers[4] as i64;
+
+    // Measuring the occluder instead of the target is a mistake this repository
+    // has already made once.
+    assert_eq!(
+        crate::window::root_window_at(plain),
+        Some(window),
+        "another window is on top of the harness, so this would measure it",
+    );
+
+    const ROUNDS: usize = 40;
+    let mut answers: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut off_element = 0usize;
+    let mut refusals_described = Vec::new();
+
+    for _ in 0..ROUNDS {
+        let outcome = acquirer.acquire(plain, &context);
+        let name = match &outcome {
+            Ok(_) => "acquired".to_owned(),
+            Err(error) => error.reason().to_owned(),
+        };
+        *answers.entry(name).or_default() += 1;
+
+        if matches!(
+            outcome,
+            Err(AcquireError::Protected(ProtectedReason::Declared))
+        ) {
+            if let Some(described) = acquirer.describe_element_at(plain) {
+                if !described.contains_point {
+                    off_element += 1;
+                }
+                if refusals_described.len() < 4 {
+                    refusals_described.push(described);
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
+    println!("\nplain EDIT, {ROUNDS} readings from another process:");
+    for (name, count) in &answers {
+        println!("  {name:<22} {count}");
+    }
+    if let Some(described) = acquirer.describe_element_at(plain) {
+        println!("  element now            {described:?}");
+    }
+    for described in &refusals_described {
+        println!("  refused as             {described:?}");
+    }
+    if !refusals_described.is_empty() {
+        println!(
+            "  of the refusals, {off_element} came from an element whose rectangle does \
+             not contain the point",
+        );
+    }
+
+    // Now that it is explained, both are asserted. The plain control must
+    // never be refused as protected, which is the whole of issue #40, and the
+    // password control must be refused every time, which is the direction that
+    // would matter if this were ever wrong.
+    assert_eq!(
+        answers.get("protected").copied().unwrap_or(0),
+        0,
+        "a plain EDIT was refused as protected from another process: {answers:?}",
+    );
+    let plain_element = acquirer
+        .describe_element_at(plain)
+        .expect("no element under the plain field");
+    assert_eq!(
+        plain_element.is_password,
+        Some(false),
+        "the element under the plain field declares itself a password field",
+    );
+    assert!(
+        plain_element.contains_point,
+        "the element under the plain field does not contain the point that found          it, which is the two coordinate spaces disagreeing again",
+    );
+
+    let mut password_answers: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    for _ in 0..8 {
+        let name = match acquirer.acquire(password, &context) {
+            Ok(_) => "acquired".to_owned(),
+            Err(error) => error.reason().to_owned(),
+        };
+        *password_answers.entry(name).or_default() += 1;
+    }
+    println!("\npassword EDIT, 8 readings from another process:");
+    for (name, count) in &password_answers {
+        println!("  {name:<22} {count}");
+    }
+    let password_element = acquirer
+        .describe_element_at(password)
+        .expect("no element under the password field");
+    println!("  element                {password_element:?}");
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert_eq!(
+        password_answers.get("protected").copied().unwrap_or(0),
+        8,
+        "a declared password field was not refused every time: {password_answers:?}",
+    );
+    assert_eq!(password_element.is_password, Some(true));
+}
