@@ -33,9 +33,10 @@ be through a small documented process boundary, not by merging the code
 
 ## Current state
 
-**Milestone 2 · Windows overlay.** The whole chain runs on Windows:
-hover, read, translate, card. `cargo build --release -p lens` produces
-something you can use today, and the section below says how.
+**Milestone 4 · Windows manual OCR.** The whole chain runs on Windows:
+hover, read, translate, card, and a hotkey that reads the pixels where
+the accessibility path gives nothing. `cargo build --release -p lens`
+produces something you can use today, and the section below says how.
 
 What ships, each of it measured rather than asserted:
 
@@ -45,17 +46,34 @@ What ships, each of it measured rather than asserted:
   [`docs/compatibility/windows-app-matrix.md`](docs/compatibility/windows-app-matrix.md),
   including the two that fail: VS Code's editor exposes nothing without
   a setting change, and KakaoTalk exposes 40 characters in total.
-- **A card drawn with per-pixel alpha**: translucent surface, opaque
-  text, rounded, shadowed, sized to its contents, on the monitor the
-  text is on, never taking focus, passing every click through.
+- **A card drawn with per-pixel alpha**: the text is opaque whatever the
+  surface is, corners are round and antialiased, and it is sized to its
+  contents, on the monitor the text is on, never taking focus, passing
+  every click through. Not shadowed: that was rebuilt three times and
+  read as a box every time, so it went rather than being tuned a fourth.
 - **A tray icon**, a settings file that reloads while running, and
   start-with-Windows.
 - **Secure fields refused before they are read**, checked against a real
-  password control.
+  password control, in its own process and from another one.
+- **OCR where accessibility gives nothing.** `Ctrl+Alt+O` reads the band
+  around the pointer. Measured against VS Code, the application that
+  prompted it: 336 words recovered where accessibility resolves 9 grid
+  points in 260.
+- **It says why nothing happened.** An application that exposes no text
+  is told once, with the hotkey that would work; a reader who has not
+  held the modifier is told once, on a card, because a release binary
+  has no console to print it in.
 
-What does not exist yet: OCR, deep grammar analysis, macOS, saved
-vocabulary, and a settings window. Sequenced in
+What does not exist yet: deep grammar analysis, macOS, saved
+vocabulary, a settings window, and an installer. Sequenced in
 [docs/roadmap.md](docs/roadmap.md).
+
+What is known to be weak, because measuring it is the point of this
+repository: **translation quality**. On five sentences the model this
+picks stated the opposite of the source once, dropped the adverb
+carrying another, and invented a sentence in a third. It is not the
+prompt and not the sampling, both ruled out by measurement. See
+[the quality benchmark](docs/benchmarks/2026-08-06-translation-quality.md).
 
 The authoritative list, capability by capability, is §4 of
 [`docs/mori-lens-project-goal.md`](docs/mori-lens-project-goal.md). This
@@ -157,9 +175,12 @@ it. It opens no window and appears in the notification area.
   That is the way out: Lens opens no console, so a shell does not wait for
   it and `Ctrl+C` at the prompt goes to the shell rather than to Lens.
 
+If you rest the pointer somewhere Lens would read and never hold Alt,
+it says so on a card, once, and tells you the modifier is a setting.
+
 The first run writes `%APPDATA%\Mori Lens\settings.conf` with every
 option in it, commented. That is where the target language, the theme,
-and the per-application rules live:
+the Ollama address, and the per-application rules live:
 
 ```
 default = modifier          # allow, modifier, or deny
@@ -171,6 +192,12 @@ code = deny                 # never, not even with Alt
 
 Password managers are denied before that file is read, and writing
 `default = allow` does not switch that off.
+
+`endpoint` is there for an Ollama that does not listen on
+`127.0.0.1:11434`. It has to be an address on this machine. A remote one
+is refused rather than warned about: the HTTP client here has no TLS, so
+pointing it at another host would send what you hover in clear text, and
+the per-provider grant that would make that a choice does not exist.
 
 Command line flags win over the file, for a one-off run:
 

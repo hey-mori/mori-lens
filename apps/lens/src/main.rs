@@ -889,6 +889,34 @@ fn main() -> std::process::ExitCode {
         // loop carries on to the pause key and the card timers below.
         hover.sample(position, now, input, process_name.clone());
 
+        // The commonest way this product fails a new person: they are not
+        // holding the modifier, so nothing happens, and nothing on screen says
+        // why. Judged here rather than in the worker because a suppressed
+        // sample never settles, so the hover machine never reports one and
+        // there is nothing on that side to notice.
+        //
+        // The condition is narrow on purpose: the modifier must be the *only*
+        // thing in the way, so this never appears over a denied application,
+        // over Lens's own card, or on an empty desktop.
+        let blocked_by_the_modifier = !input.modifier_held
+            && !policy.allows(process_name.as_deref(), false)
+            && policy.allows(process_name.as_deref(), true);
+        if reach.pointer(position, now, blocked_by_the_modifier) {
+            println!("hint  not reading here without the modifier");
+            // Through the lifecycle like any other card, so it retires when the
+            // pointer leaves rather than sitting there. A round trip for the
+            // generation, which happens once a session at most and only while
+            // nothing is in flight: the modifier is not held, so there is no
+            // hover for it to make stale.
+            if let Some(generation) = hover.take_generation() {
+                let anchor = ScreenRect::new(position.x, position.y, 1, 1);
+                life.job_dispatched(generation, anchor, now);
+                life.answer_arrived(generation, anchor);
+                narrator.card_shown();
+                overlay.show(Card::hold_the_modifier("Alt"), anchor);
+            }
+        }
+
         while let Some(answer) = hover.try_recv() {
             let hover_worker::FromHover::Settled {
                 generation,
@@ -910,6 +938,9 @@ fn main() -> std::process::ExitCode {
                     // This application can be read, so it is never offered the
                     // fallback again however the pointer wanders afterwards.
                     reach.readable(process_name.as_deref());
+                    // And a card is about to appear, so the first-run hint has
+                    // nothing left to explain.
+                    reach.card_shown();
                     let sentence = target.segmented.sentence_text().trim().to_owned();
                     // Text already in the reader's language costs nothing and
                     // shows nothing. Without this a Korean reader hovering

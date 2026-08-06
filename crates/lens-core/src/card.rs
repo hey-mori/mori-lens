@@ -212,6 +212,23 @@ impl Card {
         }
     }
 
+    /// The card a first-time reader needs, and the one nothing could tell them.
+    ///
+    /// The default tier puts reading behind a modifier, so a new user rests the
+    /// pointer on a sentence and nothing happens. There is a console line for
+    /// it, and a release binary is a Windows subsystem application: somebody
+    /// who double-clicked it from Explorer has nowhere to read one.
+    ///
+    /// Shown once a session, on the decision in [`crate::reach`], and never
+    /// after a card has already appeared.
+    pub fn hold_the_modifier(key: &str) -> Self {
+        Self {
+            original: "지금은 읽지 않고 있습니다".to_owned(),
+            body: CardBody::Problem(format!("{key}를 누른 채 문장 위에 올려두세요")),
+            footer: "설정에서 항상 읽도록 바꿀 수 있습니다".to_owned(),
+        }
+    }
+
     /// A card for text that could not be read at all.
     pub fn not_acquired(error: AcquireError) -> Self {
         Self {
@@ -313,6 +330,20 @@ mod tests {
             latency_ms: 900,
             cached: false,
         }
+    }
+
+    #[test]
+    fn the_first_run_card_names_the_key_and_the_way_out() {
+        let card = Card::hold_the_modifier("Alt");
+        assert!(card.is_showable());
+        match &card.body {
+            CardBody::Problem(text) => assert!(text.contains("Alt"), "{text}"),
+            other => panic!("expected a problem card, got {other:?}"),
+        }
+        // The footer says the modifier is a setting rather than the product's
+        // nature, because a reader who does not want to hold a key has no
+        // other way to find that out.
+        assert!(card.footer.contains("설정"), "{}", card.footer);
     }
 
     #[test]
