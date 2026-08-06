@@ -210,6 +210,27 @@ impl Overlay {
         self.commands.send(Command::Hide).is_ok() && self.wake()
     }
 
+    /// A way to hide the card from somewhere that cannot hold this.
+    ///
+    /// The OCR acquirer has to take the card down before it photographs the
+    /// screen, or Lens reads its own translation. It lives on the acquisition
+    /// thread and this lives on the hover loop's, so what crosses is a request
+    /// rather than a handle: a `Sender` and a thread id, both of which are
+    /// `Send`, and neither of which is a window.
+    pub fn hider(&self) -> impl Fn() + Send + 'static {
+        let commands = self.commands.clone();
+        let thread_id = self.thread_id;
+        move || {
+            if commands.send(Command::Hide).is_ok() {
+                // SAFETY: posting a documented message to a thread the overlay
+                // owns, exactly as `wake` does.
+                unsafe {
+                    let _ = PostThreadMessageW(thread_id, WM_LENS_REFRESH, WPARAM(0), LPARAM(0));
+                }
+            }
+        }
+    }
+
     /// Nudge the pump so it notices a queued command.
     fn wake(&self) -> bool {
         // SAFETY: posting a documented message to a thread this struct owns.
