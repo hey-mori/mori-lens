@@ -267,6 +267,10 @@ pub const TEMPLATE: &str = "\
 # ocr          = manual        # off, manual, or automatic. Automatic reads
                                # the pixels around the pointer whenever an
                                # application exposes no text, with no keypress.
+                               # In an editor that is nearly every hover, and
+                               # it measured 36% of one core while reading,
+                               # against 0.16% idle. Nothing is written to
+                               # disk either way.
 # text         = normal        # small, normal, large, larger
 
 # What Lens may do in an application it has no rule for.

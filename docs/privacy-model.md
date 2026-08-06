@@ -285,7 +285,8 @@ Every claim on this page, and whether the code keeps it:
 |---|---|
 | Nothing leaves the machine by default | **kept**, and the reason changed on 2026-08-06. The endpoint is now a setting and a flag, because Ollama does not always listen on the default port. Both go through one check, `translate::engine_for`, which accepts `localhost`, `127.0.0.0/8` and `::1` and refuses everything else as a settings error. A name that might resolve to a loopback address is refused too: this cannot resolve names, and guessing from a string is how a promise gets broken quietly. The HTTP client still has no TLS, which is why the restriction is a refusal rather than a warning. |
 | Nothing is recorded | **kept.** No file is written. The translation cache is in memory and dies with the process. |
-| No screen image written to disk | **kept**, and no longer trivially. Two capture paths exist as of M4: `Ctrl+Alt+O` always, and `ocr = automatic` for a hover the accessibility path could not serve, which is off unless a reader turns it on. Both capture a band around the pointer, recognise it, and drop the pixels. `Capture` is not `Clone`, holds no path, and its `Debug` omits the buffer. The claim used to be kept because there was nothing to write. |
+| No screen image written to disk | **kept**, and no longer trivially. Two capture paths exist as of M4, and **how often each runs** is below. Both capture a band around the pointer, recognise it, and drop the pixels. `Capture` is not `Clone`, holds no path, and its `Debug` omits the buffer. The claim used to be kept because there was nothing to write. |
+| How often the screen is captured is stated, not only what | **kept** since 2026-08-06, and it was not before. This page said what a capture contains and never how many there are, which is most of what somebody deciding about a screen-reading tool wants to know. §7. |
 | Protected fields refused before they are read | **kept and executed**, against a real `ES_PASSWORD` control. See §1. |
 | The engine in use is visible | **kept.** Every card's footer names the model and says 로컬 or 외부. |
 | Model output is untrusted | **kept structurally, weaker than it reads.** See §1: two of three local models obeyed an instruction in screen text. Nothing is executed; the mitigation is that the original is always shown beside the answer. |
@@ -298,3 +299,36 @@ Every claim on this page, and whether the code keeps it:
 Three rows are open. They are listed rather than quietly dropped
 because the point of this page is that a reader can tell which promises
 the code keeps.
+
+## 7. How often the screen is captured
+
+What a capture contains is above. How many there are is this, because a
+page that answers only the first question is answering the easier one.
+
+**`ocr = manual`, the default.** Once per `Ctrl+Alt+O`. A reader who never
+presses it is never captured, and a reader who does knows exactly when,
+because they did it.
+
+**`ocr = automatic`.** Once per settled hover that the accessibility path
+could not serve. That sounds narrow and is not: in VS Code the
+accessibility path fails at **96% of sampled points**, so in an editor it
+is very nearly once per settled hover, most of them landing on a margin
+and finding nothing.
+
+Measured on 2026-08-06, twenty fall-throughs at one every 500ms:
+
+```
+per reading  179 ms of CPU
+             35.7 percent of one core, sustained, while somebody reads
+```
+
+against 0.16 percent idle. See
+[`benchmarks/2026-08-05-idle-cost.md`](benchmarks/2026-08-05-idle-cost.md).
+
+**`ocr = off`.** Never. No capture path exists in the process: the acquirer
+is not constructed.
+
+None of this changes what happens to a capture, which is that it is
+recognised and dropped. It changes how much of somebody's screen passes
+through memory in an afternoon, and that is a different question they are
+entitled to ask.

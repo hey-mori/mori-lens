@@ -114,6 +114,9 @@ OPTIONS
                         pixels around the pointer whenever an application
                         exposes no text, with no keypress, which is what an
                         editor or a messenger needs to be readable by hovering.
+                        In an editor that is nearly every hover: measured at
+                        36% of one core while reading, against 0.16% idle.
+                        Nothing is written to disk either way.
     -V, --version       Print the version and the commit this was built from.
     --endpoint <addr>   Where Ollama listens. Default 127.0.0.1:11434, and it
                         must be on this machine: 127.0.0.1, localhost or ::1.
@@ -437,6 +440,15 @@ fn main() -> std::process::ExitCode {
             "UNAVAILABLE: Ctrl+Alt+L is taken by another application"
         }
     );
+    if options.ocr_mode == OcrMode::Automatic {
+        // Said at startup, because a reader who turned this on in a settings
+        // file weeks ago is not going to re-read the file, and 36% of a core
+        // is the kind of thing a laptop notices before its owner does.
+        // One line. A `\`-continuation inside a literal comes back from
+        // rustfmt rejoined with its indentation intact, which has now reached
+        // a user once and a banner once.
+        println!("  cost      36% of one core while reading, measured 2026-08-06");
+    }
     println!(
         "  ocr       {} · {}",
         options.ocr_mode.as_str(),
