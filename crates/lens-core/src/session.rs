@@ -30,9 +30,39 @@ pub enum OcrMode {
     /// means a user who never reaches for OCR never enables a capture path
     /// (`docs/privacy-model.md` §4).
     Manual,
-    /// Whenever accessibility fails with something OCR could repair. Not a v1
-    /// setting; the variant exists so the routing is written once.
+    /// Whenever accessibility fails with something OCR could repair.
+    ///
+    /// A setting, off unless asked for. This is what
+    /// [ADR-0002](../../../docs/decisions/ADR-0002-accessibility-first-acquisition.md)
+    /// describes, and what an application exposing no text needs to be usable
+    /// by hovering rather than by pressing a key: VS Code resolves 9 grid
+    /// points in 260 through accessibility and 336 words through pixels.
+    ///
+    /// Off by default and staying that way. A tool that photographs the screen
+    /// on its own has to be turned on by somebody rather than arrive that way,
+    /// and the M4 gate's "OCR never runs unasked" is a promise about the
+    /// product as installed.
     Automatic,
+}
+
+impl OcrMode {
+    /// The name this mode is written under in the settings file.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Manual => "manual",
+            Self::Automatic => "automatic",
+        }
+    }
+
+    pub fn named(name: &str) -> Option<Self> {
+        match name {
+            "off" => Some(Self::Off),
+            "manual" => Some(Self::Manual),
+            "automatic" => Some(Self::Automatic),
+            _ => None,
+        }
+    }
 }
 
 /// Input state that is not the pointer position.
