@@ -740,6 +740,12 @@ fn main() -> std::process::ExitCode {
     // product that had crashed.
     let mut narrator = silence::Narrator::default();
     let mut reach = lens_core::reach::Reach::new();
+    // Whether the acquisition thread's death has already been reported, so it
+    // is said once rather than on every tick of a loop that keeps running.
+    let mut said_it_died = false;
+    // Whether the translation worker is still there. A failed send is the only
+    // notice it gives, and it is enough.
+    let mut translating = true;
     // Resolved once, here, rather than at the moment a card is drawn. The
     // offer must name a key that will actually do something: taken by another
     // application, or with no recogniser installed, and the card says what is
@@ -910,14 +916,21 @@ fn main() -> std::process::ExitCode {
                     } else {
                         life.job_dispatched(generation, reading.anchor, started.elapsed());
                         pending_original = reading.sentence.clone();
-                        let _ = jobs_tx.send(Job {
-                            generation,
-                            original: reading.sentence,
-                            focused_word: Some(reading.word),
-                            anchor: reading.anchor,
-                            language: language.clone(),
-                            doubtful: reading.misread > 0,
-                        });
+                        // A failed send means the translation worker has
+                        // gone. Recorded rather than discarded, for the same
+                        // reason the acquisition thread's death is: a product
+                        // that keeps running while nothing answers is worse
+                        // than one that says so.
+                        translating &= jobs_tx
+                            .send(Job {
+                                generation,
+                                original: reading.sentence,
+                                focused_word: Some(reading.word),
+                                anchor: reading.anchor,
+                                language: language.clone(),
+                                doubtful: reading.misread > 0,
+                            })
+                            .is_ok();
                     }
                 }
                 Err(refusal) => {
@@ -930,6 +943,33 @@ fn main() -> std::process::ExitCode {
                     );
                 }
             }
+        }
+
+        // Said once, and said everywhere a person might be looking. A worker
+        // that has gone leaves the product running and reading nothing, and
+        // until this the tray went on saying it was listening.
+        if (hover.has_died() || !translating) && !said_it_died {
+            said_it_died = true;
+            eprintln!(
+                "{} has stopped; restart Lens",
+                if hover.has_died() {
+                    "the acquisition thread"
+                } else {
+                    "the translation thread"
+                },
+            );
+            if let Some(tray) = &tray {
+                tray.set_state(
+                    Glyph::Paused,
+                    "Mori Lens · 읽기가 멈췄습니다. 다시 실행해 주세요",
+                    theme.problem,
+                );
+            }
+            let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
+            overlay.show(
+                Card::not_readable("읽기가 멈췄습니다 · 다시 실행해 주세요"),
+                ScreenRect::new(at.x, at.y, 1, 1),
+            );
         }
 
         if pause.is_paused() {
@@ -1043,15 +1083,22 @@ fn main() -> std::process::ExitCode {
                         // tell the reader it was heard if the answer is slow.
                         life.job_dispatched(generation, anchor, now);
                         pending_original = sentence.clone();
-                        let _ = jobs_tx.send(Job {
-                            generation,
-                            original: sentence,
-                            focused_word: target.segmented.word_text().map(str::to_owned),
-                            anchor,
-                            language: language.clone(),
-                            // The accessibility path reads text, not pixels.
-                            doubtful: false,
-                        });
+                        // A failed send means the translation worker has
+                        // gone. Recorded rather than discarded, for the same
+                        // reason the acquisition thread's death is: a product
+                        // that keeps running while nothing answers is worse
+                        // than one that says so.
+                        translating &= jobs_tx
+                            .send(Job {
+                                generation,
+                                original: sentence,
+                                focused_word: target.segmented.word_text().map(str::to_owned),
+                                anchor,
+                                language: language.clone(),
+                                // The accessibility path reads text, not pixels.
+                                doubtful: false,
+                            })
+                            .is_ok();
                     }
                 }
                 // None of these draws a card, and until now none of them said
