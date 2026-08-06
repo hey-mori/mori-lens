@@ -225,6 +225,39 @@ impl Capture {
         })
     }
 
+    /// A rectangle of this capture, in the capture's own coordinates.
+    ///
+    /// Clamped to what is there, so a caller asking for a region that hangs
+    /// over an edge gets the part that exists rather than nothing.
+    ///
+    /// **This is what makes an enlarged second pass affordable.** Enlarging the
+    /// whole band three times is 2280x540 pixels of recognition, measured at
+    /// 887ms, and the caller only ever wants the word under one point. Cropping
+    /// first asks the expensive question about the part of the picture the
+    /// answer can come from.
+    pub fn cropped(&self, region: ScreenRect) -> Option<Self> {
+        let left = region.x.clamp(0, self.width);
+        let top = region.y.clamp(0, self.height);
+        let right = region.right().clamp(0, self.width);
+        let bottom = region.bottom().clamp(0, self.height);
+        let (width, height) = (right - left, bottom - top);
+        if width <= 0 || height <= 0 {
+            return None;
+        }
+
+        let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+        for y in top..bottom {
+            let from = ((y * self.width + left) * 4) as usize;
+            let to = from + (width * 4) as usize;
+            pixels.extend_from_slice(&self.pixels[from..to]);
+        }
+        Some(Self {
+            width,
+            height,
+            pixels,
+        })
+    }
+
     /// Mean luminance, 0 to 255.
     ///
     /// Sampled rather than summed: a band is tens of thousands of pixels and
