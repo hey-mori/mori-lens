@@ -212,10 +212,25 @@ pub fn parameter_billions(name: &str) -> Option<f32> {
 /// installed short-circuited every rule, and the better model sitting beside it
 /// was never considered.
 ///
-/// **A code model is never chosen automatically.** The previous version matched
-/// the prefix `qwen2.5`, which also matches `qwen2.5-coder:7b`, so a machine
-/// with the coder model and nothing else would have translated prose with a
-/// model trained to complete functions. It can still be asked for by name.
+/// **A code model can be chosen automatically, and that is deliberate.** It
+/// was excluded once, on the reasoning that a model trained to complete
+/// functions should not translate prose. That reasoning was measured on
+/// 2026-08-05 and lost: `qwen2.5-coder:7b` was right where `qwen2.5:3b`
+/// rendered "pointer" as 점퍼. `a_code_model_is_not_excluded_because_of_its_name`
+/// is that measurement.
+///
+/// This paragraph said the opposite until 2026-08-06, describing the excluded
+/// behaviour as current, and it is worth saying why that mattered rather than
+/// just correcting it. A reader asked why the translations were poor. The model
+/// answering was the coder model, chosen by this function, while the comment
+/// above the function said that could not happen. A stale comment about a rule
+/// is not a small thing when somebody is trying to work out where an answer
+/// came from.
+///
+/// What the 2026-08-05 measurement establishes is narrower than it was read as:
+/// 7B beat 3B. It compared a code model against a general model **of a
+/// different size**, so it says nothing about specialisation at a fixed size.
+/// See `docs/benchmarks/2026-08-06-translation-quality.md`.
 pub fn choose_model(wanted: Option<&str>, installed: &[String]) -> Option<String> {
     if let Some(wanted) = wanted {
         if installed.iter().any(|name| name == wanted) {
