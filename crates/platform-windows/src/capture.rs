@@ -225,6 +225,68 @@ impl Capture {
         })
     }
 
+    /// Mean luminance, 0 to 255.
+    ///
+    /// Sampled rather than summed: a band is tens of thousands of pixels and
+    /// every sixteenth of them says the same thing about whether a background
+    /// is dark.
+    ///
+    /// Exists for [`Self::inverted`]'s benchmark, where it is what proved the
+    /// inversion was actually happening. Without it the identical recognition
+    /// either side of it would have read as a broken measurement, which is
+    /// what it looked like first.
+    pub fn brightness(&self) -> u8 {
+        let mut total: u64 = 0;
+        let mut counted: u64 = 0;
+        for pixel in self.pixels.chunks_exact(4).step_by(16) {
+            // Rec. 601 weights, in integers. The exact constants matter less
+            // than that green counts for most of it, which is what makes this
+            // agree with what an eye calls dark.
+            total +=
+                (u64::from(pixel[2]) * 299 + u64::from(pixel[1]) * 587 + u64::from(pixel[0]) * 114)
+                    / 1000;
+            counted += 1;
+        }
+        if counted == 0 {
+            return 255;
+        }
+        (total / counted).min(255) as u8
+    }
+
+    /// The same picture with its colours inverted.
+    ///
+    /// **Used by a benchmark and deliberately not by the product**, because
+    /// the benchmark ruled it out. It is kept because a negative result that
+    /// cannot be re-run is a claim rather than a measurement.
+    ///
+    /// The reasoning was good and it was wrong. `Windows.Media.Ocr` is trained
+    /// on documents, which are dark text on light paper, and every card a
+    /// reader photographed with garbage in it was light text on a dark
+    /// background. Measured on the same sentence at the same size, a dark card
+    /// scores 3 of 7 words against a light one's 6 of 7, so the effect is real.
+    ///
+    /// Inverting it changes **nothing at all**. Not a smaller improvement: the
+    /// recogniser returns the identical string, word for word, from a picture
+    /// whose mean luminance went from 38 to 215. Whatever costs the dark card
+    /// three words, polarity is not it, and the recogniser normalises it away
+    /// before the classifier sees anything.
+    ///
+    /// Alpha is left alone. Inverting it would turn a transparent margin into
+    /// an opaque one and give the recogniser a rectangle of ink to look at.
+    pub fn inverted(&self) -> Self {
+        let mut pixels = self.pixels.clone();
+        for pixel in pixels.chunks_exact_mut(4) {
+            pixel[0] = 255 - pixel[0];
+            pixel[1] = 255 - pixel[1];
+            pixel[2] = 255 - pixel[2];
+        }
+        Self {
+            width: self.width,
+            height: self.height,
+            pixels,
+        }
+    }
+
     /// A capture built from bytes this process produced rather than from the
     /// screen. Only for measuring the recogniser against text this repository
     /// drew, which is the one way to score it without printing anybody's.
