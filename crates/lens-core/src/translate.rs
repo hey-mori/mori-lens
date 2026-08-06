@@ -640,7 +640,11 @@ mod tests {
     fn a_sentence_is_given_room_to_finish() {
         // A translation cut off mid-sentence is worse than a wordy one, so the
         // budget stays generous for anything sentence-sized.
-        let sentence = "The output files came back empty, so the full test suite                         produced nothing.";
+        // One line. A line continuation inside a string literal comes back
+        // from rustfmt rejoined with its indentation, and this very sentence
+        // carried twenty-five spaces in the middle of it until 2026-08-06.
+        let sentence =
+            "The output files came back empty, so the full test suite produced nothing at all.";
         assert!(token_budget(sentence.chars().count()) >= 200);
     }
 
