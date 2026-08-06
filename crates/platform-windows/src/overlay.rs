@@ -111,6 +111,14 @@ static THEME: Mutex<Option<Theme>> = Mutex::new(None);
 /// `KEEP_CARD_WITHIN_PX` exists to prevent.
 static PLACED: Mutex<Option<ScreenRect>> = Mutex::new(None);
 
+/// Where the card is on screen right now, if it is.
+///
+/// The hover loop needs it so a pointer moved onto a card to read it does not
+/// count as having left the text the card explains.
+pub fn card_rect() -> Option<ScreenRect> {
+    PLACED.lock().ok().and_then(|slot| *slot)
+}
+
 /// Remember, or forget, where the card is.
 fn remember_placement(placed: Option<ScreenRect>) {
     if let Ok(mut slot) = PLACED.lock() {
