@@ -161,6 +161,11 @@ cargo build --release -p lens
 no service, no elevation. Put it wherever you keep such things and run
 it. It opens no window and appears in the notification area.
 
+Running it twice does nothing: the second copy says so on a card and
+exits. It opens no window on launch, so double-clicking again is the
+natural thing to do when nothing seems to happen, and it used to give
+you two of everything.
+
 To hand it to somebody else:
 
 ```bash
