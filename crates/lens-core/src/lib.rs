@@ -23,6 +23,7 @@
 //! - [`geometry`] is the one coordinate space, physical screen pixels.
 
 pub mod acquire;
+pub mod analyse;
 pub mod barren;
 pub mod cache;
 pub mod card;
