@@ -53,11 +53,34 @@ foreign, possibly wedged UI thread.
 **Where Lens differs, and it is a real problem.** Mori pays this cost
 once per deliberate keypress. Lens would pay it per hover, and 340ms of
 wake plus settle is longer than the entire hover budget. So Lens cannot
-simply copy the retry. The wake has to become a *per-window, once*
-operation, remembered for the lifetime of that window rather than
-repeated per hover, and it must not run on the pointer thread. That
-design is not inherited; it is Lens's to solve, and the probe is where
-it gets measured.
+simply copy the retry.
+
+**What Lens built first, and what it measured.** The design written here
+was *per-window, once*, remembered for the lifetime of the window. That
+was built, and it produced a failure a reader described exactly:
+
+> Alt을 눌렀는데 처음에는 반응이 없고, 두 번째에는 못한다고 하고,
+> 세 번째에는 번역된 걸 보여주고
+
+A renderer that has not finished building its tree fails the retry, and
+*once* meant the second hover sent no message and made no retry at all.
+The tree finished on its own while the reader tried again.
+
+So the design is now **poll, throttled per window**: the message goes
+out, the tree is asked for every 25ms until 420ms, and a window that did
+not wake may be asked again after two seconds. Forgetting a failed wake
+entirely was tried in between and was worse, because every failing point
+then paid the full wait: a sweep managed 45 points in twenty seconds
+before the live check that caught it gave up.
+
+Both halves are affordable now for a reason that was not true when this
+was written: acquisition runs on its own thread (issue #42), so waiting
+costs the card latency and costs the pointer and the pause key nothing.
+
+The measured cost of the wake message itself, taken 2026-08-06 across
+four runs, is **about 0.1ms**. The 340ms in the paragraph above is the
+message plus a fixed sleep, and the sleep was all of it.
+See `benchmarks/2026-08-06-accessibility-wake.md`.
 
 ## 3. The element must be re-fetched after waking
 
