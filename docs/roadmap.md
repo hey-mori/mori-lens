@@ -109,6 +109,17 @@ both work; Lens never recognises its own overlay; no captured image
 reaches disk; and VS Code and KakaoTalk, the two applications that
 prompted the swap, are measured again with it.
 
+**"Unasked" means as installed, and that is the whole of it.** As of
+2026-08-06 `ocr = automatic` exists, and under it a hover the
+accessibility path could not serve falls through to pixels with no
+keypress. That is what
+[ADR-0002](decisions/ADR-0002-accessibility-first-acquisition.md)
+describes rather than a departure from it, and it is what an editor or a
+messenger needs to be readable by hovering. The default is `manual` and
+stays there: a tool that photographs the screen on its own has to be
+turned on by somebody. A reader who writes that line in their settings
+file has asked.
+
 **Answered, 2026-08-05** ([#62](https://github.com/swarea/mori-lens/issues/62)).
 `Windows.Media.Ocr` documents a package identity requirement for desktop
 applications, and Lens ships as a single unpackaged `lens.exe`. Measured
