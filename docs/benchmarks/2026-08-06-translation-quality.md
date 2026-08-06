@@ -163,6 +163,59 @@ That is worth stating plainly because the conclusion has been load
 bearing since: it is why the family preference names `qwen2.5` and why a
 code model is not on the list of things a hover must not use.
 
+## Identifiers, named rather than described
+
+A separate defect from the same session, and one that is fixed.
+
+A reader photographed a card whose source was Korean prose carrying English
+identifiers. The answer had transliterated `EngineDataSheetService` into
+엔진데이터시트서비스. That is worse than not translating the sentence: a
+sentence a reader can already mostly read came back with the one part they
+could act on destroyed.
+
+The system prompt already said *code identifiers, file paths and URLs stay
+verbatim*. A 7B model applying that rule to a bare CamelCase word in the
+middle of a sentence evidently does not.
+
+So they are listed. `lens_core::translate::identifiers_in` finds tokens no
+ordinary word could be, an underscore inside, a lower-then-upper camel hump,
+a slash with something after it, or a scheme, and the prompt names them.
+That turns a rule the model has to apply into a list it has to copy.
+
+Measured over three sentences on `qwen2.5-coder:7b`:
+
+```
+insway의 EngineDataSheetService 에 export_csv 를 넣고, POST /projects/{id}/... 
+  kept    EngineDataSheetService
+  kept    export_csv
+  kept    /projects/{id}/insbase/tables/{table}/export
+
+The build failed because cargo fmt --check found a difference in src/main.rs
+  kept    src/main.rs
+
+Call getUserProfile with the user_id and the request will return a row
+  kept    getUserProfile
+  kept    user_id
+
+6 of 6 identifiers survived
+```
+
+The line from the card now comes back with all three intact.
+
+**These came off a screen**, so the tokens are filtered to a closed
+character set rather than a list of forbidden ones: a list of what may not
+appear has to be kept complete forever against strings arriving from a
+stranger's display, and a list of what may is closed by construction. This
+and the focused word are the only two places screen text is spliced into
+instructions rather than fenced, and there is a test that a token carrying a
+newline and an injection cannot break out of the line it sits in.
+
+**Not fixed by this:** the proper noun beside them. `insway` came back as
+인웨이. A company name is not an identifier by any shape rule, and teaching
+the extractor to catch capitalised words would list every proper noun in
+every sentence and train the model to leave names untranslated, which is the
+opposite of what a reader wants.
+
 ## What to do
 
 Neither of the two candidates is shippable and the cause is not the
