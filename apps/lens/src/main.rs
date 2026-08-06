@@ -941,7 +941,14 @@ fn main() -> std::process::ExitCode {
                     if let Resolution::Failed(error) = &other {
                         if reach.unreadable(process_name.as_deref(), error) {
                             let card = Card::cannot_read_this_app(ocr_hotkey.as_deref());
-                            let anchor = ScreenRect::new(position.x, position.y, 1, 1);
+                            // **The settled point, not the pointer now.** They
+                            // were the same value while acquisition ran inline
+                            // on this loop. They are not any more: this card is
+                            // shown after a read that failed, and the read is
+                            // allowed 800ms, so anchoring on the live pointer
+                            // puts the card wherever the hand drifted to in the
+                            // meantime rather than on the text it is about.
+                            let anchor = ScreenRect::new(point.x, point.y, 1, 1);
                             narrator.card_shown();
                             life.job_dispatched(generation, anchor, now);
                             life.answer_arrived(generation, anchor);
