@@ -39,7 +39,7 @@
 //! about a sequence, and a sequence with the middle removed is a different one.
 
 use std::collections::VecDeque;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::Duration;
 
 use lens_core::geometry::ScreenPoint;
@@ -88,6 +88,16 @@ pub struct HoverWorker {
     /// hover happened to be in the queue and drop it, so pressing the OCR key
     /// at the wrong moment would silently discard a card.
     pending: VecDeque<FromHover>,
+    /// Whether the thread has gone.
+    ///
+    /// **A product has to notice its own death.** Without this, a worker that
+    /// panicked left the channel disconnected, `try_recv` answered `None`
+    /// forever, and the loop carried on sampling a pointer nobody was reading.
+    /// The tray went on saying it was listening. That is the worst shape a
+    /// failure can take here and it is the one `silence.rs` exists to prevent,
+    /// so the one thread that can take the product down silently should not be
+    /// able to.
+    dead: bool,
     join: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -168,6 +178,7 @@ impl HoverWorker {
                 to,
                 from,
                 pending: VecDeque::new(),
+                dead: false,
                 join: Some(join),
             })
         } else {
@@ -224,10 +235,35 @@ impl HoverWorker {
         if let Some(held) = self.pending.pop_front() {
             return Some(held);
         }
-        // Disconnected is treated as empty on purpose: the worker having gone
-        // away is not something this loop can do anything about mid-frame, and
-        // the product keeps drawing whatever card it already has.
-        self.from.try_recv().ok()
+        match self.from.try_recv() {
+            Ok(message) => Some(message),
+            Err(TryRecvError::Empty) => None,
+            // Recorded rather than swallowed. Nothing can be done about it
+            // mid-frame, and a caller that never finds out cannot say so.
+            Err(TryRecvError::Disconnected) => {
+                self.dead = true;
+                None
+            }
+        }
+    }
+
+    /// End the thread, for a test that needs a dead one.
+    ///
+    /// The same thing a panic does from this side of the channel: the sender
+    /// goes away and the loop's `recv` returns an error.
+    #[cfg(test)]
+    fn stop_for_test(&mut self) {
+        let (dead, _) = mpsc::channel();
+        let live = std::mem::replace(&mut self.to, dead);
+        drop(live);
+    }
+
+    /// Whether the acquisition thread has gone.
+    ///
+    /// Latched: a channel does not un-disconnect, and a product that reported
+    /// this intermittently would be worse than one that reported it once.
+    pub fn has_died(&self) -> bool {
+        self.dead
     }
 }
 
@@ -391,11 +427,61 @@ mod tests {
             "the settled hover in the channel was consumed by the generation request",
         );
     }
+}
 
-    /// A worker whose session cannot be built reports it rather than starting
-    /// a thread that answers nothing for the life of the process.
+#[cfg(test)]
+mod liveness_tests {
+    use super::*;
+
+    /// A worker that never starts is not a worker.
     #[test]
-    fn a_session_that_cannot_be_built_is_not_a_running_worker() {
+    fn a_session_that_cannot_be_built_reports_it() {
         assert!(HoverWorker::start(|| None).is_none());
+    }
+
+    /// A worker whose thread has gone is noticed, and stays noticed.
+    ///
+    /// This is the failure the whole latch exists for: before it, a thread that
+    /// panicked left the channel disconnected, `try_recv` answered `None`
+    /// forever, and the product carried on sampling a pointer nobody was
+    /// reading while the tray said it was listening.
+    #[test]
+    fn a_worker_that_has_gone_is_noticed_and_stays_noticed() {
+        let mut worker = HoverWorker::start(|| {
+            Some(HoverSession::new(
+                HoverConfig::default(),
+                AppPolicy::default(),
+                Box::new(NeverReads),
+            ))
+        })
+        .expect("worker");
+
+        assert!(!worker.has_died(), "it has not");
+
+        // Ending the thread the way a panic would: the far end of the channel
+        // goes away.
+        worker.stop_for_test();
+        // Give the thread a moment to unwind and drop its sender.
+        for _ in 0..100 {
+            if worker.try_recv().is_none() && worker.has_died() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(worker.has_died(), "the death was not noticed");
+        let _ = worker.try_recv();
+        assert!(worker.has_died(), "and it did not un-notice it");
+    }
+
+    struct NeverReads;
+
+    impl lens_core::acquire::TextAcquirer for NeverReads {
+        fn acquire(
+            &self,
+            _point: ScreenPoint,
+            _context: &lens_core::acquire::AcquireContext,
+        ) -> Result<lens_core::acquire::TextTarget, lens_core::acquire::AcquireError> {
+            Err(lens_core::acquire::AcquireError::Unsupported)
+        }
     }
 }
