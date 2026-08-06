@@ -1,0 +1,5 @@
+[package]
+name = "lens-build-stamp"
+version.workspace = true
+edition.workspace = true
+publish = false
