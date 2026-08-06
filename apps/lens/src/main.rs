@@ -615,6 +615,13 @@ fn main() -> std::process::ExitCode {
     // modifier over a window that exposes no text used to look exactly like a
     // product that had crashed.
     let mut narrator = silence::Narrator::default();
+    let mut reach = lens_core::reach::Reach::new();
+    // Resolved once, here, rather than at the moment a card is drawn. The
+    // offer must name a key that will actually do something: taken by another
+    // application, or with no recogniser installed, and the card says what is
+    // wrong without naming a key that does nothing.
+    let ocr_hotkey = (pause.ocr_is_registered() && !ocr::available_languages().is_empty())
+        .then(|| "Ctrl+Alt+O".to_owned());
 
     // Pause has three entrances now: the hotkey, the tray icon, and the tray
     // menu. They set the same flag rather than each doing their own thing,
@@ -817,6 +824,9 @@ fn main() -> std::process::ExitCode {
             life.hover_settled(generation);
             match session.resolve(generation, point, now, input) {
                 Resolution::Presented(target) => {
+                    // This application can be read, so it is never offered the
+                    // fallback again however the pointer wanders afterwards.
+                    reach.readable(process_name.as_deref());
                     let sentence = target.segmented.sentence_text().trim().to_owned();
                     // Text already in the reader's language costs nothing and
                     // shows nothing. Without this a Korean reader hovering
@@ -870,6 +880,22 @@ fn main() -> std::process::ExitCode {
                 other => {
                     if let Some(line) = narrator.line_for(&other, process_name.as_deref()) {
                         println!("{line}");
+                    }
+                    // A console line is not an answer for somebody who started
+                    // this from Explorer: a Windows subsystem binary has no
+                    // console to print it in. Once per application, when the
+                    // application rather than the pointer is what failed, the
+                    // reader is told on the card instead, and told what to
+                    // press. `reach` decides; this only draws.
+                    if let Resolution::Failed(error) = &other {
+                        if reach.unreadable(process_name.as_deref(), error) {
+                            let card = Card::cannot_read_this_app(ocr_hotkey.as_deref());
+                            let anchor = ScreenRect::new(position.x, position.y, 1, 1);
+                            narrator.card_shown();
+                            life.job_dispatched(generation, anchor, now);
+                            life.answer_arrived(generation, anchor);
+                            overlay.show(card, anchor);
+                        }
                     }
                 }
             }

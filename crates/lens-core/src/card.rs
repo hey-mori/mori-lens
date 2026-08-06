@@ -185,6 +185,33 @@ impl Card {
         }
     }
 
+    /// A card for an application that has proved it exposes no text.
+    ///
+    /// Shown once per application per session, on the decision in
+    /// [`crate::reach`], and never for a protected field. It exists because
+    /// hovering an unreadable window does nothing, and nothing is also what a
+    /// broken product does: without this the reader learns only that Lens does
+    /// not work here, which is both discouraging and untrue.
+    ///
+    /// `hotkey` is `None` when OCR cannot actually be reached, because the
+    /// combination is held by another application or the system has no
+    /// recogniser installed. Then the card says what is wrong and stops,
+    /// rather than naming a key that will do nothing.
+    pub fn cannot_read_this_app(hotkey: Option<&str>) -> Self {
+        match hotkey {
+            Some(key) => Self {
+                original: "이 앱은 글자를 내주지 않습니다".to_owned(),
+                body: CardBody::Problem(format!("{key} 를 누르면 화면을 읽습니다")),
+                footer: "화면 읽기".to_owned(),
+            },
+            None => Self {
+                original: String::new(),
+                body: CardBody::Problem("이 앱은 글자를 내주지 않습니다".to_owned()),
+                footer: "화면 읽기를 쓸 수 없습니다".to_owned(),
+            },
+        }
+    }
+
     /// A card for text that could not be read at all.
     pub fn not_acquired(error: AcquireError) -> Self {
         Self {
@@ -285,6 +312,31 @@ mod tests {
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 900,
             cached: false,
+        }
+    }
+
+    #[test]
+    fn the_offer_names_the_key_that_actually_works() {
+        let offered = Card::cannot_read_this_app(Some("Ctrl+Alt+O"));
+        assert!(offered.is_showable());
+        match &offered.body {
+            CardBody::Problem(text) => assert!(text.contains("Ctrl+Alt+O"), "{text}"),
+            other => panic!("expected a problem card, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_unreachable_fallback_is_not_offered() {
+        // Naming a key that is held by another application, or that has no
+        // recogniser behind it, is worse than saying nothing: the reader
+        // presses it, nothing happens, and now two things look broken.
+        let plain = Card::cannot_read_this_app(None);
+        assert!(plain.is_showable());
+        match &plain.body {
+            CardBody::Problem(text) => {
+                assert!(!text.contains("Ctrl"), "a key was named anyway: {text}");
+            }
+            other => panic!("expected a problem card, got {other:?}"),
         }
     }
 
