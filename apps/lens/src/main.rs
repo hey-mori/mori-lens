@@ -30,6 +30,7 @@
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use lens_core::analyse::{Analyser, DeepRequest};
 use lens_core::cache::{CacheKey, TranslationCache};
 use lens_core::card::Card;
 use lens_core::geometry::{ScreenPoint, ScreenRect};
@@ -56,8 +57,22 @@ mod pointer;
 mod refresh;
 mod silence;
 
+/// What the worker is asked to do.
+///
+/// Two variants rather than a flag, because the two paths of
+/// [ADR-0005](../../../docs/decisions/ADR-0005-two-speed-ai.md) share a worker
+/// and nothing else: different prompt, different budget, different timeout. A
+/// `Translate` carrying an optional explanation would be one struct describing
+/// two requests, and the field that says which would be the thing to forget.
+enum Job {
+    Translate(Translate),
+    /// Explain the sentence a card is already showing, because a reader
+    /// pressed the key for it.
+    Explain(Explain),
+}
+
 /// What the worker is asked to translate.
-struct Job {
+struct Translate {
     generation: Generation,
     original: String,
     focused_word: Option<String>,
@@ -72,6 +87,35 @@ struct Job {
     /// looking at, rather than on one that is shown and then covered by the
     /// answer.
     doubtful: bool,
+}
+
+/// What the card on screen is showing, so the explain key has something to
+/// explain.
+///
+/// Held rather than read back off the overlay, because the overlay stores a
+/// `Card` and a card is display copy: pulling the sentence out of it would put
+/// a parser between the reader's key and the model, and the parts here are the
+/// parts that were sent in the first place.
+struct Explainable {
+    original: String,
+    focused_word: Option<String>,
+    anchor: ScreenRect,
+    translation: String,
+}
+
+/// What the worker is asked to explain.
+///
+/// Carries the translation as well as the source, because the deep path is
+/// grounded on the answer already on the screen rather than deriving its own.
+/// Sending only the source would have the model explain a sentence the reader
+/// is not looking at, on the strength of a second translation nobody saw.
+struct Explain {
+    generation: Generation,
+    original: String,
+    translation: String,
+    focused_word: Option<String>,
+    anchor: ScreenRect,
+    language: String,
 }
 
 /// What comes back, still carrying the generation it belongs to.
@@ -98,6 +142,7 @@ USAGE
     lens [OPTIONS]
 
     Rest the pointer on a sentence. Hold Alt unless --auto is given.
+    Ctrl+Alt+D explains the sentence the card is showing.
     Ctrl+C to quit.
 
 OPTIONS
@@ -485,6 +530,14 @@ fn main() -> std::process::ExitCode {
             )
         },
     );
+    println!(
+        "  explain   {}",
+        if pause.explain_is_registered() {
+            "Ctrl+Alt+D explains the sentence on the card: form, part of speech, structure"
+        } else {
+            "UNAVAILABLE: Ctrl+Alt+D is taken by another application"
+        }
+    );
     // The one line that tells a first-time user what to do, so it has to
     // agree with the policy above it. It said "Rest the pointer on a sentence"
     // while the mode line two rows up said "hold Alt", and the first person to
@@ -594,6 +647,47 @@ fn main() -> std::process::ExitCode {
             if skipped > 0 {
                 println!("worker  skipped {skipped} stale job(s)");
             }
+
+            let job = match job {
+                Job::Translate(job) => job,
+                Job::Explain(job) => {
+                    // The deep path. Grounded on the translation already on the
+                    // screen, so this is one focused generation rather than a
+                    // second full one (ADR-0005).
+                    let mut request =
+                        DeepRequest::new(&job.original, &job.translation, &job.language);
+                    if let Some(word) = &job.focused_word {
+                        request = request.about_the_word(word);
+                    }
+                    let card = match translator.deep(&request) {
+                        Ok(analysis) => {
+                            println!(
+                                "deep  {} lines in {}ms",
+                                analysis.lines().len(),
+                                analysis.latency_ms,
+                            );
+                            Card::analysed(&job.original, &analysis)
+                        }
+                        Err(error) => {
+                            println!("deep  no analysis [{}]", error.reason());
+                            Card::not_readable(error.user_message())
+                        }
+                    };
+                    last_answer = Some(Instant::now());
+                    if answers_tx
+                        .send(Answer {
+                            generation: job.generation,
+                            card,
+                            anchor: job.anchor,
+                            final_answer: true,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                    continue;
+                }
+            };
 
             let mut request = QuickRequest::new(&job.original, &job.language);
             if let Some(word) = &job.focused_word {
@@ -775,6 +869,15 @@ fn main() -> std::process::ExitCode {
     // The sentence the outstanding translation belongs to, so a waiting card
     // can show it. One at a time: a second hover replaces the first.
     let mut pending_original = String::new();
+    // What the reader is looking at, filled in when a translation finishes.
+    // Not cleared when the card is retired: somebody who presses the key a
+    // moment after the card faded meant the sentence they were just reading,
+    // and the anchor puts the answer back where it was.
+    let mut explainable: Option<Explainable> = None;
+    // The word and the region of the outstanding translation, so the pair
+    // above can be completed when the answer comes back.
+    let mut pending_word: Option<String> = None;
+    let mut pending_anchor = ScreenRect::new(0, 0, 1, 1);
     // Why no card appeared, said once per distinct reason. Holding the
     // modifier over a window that exposes no text used to look exactly like a
     // product that had crashed.
@@ -827,10 +930,55 @@ fn main() -> std::process::ExitCode {
             }
         }
         let mut read_with_ocr = false;
+        let mut explain = false;
         for press in pause.poll() {
             match press {
                 pause::Pressed::PauseChanged => pause_changed = true,
                 pause::Pressed::ReadWithOcr => read_with_ocr = true,
+                pause::Pressed::Explain => explain = true,
+            }
+        }
+
+        if explain && !pause.is_paused() {
+            match &explainable {
+                Some(showing) => {
+                    // A generation of its own, from the hover machine, exactly
+                    // as manual OCR takes one: the answer has to be
+                    // cancellable and an answer with no generation cannot be.
+                    match hover.take_generation() {
+                        Some(generation) => {
+                            life.hover_settled(generation);
+                            life.job_dispatched(generation, showing.anchor, started.elapsed());
+                            // Said before the model is asked. An analysis
+                            // measured 2.6 to 4.9 seconds warm, and a card
+                            // that sits unchanged for four seconds after a
+                            // keypress reads as a key that did nothing.
+                            overlay.show(Card::explaining(&showing.original), showing.anchor);
+                            translating &= jobs_tx
+                                .send(Job::Explain(Explain {
+                                    generation,
+                                    original: showing.original.clone(),
+                                    translation: showing.translation.clone(),
+                                    focused_word: showing.focused_word.clone(),
+                                    anchor: showing.anchor,
+                                    language: language.clone(),
+                                }))
+                                .is_ok();
+                        }
+                        None => println!("deep  the acquisition thread did not answer"),
+                    }
+                }
+                // The key is not silent when there is nothing to explain. A
+                // reader who presses it over an empty desktop is owed the
+                // reason, and the console is not where they are looking.
+                None => {
+                    let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
+                    println!("deep  nothing on screen to explain");
+                    overlay.show(
+                        Card::not_readable("설명할 문장이 아직 없습니다"),
+                        ScreenRect::new(at.x, at.y, 1, 1),
+                    );
+                }
             }
         }
         if pause_changed {
@@ -984,20 +1132,22 @@ fn main() -> std::process::ExitCode {
                     } else {
                         life.job_dispatched(generation, reading.anchor, started.elapsed());
                         pending_original = reading.sentence.clone();
+                        pending_word = Some(reading.word.clone());
+                        pending_anchor = reading.anchor;
                         // A failed send means the translation worker has
                         // gone. Recorded rather than discarded, for the same
                         // reason the acquisition thread's death is: a product
                         // that keeps running while nothing answers is worse
                         // than one that says so.
                         translating &= jobs_tx
-                            .send(Job {
+                            .send(Job::Translate(Translate {
                                 generation,
                                 original: reading.sentence,
                                 focused_word: Some(reading.word),
                                 anchor: reading.anchor,
                                 language: language.clone(),
                                 doubtful: reading.misread > 0,
-                            })
+                            }))
                             .is_ok();
                     }
                 }
@@ -1151,13 +1301,15 @@ fn main() -> std::process::ExitCode {
                         // tell the reader it was heard if the answer is slow.
                         life.job_dispatched(generation, anchor, now);
                         pending_original = sentence.clone();
+                        pending_word = target.segmented.word_text().map(str::to_owned);
+                        pending_anchor = anchor;
                         // A failed send means the translation worker has
                         // gone. Recorded rather than discarded, for the same
                         // reason the acquisition thread's death is: a product
                         // that keeps running while nothing answers is worse
                         // than one that says so.
                         translating &= jobs_tx
-                            .send(Job {
+                            .send(Job::Translate(Translate {
                                 generation,
                                 original: sentence,
                                 focused_word: target.segmented.word_text().map(str::to_owned),
@@ -1165,7 +1317,7 @@ fn main() -> std::process::ExitCode {
                                 language: language.clone(),
                                 // The accessibility path reads text, not pixels.
                                 doubtful: false,
-                            })
+                            }))
                             .is_ok();
                     }
                 }
@@ -1227,6 +1379,18 @@ fn main() -> std::process::ExitCode {
         while let Ok(answer) = answers_rx.try_recv() {
             if answer.final_answer {
                 log_card(&answer.card);
+                // A finished translation is a sentence the reader can now ask
+                // about. Only a translation: an analysis must not become the
+                // thing the next analysis explains, and a problem card has no
+                // sentence behind it.
+                if let lens_core::card::CardBody::Translation(text) = &answer.card.body {
+                    explainable = Some(Explainable {
+                        original: answer.card.original.clone(),
+                        focused_word: pending_word.clone(),
+                        anchor: pending_anchor,
+                        translation: text.clone(),
+                    });
+                }
             }
             // The generation check lives in the lifecycle, so an answer for a
             // hover the reader has left is dropped in one place rather than at
@@ -1310,7 +1474,11 @@ fn tooltip(
     // It was in the banner only, which a reader who double-clicked the binary
     // has never seen. They would press the key, get nothing, and conclude the
     // product was broken, which is the failure this file keeps meeting.
-    let trouble = hotkey_trouble(keys.is_registered(), keys.ocr_is_registered());
+    let trouble = hotkey_trouble(
+        keys.is_registered(),
+        keys.ocr_is_registered(),
+        keys.explain_is_registered(),
+    );
     format!(
         "Mori Lens · {}{trouble}
 {}
@@ -1330,21 +1498,48 @@ fn tooltip(
 /// a test cannot ask for one that failed without holding the combination
 /// itself.
 ///
-/// Empty when both work, which is the ordinary case and must cost nothing.
-fn hotkey_trouble(pause_registered: bool, ocr_registered: bool) -> String {
-    match (pause_registered, ocr_registered) {
-        (true, true) => String::new(),
-        // Pause is the privacy control, so this names the way that still
-        // works rather than only the way that does not.
-        (false, true) => "
-Ctrl+Alt+L을 다른 앱이 쓰고 있습니다 · 클릭해 일시정지"
-            .to_owned(),
-        (true, false) => "
-Ctrl+Alt+O를 다른 앱이 쓰고 있습니다"
-            .to_owned(),
-        (false, false) => "
-단축키를 다른 앱이 쓰고 있습니다 · 클릭해 일시정지"
-            .to_owned(),
+/// Empty when all three work, which is the ordinary case and must cost
+/// nothing.
+///
+/// **One taken key is named; two or more are not.** The shell keeps 127 UTF-16
+/// units and three chord names plus the sentence would not leave room for the
+/// engine, so the generic form is what a reader gets when several are gone.
+/// Naming one of three would be worse than naming none: it reads as a
+/// complete account.
+fn hotkey_trouble(
+    pause_registered: bool,
+    ocr_registered: bool,
+    explain_registered: bool,
+) -> String {
+    let taken: Vec<&str> = [
+        (pause_registered, "Ctrl+Alt+L"),
+        (ocr_registered, "Ctrl+Alt+O"),
+        (explain_registered, "Ctrl+Alt+D"),
+    ]
+    .into_iter()
+    .filter_map(|(held, name)| (!held).then_some(name))
+    .collect();
+
+    if taken.is_empty() {
+        return String::new();
+    }
+    let what = match taken.as_slice() {
+        [only] => format!("{only}을 다른 앱이 쓰고 있습니다"),
+        _ => "단축키를 다른 앱이 쓰고 있습니다".to_owned(),
+    };
+    // Pause is the privacy control. When it is one of the ones that is gone,
+    // the line names the way that still works rather than only the way that
+    // does not, because the tray icon does the same thing on a click.
+    if pause_registered {
+        format!(
+            "
+{what}"
+        )
+    } else {
+        format!(
+            "
+{what} · 클릭해 일시정지"
+        )
     }
 }
 
@@ -1413,6 +1608,15 @@ fn log_card(card: &Card) {
                 format!("translated={} chars", text.chars().count()),
             lens_core::card::CardBody::Problem(_) => "problem".to_owned(),
             lens_core::card::CardBody::Waiting(status) => format!("waiting: {status}"),
+            // Lines and characters, like everything else here. The headings
+            // are this repository's own strings and the values are a model's
+            // account of text off somebody's screen, so the values are counted
+            // and not printed.
+            lens_core::card::CardBody::Analysis(text) => format!(
+                "analysis={} lines, {} chars",
+                text.lines().count(),
+                text.chars().count(),
+            ),
         },
         card.footer,
     );
@@ -1554,6 +1758,9 @@ selftest passed: the text on screen needed no translation, and none was made."
 
     let mut cache = TranslationCache::new(CACHE_ENTRIES);
     let key = CacheKey::of(&request, translator.model(), PROMPT_VERSION);
+    // Kept, because step 4 explains what step 2 translated rather than
+    // translating it again. That grounding is the deep path's whole shape.
+    let mut translated: Option<String> = None;
     let card = match translator.quick_streaming(&request, &mut on_partial) {
         Ok(translation) => {
             println!(
@@ -1570,6 +1777,7 @@ selftest passed: the text on screen needed no translation, and none was made."
                 None => println!("   streaming  no partial arrived"),
             }
             cache.insert(key.clone(), translation.clone());
+            translated = Some(translation.text.clone());
             Card::translated(&sentence, &translation)
         }
         Err(error) => {
@@ -1606,6 +1814,51 @@ total {}ms from acquisition to card",
     );
 
     std::thread::sleep(Duration::from_secs(4));
+
+    // The deep path, on the sentence that was just translated, exactly as
+    // Ctrl+Alt+D would. Last because it is the slow half of ADR-0005 and a
+    // selftest that ran it first would look like a product that takes five
+    // seconds to answer.
+    if let Some(translation) = translated {
+        overlay.show(Card::explaining(&sentence), anchor);
+        let mut deep = DeepRequest::new(&sentence, &translation, language);
+        if let Some(word) = &word {
+            deep = deep.about_the_word(word);
+        }
+        let answerable = deep.answerable();
+        println!(
+            "4. explaining  word={} structure={}",
+            answerable.the_word, answerable.the_structure
+        );
+        match translator.deep(&deep) {
+            Ok(analysis) => {
+                println!(
+                    "   analysed   {} lines in {}ms via {}",
+                    analysis.lines().len(),
+                    analysis.latency_ms,
+                    analysis.model,
+                );
+                // The headings, not the values. The headings are this
+                // repository's own strings; the values are a model's account
+                // of text off somebody's screen (`docs/privacy-model.md` §3).
+                for (heading, text) in analysis.lines() {
+                    println!("   {heading:<12} {} chars", text.chars().count());
+                }
+                if !overlay.show(Card::analysed(&sentence, &analysis), anchor) {
+                    println!("   REFUSED    the analysis card was not showable");
+                    return std::process::ExitCode::from(1);
+                }
+                println!("   shown      on screen for 4 seconds");
+                std::thread::sleep(Duration::from_secs(4));
+            }
+            Err(error) => println!(
+                "4. not explained: {} ({})",
+                error.user_message(),
+                error.reason(),
+            ),
+        }
+    }
+
     overlay.hide();
     std::thread::sleep(Duration::from_millis(200));
     println!(
@@ -1623,13 +1876,23 @@ mod tooltip_tests {
     /// The shell gives a tooltip 127 UTF-16 units and truncates the rest, so
     /// the worst case has to fit or the last line is what disappears.
     ///
-    /// Built the way `tooltip` builds it, with the longest of everything: both
-    /// hotkeys taken, a long model name, and the policy sentence.
+    /// Built the way `tooltip` builds it, with the longest of everything: the
+    /// longest trouble line any combination can produce, a long model name,
+    /// and the policy sentence.
     #[test]
     fn the_worst_tooltip_fits_what_the_shell_will_show() {
-        let trouble = hotkey_trouble(false, false);
+        // Every combination, so the longest is measured rather than assumed.
+        // The obvious candidate is all three taken, and it is not: that one
+        // collapses to the generic sentence and one named key is longer.
+        let worst = (0..8)
+            .map(|bits| hotkey_trouble(bits & 1 == 0, bits & 2 == 0, bits & 4 == 0))
+            .max_by_key(|line| line.encode_utf16().count())
+            .expect("eight combinations");
+
         let built = format!(
-            "Mori Lens · {}{trouble}\n{}\n{} · {}",
+            "Mori Lens · {}{worst}
+{}
+{} · {}",
             "일시정지",
             korean_how_to(&AppPolicy::default()),
             "Korean",
@@ -1639,28 +1902,49 @@ mod tooltip_tests {
         let units = built.encode_utf16().count();
         assert!(
             units < 127,
-            "the tooltip is {units} units and the shell keeps 127:\n{built}",
+            "the tooltip is {units} units and the shell keeps 127:
+{built}",
         );
     }
 
     /// The ordinary case costs nothing.
     #[test]
-    fn two_working_hotkeys_add_no_line() {
-        assert!(hotkey_trouble(true, true).is_empty());
+    fn three_working_hotkeys_add_no_line() {
+        assert!(hotkey_trouble(true, true, true).is_empty());
     }
 
-    /// Each broken one names itself, and the pause line names the way that
-    /// still works, because pause is the privacy control.
+    /// One taken key names itself, and the pause line names the way that still
+    /// works, because pause is the privacy control and the tray icon does the
+    /// same thing on a click.
     #[test]
     fn a_taken_hotkey_names_itself_and_the_way_round_it() {
-        let pause_gone = hotkey_trouble(false, true);
+        let pause_gone = hotkey_trouble(false, true, true);
         assert!(pause_gone.contains("Ctrl+Alt+L"), "{pause_gone}");
         assert!(pause_gone.contains("클릭"), "{pause_gone}");
 
-        let ocr_gone = hotkey_trouble(true, false);
+        let ocr_gone = hotkey_trouble(true, false, true);
         assert!(ocr_gone.contains("Ctrl+Alt+O"), "{ocr_gone}");
+        assert!(!ocr_gone.contains("클릭"), "{ocr_gone}");
 
-        let both = hotkey_trouble(false, false);
-        assert!(both.contains("클릭"), "{both}");
+        let explain_gone = hotkey_trouble(true, true, false);
+        assert!(explain_gone.contains("Ctrl+Alt+D"), "{explain_gone}");
+    }
+
+    /// Two or more taken and none is named.
+    ///
+    /// Naming one of three reads as a complete account of what is wrong, and
+    /// naming three does not fit in what the shell keeps.
+    #[test]
+    fn several_taken_hotkeys_are_reported_without_naming_one() {
+        for line in [
+            hotkey_trouble(false, false, true),
+            hotkey_trouble(false, true, false),
+            hotkey_trouble(true, false, false),
+            hotkey_trouble(false, false, false),
+        ] {
+            assert!(!line.is_empty());
+            assert!(!line.contains("Ctrl+Alt+"), "{line}");
+            assert!(line.contains("단축키"), "{line}");
+        }
     }
 }
