@@ -262,6 +262,77 @@ impl Card {
         self
     }
 
+    /// The same card with its answer cut to roughly `keep` characters.
+    ///
+    /// **The answer, never the original.** A card taller than the screen it is
+    /// on gets clipped by the window, and what vanishes is the end of the
+    /// answer with nothing to say so: measured at 269 pixels on a text with no
+    /// sentence boundary in it, which is what the segmenter returns for
+    /// KakaoTalk's single region. Cutting deliberately and saying so is the
+    /// same loss with the reader told about it.
+    ///
+    /// The original stays whole for the reason it always does. It is the only
+    /// way to notice an answer that is not a translation, and an original cut
+    /// to fit beside a cut answer once put a reader in front of two different
+    /// halves of one sentence.
+    ///
+    /// Cut at a word boundary, so the last thing shown is a word rather than
+    /// part of one, and marked, because an answer that merely stops reads as a
+    /// model that gave up.
+    pub fn with_the_answer_cut_to(mut self, keep: usize) -> Self {
+        /// Fewest characters worth showing as an answer.
+        ///
+        /// Below this the card would say `한…`, which tells a reader less than
+        /// a clipped card does: a clipped one at least shows the beginning of
+        /// a sentence. A cut that leaves nothing is not a cut, it is a
+        /// deletion with a marker on it.
+        const WORTH_SHOWING: usize = 4;
+
+        if let CardBody::Translation(text) = &self.body {
+            let cut: String = text.chars().take(keep).collect();
+            let mut cut = whole_words(&cut);
+            if cut.chars().count() < WORTH_SHOWING {
+                return self;
+            }
+            cut.push('…');
+            self.body = CardBody::Translation(cut);
+            // Once. A fitting loop calls this more than once and a footer
+            // reading `잘림 · 잘림 · 잘림` says three times over what it needed
+            // to say once.
+            if !self.footer.contains(Self::CUT) {
+                if !self.footer.is_empty() {
+                    self.footer.push_str(" · ");
+                }
+                self.footer.push_str(Self::CUT);
+            }
+        }
+        self
+    }
+
+    /// What a footer says when the answer was cut to fit.
+    pub const CUT: &str = "잘림";
+
+    /// A card for a passage too long to show honestly.
+    ///
+    /// **Not a clipped card.** The layout is original, then answer, then
+    /// footer, so a card taller than the screen loses the answer first: a
+    /// reader hovering an unsegmented blob would get their own source text
+    /// back and nothing else. Cutting the original instead is the one thing
+    /// this file forbids, because an original cut to fit beside a translation
+    /// of the whole thing puts two different halves of one sentence in front
+    /// of somebody.
+    ///
+    /// So neither. A passage this long is one the segmenter could not break
+    /// up, which is what KakaoTalk's single region produces (issue #34), and
+    /// saying that is more use than most of a source with the answer missing.
+    pub fn too_long_to_show() -> Self {
+        Self {
+            original: String::new(),
+            body: CardBody::Problem("문장이 너무 길어 카드에 담을 수 없습니다".to_owned()),
+            footer: "문장 나누기 실패".to_owned(),
+        }
+    }
+
     /// Whether this card is safe to show.
     ///
     /// A translation with no original beside it is refused, per the note on
@@ -771,5 +842,70 @@ mod copy_tests {
                 "{what} contains an em dash: {sentence:?}",
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod cutting_tests {
+    use super::*;
+    use crate::translate::{EngineId, QuickTranslation};
+
+    fn card(text: &str) -> Card {
+        Card::translated(
+            "The original, which stays whole because it is how a reader checks the answer.",
+            &QuickTranslation {
+                text: text.to_owned(),
+                engine: EngineId::LocalOllama,
+                model: "fixture".to_owned(),
+                latency_ms: 900,
+                cached: false,
+            },
+        )
+    }
+
+    #[test]
+    fn the_answer_is_cut_at_a_word_and_marked() {
+        let cut = card("하나 둘 셋 넷 다섯 여섯 일곱").with_the_answer_cut_to(10);
+        match &cut.body {
+            CardBody::Translation(text) => {
+                assert!(text.ends_with('…'), "{text:?}");
+                assert!(!text.contains("여섯"), "it kept too much: {text:?}");
+                // Cut at a word, so the last thing shown is a whole one.
+                let last = text.trim_end_matches('…');
+                assert!(!last.ends_with(' '), "{text:?}");
+            }
+            other => panic!("expected a translation, got {other:?}"),
+        }
+        assert!(cut.footer.contains("잘림"), "{}", cut.footer);
+    }
+
+    /// The original is untouched, which is the whole reason this cuts the
+    /// answer rather than the card.
+    #[test]
+    fn the_original_is_never_cut() {
+        let whole = card("하나 둘 셋 넷 다섯 여섯 일곱");
+        let cut = whole.clone().with_the_answer_cut_to(6);
+        assert_eq!(cut.original, whole.original);
+    }
+
+    /// A cut so short that nothing survives leaves the card alone.
+    ///
+    /// Better a clipped card than an empty one: an answer of `…` says less
+    /// than the first half of a sentence does.
+    #[test]
+    fn a_cut_with_nothing_left_changes_nothing() {
+        let whole = card("한 단어");
+        let cut = whole.clone().with_the_answer_cut_to(0);
+        assert_eq!(cut.body, whole.body);
+        assert_eq!(cut.footer, whole.footer);
+    }
+
+    /// A problem card has no answer to cut.
+    #[test]
+    fn only_a_translation_is_cut() {
+        let problem = Card::not_readable("읽지 못했습니다");
+        let after = problem.clone().with_the_answer_cut_to(2);
+        assert_eq!(after.body, problem.body);
+        assert_eq!(after.footer, problem.footer);
     }
 }
