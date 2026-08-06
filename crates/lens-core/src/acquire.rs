@@ -73,6 +73,15 @@ pub enum AcquireError {
     Unsupported,
     /// The read succeeded and returned nothing.
     Empty,
+    /// Nothing was read, because the previous reading of this pixel already
+    /// showed there is no line on it.
+    ///
+    /// Its own reason rather than an [`AcquireError::Empty`]. A capture that
+    /// did not happen is not a measurement, and folding it into the count of
+    /// regions that were photographed and found bare would put readings nobody
+    /// took into `docs/compatibility/windows-app-matrix.md`. See
+    /// [`crate::barren`].
+    KnownEmpty,
     /// The element vanished mid-call, which happens constantly in a live UI and
     /// is a normal outcome rather than an exception.
     ElementGone,
@@ -94,6 +103,7 @@ impl AcquireError {
         match self {
             Self::Unsupported => "unsupported",
             Self::Empty => "empty",
+            Self::KnownEmpty => "known-empty",
             Self::ElementGone => "element-gone",
             Self::Protected(ProtectedReason::Declared) => "protected",
             Self::Protected(ProtectedReason::Unprovable) => "protected-unprovable",
@@ -111,6 +121,8 @@ impl AcquireError {
     pub const fn ocr_can_help(self) -> bool {
         match self {
             Self::Unsupported | Self::Empty | Self::ElementGone => true,
+            // OCR is what said this, so there is nothing for it to repair.
+            Self::KnownEmpty => false,
             Self::Protected(_) | Self::Timeout | Self::Stale | Self::Unavailable => false,
         }
     }
@@ -395,6 +407,18 @@ pub struct AcquireContext {
     /// tree. It costs real milliseconds, so a caller in a hurry can decline
     /// (`docs/research/inherited-from-mori.md` §2).
     pub allow_accessibility_wake: bool,
+    /// Something happened that could have moved what is on the screen: a
+    /// scroll, a keystroke, a click.
+    ///
+    /// An adapter that remembers anything about where things were has to throw
+    /// it away when this is set. Only [`crate::barren`] does, and only ever
+    /// about layout, so the worst this being wrong can cost is one capture too
+    /// many or one card too few.
+    ///
+    /// It is not a pointer sample's business: the events that move a view
+    /// **cancel** a hover, so the sample that settles is by definition a quiet
+    /// one. The session watches for them between hovers instead.
+    pub view_may_have_changed: bool,
 }
 
 impl AcquireContext {
@@ -403,6 +427,9 @@ impl AcquireContext {
             generation,
             max_context_chars: 2_000,
             allow_accessibility_wake: true,
+            // The safe default: a caller that does not track this gets an
+            // adapter that remembers nothing.
+            view_may_have_changed: true,
         }
     }
 }

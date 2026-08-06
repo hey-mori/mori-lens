@@ -459,3 +459,101 @@ fn resting_a_hand_on_one_word_costs_one_call_not_forty() {
         calls.get(),
     );
 }
+
+/// An acquirer that records what each call was told about the view.
+struct WatchesTheView {
+    seen: Rc<std::cell::RefCell<Vec<bool>>>,
+}
+
+impl TextAcquirer for WatchesTheView {
+    fn acquire(
+        &self,
+        _point: ScreenPoint,
+        context: &AcquireContext,
+    ) -> Result<TextTarget, AcquireError> {
+        self.seen.borrow_mut().push(context.view_may_have_changed);
+        Err(AcquireError::Unsupported)
+    }
+}
+
+/// The first hover of a session trusts nothing.
+///
+/// An adapter that remembers where the lines were has no way to know how long
+/// it has been running or what happened before it existed, so the session
+/// starts by telling it to assume everything moved.
+#[test]
+fn the_first_hover_is_told_the_view_may_have_changed() {
+    let seen = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let mut session = HoverSession::new(
+        HoverConfig::default(),
+        AppPolicy::default(),
+        Box::new(WatchesTheView {
+            seen: Rc::clone(&seen),
+        }),
+    );
+
+    let generation = settle(&mut session, POINT);
+    let _ = session.resolve(generation, POINT, ms(400), InputState::default());
+
+    assert_eq!(seen.borrow().as_slice(), &[true]);
+}
+
+/// A quiet second hover is told the view held still, and a scroll before it is
+/// not.
+///
+/// **The scroll is on a sample that never settles**, which is the whole reason
+/// this is latched rather than read off the settling sample: scrolling cancels
+/// a hover, so by the time one settles the scroll is over and the sample that
+/// arrives is a quiet one. An adapter reading only that sample would carry a
+/// pre-scroll layout across the scroll and answer "nothing here" about text
+/// that had moved under the pointer.
+#[test]
+fn a_scroll_between_hovers_reaches_the_next_acquisition() {
+    let seen = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let mut session = HoverSession::new(
+        HoverConfig::default(),
+        AppPolicy::default(),
+        Box::new(WatchesTheView {
+            seen: Rc::clone(&seen),
+        }),
+    );
+
+    let generation = settle(&mut session, POINT);
+    let _ = session.resolve(generation, POINT, ms(400), InputState::default());
+
+    // A second hover with nothing in between. Leaving a settled hover costs
+    // the grace period and a `Left` before a new dwell can start, which is why
+    // this is four samples rather than two.
+    let elsewhere = ScreenPoint::new(400, 300);
+    session.observe(PointerSample::moved(elsewhere, ms(500)));
+    session.observe(PointerSample::moved(elsewhere, ms(800)));
+    session.observe(PointerSample::moved(elsewhere, ms(900)));
+    let Some(HoverEvent::Settled { generation, .. }) =
+        session.observe(PointerSample::moved(elsewhere, ms(1300)))
+    else {
+        panic!("expected a second settle");
+    };
+    let _ = session.resolve(generation, elsewhere, ms(1300), InputState::default());
+
+    // A third, with a scroll before it. The scroll cancels, so it never
+    // settles and never reaches an acquisition of its own.
+    let scrolled = PointerSample {
+        scrolling: true,
+        ..PointerSample::moved(elsewhere, ms(1400))
+    };
+    assert!(
+        !matches!(session.observe(scrolled), Some(HoverEvent::Settled { .. })),
+        "a scroll abandons a hover, it does not settle one",
+    );
+
+    let further = ScreenPoint::new(600, 300);
+    session.observe(PointerSample::moved(further, ms(1500)));
+    let Some(HoverEvent::Settled { generation, .. }) =
+        session.observe(PointerSample::moved(further, ms(1900)))
+    else {
+        panic!("expected a third settle");
+    };
+    let _ = session.resolve(generation, further, ms(1900), InputState::default());
+
+    assert_eq!(seen.borrow().as_slice(), &[true, false, true]);
+}
