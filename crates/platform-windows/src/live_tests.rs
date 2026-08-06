@@ -3142,6 +3142,30 @@ fn measure_what_an_automatic_fall_through_costs() {
              hovers a second is {:.0}% of one core",
             (with_hide as f64 * 2.0) / 10.0,
         );
+
+        // The same eight readings with the memory left alone, which is what a
+        // reader who is not scrolling or typing actually gets. The first is a
+        // capture; any after it that land on no line should be refused before
+        // one happens. `known-empty` is that refusal, and it is counted rather
+        // than inferred from the timings.
+        let quiet = AcquireContext {
+            view_may_have_changed: false,
+            ..AcquireContext::new(Generation(1))
+        };
+        let mut remembered = Vec::new();
+        let mut skipped = 0usize;
+        for _ in 0..8 {
+            let began = Instant::now();
+            let outcome = acquirer.acquire(point, &quiet);
+            remembered.push(began.elapsed().as_millis());
+            if matches!(outcome, Err(lens_core::AcquireError::KnownEmpty)) {
+                skipped += 1;
+            }
+        }
+        println!(
+            "  with the reading remembered: {remembered:?}, {skipped} of 8 refused
+               without a capture",
+        );
     }
 }
 
