@@ -83,7 +83,7 @@ pub struct OcrTextAcquirer {
     /// A hook rather than an `Overlay`, so this compiles and can be tested
     /// without one, and so the thing that owns the window stays the thing that
     /// decides how to hide it.
-    hide_the_card: Box<dyn Fn()>,
+    hide_the_card: Box<dyn Fn(ScreenRect)>,
 }
 
 impl std::fmt::Debug for OcrTextAcquirer {
@@ -93,7 +93,7 @@ impl std::fmt::Debug for OcrTextAcquirer {
 }
 
 impl OcrTextAcquirer {
-    pub fn new(hide_the_card: Box<dyn Fn()>) -> Self {
+    pub fn new(hide_the_card: Box<dyn Fn(ScreenRect)>) -> Self {
         Self { hide_the_card }
     }
 
@@ -113,11 +113,15 @@ impl TextAcquirer for OcrTextAcquirer {
         point: ScreenPoint,
         _context: &AcquireContext,
     ) -> Result<TextTarget, AcquireError> {
-        (self.hide_the_card)();
-        std::thread::sleep(SETTLE);
-
         let scale = window::monitor_scale_at(point);
         let region = band_around(point, scale);
+        // The band is computed first so the hook can decide whether the card is
+        // even in it. With `Automatic` this runs on every hover accessibility
+        // could not serve, and hiding the card each time would take the answer
+        // a reader is reading off the screen when they nudge the pointer onto a
+        // margin.
+        (self.hide_the_card)(region);
+        std::thread::sleep(SETTLE);
         let captured = capture::rectangle(region).ok_or(AcquireError::Empty)?;
         let read = ocr::read_best(&captured, ScreenPoint::new(region.x, region.y))
             // Not `Empty`: a machine with no recogniser is a machine where this
@@ -196,7 +200,7 @@ mod tests {
 
         let hides = Arc::new(AtomicUsize::new(0));
         let theirs = Arc::clone(&hides);
-        let acquirer = OcrTextAcquirer::new(Box::new(move || {
+        let acquirer = OcrTextAcquirer::new(Box::new(move |_band| {
             theirs.fetch_add(1, Ordering::SeqCst);
         }));
 
