@@ -59,6 +59,18 @@ pub enum CardBody {
     /// the pointer, which cancels the hover, which means it really does show
     /// nothing. This is the state that breaks that loop.
     Waiting(String),
+    /// What a model said the sentence is doing, one field to a line.
+    ///
+    /// **The one body a reader sees that carries newlines**, and the copy
+    /// tests check it line by line for that reason. Every other card says one
+    /// thing and lets the renderer wrap it; this one is a list of five
+    /// headings, and joining them into a paragraph would make the shortest
+    /// answer the hardest to read.
+    ///
+    /// A string rather than the pairs it was built from, so both renderers
+    /// keep laying out one measured block of text. Ordering and headings are
+    /// decided once, in [`crate::analyse::DeepAnalysis::lines`].
+    Analysis(String),
 }
 
 impl Card {
@@ -146,6 +158,49 @@ impl Card {
         Self::in_progress(original, Self::LOADING_TEXT)
     }
 
+    /// The waiting card for an explanation, which takes seconds rather than
+    /// one second and so needs its own word for what is happening.
+    pub fn explaining(original: impl Into<String>) -> Self {
+        Self::in_progress(original, Self::EXPLAINING_TEXT)
+    }
+
+    /// A card for a finished analysis.
+    ///
+    /// The source stays on it, exactly as a translation's does and for the
+    /// same reason: it is the only way to notice that what is being explained
+    /// is not what the reader pointed at.
+    ///
+    /// The label goes in the **footer**, beside the model and the time, which
+    /// is where a card already says how it came by what it is showing. It is
+    /// first in that line rather than last, because the shell of a card cuts
+    /// from the end and this is the part
+    /// [ADR-0005](../../../docs/decisions/ADR-0005-two-speed-ai.md) requires.
+    pub fn analysed(original: impl Into<String>, analysis: &crate::analyse::DeepAnalysis) -> Self {
+        let body = analysis
+            .lines()
+            .into_iter()
+            .map(|(heading, text)| format!("{heading} · {text}"))
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            );
+        Self {
+            original: original.into(),
+            body: CardBody::Analysis(body),
+            footer: format!(
+                "{} · {} · {}",
+                crate::analyse::DeepAnalysis::LABEL,
+                analysis.model,
+                if analysis.latency_ms >= 1000 {
+                    format!("{:.1}초", analysis.latency_ms as f64 / 1000.0)
+                } else {
+                    format!("{}ms", analysis.latency_ms)
+                },
+            ),
+        }
+    }
+
     fn in_progress(original: impl Into<String>, status: &str) -> Self {
         Self {
             original: original.into(),
@@ -171,6 +226,14 @@ impl Card {
     /// owed the difference, and "번역 중" for thirteen seconds is a product
     /// that looks hung.
     pub const LOADING_TEXT: &str = "모델을 불러오는 중";
+
+    /// What a waiting card says while an explanation is being written.
+    ///
+    /// Its own sentence for the same reason as the one above. A deep analysis
+    /// measured 2.6 to 4.9 seconds warm against a translation's 1.6, and
+    /// "번역 중" would be wrong twice: it is not a translation, and it is not
+    /// over in the second that word has taught the reader to expect.
+    pub const EXPLAINING_TEXT: &str = "설명 만드는 중";
 
     /// A card that says something plainly, with no original to show.
     ///
@@ -383,6 +446,11 @@ impl Card {
             // The original is the whole card, so the rule that a translation
             // never appears without one is what makes this showable at all.
             CardBody::Waiting(_) => !self.original.trim().is_empty(),
+            // The same rule as a translation, and for the same reason. An
+            // explanation of a sentence, shown without the sentence, cannot be
+            // checked against anything: it is a model's account of text the
+            // reader would have to remember.
+            CardBody::Analysis(text) => !text.trim().is_empty() && !self.original.trim().is_empty(),
         }
     }
 }
@@ -780,9 +848,16 @@ mod copy_tests {
         let mut copy: Vec<(&'static str, String)> = Vec::new();
 
         fn parts(what: &'static str, card: &Card, into: &mut Vec<(&'static str, String)>) {
-            let (CardBody::Translation(text) | CardBody::Problem(text) | CardBody::Waiting(text)) =
-                &card.body;
-            into.push((what, text.clone()));
+            let (CardBody::Translation(text)
+            | CardBody::Problem(text)
+            | CardBody::Waiting(text)
+            | CardBody::Analysis(text)) = &card.body;
+            // An analysis is the one body with lines in it, so it is checked a
+            // line at a time. Pushing it whole would fail the newline rule for
+            // the one card where a newline is the point.
+            for line in text.lines() {
+                into.push((what, line.to_owned()));
+            }
             into.push((what, card.original.clone()));
             into.push((what, card.footer.clone()));
         }
@@ -798,6 +873,22 @@ mod copy_tests {
             Card::cannot_read_this_app(None),
         );
         card("not_readable", Card::not_readable("읽지 못했습니다"));
+        card("explaining", Card::explaining("a sentence"));
+        card(
+            "analysed",
+            Card::analysed(
+                "a sentence",
+                &crate::analyse::DeepAnalysis {
+                    lemma: "rest".to_owned(),
+                    part_of_speech: "동사".to_owned(),
+                    sense: "포인터를 멈추게 하는 것".to_owned(),
+                    structure: "제한 조건을 설정하는 구문".to_owned(),
+                    note: String::new(),
+                    model: "qwen2.5-coder:7b".to_owned(),
+                    latency_ms: 3670,
+                },
+            ),
+        );
         card(
             "not_acquired protected",
             Card::not_acquired(AcquireError::Protected(ProtectedReason::Declared)),
@@ -867,6 +958,77 @@ mod copy_tests {
                  {sentence:?}",
             );
         }
+    }
+
+    /// An analysis is a list, and the list is what the card shows.
+    ///
+    /// One line per field the model filled in, headed, in the order
+    /// `DeepAnalysis::lines` decides. Asserted here rather than left to the
+    /// renderer, because a body joined into a paragraph would still fit on the
+    /// card and would still be readable, and nobody would notice the shortest
+    /// answer had become the hardest one.
+    #[test]
+    fn an_analysis_is_one_headed_line_per_field_it_has() {
+        let card = Card::analysed(
+            "The pointer must rest before anything is read.",
+            &crate::analyse::DeepAnalysis {
+                lemma: "rest".to_owned(),
+                part_of_speech: "동사".to_owned(),
+                structure: "제한 조건을 설정하는 구문".to_owned(),
+                model: "qwen2.5-coder:7b".to_owned(),
+                latency_ms: 3670,
+                ..crate::analyse::DeepAnalysis::default()
+            },
+        );
+        let CardBody::Analysis(body) = &card.body else {
+            panic!("{card:?}");
+        };
+        assert_eq!(
+            body.lines().collect::<Vec<_>>(),
+            vec![
+                "원형 · rest",
+                "품사 · 동사",
+                "구조 · 제한 조건을 설정하는 구문"
+            ],
+        );
+        assert!(card.is_showable());
+    }
+
+    /// The label ADR-0005 requires, on the card, where it is not cut off.
+    ///
+    /// First in the footer rather than last: the fitting loop and the shell
+    /// both take from the end, and this is the part that must survive.
+    #[test]
+    fn an_analysis_says_a_model_wrote_it_before_it_says_which() {
+        let card = Card::analysed(
+            "a sentence",
+            &crate::analyse::DeepAnalysis {
+                sense: "뜻".to_owned(),
+                model: "qwen2.5-coder:7b".to_owned(),
+                latency_ms: 3670,
+                ..crate::analyse::DeepAnalysis::default()
+            },
+        );
+        assert!(
+            card.footer.starts_with(crate::analyse::DeepAnalysis::LABEL),
+            "{}",
+            card.footer,
+        );
+        assert!(card.footer.contains("3.7초"), "{}", card.footer);
+    }
+
+    /// An explanation with no sentence beside it cannot be checked against
+    /// anything, so it is not shown at all.
+    #[test]
+    fn an_analysis_with_no_original_is_not_showable() {
+        let card = Card::analysed(
+            "",
+            &crate::analyse::DeepAnalysis {
+                sense: "뜻".to_owned(),
+                ..crate::analyse::DeepAnalysis::default()
+            },
+        );
+        assert!(!card.is_showable());
     }
 
     /// And the em dash, which this repository bans everywhere.

@@ -28,11 +28,16 @@ use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, MSG, PM_REMOVE, WM_H
 /// Hotkey ids. Arbitrary; they only have to be unique within this thread.
 const PAUSE_ID: i32 = 0x4C31;
 const OCR_ID: i32 = 0x4C32;
+const EXPLAIN_ID: i32 = 0x4C33;
 
 /// `L`, for Lens.
 const VK_L: u32 = 0x4C;
 /// `O`, for OCR.
 const VK_O: u32 = 0x4F;
+/// `D`, for 설명. `E` is taken by Explorer on many machines and `A` by
+/// select-all in whatever has focus, which matters because a global chord that
+/// fails to register is a key that silently does nothing.
+const VK_D: u32 = 0x44;
 
 /// What a press asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +47,15 @@ pub enum Pressed {
     /// Read what is under the pointer with OCR, because the accessibility
     /// path has nothing to give there.
     ReadWithOcr,
+    /// Explain the sentence the card is already showing.
+    ///
+    /// The deep path of
+    /// [ADR-0005](../../../docs/decisions/ADR-0005-two-speed-ai.md), and the
+    /// user action that whole path is gated on. A key rather than a button on
+    /// the card, because the overlay passes clicks through
+    /// ([ADR-0004](../../../docs/decisions/ADR-0004-passive-overlay.md)) and a
+    /// card that could be clicked would be a card that takes focus.
+    Explain,
 }
 
 /// Registers both global keys and reports presses.
@@ -55,6 +69,7 @@ pub enum Pressed {
 pub struct PauseKey {
     registered: bool,
     ocr_registered: bool,
+    explain_registered: bool,
     paused: bool,
 }
 
@@ -67,18 +82,20 @@ impl PauseKey {
         // to this thread's message queue rather than to a window.
         // SAFETY: registers documented thread-local hotkeys; `None` binds them
         // to this thread's message queue rather than to a window.
-        let (registered, ocr_registered) = unsafe {
+        let (registered, ocr_registered, explain_registered) = unsafe {
             // NOREPEAT so holding a chord does not fire repeatedly.
             let modifiers = HOT_KEY_MODIFIERS(MOD_CONTROL.0 | MOD_ALT.0 | MOD_NOREPEAT.0);
             (
                 RegisterHotKey(None, PAUSE_ID, modifiers, VK_L).is_ok(),
                 RegisterHotKey(None, OCR_ID, modifiers, VK_O).is_ok(),
+                RegisterHotKey(None, EXPLAIN_ID, modifiers, VK_D).is_ok(),
             )
         };
 
         Self {
             registered,
             ocr_registered,
+            explain_registered,
             paused: false,
         }
     }
@@ -86,6 +103,11 @@ impl PauseKey {
     /// Whether Ctrl+Alt+O was taken by something else.
     pub fn ocr_is_registered(&self) -> bool {
         self.ocr_registered
+    }
+
+    /// Whether Ctrl+Alt+D was taken by something else.
+    pub fn explain_is_registered(&self) -> bool {
+        self.explain_registered
     }
 
     pub fn is_registered(&self) -> bool {
@@ -111,7 +133,7 @@ impl PauseKey {
     /// and retire the card without printing a line on every loop iteration.
     pub fn poll(&mut self) -> Vec<Pressed> {
         let mut pressed = Vec::new();
-        if !self.registered && !self.ocr_registered {
+        if !self.registered && !self.ocr_registered && !self.explain_registered {
             return pressed;
         }
         let mut message = MSG::default();
@@ -126,6 +148,7 @@ impl PauseKey {
                     pressed.push(Pressed::PauseChanged);
                 }
                 OCR_ID => pressed.push(Pressed::ReadWithOcr),
+                EXPLAIN_ID => pressed.push(Pressed::Explain),
                 _ => {}
             }
         }
@@ -135,11 +158,20 @@ impl PauseKey {
 
 impl Drop for PauseKey {
     fn drop(&mut self) {
-        if self.registered {
-            // SAFETY: unregisters the hotkey this instance registered.
-            unsafe {
-                let _ = UnregisterHotKey(None, PAUSE_ID);
-                let _ = UnregisterHotKey(None, OCR_ID);
+        // Each one guarded by its own flag. They were all behind `registered`,
+        // so a machine where another application held Ctrl+Alt+L left the
+        // other two registered on the way out: the flag for one key was
+        // deciding the fate of three.
+        for (held, id) in [
+            (self.registered, PAUSE_ID),
+            (self.ocr_registered, OCR_ID),
+            (self.explain_registered, EXPLAIN_ID),
+        ] {
+            if held {
+                // SAFETY: unregisters a hotkey this instance registered.
+                unsafe {
+                    let _ = UnregisterHotKey(None, id);
+                }
             }
         }
     }
