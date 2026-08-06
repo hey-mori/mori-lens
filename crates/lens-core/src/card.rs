@@ -242,6 +242,26 @@ impl Card {
         }
     }
 
+    /// The same card, marked as built on a reading that may be wrong.
+    ///
+    /// **On the card the reader ends up looking at**, not on one shown and then
+    /// replaced. A warning that appears for a second and is covered by the
+    /// answer is a warning nobody sees, and the answer is what they will act
+    /// on.
+    ///
+    /// In the footer, beside the model and the time, because that line is
+    /// already where a card says how it came by what it is showing. It is a
+    /// caveat, not the message: the reading is still the best one available,
+    /// and refusing to translate it would leave somebody who pressed a key
+    /// with nothing at all.
+    pub fn built_on_a_doubtful_reading(mut self) -> Self {
+        if !self.footer.is_empty() {
+            self.footer.push_str(" · ");
+        }
+        self.footer.push_str("읽기 불확실");
+        self
+    }
+
     /// Whether this card is safe to show.
     ///
     /// A translation with no original beside it is refused, per the note on
