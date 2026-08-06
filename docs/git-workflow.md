@@ -65,7 +65,25 @@ is too large and should be split.
    so the issue closes on merge and the trail is traceable both
    directions.
 6. **CI green** before merge, when CI is enabled (§9).
-7. **Merge, then delete the branch.**
+7. **Merge, then delete the branch, on the remote and here.**
+
+   ```bash
+   gh pr merge <n> --merge --delete-branch
+   git checkout main && git pull && git remote prune origin
+   ```
+
+   The prune is the part that gets forgotten, and it is the part
+   somebody notices. `--delete-branch` removes the branch from GitHub
+   and leaves this checkout's copy of it behind, so a clone that has
+   done fifty of these lists fifty branches that no longer exist. It
+   happened here: `git branch -r` showed fifty-five, of which one was
+   real.
+
+   The other half is a branch merged without `--delete-branch` at all,
+   which then sits on the remote looking current. One did, for a day.
+   `gh api repos/<owner>/<repo>/branches --jq '.[].name'` is the check
+   that answers this without trusting the local copy, because the local
+   copy is the thing that goes stale.
 
 ## 4. Merge policy: merge commit, not squash
 
