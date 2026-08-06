@@ -5,6 +5,7 @@ mod ocr_probe;
 mod pointer;
 mod report;
 mod sweep;
+mod wake;
 
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -51,6 +52,7 @@ USAGE
     hover-probe sweep [OPTIONS]     measure whole windows, pointer untouched
     hover-probe inventory [--only x] ask each window what text it holds
     hover-probe ocr [OPTIONS]       read the foreground window with OCR
+    hover-probe wake [OPTIONS]      what the accessibility wake costs, and how often
 
 FOLLOW MODE
     Rest the pointer on text. One line is printed per resolved hover.
@@ -114,6 +116,22 @@ OCR MODE
     --no-compare        Skip the accessibility half.
     --budget <s>        Seconds allowed for the accessibility half. Default 20.
 
+WAKE MODE
+    Chromium and Electron build no accessibility tree until an assistive
+    client asks. This measures the ask: the message on its own, the time from
+    it to the first successful read, and whether the tree is still there after
+    a period of silence. That last one is the number that decides whether
+    hovering in a browser is viable, because a wake paid once per window is a
+    slightly slow first hover and a wake paid per hover is more than the whole
+    dwell budget.
+
+    Nothing to wake is a result. It means every window already had a tree.
+
+    --only <text>       Only windows whose process or title contains this.
+    --quiet <s>         Silence before asking whether it is still awake.
+                        Default 30.
+    --patience <ms>     How long to keep re-reading after a wake. Default 600.
+
     -h, --help          This text.
 ";
 
@@ -130,6 +148,7 @@ enum Mode {
         only: Option<String>,
     },
     Ocr(ocr_probe::OcrOptions),
+    Wake(wake::WakeOptions),
 }
 
 fn parse_args() -> Result<Mode, String> {
@@ -151,6 +170,10 @@ fn parse_args() -> Result<Mode, String> {
             }
         }
         return Ok(Mode::Inventory { only, titles });
+    }
+    if args.first().is_some_and(|first| first == "wake") {
+        args.remove(0);
+        return parse_wake(args).map(Mode::Wake);
     }
     if args.first().is_some_and(|first| first == "ocr") {
         args.remove(0);
@@ -188,6 +211,33 @@ fn parse_options(args: Vec<String>) -> Result<Options, String> {
         }
     }
 
+    Ok(options)
+}
+
+fn parse_wake(args: Vec<String>) -> Result<wake::WakeOptions, String> {
+    let mut options = wake::WakeOptions::default();
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-h" | "--help" => {
+                print!("{USAGE}");
+                std::process::exit(0);
+            }
+            "--only" => options.only = Some(args.next().ok_or("--only needs some text")?),
+            "--quiet" => {
+                options.quiet = Duration::from_secs(
+                    args.next()
+                        .ok_or("--quiet needs a number of seconds")?
+                        .parse()
+                        .map_err(|_| "--quiet needs a number of seconds")?,
+                );
+            }
+            "--patience" => {
+                options.patience = Duration::from_millis(parse_millis(args.next(), "--patience")?);
+            }
+            other => return Err(format!("unknown argument: {other}")),
+        }
+    }
     Ok(options)
 }
 
@@ -325,6 +375,16 @@ pub fn run() -> ExitCode {
         Mode::Follow(options) => follow(acquirer, options, dpi_declared),
         Mode::Sweep { options, only } => run_sweep(acquirer, options, only, dpi_declared),
         Mode::Ocr(options) => run_ocr(&acquirer, &options, dpi_declared),
+        Mode::Wake(options) => {
+            println!(
+                "hover-probe wake · build {}
+",
+                build_stamp()
+            );
+            let rows = wake::run(&acquirer, &options);
+            wake::print(&rows, &options);
+            ExitCode::SUCCESS
+        }
         Mode::Inventory { only, titles } => {
             println!(
                 "hover-probe inventory · build {}

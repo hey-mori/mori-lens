@@ -43,3 +43,12 @@ pub use window::{
     declare_dpi_awareness, foreground_window, monitor_scale_at, process_name_at, root_window_at,
     top_level_windows, ForegroundProblem, WindowInfo,
 };
+
+/// Send the accessibility wake message to a window, by its opaque id.
+///
+/// Separate from `UiaTextAcquirer::wake_window`, which also sleeps the settle:
+/// this is the message alone, so the message and the settle can be measured as
+/// the two different things they are (issue #4).
+pub fn wake_accessibility_for(window_id: i64) {
+    window::wake_accessibility(windows::Win32::Foundation::HWND(window_id as *mut _));
+}
