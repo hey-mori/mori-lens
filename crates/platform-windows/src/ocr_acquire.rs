@@ -42,11 +42,13 @@
 //! passed in rather than assumed, because `lens-core` owns the trait and knows
 //! nothing about overlays.
 
-use std::time::Duration;
+use std::cell::RefCell;
+use std::time::{Duration, Instant};
 
 use lens_core::acquire::{
     AcquireContext, AcquireError, AcquisitionSource, ProviderInfo, TextAcquirer, TextTarget,
 };
+use lens_core::barren::Barren;
 use lens_core::geometry::{ScreenPoint, ScreenRect};
 
 use crate::{capture, ocr, window};
@@ -84,6 +86,17 @@ pub struct OcrTextAcquirer {
     /// without one, and so the thing that owns the window stays the thing that
     /// decides how to hide it.
     hide_the_card: Box<dyn Fn(ScreenRect)>,
+    /// Where the last reading found lines, so a hover in the same margin is
+    /// not another capture. See [`lens_core::barren`].
+    ///
+    /// `RefCell` because `acquire` takes `&self`: the trait is shared, and a
+    /// reading that costs half a second is not something two threads should be
+    /// doing at once anyway. This acquirer lives on the hover worker's thread
+    /// and nothing else touches it.
+    barren: RefCell<Barren>,
+    /// A monotonic origin, so the memory can be timed without an `Instant` in
+    /// `lens-core`.
+    since: Instant,
 }
 
 impl std::fmt::Debug for OcrTextAcquirer {
@@ -94,7 +107,11 @@ impl std::fmt::Debug for OcrTextAcquirer {
 
 impl OcrTextAcquirer {
     pub fn new(hide_the_card: Box<dyn Fn(ScreenRect)>) -> Self {
-        Self { hide_the_card }
+        Self {
+            hide_the_card,
+            barren: RefCell::new(Barren::new()),
+            since: Instant::now(),
+        }
     }
 
     /// Whether this machine can recognise anything at all.
@@ -111,8 +128,18 @@ impl TextAcquirer for OcrTextAcquirer {
     fn acquire(
         &self,
         point: ScreenPoint,
-        _context: &AcquireContext,
+        context: &AcquireContext,
     ) -> Result<TextTarget, AcquireError> {
+        let now = self.since.elapsed();
+        if context.view_may_have_changed {
+            self.barren.borrow_mut().forget();
+        } else if self.barren.borrow().nothing_is_at(point, now) {
+            // The previous capture already read this pixel and found no line
+            // on it. Photographing the screen again to be told the same thing
+            // is the cost issue #87 is about.
+            return Err(AcquireError::KnownEmpty);
+        }
+
         let scale = window::monitor_scale_at(point);
         let region = band_around(point, scale);
         // The band is computed first so the hook can decide whether the card is
@@ -133,6 +160,13 @@ impl TextAcquirer for OcrTextAcquirer {
                 // path cannot work at all, and saying so is different from saying
                 // there was nothing to read.
                 .ok_or(AcquireError::Unavailable)?;
+
+        // Remembered whether or not this point resolved. A reading that found a
+        // word still says where the rest of its region is empty, and that is
+        // the same saving on the next hover.
+        self.barren
+            .borrow_mut()
+            .remember(read.covered, read.line_bounds(), now);
 
         let (line, word) = read.word_at(point).ok_or(AcquireError::Empty)?;
         let text = line.text.trim();

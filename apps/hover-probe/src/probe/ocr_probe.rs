@@ -405,7 +405,11 @@ pub fn run(acquirer: &UiaTextAcquirer, options: &OcrOptions) -> Result<OcrRow, S
         return Err("the capture or the recognition failed".to_owned());
     };
 
-    let read = ocr::Recognised { lines };
+    let read = ocr::Recognised {
+        lines,
+        // The client area, which is what `recognise` tiled and read.
+        covered: client_bounds,
+    };
     let words: Vec<&ocr::OcrWord> = read.lines.iter().flat_map(|line| &line.words).collect();
     let characters: usize = read
         .lines
