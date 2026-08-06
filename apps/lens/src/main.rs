@@ -109,6 +109,7 @@ OPTIONS
                         applications that expose no text at all.
                         Written with every option in it on first run.
     --language <name>   Target language. Default Korean.
+    -V, --version       Print the version and the commit this was built from.
     --endpoint <addr>   Where Ollama listens. Default 127.0.0.1:11434, and it
                         must be on this machine: 127.0.0.1, localhost or ::1.
                         Lens has no way to send text off this machine safely
@@ -217,6 +218,14 @@ fn parse_flags() -> Result<Flags, String> {
             "--text" => flags.text = Some(value("--text")?),
             "--language" => flags.language = Some(value("--language")?),
             "--model" => flags.model = Some(value("--model")?),
+            "--version" | "-V" => {
+                println!(
+                    "Mori Lens {} · build {}",
+                    env!("CARGO_PKG_VERSION"),
+                    build_stamp()
+                );
+                std::process::exit(0);
+            }
             "--endpoint" => flags.endpoint = Some(value("--endpoint")?),
             "--dwell" => {
                 flags.dwell_ms = Some(
@@ -385,6 +394,9 @@ fn main() -> std::process::ExitCode {
         // visible or the user concludes the product does not work.
         println!("            line {}: {}", problem.line, problem.message);
     }
+    // First, because everything under it is a measurement of *this* build and
+    // a reader pasting the lines has no other way to say which one.
+    println!("  build     {}", build_stamp());
     println!("  target    {}", options.language);
     println!("  engine    {engine_line}");
     // Where, as well as what. A user who has pointed this somewhere else has
@@ -1079,6 +1091,18 @@ fn main() -> std::process::ExitCode {
     releaser.release();
     println!("\nstopped, and the model released");
     std::process::ExitCode::SUCCESS
+}
+
+/// The commit this binary was built from, baked in by `build.rs`.
+///
+/// Printed on every run and by `--version`. A stale binary produces output that
+/// looks entirely ordinary, and on 2026-08-06 a reader pasted a session log
+/// that neither of us could date: a defect fixed an hour earlier was read as
+/// still present because nothing in the lines said which build had produced
+/// them. Comparing this against `git rev-parse --short HEAD` is the whole
+/// defence, and it only works if the number is in front of somebody.
+fn build_stamp() -> &'static str {
+    env!("LENS_BUILD_SHA")
 }
 
 /// Open the settings file with whatever the user edits `.conf` files with.

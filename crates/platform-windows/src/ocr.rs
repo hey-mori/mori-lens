@@ -628,17 +628,6 @@ pub fn is_misread(word: &str) -> bool {
         })
 }
 
-impl Recognised {
-    /// How many recognised words are misreadings by [`is_misread`].
-    pub fn misread_words(&self) -> usize {
-        self.lines
-            .iter()
-            .flat_map(|line| &line.words)
-            .filter(|word| is_misread(&word.text))
-            .count()
-    }
-}
-
 #[cfg(test)]
 mod misreading_tests {
     use super::is_misread;

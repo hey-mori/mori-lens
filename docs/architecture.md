@@ -43,19 +43,23 @@ running ([ADR-0003](decisions/ADR-0003-rust-core-platform-adapters.md)).
 ## 2. Crates
 
 ```
+crates/build-stamp/        the commit a binary was built from, for both apps
+
 crates/lens-core/          no OS dependencies, no async runtime
   geometry.rs              points, rectangles, monitor-space maths
   hover.rs                 the intent state machine and generations
+  session.rs               policy plus intent plus acquisition routing
   text.rs                  TextTarget and word/sentence/paragraph spans
   acquire.rs               the TextAcquirer trait and AcquireError
+  language.rs              which script a text is in, and whether to translate
   policy.rs                per-application allow / modifier / deny
-  translate.rs             the Translator trait and TranslateError
-  cache.rs                 what has already been translated
+  translate.rs             the Translator trait, TranslateError, echo checks
+  cache.rs                 the same sentence twice costs nothing
   card.rs                  what a card says, and where it sits
+  reach.rs                 when to tell a reader why nothing happened
   theme.rs                 what a card looks like, as data
   settings.rs              what the user chose, parsed from their file
   icon.rs                  the tray glyph, computed rather than shipped
-  cache.rs                 the same sentence twice costs nothing
 
 crates/lens-translate/     the Ollama client, no HTTP or JSON dependency
   http.rs                  just enough HTTP/1.1 for a loopback socket
@@ -66,15 +70,28 @@ crates/platform-windows/   the Windows implementation of TextAcquirer
   window.rs                foreground window, process name, DPI, monitors
   uia.rs                   ElementFromPoint → RangeFromPoint → ranges
   inventory.rs             what a window holds, asked by handle not coordinate
+  capture.rs               a rectangle of screen, held only until words come out
+  ocr.rs                   Windows.Media.Ocr, and which readings to doubt
   overlay.rs               the card window: layered, click-through, no-activate
   glass.rs                 what is painted on it, with per-pixel alpha
   tray.rs                  the notification area icon and its menu
   autostart.rs             the per-user run key, off unless asked
   appearance.rs            what Windows says the interface should look like
+  protected_harness.rs     a real password control, so a refusal can be proved
 
 apps/hover-probe/          the measurement instrument
+  probe/sweep.rs           a grid across a window, pointer untouched
+  probe/inventory.rs       what each window holds, by handle
+  probe/ocr_probe.rs       what OCR reads where accessibility does not
+  probe/wake.rs            what the accessibility wake costs, and how often
+  probe/report.rs          percentiles and the shape of a run
+
 apps/lens/                 the product
+  hover_worker.rs          acquisition on its own thread, off the pointer loop
   lifecycle.rs             when a card appears, stays, and goes
+  manual_ocr.rs            the band around the pointer, on a keypress
+  pause.rs                 both hotkeys, because they share one message queue
+  pointer.rs               sampling, modifiers, and the process under the point
   refresh.rs               noticing an edited settings file and dark mode
   silence.rs               why no card appeared
   console.rs               where the banner goes when there is no console
