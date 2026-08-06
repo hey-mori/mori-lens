@@ -937,3 +937,182 @@ mod half_translated_tests {
         assert!(!reads_as_the_source(source, good));
     }
 }
+
+/// Tokens in `text` that are code rather than words.
+///
+/// A model translating a Korean sentence full of English identifiers turned
+/// `LedgerDataSheetService` into 레저데이터시트서비스 on a reader's card. The
+/// system prompt already says identifiers stay verbatim, and a 7B model
+/// applying that to a bare CamelCase word in the middle of a sentence is
+/// evidently not something a sentence of instruction achieves.
+///
+/// So they are named. Listing the actual tokens turns a rule the model has to
+/// apply into a list it has to copy, which is a much easier thing to ask.
+///
+/// # What counts, and why the shapes are narrow
+///
+/// Only tokens no ordinary word could be: an underscore inside, a lower-then-
+/// upper camel hump, a slash with something either side, or a scheme. A rule
+/// that also caught capitalised words would list every proper noun in the
+/// sentence and teach the model to leave names untranslated, which is the
+/// opposite of what a reader wants.
+///
+/// # These came off a screen
+///
+/// So they are filtered the way [`crate::translate`]'s focused word is: no
+/// quotes, no newlines, bounded length, bounded count. A token that survives
+/// that cannot close the string it sits in or carry a sentence of instruction,
+/// which is the property the fence exists to protect
+/// (`docs/privacy-model.md`).
+pub fn identifiers_in(text: &str) -> Vec<String> {
+    /// Everything a token may contain besides letters and digits.
+    ///
+    /// A **closed** list. The first version removed quotes, newlines and
+    /// backslashes and kept the rest, which is a list somebody has to keep
+    /// complete forever against strings arriving from a stranger's screen.
+    /// This one cannot be incomplete: a character not written here does not
+    /// survive.
+    const IDENTIFIER_PUNCTUATION: [char; 8] = ['_', '-', '/', '.', ':', '{', '}', '#'];
+
+    /// Longest token worth naming. Past this it is not an identifier, it is a
+    /// paragraph with no spaces in it.
+    const LONGEST: usize = 64;
+    /// Most tokens to name. A line of pure code would otherwise put a hundred
+    /// of them in front of a model that has a sentence to translate.
+    const MOST: usize = 8;
+
+    let mut found: Vec<String> = Vec::new();
+    for raw in text.split_whitespace() {
+        // Kept characters rather than removed ones. A list of what may not
+        // appear is a list somebody has to keep complete; a list of what may is
+        // closed by construction, and these strings came off a screen.
+        let token: String = raw
+            .trim_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '_')
+            .chars()
+            .filter(|c| c.is_alphanumeric() || IDENTIFIER_PUNCTUATION.contains(c))
+            .take(LONGEST)
+            .collect();
+        if token.chars().count() < 3 || token.chars().count() >= LONGEST {
+            continue;
+        }
+        if !looks_like_code(&token) {
+            continue;
+        }
+        if !found.iter().any(|kept| kept == &token) {
+            found.push(token);
+        }
+        if found.len() >= MOST {
+            break;
+        }
+    }
+    found
+}
+
+/// Whether a token is code rather than a word.
+fn looks_like_code(token: &str) -> bool {
+    let has_letter = token.chars().any(char::is_alphabetic);
+    if !has_letter {
+        return false;
+    }
+    if token.contains("://") {
+        return true;
+    }
+    // A path rather than a sentence that happens to contain a slash. Both
+    // sides have to be there, **or** it begins with one, which is what an
+    // absolute route looks like and what the first version of this missed:
+    // `/projects/{id}/orbbase/tables/{table}/export` has nothing before its
+    // first slash, so a rule about both sides rejected the longest and most
+    // fragile identifier on the card.
+    if let Some(rest) = token.strip_prefix('/') {
+        if !rest.is_empty() {
+            return true;
+        }
+    }
+    if let Some((before, after)) = token.split_once('/') {
+        if !before.is_empty() && !after.is_empty() {
+            return true;
+        }
+    }
+    if token.contains('_') {
+        return true;
+    }
+    // A camel hump. `LedgerDataSheetService` has one and `English` does not,
+    // which is the whole distinction: an initial capital is a sentence
+    // starting, and a capital after a lower-case letter is not.
+    token
+        .chars()
+        .zip(token.chars().skip(1))
+        .any(|(first, second)| first.is_lowercase() && second.is_uppercase())
+}
+
+#[cfg(test)]
+mod identifier_tests {
+    use super::identifiers_in;
+
+    /// The line from the card, and the token it damaged.
+    #[test]
+    fn the_identifiers_a_model_transliterated_are_found() {
+        let line = "orbita의 LedgerDataSheetService 에 export_csv 를 넣고, \
+                    POST /projects/{id}/orbbase/tables/{table}/export 라우트를 붙였습니다.";
+        let found = identifiers_in(line);
+        assert!(
+            found.iter().any(|token| token == "LedgerDataSheetService"),
+            "{found:?}"
+        );
+        assert!(found.iter().any(|token| token == "export_csv"), "{found:?}");
+        assert!(
+            found.iter().any(|token| token.starts_with("/projects/")),
+            "{found:?}",
+        );
+    }
+
+    /// And ordinary words are not, however capitalised.
+    #[test]
+    fn words_are_not_identifiers() {
+        let line = "The Korean reader hovered a sentence in Chrome and Word on Tuesday.";
+        assert!(
+            identifiers_in(line).is_empty(),
+            "{:?}",
+            identifiers_in(line)
+        );
+    }
+
+    /// A capital that starts a sentence is not a camel hump.
+    #[test]
+    fn a_leading_capital_is_not_a_hump() {
+        assert!(identifiers_in("English German Korean").is_empty());
+        assert_eq!(identifiers_in("camelCase"), vec!["camelCase".to_owned()]);
+    }
+
+    #[test]
+    fn a_url_counts_and_a_sentence_with_a_slash_does_not() {
+        assert_eq!(
+            identifiers_in("see https://example.com/docs for more"),
+            vec!["https://example.com/docs".to_owned()],
+        );
+        assert!(identifiers_in("the input / output boundary").is_empty());
+    }
+
+    /// Bounded in both directions, because these came off a screen.
+    #[test]
+    fn the_list_is_bounded_in_count_and_in_length() {
+        let many: String = (0..40).map(|n| format!("token_{n} ")).collect();
+        assert_eq!(identifiers_in(&many).len(), 8);
+
+        let enormous = format!("prefix_{}", "x".repeat(500));
+        assert!(
+            identifiers_in(&enormous).is_empty(),
+            "a paragraph is not a token"
+        );
+    }
+
+    /// Nothing that could close the string it will sit in.
+    #[test]
+    fn a_token_carrying_a_quote_or_a_newline_is_stripped_of_it() {
+        let hostile = "field_\"one\" second_\ntwo";
+        for token in identifiers_in(hostile) {
+            assert!(!token.contains('"'), "{token:?}");
+            assert!(!token.contains('\n'), "{token:?}");
+        }
+    }
+}
