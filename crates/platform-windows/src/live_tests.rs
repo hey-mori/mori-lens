@@ -380,44 +380,64 @@ fn a_streamed_answer_does_not_blank_or_disappear_between_redraws() {
     use lens_core::geometry::ScreenRect;
 
     let overlay = crate::Overlay::start().expect("overlay");
-    crate::overlay::forget_last_frame();
     let anchor = ScreenRect::new(500, 400, 300, 22);
     let original = "The output files came back empty, so the full test suite produced nothing.";
 
-    assert!(overlay.show(Card::partial(original, "출력"), anchor));
-    std::thread::sleep(std::time::Duration::from_millis(400));
+    /// How dense the sampling has to be before a pass means anything.
+    ///
+    /// The bug hid the card for one 25ms loop tick, so a sampler slower than
+    /// this could miss it and report nothing wrong.
+    const FINE_ENOUGH_MS: f64 = 20.0;
 
-    let stop = Arc::new(AtomicBool::new(false));
-    let watcher = watch_card(overlay.window_id(), Arc::clone(&stop));
+    let mut attempts = Vec::new();
+    let mut observed = None;
+    // **Twice, and the retry is about the machine rather than the product.**
+    // A sampler that did not get enough turns has not measured anything, and
+    // reporting that as a card flickering would blame the product for a busy
+    // afternoon. This first failed in a suite of forty checks, several of them
+    // enlarging large bitmaps immediately before it, and passed alone and on
+    // the next run.
+    for attempt in 1..=2 {
+        crate::overlay::forget_last_frame();
+        assert!(overlay.show(Card::partial(original, "출력"), anchor));
+        std::thread::sleep(std::time::Duration::from_millis(400));
 
-    // What a streamed answer does: the same card, growing, on the throttle.
-    for piece in [
-        "출력 파일이",
-        "출력 파일이 비어 있었기",
-        "출력 파일이 비어 있었기 때문에 전체",
-        "출력 파일이 비어 있었기 때문에 전체 테스트 스위트는",
-        "출력 파일이 비어 있었기 때문에 전체 테스트 스위트는 아무것도 생성하지 않았습니다.",
-    ] {
-        assert!(overlay.show(Card::partial(original, piece), anchor));
-        std::thread::sleep(std::time::Duration::from_millis(120));
+        let stop = Arc::new(AtomicBool::new(false));
+        let watcher = watch_card(overlay.window_id(), Arc::clone(&stop));
+
+        // What a streamed answer does: the same card, growing, on the throttle.
+        for piece in [
+            "출력 파일이",
+            "출력 파일이 비어 있었기",
+            "출력 파일이 비어 있었기 때문에 전체",
+            "출력 파일이 비어 있었기 때문에 전체 테스트 스위트는",
+            "출력 파일이 비어 있었기 때문에 전체 테스트 스위트는 아무것도 생성하지 않았습니다.",
+        ] {
+            assert!(overlay.show(Card::partial(original, piece), anchor));
+            std::thread::sleep(std::time::Duration::from_millis(120));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        stop.store(true, Ordering::Relaxed);
+        let seen = watcher.join().expect("watcher");
+        let period_ms = 800.0 / seen.samples as f64;
+        println!(
+            "attempt {attempt}: {} samples every {period_ms:.1}ms · {} hidden · {} blank · thinnest {} opaque",
+            seen.samples, seen.hidden, seen.blank, seen.thinnest,
+        );
+        attempts.push(format!("{} samples every {period_ms:.1}ms", seen.samples));
+        if seen.samples > 60 && period_ms < FINE_ENOUGH_MS {
+            observed = Some(seen);
+            break;
+        }
+        println!("  too coarse to see a 25ms flicker; the machine was busy, trying again");
     }
-    std::thread::sleep(std::time::Duration::from_millis(200));
 
-    stop.store(true, Ordering::Relaxed);
-    let seen = watcher.join().expect("watcher");
-    let period_ms = 800.0 / seen.samples as f64;
-    println!(
-        "{} samples every {period_ms:.1}ms · {} hidden · {} blank · thinnest {} opaque pixels",
-        seen.samples, seen.hidden, seen.blank, seen.thinnest,
-    );
-
-    // The bug hid the card for one 25ms loop tick, so the sampler has to be
-    // well inside that or a pass means nothing.
-    assert!(
-        seen.samples > 60 && period_ms < 20.0,
-        "{} samples, one every {period_ms:.1}ms: too coarse to see a 25ms flicker",
-        seen.samples,
-    );
+    let Some(seen) = observed else {
+        panic!(
+            "the sampler never got enough turns to see a 25ms flicker, so nothing was              measured: {attempts:?}",
+        );
+    };
     assert_eq!(
         seen.hidden, 0,
         "the card disappeared while a streamed answer was arriving",
