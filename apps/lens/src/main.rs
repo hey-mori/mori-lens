@@ -850,11 +850,39 @@ fn main() -> std::process::ExitCode {
                 };
                 policy = reloaded;
                 hover.reconfigure(hover_config, policy.clone());
+
+                // **Everything that is read once, gathered.** The model and
+                // the address belong to the translation worker, which owns
+                // them for its life: swapping one mid-flight would leave a
+                // queued job answered by the model it did not ask for. The OCR
+                // mode decides whether the acquisition thread is built with a
+                // capture path at all.
+                //
+                // Only the model was named here, and `ocr` and `endpoint` were
+                // ignored in silence. A reader who edits a file, saves it, and
+                // sees nothing concludes the file does not work.
+                let mut stale: Vec<&str> = Vec::new();
                 if settings.model != options.model {
-                    // The worker owns the translator, and swapping a model
-                    // mid-flight would leave a queued job answered by the one
-                    // it did not ask for. Said rather than silently ignored.
-                    println!("settings: the model changed; restart to use it");
+                    stale.push("model");
+                }
+                if settings.endpoint != options.endpoint {
+                    stale.push("endpoint");
+                }
+                if OcrMode::named(&settings.ocr) != Some(options.ocr_mode) {
+                    stale.push("ocr");
+                }
+                if !stale.is_empty() {
+                    let keys = stale.join(", ");
+                    println!("settings: {keys} changed; restart to use it");
+                    // And on a card, because a Windows subsystem binary
+                    // started from Explorer has nowhere to print that line,
+                    // and the reader is looking at the screen: they just saved
+                    // a file and are waiting to see what it did.
+                    let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
+                    overlay.show(
+                        Card::needs_a_restart(&keys),
+                        ScreenRect::new(at.x, at.y, 1, 1),
+                    );
                 }
             }
 
