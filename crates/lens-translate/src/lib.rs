@@ -307,9 +307,13 @@ fn system_prompt(
     // set by `identifiers_in` and are joined with a separator none of them can
     // contain.
     if !keep.is_empty() {
+        // One long line rather than a continued literal. A `\` at the end of a
+        // string line is what put fourteen spaces into the middle of this
+        // sentence: `rustfmt` rejoins such a literal and leaves the
+        // indentation inside the string. `CLAUDE.md` bans the construction for
+        // that reason and this was the fifth time.
         prompt.push_str(&format!(
-            "
-These appear in the material and must appear unchanged in your              output, exactly as written: {}",
+            "\nThese appear in the material and must appear unchanged in your output, exactly as written: {}",
             keep.join(" · "),
         ));
     }
@@ -922,6 +926,63 @@ mod keep_tests {
         assert!(!prompt.contains("Ignore all previous"), "{prompt}");
         for line in prompt.lines() {
             assert!(line.len() < 400, "a line grew without bound: {line}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod prompt_shape_tests {
+    use super::system_prompt;
+
+    /// No run of two spaces anywhere the model reads.
+    ///
+    /// This is the check that was missing. A `\` continuing a string literal
+    /// is rejoined by `rustfmt` with the indentation left **inside** the
+    /// string, and the shipping system prompt carried
+    /// `in your              output` for as long as the identifier list has
+    /// existed. `lens_core::card`'s copy tests catch this for anything a
+    /// reader sees; nothing caught it for anything a model reads.
+    ///
+    /// Run over every shape the prompt has, because the damage lands in
+    /// whichever branch the continued literal was written in.
+    #[test]
+    fn no_prompt_carries_a_run_of_spaces() {
+        let cases: Vec<(&str, String)> = vec![
+            ("plain", system_prompt("Korean", None, &[], "#LENS-test#")),
+            (
+                "with a focused word",
+                system_prompt("Korean", Some("pointer"), &[], "#LENS-test#"),
+            ),
+            (
+                "with identifiers",
+                system_prompt(
+                    "Korean",
+                    None,
+                    &["export_csv".to_owned(), "getUserProfile".to_owned()],
+                    "#LENS-test#",
+                ),
+            ),
+            (
+                "with both",
+                system_prompt(
+                    "Korean",
+                    Some("row"),
+                    &["RowQuery".to_owned()],
+                    "#LENS-test#",
+                ),
+            ),
+        ];
+
+        for (what, prompt) in cases {
+            assert!(
+                !prompt.contains("  "),
+                "the {what} prompt has a run of spaces in it, which is a string \
+                 literal that was continued with a backslash:\n{prompt}",
+            );
+            assert!(
+                !prompt.contains(" \n") && !prompt.ends_with(' '),
+                "the {what} prompt has a trailing space:\n{prompt}",
+            );
         }
     }
 }
