@@ -17,7 +17,7 @@
 //! named applications (`CLAUDE.md`, "Claiming something works").
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr;
 use std::time::{Duration, Instant};
@@ -46,13 +46,51 @@ use windows::Win32::UI::Accessibility::{
 use crate::com::ComScope;
 use crate::window;
 
-/// How long to let a woken Chromium renderer build its tree before re-reading.
+/// How long to keep asking a woken renderer, before giving up on this hover.
 ///
-/// Short enough to stay imperceptible, long enough for the renderer to answer
-/// in practice. Measured by Mori at 140ms; carried over as a starting value and
-/// re-measured by the probe, because Lens pays it on a hover budget rather than
-/// on a keypress.
-const WAKE_SETTLE_MS: u64 = 140;
+/// This was a **sleep of 140ms followed by one retry**, carried over from Mori
+/// where it is paid once per deliberate keypress. A reader described what that
+/// produces, exactly:
+///
+/// > Alt을 눌렀는데 처음에는 반응이 없고, 두 번째에는 못한다고 하고,
+/// > 세 번째에는 번역된 걸 보여주고
+///
+/// That is this constant and the line below it. A renderer that has not
+/// finished building its tree at 140ms fails the retry; the window is by then
+/// recorded as woken, so the second hover sends no message and makes no retry
+/// at all; and the third succeeds only because the tree finished on its own
+/// while the reader was trying again.
+///
+/// So it polls instead. The tree is asked for as soon as it might exist and
+/// every [`WAKE_STEP`] after that, and the answer arrives when it is ready
+/// rather than at a moment somebody guessed. Longer than 140ms in the worst
+/// case and shorter in the common one.
+///
+/// Affordable now in a way it was not: acquisition runs on its own thread
+/// (issue #42), so waiting here costs the card some latency and costs the
+/// pointer, the card timers and the pause key nothing.
+const WAKE_PATIENCE: Duration = Duration::from_millis(420);
+
+/// How long before a window that did not wake may be asked again.
+///
+/// The other half of the defect this file records. A window was recorded as
+/// woken the moment the message went out, whether or not it ever answered, so a
+/// renderer that was still building got one message and then silence for the
+/// session. Forgetting it on failure fixed that and broke something worse:
+/// every failing point paid the full wait, and a sweep across one window
+/// managed 45 points in twenty seconds.
+///
+/// Two seconds. Long enough that a loop asking about a hundred points sends one
+/// message, short enough that a reader who tries again gets a real second
+/// attempt rather than the silence they reported.
+const WAKE_RETRY_AFTER: Duration = Duration::from_secs(2);
+
+/// How often to ask, while waiting for a tree to appear.
+///
+/// A read costs a few milliseconds against a p50 of 3 to 7, so this is mostly
+/// sleeping. Fine enough to return early on a fast renderer, coarse enough not
+/// to spend the wait making cross-process calls.
+const WAKE_STEP: Duration = Duration::from_millis(25);
 
 /// How long UI Automation may wait for one cross-process call to come back.
 ///
@@ -149,7 +187,15 @@ pub struct UiaTextAcquirer {
     /// rather than once per hover. A closed window's handle staying in the set
     /// is harmless: handles are not reused often enough to matter, and the worst
     /// case is one skipped wake on a cold tree.
-    woken: RefCell<HashSet<isize>>,
+    /// When each window was last sent a wake message.
+    ///
+    /// A time rather than a set, and that is the whole of the throttle. A set
+    /// answers "has this window ever been woken", which is the wrong question
+    /// twice over: yes forever means a renderer that was still building its
+    /// tree never gets another message, and forgetting it on failure means the
+    /// next point pays the full wait again. A sweep across one window found 45
+    /// points in twenty seconds that way.
+    woken: RefCell<HashMap<isize, Instant>>,
     /// Whether the per-call limits were actually accepted.
     ///
     /// Recorded rather than assumed. `IUIAutomation2` is Windows 8 and later,
@@ -213,7 +259,7 @@ impl UiaTextAcquirer {
 
         Ok(Self {
             automation,
-            woken: RefCell::new(HashSet::new()),
+            woken: RefCell::new(HashMap::new()),
             bounded,
             _com: com,
         })
@@ -321,16 +367,51 @@ impl UiaTextAcquirer {
         self.woken.borrow_mut().clear();
     }
 
-    /// Send the wake message if this window has not had one. Returns whether it
-    /// was sent, so a retry only happens when something actually changed.
+    /// Send the wake message, unless this window had one recently.
+    ///
+    /// Returns whether one went out, so the caller only waits when something
+    /// actually changed.
+    ///
+    /// **Throttled rather than once.** Once meant a renderer still building its
+    /// tree got a single message and then silence for the session. Never meant
+    /// every failing point paid the full wait, and a sweep managed 45 points in
+    /// twenty seconds. A reader gets another chance [`WAKE_RETRY_AFTER`] later,
+    /// and a loop asking about a hundred points does not.
+    ///
+    /// No sleep here. Waiting is [`Self::read_until_awake`]'s job, because how
+    /// long to wait is a question about whether an answer has arrived and not
+    /// one a constant can settle.
     fn wake_once(&self, hwnd: windows::Win32::Foundation::HWND) -> bool {
         let key = window::window_key(hwnd);
-        if !self.woken.borrow_mut().insert(key) {
-            return false;
+        let now = Instant::now();
+        let mut woken = self.woken.borrow_mut();
+        if let Some(last) = woken.get(&key) {
+            if now.duration_since(*last) < WAKE_RETRY_AFTER {
+                return false;
+            }
         }
+        woken.insert(key, now);
+        drop(woken);
         window::wake_accessibility(hwnd);
-        std::thread::sleep(std::time::Duration::from_millis(WAKE_SETTLE_MS));
         true
+    }
+
+    /// Read until the tree exists, or until this hover has waited long enough.
+    ///
+    /// Returns the last failure rather than a synthesised one, so the
+    /// compatibility matrix records what the provider actually said.
+    fn read_until_awake(
+        &self,
+        point: POINT,
+        context: &AcquireContext,
+    ) -> Result<Reading, AcquireError> {
+        let deadline = Instant::now() + WAKE_PATIENCE;
+        let mut last = self.read_once(point, context);
+        while last.is_err() && Instant::now() < deadline {
+            std::thread::sleep(WAKE_STEP);
+            last = self.read_once(point, context);
+        }
+        last
     }
 }
 
@@ -360,16 +441,19 @@ impl TextAcquirer for UiaTextAcquirer {
         let mut reading = self.read_once(native, context);
 
         if let Err(error) = reading {
-            if context.allow_accessibility_wake && Self::wake_could_help(error) {
-                if let Some(hwnd) = hwnd.filter(|hwnd| self.wake_once(*hwnd)) {
-                    let _ = hwnd;
-                    woke = true;
-                    // Re-run the whole chain, not just the read: the provider
-                    // that answers after activation is a different object from
-                    // the stub that answered before it
-                    // (`docs/research/inherited-from-mori.md` §3).
-                    reading = self.read_once(native, context);
-                }
+            // `wake_once` is last, and deliberately: it has the side effect of
+            // sending the message, so it must not run for a failure a wake
+            // could not repair or for a hover that is not allowed to wake.
+            if context.allow_accessibility_wake
+                && Self::wake_could_help(error)
+                && hwnd.is_some_and(|hwnd| self.wake_once(hwnd))
+            {
+                woke = true;
+                // Re-run the whole chain, not just the read: the provider that
+                // answers after activation is a different object from the stub
+                // that answered before it
+                // (`docs/research/inherited-from-mori.md` §3).
+                reading = self.read_until_awake(native, context);
             }
         }
 
