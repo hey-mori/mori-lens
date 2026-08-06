@@ -2892,3 +2892,115 @@ fn measure_what_enlarging_a_capture_does_for_small_text() {
         }
     }
 }
+
+/// How much contrast the recogniser needs, at the size a code editor uses.
+///
+/// **The measurement before this one had a hole in it.** It compared the card's
+/// light theme against its dark one and found 6 of 7 words against 3 of 7,
+/// which says those two themes differ and says nothing about why. They differ
+/// in polarity, which was ruled out, and in their actual colours, which was
+/// not. A reader's problem is a code editor's dark theme, not this card's, and
+/// nothing in that run could speak to it.
+///
+/// So this fixes the background, fixes the size, and varies **one thing**: how
+/// far the ink is from the paper. What comes out is a curve rather than a
+/// comparison, and a curve says what a surface needs rather than which of two
+/// surfaces was better.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn measure_how_much_contrast_the_recogniser_needs() {
+    use lens_core::card::Card;
+    use lens_core::geometry::ScreenPoint;
+    use lens_core::theme::{Rgb, Theme};
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    let glass = crate::glass::Glass::new().expect("Direct2D");
+    let known = "The test correctly refuses to pass vacuously";
+    let card = Card::translated(
+        known,
+        &QuickTranslation {
+            text: "테스트가 의미 없이 통과하는 것을 올바르게 거부한다".to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "fixture".to_owned(),
+            latency_ms: 0,
+            cached: false,
+        },
+    );
+
+    // A dark editor's background, and inks walking away from it. VS Code's
+    // default dark theme is #1e1e1e paper with #d4d4d4 comment ink, which is
+    // the row this exists to place.
+    let paper = Rgb::new(0x1e, 0x1e, 0x1e);
+    let inks = [
+        Rgb::new(0x3a, 0x3a, 0x3a),
+        Rgb::new(0x55, 0x55, 0x55),
+        Rgb::new(0x70, 0x70, 0x70),
+        Rgb::new(0x8b, 0x8b, 0x8b),
+        Rgb::new(0xa6, 0xa6, 0xa6),
+        Rgb::new(0xd4, 0xd4, 0xd4),
+        Rgb::new(0xff, 0xff, 0xff),
+    ];
+
+    println!("\npaper #1e1e1e, text at 8pt\n");
+    println!("  ink        contrast    3x    4x    5x    6x   (of 7 words)");
+    for ink in inks {
+        let mut theme = Theme::resolve(
+            lens_core::theme::Preset::System,
+            lens_core::theme::Translucency::Solid,
+            lens_core::theme::TextScale::Small,
+            lens_core::theme::SystemPreferences {
+                dark: true,
+                ..lens_core::theme::SystemPreferences::default()
+            },
+        );
+        theme.surface = paper;
+        theme.body = ink;
+        theme.original = ink;
+        theme.footer = ink;
+        theme.border = paper;
+
+        let laid = glass.lay_out(&card, &theme, 420, 0.75).expect("layout");
+        // SAFETY: the renderer creates and releases its own objects.
+        let (width, height, argb) = unsafe { glass.pixels(&laid, &theme) }.expect("pixels");
+        let mut bgra = Vec::with_capacity(argb.len() * 4);
+        for pixel in &argb {
+            bgra.extend_from_slice(&pixel.to_le_bytes());
+        }
+        let native = crate::capture::Capture::from_bgra(width, height, bgra);
+        let score = |capture: &crate::capture::Capture| -> usize {
+            let text = crate::ocr::read(capture, ScreenPoint::new(0, 0))
+                .map(|read| read.text())
+                .unwrap_or_default();
+            let got: Vec<String> = text
+                .split_whitespace()
+                .map(|word| {
+                    word.trim_matches(|c: char| !c.is_alphanumeric())
+                        .to_lowercase()
+                })
+                .collect();
+            known
+                .split_whitespace()
+                .filter(|word| got.iter().any(|read| read == &word.to_lowercase()))
+                .count()
+        };
+        // Past the 3x this crate stops at, because the contrast columns say
+        // contrast is not the lever and size is the only one left.
+        let at = |factor: u32| -> String {
+            native.scaled(factor).map_or_else(
+                || "  -".to_owned(),
+                |capture| format!("{:>3}", score(&capture)),
+            )
+        };
+        println!(
+            "  #{:02x}{:02x}{:02x}   {:>6.1}:1  {}   {}   {}   {}",
+            ink.r,
+            ink.g,
+            ink.b,
+            ink.contrast_with(paper),
+            at(3),
+            at(4),
+            at(5),
+            at(6),
+        );
+    }
+}

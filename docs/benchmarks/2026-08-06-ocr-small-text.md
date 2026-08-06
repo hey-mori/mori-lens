@@ -104,6 +104,81 @@ measurement.
 antialiasing are the obvious candidates and neither has been measured. One
 run per cell, so the gap itself deserves repeating before it is built on.
 
+## Contrast is not the lever either, and nor is more enlargement
+
+The dark-versus-light run above compared the card's two themes, which
+differ in polarity and in their actual colours. Polarity was ruled out.
+Colour was not, and a reader's problem is a code editor's dark theme rather
+than this card's, so a comparison of two of our themes could not speak to it.
+
+This fixes the paper at `#1e1e1e`, which is VS Code's default dark
+background, fixes the size at 8pt, and varies one thing: how far the ink is
+from the paper. Every cell is the number of seven English words that came
+back exactly.
+
+```
+paper #1e1e1e, text at 8pt
+
+  ink        contrast    3x    4x    5x    6x
+  #3a3a3a      1.5:1     0     0     0     0
+  #555555      2.2:1     0     0     0     0
+  #707070      3.4:1     3     2     1     2
+  #8b8b8b      4.9:1     3     5     3     4
+  #a6a6a6      6.8:1     3     4     3     4
+  #d4d4d4     11.2:1     5     4     4     5
+  #ffffff     16.7:1     3     2     4     4
+```
+
+Three things fall out of it.
+
+**Below about 3:1 there is a cliff.** Nothing is read at all, at any
+enlargement. That is the one place contrast decides the outcome.
+
+**Above it, contrast does nothing.** Pure white on near-black, at 16.7:1, is
+no better than `#8b8b8b` at 4.9:1, and worse than `#d4d4d4` at 11.2:1. The
+numbers are not noise: the recogniser returns identical output for identical
+input, which the inversion run proved. They are the rasterisation of
+particular glyphs at a particular size, and they do not lie on a curve.
+
+**Nothing past 3x helps.** Four, five and six times give the same three to
+five words. The cap in `read_best` is where the improvement stopped, and now
+there is a table saying so rather than a sentence.
+
+VS Code's own comment colour is `#d4d4d4` on `#1e1e1e`, the 11.2:1 row, at
+four or five words of seven. That is exactly what the reader photographed:
+mostly right, one or two words mangled, translated with a straight face.
+
+**So preprocessing is spent.** There is no picture Lens can hand this
+recogniser that reads a dark 8pt editor reliably.
+
+## Which leaves detection
+
+`ocr::is_misread`. Not confidence, which `Windows.Media.Ocr` does not
+provide, but shape: a Hangul syllable with a letter or a digit on both sides
+of it, which is what `do은5`, `k국05t` and `de님op디5` all are and what real
+text is not.
+
+A suffix does not count, and that distinction is the rule. Korean technical
+writing attaches particles to English identifiers constantly, `export_csv를`,
+`insbase에`, `k8s를`, and flagging those would fire on most of what this
+product's first reader writes.
+
+It is a floor rather than a ceiling, and the gaps are asserted in their own
+test so nobody reads the passing ones as completeness:
+
+- `님hOle` for `whole`, where the Hangul is first with nothing before it
+- `5h0l` for `show`, digits standing in for letters with no Hangul at all,
+  which needs a rule about digits inside Latin words, and `k8s`, `qwen2.5`
+  and `sha256` are all that shape
+
+What the product does with it: the card's footer says 읽기 불확실 beside the
+model and the time. Not a refusal. A doubtful reading is still the best
+reading available and refusing to translate it leaves somebody who pressed a
+key with nothing; what they must not have is a confident translation of
+nonsense with nothing to say so. And it goes on the card they are still
+looking at a second later, rather than on one shown first and covered by the
+answer.
+
 ## What this does not fix
 
 **Lens still cannot tell a good reading from a bad one.**

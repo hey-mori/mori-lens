@@ -66,6 +66,12 @@ struct Job {
     /// target language in the settings file takes effect on the next hover
     /// instead of the next launch.
     language: String,
+    /// Whether the text came from a reading with misread words in it.
+    ///
+    /// Travels with the job so the caveat lands on the card the reader ends up
+    /// looking at, rather than on one that is shown and then covered by the
+    /// answer.
+    doubtful: bool,
 }
 
 /// What comes back, still carrying the generation it belongs to.
@@ -542,7 +548,10 @@ fn main() -> std::process::ExitCode {
 
             let key = CacheKey::of(&request, translator.model(), PROMPT_VERSION);
             if let Some(hit) = cache.get(&key) {
-                let card = Card::translated(&job.original, &hit);
+                let mut card = Card::translated(&job.original, &hit);
+                if job.doubtful {
+                    card = card.built_on_a_doubtful_reading();
+                }
                 let _ = answers_tx.send(Answer {
                     generation: job.generation,
                     card,
@@ -575,6 +584,13 @@ fn main() -> std::process::ExitCode {
                     Card::translated(&job.original, &translation)
                 }
                 Err(error) => Card::not_translated(&job.original, &error),
+            };
+            // The caveat rides the answer rather than preceding it, so it is
+            // on the card the reader is still looking at a second later.
+            let card = if job.doubtful {
+                card.built_on_a_doubtful_reading()
+            } else {
+                card
             };
             last_answer = Some(Instant::now());
             if answers_tx
@@ -830,9 +846,13 @@ fn main() -> std::process::ExitCode {
             match manual_ocr::read_around(&overlay, at, scale) {
                 Ok(reading) => {
                     println!(
-                        "ocr   {} chars on the line, focus {} chars",
+                        "ocr   {} chars on the line, focus {} chars{}",
                         reading.sentence.chars().count(),
                         reading.word.chars().count(),
+                        match reading.misread {
+                            0 => String::new(),
+                            n => format!(", {n} misread"),
+                        },
                     );
                     if decide(&reading.sentence, &language) == Decision::AlreadyInTarget {
                         overlay.show(
@@ -848,6 +868,7 @@ fn main() -> std::process::ExitCode {
                             focused_word: Some(reading.word),
                             anchor: reading.anchor,
                             language: language.clone(),
+                            doubtful: reading.misread > 0,
                         });
                     }
                 }
@@ -980,6 +1001,8 @@ fn main() -> std::process::ExitCode {
                             focused_word: target.segmented.word_text().map(str::to_owned),
                             anchor,
                             language: language.clone(),
+                            // The accessibility path reads text, not pixels.
+                            doubtful: false,
                         });
                     }
                 }

@@ -563,3 +563,148 @@ impl Recognised {
         }
     }
 }
+
+/// Whether a recognised word is a misreading rather than a word.
+///
+/// **The last lever, because preprocessing is spent.** Enlarging took small
+/// text from 0 of 7 words to 6 of 7 and nothing beyond 3x helps; contrast is a
+/// cliff below 3:1 and flat above it; inverting a dark capture changes nothing
+/// at all. At the size a code editor renders, on a dark theme, the recogniser
+/// returns four or five of seven words and no amount of preparing the picture
+/// moves that. See `docs/benchmarks/2026-08-06-ocr-small-text.md`.
+///
+/// So the remaining thing Lens can do is stop presenting a misreading as a
+/// reading. `Windows.Media.Ocr` gives no per-word confidence, so this is a
+/// shape rule.
+///
+/// # Hangul in the middle of a Latin word
+///
+/// `do은5` for `does`, `k국05t` for part of a URL, `de님op디5` for `developers`.
+/// Each has a Hangul syllable with a letter or a digit **on both sides of it**,
+/// which is a shape real text does not have.
+///
+/// A suffix does not count, and that distinction is the whole rule. Korean
+/// technical writing attaches particles to English identifiers constantly:
+/// `export_csv를`, `insbase에`, `RowQuery의`, `k8s를`. Those are Hangul at the
+/// end of a Latin token and they are correct readings of correct text.
+/// Flagging them would fire on most of what this product's first reader
+/// writes, which is worse than the silence it is trying to fix.
+///
+/// # What it cannot see, written down because the gap is the useful part
+///
+/// - **`님hOle` for `whole`.** The Hangul is first, with nothing before it. A
+///   rule that caught a leading syllable would also catch a Korean word run
+///   into an English one, and a false positive here suppresses a correct
+///   reading.
+/// - **`5h0l` for `show`, `0f` for `Off`.** Digits standing in for letters,
+///   with no Hangul anywhere. Catching that needs a rule about digits inside
+///   Latin words, and `k8s`, `qwen2.5` and `sha256` are all that shape.
+///
+/// So this is a floor on what can be detected rather than a ceiling. It
+/// catches the misreadings whose shape is impossible and leaves the ones whose
+/// shape is merely unlikely.
+pub fn is_misread(word: &str) -> bool {
+    let hangul =
+        |c: char| ('\u{AC00}'..='\u{D7A3}').contains(&c) || ('\u{3130}'..='\u{318F}').contains(&c);
+    let latin = |c: char| c.is_ascii_alphabetic();
+    let filler = |c: char| c.is_ascii_alphanumeric();
+
+    let characters: Vec<char> = word.chars().collect();
+    // At least one Latin letter somewhere, so a Korean word beside a number is
+    // never a candidate.
+    if !characters.iter().any(|c| latin(*c)) {
+        return false;
+    }
+    characters
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| hangul(**c))
+        .any(|(at, _)| {
+            // Digits count as filler, not only letters: `do은5` has a digit
+            // after the syllable and is exactly the shape this is for.
+            let before = characters[..at].iter().any(|c| filler(*c));
+            let after = characters[at + 1..].iter().any(|c| filler(*c));
+            before && after
+        })
+}
+
+impl Recognised {
+    /// How many recognised words are misreadings by [`is_misread`].
+    pub fn misread_words(&self) -> usize {
+        self.lines
+            .iter()
+            .flat_map(|line| &line.words)
+            .filter(|word| is_misread(&word.text))
+            .count()
+    }
+}
+
+#[cfg(test)]
+mod misreading_tests {
+    use super::is_misread;
+
+    /// Words a reader photographed, off their own screen, in cards that
+    /// presented a confident translation of them.
+    #[test]
+    fn the_misreadings_from_the_cards_are_caught() {
+        for word in ["do은5", "k국05t", "de님op디5", "En글lish"] {
+            assert!(is_misread(word), "{word} was not caught");
+        }
+    }
+
+    /// The misreadings this rule cannot see, asserted so the gap stays honest.
+    ///
+    /// A test that shows only what a rule catches invites a reader to believe
+    /// it catches everything.
+    #[test]
+    fn the_misreadings_it_cannot_see_are_named() {
+        // Hangul first, with nothing before it. A rule that caught a leading
+        // syllable would also catch a Korean word run into an English one,
+        // and a false positive here suppresses a correct reading.
+        assert!(!is_misread("님hOle"));
+        // Digits standing in for letters, with no Hangul anywhere. Catching
+        // that needs a rule about digits inside Latin words, and `k8s`,
+        // `qwen2.5` and `sha256` are all that shape.
+        assert!(!is_misread("5h0l"));
+        assert!(!is_misread("0f"));
+    }
+
+    /// Korean technical writing, which does this constantly and correctly.
+    #[test]
+    fn a_particle_on_an_identifier_is_not_a_misreading() {
+        for word in [
+            "export_csv를",
+            "insbase에",
+            "RowQuery의",
+            "systemd에서",
+            "k8s를",
+            "GitHub과",
+        ] {
+            assert!(!is_misread(word), "{word} was flagged");
+        }
+    }
+
+    #[test]
+    fn ordinary_words_in_either_script_are_not_misreadings() {
+        for word in [
+            "translation",
+            "테스트",
+            "127.0.0.1:11434",
+            "src/main.rs",
+            "8pt",
+        ] {
+            assert!(!is_misread(word), "{word} was flagged");
+        }
+    }
+
+    /// A Latin word inside Korean is not a misreading either, and the rule
+    /// only looks at Hangul with Latin on **both** sides of it.
+    #[test]
+    fn latin_inside_korean_is_not_flagged() {
+        assert!(
+            !is_misread("한글English한글"),
+            "Latin inside Hangul is a different shape, and a legitimate one",
+        );
+        assert!(is_misread("En글lish"), "Hangul inside Latin is the shape");
+    }
+}
