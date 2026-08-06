@@ -31,6 +31,11 @@ use windows::Win32::Graphics::Gdi::{
     SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, SRCCOPY,
 };
 
+/// A ceiling on any single capture, so a mistake in the selection interface
+/// cannot ask this process to hold a whole wall of monitors. Generous for a
+/// paragraph and far below a desktop.
+const MAX_SIDE: i32 = 4096;
+
 /// A rectangle of screen, as premultiplied-irrelevant BGRA bytes.
 ///
 /// Deliberately not `Clone`. A capture that can be duplicated is a capture that
@@ -67,10 +72,6 @@ impl Capture {
 /// There is no error type because there is nothing a caller could do
 /// differently: a capture either happened or the user is told OCR did not work.
 pub fn rectangle(region: ScreenRect) -> Option<Capture> {
-    // A ceiling, so a mistake in the selection interface cannot ask this
-    // process to hold a whole wall of monitors. Generous for a paragraph and
-    // far below a desktop.
-    const MAX_SIDE: i32 = 4096;
     if region.width <= 0
         || region.height <= 0
         || region.width > MAX_SIDE
@@ -152,6 +153,88 @@ pub fn rectangle(region: ScreenRect) -> Option<Capture> {
             height: region.height,
             pixels,
         })
+    }
+}
+
+impl Capture {
+    /// The same picture, `factor` times larger, sampled bilinearly.
+    ///
+    /// **For the recogniser, not for a person.** `Windows.Media.Ocr` is trained
+    /// on text at document sizes and degrades sharply below them, and a code
+    /// editor is well below them: a recogniser measuring VS Code returned a
+    /// median word of 28x10px. What came back from that was `do은5` for `does`
+    /// and `5h0l word_banner` for `show_word`, translated and presented with a
+    /// straight face.
+    ///
+    /// Bilinear rather than nearest. Nearest gives the recogniser more pixels
+    /// of the same staircase; bilinear gives it the smooth edges the shapes
+    /// were antialiased into before the screen quantised them, which is what
+    /// the classifier is looking for.
+    ///
+    /// `None` when the result would exceed what a capture may hold, so a large
+    /// band cannot become an enormous allocation by asking for a big factor.
+    pub fn scaled(&self, factor: u32) -> Option<Self> {
+        if factor <= 1 {
+            return None;
+        }
+        let factor = i32::try_from(factor).ok()?;
+        let (width, height) = (
+            self.width.checked_mul(factor)?,
+            self.height.checked_mul(factor)?,
+        );
+        if width > MAX_SIDE || height > MAX_SIDE {
+            return None;
+        }
+
+        let mut pixels = vec![0u8; (width as usize) * (height as usize) * 4];
+        let sample = |x: i32, y: i32, channel: usize| -> f32 {
+            let x = x.clamp(0, self.width - 1) as usize;
+            let y = y.clamp(0, self.height - 1) as usize;
+            f32::from(self.pixels[(y * self.width as usize + x) * 4 + channel])
+        };
+
+        for out_y in 0..height {
+            // The centre of the output pixel, mapped back into the source. The
+            // half-pixel offsets are what stop the whole picture drifting by
+            // half a source pixel towards the origin, which at these sizes is
+            // most of a glyph's stem.
+            let source_y = (f32::from(out_y as i16) + 0.5) / factor as f32 - 0.5;
+            let top = source_y.floor();
+            let weight_y = source_y - top;
+            for out_x in 0..width {
+                let source_x = (f32::from(out_x as i16) + 0.5) / factor as f32 - 0.5;
+                let left = source_x.floor();
+                let weight_x = source_x - left;
+                let (left, top) = (left as i32, top as i32);
+
+                let base = ((out_y as usize) * (width as usize) + out_x as usize) * 4;
+                for channel in 0..4 {
+                    let upper = sample(left, top, channel) * (1.0 - weight_x)
+                        + sample(left + 1, top, channel) * weight_x;
+                    let lower = sample(left, top + 1, channel) * (1.0 - weight_x)
+                        + sample(left + 1, top + 1, channel) * weight_x;
+                    let value = upper * (1.0 - weight_y) + lower * weight_y;
+                    pixels[base + channel] = value.round().clamp(0.0, 255.0) as u8;
+                }
+            }
+        }
+        Some(Self {
+            width,
+            height,
+            pixels,
+        })
+    }
+
+    /// A capture built from bytes this process produced rather than from the
+    /// screen. Only for measuring the recogniser against text this repository
+    /// drew, which is the one way to score it without printing anybody's.
+    #[cfg(test)]
+    pub(crate) fn from_bgra(width: i32, height: i32, pixels: Vec<u8>) -> Self {
+        Self {
+            width,
+            height,
+            pixels,
+        }
     }
 }
 

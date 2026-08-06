@@ -114,7 +114,7 @@ pub fn read_around(
     let region = ScreenRect::new(pointer.x - width / 2, pointer.y - height / 2, width, height);
 
     let captured = capture::rectangle(region).ok_or(NoReading::NotCaptured)?;
-    let read = ocr::read(&captured, ScreenPoint::new(region.x, region.y))
+    let read = ocr::read_best(&captured, ScreenPoint::new(region.x, region.y))
         .ok_or(NoReading::NoRecogniser)?;
 
     if read.lines.iter().all(|line| line.words.is_empty()) {
