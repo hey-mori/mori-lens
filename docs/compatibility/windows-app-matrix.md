@@ -677,6 +677,49 @@ here, forty times. This repository's earlier note, inherited from Mori, was
 that plain `EDIT` controls expose no text pattern at all. On this control, on
 this build, they do.
 
+### Two instruments on one pixel, 2026-08-06
+
+The oldest open condition on the M1 gate is that **no person has confirmed
+that a resolved word is the word they were pointing at**. Everything measured
+before today used one proxy: whether the resolved word's rectangle contains
+the sample point. That checks a position, not a word. A provider returning
+the right rectangle around the wrong text passes it.
+
+OCR is a second answer to the same question, arrived at from pixels rather
+than from a provider, sharing no code and no assumptions with the first.
+Where both resolve a word at one grid point they can be compared.
+
+First run, `hover-probe ocr`, one Chromium window, 252 points, of which 89
+had recognised text and 29 had a word from **both** instruments:
+
+```
+both instruments resolved a word at 29 points:
+  the same word            21  72.4%
+  one inside the other      3  10.3%
+  different                 5  17.2%
+```
+
+"One inside the other" is a provider that expanded past the unit it was
+asked for. It is not a wrong word and counting it as one would put the
+expansion behaviour into the correctness figure.
+
+**Seventeen percent disagree.** On this window, with these two methods, one
+point in six where both could read returned different words. That is the
+number the on-target proxy could never have produced, and it is large enough
+to matter: a card placed on the wrong word explains the wrong thing.
+
+The words are compared in memory and never printed
+([`../privacy-model.md`](../privacy-model.md)).
+
+**What this does not do is close the gate row.** Two methods agreeing is not
+a person confirming, and both can be wrong the same way. What it does is
+make the human pass cheap. Instead of judging every resolved word, there are
+the disagreements, and if there is a wrong answer it is in them.
+
+Still needed for that row: the same measurement over the named target
+applications rather than one window, and a person looking at the
+disagreements it produces.
+
 ## Known limitations, before measurement
 
 Stated so a run does not rediscover them as bugs:
