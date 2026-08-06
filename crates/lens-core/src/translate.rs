@@ -110,27 +110,69 @@ pub fn reads_as_the_source(source: &str, answer: &str) -> bool {
     /// How much of the source has to survive before it is an echo, not a
     /// translation that kept the names in it.
     const ECHO_RATIO: f32 = 0.8;
+    /// How long an unbroken run of source has to be before that run alone is
+    /// an echo, however much of the sentence was translated around it.
+    ///
+    /// Six words. Shorter runs are ordinary: a title, a quoted phrase, a
+    /// library name and its arguments all survive a good translation intact.
+    /// Six consecutive words of untranslated prose do not.
+    const RUN_FLOOR: usize = 6;
 
-    let words = |text: &str| -> Vec<String> {
-        text.split_whitespace()
-            .map(|word| {
-                word.trim_matches(|c: char| !c.is_alphanumeric() && c != '_')
-                    .to_lowercase()
-            })
-            .filter(|word| !word.is_empty())
-            .collect()
-    };
-
-    let source_words = words(source);
+    let source_words = comparable_words(source);
     if source_words.len() < ECHO_FLOOR {
         return false;
     }
-    let answer_words = words(answer);
+    let answer_words = comparable_words(answer);
+
     let kept = source_words
         .iter()
         .filter(|word| answer_words.contains(word))
         .count();
-    kept as f32 / source_words.len() as f32 >= ECHO_RATIO
+    if kept as f32 / source_words.len() as f32 >= ECHO_RATIO {
+        return true;
+    }
+
+    // **The half-translated answer**, which the ratio above lets through and
+    // which a reader met on a card: the first clause in Korean and the rest of
+    // the sentence in English, verbatim, with nothing to say so. Counting
+    // scattered survivors cannot see it, because half a sentence is under any
+    // threshold that does not also fire on a translation full of identifiers.
+    // An unbroken run can.
+    longest_run(&source_words, &answer_words) >= RUN_FLOOR
+}
+
+/// Words as they compare: lower-case, stripped of anything but letters,
+/// digits and underscores, and with what is left of an empty word dropped.
+fn comparable_words(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .map(|word| {
+            word.trim_matches(|c: char| !c.is_alphanumeric() && c != '_')
+                .to_lowercase()
+        })
+        .filter(|word| !word.is_empty())
+        .collect()
+}
+
+/// The longest run of `source` words appearing consecutively in `answer`.
+///
+/// Quadratic, over two sentences. A hover sends one sentence and the budget
+/// caps the answer, so this is tens of words against tens of words and costs
+/// less than the allocation above it.
+fn longest_run(source: &[String], answer: &[String]) -> usize {
+    let mut best = 0;
+    for start in 0..source.len() {
+        for begin in 0..answer.len() {
+            let mut run = 0;
+            while start + run < source.len()
+                && begin + run < answer.len()
+                && source[start + run] == answer[begin + run]
+            {
+                run += 1;
+            }
+            best = best.max(run);
+        }
+    }
+    best
 }
 
 /// Names that mean a model cannot produce prose at all.
@@ -396,6 +438,14 @@ pub enum TranslateError {
     Malformed,
     /// The engine answered with the question. See [`reads_as_the_source`].
     NotTranslated,
+    /// The engine answered with the question, and it was right to: the reader
+    /// can already read a good part of the source.
+    ///
+    /// Separate from [`Self::NotTranslated`] because the two need opposite
+    /// words on a card. A reader met the wrong one: a line of Korean prose
+    /// carrying English identifiers came back unchanged, correctly, and Lens
+    /// told them the model had failed and to try another one.
+    AlreadyReadable,
     /// The pointer moved before this finished.
     Stale,
     /// Nothing worth translating: empty, or no letters in it.
@@ -410,6 +460,7 @@ impl TranslateError {
             Self::Timeout => "timeout",
             Self::Malformed => "malformed",
             Self::NotTranslated => "not-translated",
+            Self::AlreadyReadable => "already-readable",
             Self::Stale => "stale",
             Self::NotWorthTranslating => "not-worth-translating",
         }
@@ -430,6 +481,7 @@ impl TranslateError {
             // The card cannot show the answer, because the answer is the
             // sentence they are already looking at.
             Self::NotTranslated => "모델이 번역하지 않고 원문을 그대로 돌려줬습니다".to_owned(),
+            Self::AlreadyReadable => "이미 읽을 수 있는 언어입니다".to_owned(),
             Self::Stale => "취소되었습니다".to_owned(),
             Self::NotWorthTranslating => "번역할 내용이 없습니다".to_owned(),
         }
@@ -460,6 +512,8 @@ impl TranslateError {
             // The same advice, and it is the right advice: this failure is a
             // property of the model, and the user has others installed.
             Self::NotTranslated => Some("다른 모델로 바꿔 보세요".to_owned()),
+            // Nothing to fix. The reader can read it.
+            Self::AlreadyReadable => None,
             Self::Stale | Self::NotWorthTranslating => None,
         }
     }
@@ -839,5 +893,47 @@ mod endpoint_tests {
             engine_for("127.0.0.1.example.com:11434"),
             EngineId::External
         );
+    }
+}
+
+#[cfg(test)]
+mod half_translated_tests {
+    use super::reads_as_the_source;
+
+    /// The card a reader met: the first clause in Korean, the rest of the
+    /// sentence in English, verbatim, with nothing to say so.
+    #[test]
+    fn a_translation_that_gives_up_halfway_is_caught() {
+        let source = "A connection-check approach is better than an environment variable gate \
+                      here, it is honest about what is needed and keeps the test green in \
+                      environments with a database while avoiding false failures.";
+        let half = "환경 변수 게이트보다 연결 확인 접근법이 더 나은 것 같습니다. it is honest \
+                    about what is needed and keeps the test green in environments with a \
+                    database while avoiding false failures.";
+        assert!(reads_as_the_source(source, half));
+    }
+
+    /// And a whole one is not, however many names it keeps.
+    #[test]
+    fn a_translation_that_keeps_names_is_not_caught() {
+        let source = "The build failed because cargo fmt --check found a difference in \
+                      src/main.rs, so the pipeline stopped before the tests ran.";
+        let good = "cargo fmt --check 가 src/main.rs 에서 차이를 찾아 빌드가 실패했고, 그래서 \
+                    파이프라인은 테스트가 돌기 전에 멈췄습니다.";
+        assert!(!reads_as_the_source(source, good));
+    }
+
+    /// A quoted phrase inside a good translation is not a run worth catching.
+    ///
+    /// This is what the six-word floor is protecting: a title, a quoted
+    /// fragment or a library call survives a correct translation intact, and
+    /// firing on those would refuse answers that are right.
+    #[test]
+    fn a_short_quoted_fragment_survives_without_being_an_echo() {
+        let source = "The error message says connection refused by the server, which usually \
+                      means the port is wrong rather than the host.";
+        let good = "오류 메시지는 connection refused by the 라고 말하는데, 이는 보통 호스트가 \
+                    아니라 포트가 잘못됐다는 뜻입니다.";
+        assert!(!reads_as_the_source(source, good));
     }
 }
