@@ -1,4 +1,4 @@
-//! When to tell a reader that this application cannot be read, and what to do.
+//! When to tell a reader why nothing happened, and what to press.
 //!
 //! Lens has two ways to get text and only one of them is automatic. The
 //! accessibility path runs on every settled hover; OCR runs when the user asks
@@ -46,6 +46,31 @@
 //!   they did not need.
 //! - `Empty` is what a margin returns, and a margin is not an unreadable
 //!   application.
+//!
+//! # The other silence, and it is the commoner one
+//!
+//! Everything above is about an application with no text to give. The far more
+//! likely first experience is an application with plenty: **the reader is not
+//! holding the modifier.**
+//!
+//! The default tier is `Modifier`, deliberately, because a tool that reads
+//! every window from first launch has to earn that. So a new user starts Lens,
+//! rests the pointer on a sentence, and nothing happens. There is a console
+//! line for it, and `crate::acquire` records that the first person to run a
+//! release build asked exactly this question. A release binary is a Windows
+//! subsystem application: somebody who double-clicked it from Explorer has
+//! nowhere to read that line.
+//!
+//! The evidence for saying something is the same shape as above, and the
+//! conditions are what keep it from being a nag:
+//!
+//! - the pointer is **resting**, not passing through
+//! - where a card would have appeared if the modifier were held, so it is
+//!   never shown over a denied application or an empty desktop
+//! - **twice**, because one pause is a person reading
+//! - and **never once a card has been shown**, because then they know
+
+use std::time::Duration;
 
 use crate::acquire::AcquireError;
 
@@ -70,7 +95,34 @@ pub struct Reach {
     /// different reasons, and keeping them in one set is what stops a
     /// successful application being offered a fallback after a bad patch.
     settled: Vec<String>,
+    /// Whether any card at all has been shown this session.
+    seen_a_card: bool,
+    /// Where the pointer has been resting, and since when.
+    rest: Option<(crate::geometry::ScreenPoint, Duration)>,
+    /// How many separate rests have happened with the modifier not held.
+    rests: u32,
+    told_about_the_modifier: bool,
 }
+
+/// How long the pointer must be still before it counts as a rest.
+///
+/// Longer than the dwell that triggers a card, on purpose. The dwell asks
+/// "does this person want this sentence"; this asks "is this person waiting
+/// for something", and waiting takes longer than pointing.
+const REST: Duration = Duration::from_millis(900);
+
+/// How far the pointer may drift and still be the same rest.
+///
+/// A little more than the hover machine's own radius. A hand that is holding
+/// still is not holding perfectly still, and a rest that restarts on every
+/// tremor never completes.
+const REST_RADIUS: f64 = 12.0;
+
+/// How many rests before the modifier is mentioned.
+///
+/// Two. One pause is somebody reading the sentence under their pointer, which
+/// is the normal way to use a screen and not a request for help.
+pub const RESTS_BEFORE_TELLING: u32 = 2;
 
 impl Reach {
     pub fn new() -> Self {
@@ -121,6 +173,56 @@ impl Reach {
         self.run = 0;
         self.current = None;
         true
+    }
+
+    /// A card was shown, of any kind.
+    ///
+    /// Ends the first-run hint for the session: a reader who has seen one card
+    /// knows the product works, and telling them how to make it work is then
+    /// just noise about something they already did.
+    pub fn card_shown(&mut self) {
+        self.seen_a_card = true;
+    }
+
+    /// The pointer moved, and the modifier is the only thing stopping a read.
+    ///
+    /// `blocked_by_the_modifier` is the caller's answer to a question only the
+    /// policy and the keyboard can settle together: would this point be read if
+    /// the modifier were held, and is it not being read because it is not.
+    /// False everywhere else, including over a denied application, over Lens's
+    /// own card, and when the modifier **is** held.
+    ///
+    /// Returns `true` exactly once per session, on the second rest.
+    pub fn pointer(
+        &mut self,
+        point: crate::geometry::ScreenPoint,
+        now: Duration,
+        blocked_by_the_modifier: bool,
+    ) -> bool {
+        if !blocked_by_the_modifier || self.seen_a_card || self.told_about_the_modifier {
+            self.rest = None;
+            return false;
+        }
+
+        match self.rest {
+            // Moved far enough to be somewhere else. A new rest starts here
+            // rather than the old one continuing, or a pointer wandering across
+            // a page would accumulate a rest it never actually took.
+            Some((anchor, _)) if anchor.distance_to(point) > REST_RADIUS => {
+                self.rest = Some((point, now));
+            }
+            Some((_, since)) if now.saturating_sub(since) >= REST => {
+                self.rest = Some((point, now));
+                self.rests += 1;
+                if self.rests >= RESTS_BEFORE_TELLING {
+                    self.told_about_the_modifier = true;
+                    return true;
+                }
+            }
+            Some(_) => {}
+            None => self.rest = Some((point, now)),
+        }
+        false
     }
 
     fn remember(&mut self, app: &str) {
@@ -236,5 +338,97 @@ mod tests {
         for _ in 0..10 {
             assert!(!reach.unreadable(None, &AcquireError::Unsupported));
         }
+    }
+}
+
+#[cfg(test)]
+mod modifier_tests {
+    use super::*;
+    use crate::geometry::ScreenPoint;
+
+    fn ms(value: u64) -> Duration {
+        Duration::from_millis(value)
+    }
+
+    /// Rest twice in one place, and be told once.
+    #[test]
+    fn two_rests_without_the_modifier_says_something_once() {
+        let mut reach = Reach::new();
+        let here = ScreenPoint::new(400, 300);
+        assert!(!reach.pointer(here, ms(0), true));
+        assert!(
+            !reach.pointer(here, ms(950), true),
+            "the first rest only counts"
+        );
+        assert!(reach.pointer(here, ms(1900), true), "the second says it");
+        for step in 0..10 {
+            assert!(
+                !reach.pointer(here, ms(2900 + step * 950), true),
+                "a hint is shown once a session, not once a rest",
+            );
+        }
+    }
+
+    /// A pointer crossing the screen is not resting.
+    #[test]
+    fn a_moving_pointer_never_rests() {
+        let mut reach = Reach::new();
+        for step in 0..40i32 {
+            let point = ScreenPoint::new(100 + step * 40, 300);
+            assert!(
+                !reach.pointer(point, ms(step as u64 * 950), true),
+                "step {step} counted a rest for a pointer that moved 40px",
+            );
+        }
+    }
+
+    /// A hand holding still is not holding perfectly still.
+    #[test]
+    fn a_small_tremor_does_not_restart_the_rest() {
+        let mut reach = Reach::new();
+        assert!(!reach.pointer(ScreenPoint::new(400, 300), ms(0), true));
+        assert!(!reach.pointer(ScreenPoint::new(404, 302), ms(950), true));
+        assert!(reach.pointer(ScreenPoint::new(398, 297), ms(1900), true));
+    }
+
+    /// Never over an application the modifier would not have unlocked.
+    #[test]
+    fn nothing_is_said_where_the_modifier_is_not_the_reason() {
+        let mut reach = Reach::new();
+        let here = ScreenPoint::new(400, 300);
+        for step in 0..10 {
+            assert!(!reach.pointer(here, ms(step * 950), false));
+        }
+    }
+
+    /// A reader who has seen a card knows it works.
+    #[test]
+    fn a_card_ends_the_hint_for_the_session() {
+        let mut reach = Reach::new();
+        let here = ScreenPoint::new(400, 300);
+        assert!(!reach.pointer(here, ms(0), true));
+        reach.card_shown();
+        for step in 1..10 {
+            assert!(!reach.pointer(here, ms(step * 950), true));
+        }
+    }
+
+    /// Holding the modifier clears the run, so putting it down later starts
+    /// again rather than finishing a rest taken before it was held.
+    #[test]
+    fn holding_the_modifier_ends_a_rest_in_progress() {
+        let mut reach = Reach::new();
+        let here = ScreenPoint::new(400, 300);
+        assert!(!reach.pointer(here, ms(0), true));
+        assert!(
+            !reach.pointer(here, ms(500), false),
+            "the modifier went down"
+        );
+        assert!(
+            !reach.pointer(here, ms(1000), true),
+            "so this is a new rest"
+        );
+        assert!(!reach.pointer(here, ms(1950), true));
+        assert!(reach.pointer(here, ms(2900), true));
     }
 }
