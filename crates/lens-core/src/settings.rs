@@ -60,7 +60,7 @@ impl Default for Settings {
             model: None,
             dwell_ms: 320,
             theme: "system".to_owned(),
-            translucency: "balanced".to_owned(),
+            translucency: crate::theme::Translucency::DEFAULT.as_str().to_owned(),
             text: "normal".to_owned(),
             // Not `allow`. A tool that reads every window from first launch has
             // to earn that, and the file is where a user grants it
@@ -207,6 +207,12 @@ impl Settings {
 /// file full of active settings invites a user to change one and wonder why
 /// nothing else works. What is uncommented is what a first-time reader needs to
 /// see: the two examples of a per-application rule.
+///
+/// **A constant, so it can disagree with the defaults, so a test says it does
+/// not.** It did: this file told a reader the default translucency was
+/// `balanced` for as long as it was, and went on saying so after the default
+/// changed. A comment that is wrong about the product is worse than no comment,
+/// because it is the only description most people will read.
 pub const TEMPLATE: &str = "\
 # Mori Lens settings.
 #
@@ -220,7 +226,7 @@ pub const TEMPLATE: &str = "\
 # model        = auto          # or a name, e.g. qwen2.5:3b
 # dwell_ms     = 320           # how long the pointer must rest, 80 to 3000
 # theme        = system        # system, forest, night-lake, paper
-# translucency = balanced      # clear, balanced, solid
+# translucency = solid         # clear, balanced, solid
 # text         = normal        # small, normal, large, larger
 
 # What Lens may do in an application it has no rule for.
@@ -460,5 +466,45 @@ mod tests {
         assert_eq!(settings.text, "large");
         assert_eq!(settings.default_tier, AppTier::Allow);
         assert_eq!(settings.policy().tier_for(Some("code")), AppTier::Deny);
+    }
+}
+
+#[cfg(test)]
+mod template_tests {
+    use super::*;
+
+    /// Every commented default in the template is the actual default.
+    ///
+    /// Written as data rather than as five assertions so adding a setting to
+    /// the template without adding it here is visible: the list is the
+    /// checklist.
+    #[test]
+    fn the_template_describes_the_defaults_it_claims_to() {
+        let defaults = Settings::default();
+        let claimed: [(&str, String); 5] = [
+            ("language", defaults.language.clone()),
+            ("dwell_ms", defaults.dwell_ms.to_string()),
+            ("theme", defaults.theme.clone()),
+            ("translucency", defaults.translucency.clone()),
+            ("text", defaults.text.clone()),
+        ];
+        for (key, value) in claimed {
+            let line = TEMPLATE
+                .lines()
+                .find(|line| line.starts_with("# ") && line[2..].trim_start().starts_with(key))
+                .unwrap_or_else(|| panic!("the template says nothing about {key}"));
+            let stated = line
+                .split('=')
+                .nth(1)
+                .unwrap_or_default()
+                .split('#')
+                .next()
+                .unwrap_or_default()
+                .trim();
+            assert_eq!(
+                stated, value,
+                "the template says {key} defaults to {stated:?} and it is {value:?}",
+            );
+        }
     }
 }

@@ -106,7 +106,10 @@ OPTIONS
                         installed.
     --dwell <ms>        How long the pointer must rest. Default 320.
     --theme <name>      system, forest, night-lake, or paper. Default system.
-    --translucency <t>  clear, balanced, or solid. Default balanced.
+    --translucency <t>  clear, balanced, or solid. Default solid: a translucent
+                        card takes part of its edge colour from the page behind
+                        it, and one hairline then reads unevenly along its own
+                        length. The other two are still there.
     --text <size>       small, normal, large, or larger. Default normal.
     --selftest          Run the whole chain once against text already on
                         screen, without moving the pointer, and report each
