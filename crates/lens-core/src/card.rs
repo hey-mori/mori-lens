@@ -333,6 +333,28 @@ impl Card {
         }
     }
 
+    /// A card for a setting that was changed and cannot take effect yet.
+    ///
+    /// Some settings are read once, when the thing that uses them is built:
+    /// the model and the address belong to the translation worker, and the
+    /// OCR mode decides whether the acquisition thread is given a capture path
+    /// at all. Changing one of those while Lens runs does nothing.
+    ///
+    /// Saying nothing is the failure this repository keeps meeting. A reader
+    /// who edits a file, saves it, and sees no change concludes the file does
+    /// not work, and there was a console line for exactly this that a binary
+    /// started from Explorer has nowhere to print.
+    ///
+    /// `keys` is the settings-file spelling, in English, because that is what
+    /// they typed and what they will look for again.
+    pub fn needs_a_restart(keys: &str) -> Self {
+        Self {
+            original: keys.to_owned(),
+            body: CardBody::Problem("다시 실행해야 적용됩니다".to_owned()),
+            footer: "설정 변경".to_owned(),
+        }
+    }
+
     /// Whether this card is safe to show.
     ///
     /// A translation with no original beside it is refused, per the note on
@@ -770,6 +792,8 @@ mod copy_tests {
             "not_acquired unsupported",
             Card::not_acquired(AcquireError::Unsupported),
         );
+        card("needs_a_restart", Card::needs_a_restart("model, ocr"));
+        card("too_long_to_show", Card::too_long_to_show());
         card("waiting", Card::waiting("a sentence"));
         card("loading_model", Card::loading_model("a sentence"));
 
