@@ -2172,11 +2172,13 @@ fn measure_what_a_long_paragraph_does_to_the_card() {
     let laid = glass
         .lay_out(&card, &theme, crate::overlay::max_card_width(), 1.0)
         .expect("layout");
+    // SAFETY: read-only monitor queries.
+    let work_area = unsafe { crate::overlay::work_area_at(ScreenPoint::new(400, 400)) };
     println!(
-        "a {}-character paragraph lays out {}px tall; the card's limit is {}px",
+        "a {}-character paragraph lays out {}px tall; the limit on this screen is {}px",
         long.chars().count(),
         laid.height,
-        crate::overlay::max_card_height(),
+        crate::overlay::max_card_height(work_area),
     );
 }
 
@@ -2486,7 +2488,9 @@ fn measure_how_much_of_the_page_a_card_covers() {
     for scale in [1.0f32, 1.5] {
         let widest = (crate::overlay::max_card_width() as f32 * scale).round() as i32;
         let laid = glass.lay_out(&tall, &theme, widest, scale).expect("layout");
-        let window = crate::overlay::card_height_for(laid.height, scale);
+        // SAFETY: read-only monitor queries.
+        let work_area = unsafe { crate::overlay::work_area_at(ScreenPoint::new(400, 400)) };
+        let window = crate::overlay::card_height_for(laid.height, work_area);
         println!(
             "tall  scale {scale}: laid {}x{}, window height {window}, {}",
             laid.width,
@@ -2495,6 +2499,57 @@ fn measure_how_much_of_the_page_a_card_covers() {
                 "CLIPPED"
             } else {
                 "fits"
+            },
+        );
+    }
+
+    // A sentence long enough to test the ceiling. One sentence, not a
+    // paragraph: the segmenter hands the card a sentence, so this is what the
+    // tallest realistic card is made of.
+    let long = make(
+        "The migration ran against the production database on the second attempt, after the          first was rolled back because a unique index on the accounts table rejected two rows          that the staging data had never contained, which nobody noticed until the deploy had          already been announced in the channel and three people were watching it.",
+        "마이그레이션은 두 번째 시도에서 운영 데이터베이스에 적용됐습니다. 첫 번째는 계정          테이블의 고유 인덱스가 스테이징 데이터에 한 번도 없던 두 행을 거부해서 롤백됐고,          배포가 이미 채널에 공지되어 세 사람이 지켜보고 있을 때까지 아무도 눈치채지          못했습니다.",
+    );
+    // And a blob with no sentence boundary in it, which is what the segmenter
+    // hands back when there is nothing to segment on. KakaoTalk exposes its
+    // whole conversation as one region, so this is a real shape rather than a
+    // pathological one.
+    let blob = make(
+        &"one more clause about the deploy and what it did to the accounts table ".repeat(12),
+        &"배포와 그것이 계정 테이블에 한 일에 대한 절 하나 더 ".repeat(12),
+    );
+    for scale in [1.0f32, 1.5] {
+        let widest = (crate::overlay::max_card_width() as f32 * scale).round() as i32;
+        let laid = glass.lay_out(&blob, &theme, widest, scale).expect("layout");
+        // SAFETY: read-only monitor queries.
+        let work_area = unsafe { crate::overlay::work_area_at(ScreenPoint::new(400, 400)) };
+        let window = crate::overlay::card_height_for(laid.height, work_area);
+        println!(
+            "blob  scale {scale}: laid {}x{}, window height {window}, {}",
+            laid.width,
+            laid.height,
+            if window < laid.height {
+                format!("CLIPPED, {} pixels lost", laid.height - window)
+            } else {
+                "fits".to_owned()
+            },
+        );
+    }
+
+    for scale in [1.0f32, 1.5] {
+        let widest = (crate::overlay::max_card_width() as f32 * scale).round() as i32;
+        let laid = glass.lay_out(&long, &theme, widest, scale).expect("layout");
+        // SAFETY: read-only monitor queries.
+        let work_area = unsafe { crate::overlay::work_area_at(ScreenPoint::new(400, 400)) };
+        let window = crate::overlay::card_height_for(laid.height, work_area);
+        println!(
+            "long  scale {scale}: laid {}x{}, window height {window}, {}",
+            laid.width,
+            laid.height,
+            if window < laid.height {
+                format!("CLIPPED, {} pixels lost", laid.height - window)
+            } else {
+                "fits".to_owned()
             },
         );
     }
@@ -3234,4 +3289,110 @@ fn measure_what_automatic_ocr_costs_a_battery() {
         "\n  against 0.16% of a core idle, measured 2026-08-05 on a Lens that\n  \
          captured nothing."
     );
+}
+
+/// A card too tall for its screen is cut and says so, rather than clipped.
+///
+/// A text with no sentence boundary in it, which is what the segmenter returns
+/// for KakaoTalk's single region (issue #34), laid out 903 pixels tall at 150%
+/// against a ceiling of 634. What vanished was the end of the answer, with
+/// nothing on the card to say anything had.
+///
+/// This is the fitting loop `show_card` runs, exercised through the same
+/// renderer, so the number it converges to is the one the product would use.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn a_card_too_tall_for_the_screen_is_cut_rather_than_clipped() {
+    use lens_core::card::{Card, CardBody};
+    use lens_core::geometry::ScreenPoint;
+    use lens_core::theme::{Preset, SystemPreferences, TextScale, Theme, Translucency};
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    let glass = crate::glass::Glass::new().expect("Direct2D");
+    let theme = Theme::resolve(
+        Preset::System,
+        Translucency::DEFAULT,
+        TextScale::Normal,
+        SystemPreferences::default(),
+    );
+    let mut card = Card::translated(
+        "one more clause about the deploy and what it did to the accounts table ".repeat(12),
+        &QuickTranslation {
+            text: "배포와 그것이 계정 테이블에 한 일에 대한 절 하나 더 ".repeat(12),
+            engine: EngineId::LocalOllama,
+            model: "fixture".to_owned(),
+            latency_ms: 900,
+            cached: false,
+        },
+    );
+
+    let scale = 1.5f32;
+    let widest = (crate::overlay::max_card_width() as f32 * scale).round() as i32;
+    // SAFETY: read-only monitor queries.
+    let work_area = unsafe { crate::overlay::work_area_at(ScreenPoint::new(400, 400)) };
+    let ceiling = crate::overlay::max_card_height(work_area);
+    let original = card.original.clone();
+
+    // The same loop `show_card` runs, so the outcome is the product's.
+    let mut heights = Vec::new();
+    let mut refused = false;
+    for _ in 0..4 {
+        let laid = glass.lay_out(&card, &theme, widest, scale).expect("layout");
+        heights.push(laid.height);
+        if laid.height <= ceiling {
+            break;
+        }
+        let answer = match &card.body {
+            CardBody::Translation(text) => text.chars().count(),
+            _ => break,
+        };
+        // **Halved, not estimated.** The first version scaled the answer by
+        // the share of the ceiling the card overflowed, which assumes the
+        // height is proportional to the answer's length. It is not: the
+        // original is a large fixed part of it, so that estimate converged at
+        // 903, 765, 709 against a ceiling of 634 and would have taken a dozen
+        // rounds. Halving reaches the floor in three, and the floor is a
+        // refusal rather than a clip.
+        let keep = answer / 2;
+        let shorter = card.clone().with_the_answer_cut_to(keep);
+        if shorter.body == card.body {
+            card = Card::too_long_to_show();
+            refused = true;
+            continue;
+        }
+        card = shorter;
+    }
+
+    println!(
+        "
+ceiling {ceiling}px, heights {heights:?}"
+    );
+    println!("footer  {}", card.footer);
+    println!("refused {refused}");
+    assert!(
+        heights.last().is_some_and(|height| *height <= ceiling),
+        "neither cutting nor refusing brought it inside the ceiling: {heights:?}",
+    );
+    if refused {
+        // The original is too long for an answer to fit under it, so the card
+        // says so rather than showing a source with the answer clipped off.
+        assert!(card.original.is_empty(), "a refusal keeps no original");
+        assert!(card.footer.contains("나누기"), "{}", card.footer);
+    } else {
+        assert!(
+            card.footer.contains(Card::CUT),
+            "it fitted without saying it was cut: {}",
+            card.footer,
+        );
+        assert_eq!(
+            card.footer.matches(Card::CUT).count(),
+            1,
+            "it said it was cut more than once: {}",
+            card.footer,
+        );
+        assert_eq!(
+            card.original, original,
+            "the original was cut, and it is the only way to check the answer",
+        );
+    }
 }
