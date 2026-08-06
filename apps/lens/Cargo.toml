@@ -25,3 +25,6 @@ windows = { version = "0.62", features = [
 
 [lints]
 workspace = true
+
+[build-dependencies]
+lens-build-stamp = { path = "../../crates/build-stamp" }

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+  "crates/build-stamp",
   "crates/lens-core",
   "crates/lens-translate",
   "crates/platform-windows",
