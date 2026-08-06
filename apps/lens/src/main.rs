@@ -516,7 +516,13 @@ fn main() -> std::process::ExitCode {
     // that does not involve finding this terminal again.
     let tray = Tray::start(
         theme.body,
-        &tooltip(&options.language, &engine_line, false, &options.policy),
+        &tooltip(
+            &options.language,
+            &engine_line,
+            false,
+            &options.policy,
+            &pause,
+        ),
     );
     println!(
         "  tray      {}",
@@ -845,7 +851,7 @@ fn main() -> std::process::ExitCode {
                     } else {
                         Glyph::Listening
                     },
-                    &tooltip(&language, &engine_line, pause.is_paused(), &policy),
+                    &tooltip(&language, &engine_line, pause.is_paused(), &policy, &pause),
                     theme.body,
                 );
             }
@@ -931,7 +937,7 @@ fn main() -> std::process::ExitCode {
                     } else {
                         Glyph::Listening
                     },
-                    &tooltip(&language, &engine_line, pause.is_paused(), &policy),
+                    &tooltip(&language, &engine_line, pause.is_paused(), &policy, &pause),
                     theme.body,
                 );
             }
@@ -1289,9 +1295,26 @@ fn open_in_editor(path: &std::path::Path) {
 /// The engine line can be an error message when Ollama is absent, and that is
 /// the case this matters most for: a Lens that silently shows no cards because
 /// no model is installed looks identical to one that is broken.
-fn tooltip(language: &str, engine: &str, paused: bool, policy: &AppPolicy) -> String {
+fn tooltip(
+    language: &str,
+    engine: &str,
+    paused: bool,
+    policy: &AppPolicy,
+    keys: &pause::PauseKey,
+) -> String {
+    // **Second, not last.** The tooltip is a fixed 127 units and the engine
+    // name is the longest thing in it, so anything appended after that is what
+    // gets cut. A hotkey nobody can use is the exceptional line and the one
+    // worth the space.
+    //
+    // It was in the banner only, which a reader who double-clicked the binary
+    // has never seen. They would press the key, get nothing, and conclude the
+    // product was broken, which is the failure this file keeps meeting.
+    let trouble = hotkey_trouble(keys.is_registered(), keys.ocr_is_registered());
     format!(
-        "Mori Lens · {}\n{}\n{language} · {engine}",
+        "Mori Lens · {}{trouble}
+{}
+{language} · {engine}",
         if paused { "일시정지" } else { "켜짐" },
         if paused {
             "다시 켜려면 클릭".to_owned()
@@ -1299,6 +1322,30 @@ fn tooltip(language: &str, engine: &str, paused: bool, policy: &AppPolicy) -> St
             korean_how_to(policy)
         },
     )
+}
+
+/// The tooltip line for a hotkey another application is holding, if any.
+///
+/// Separate so it can be tested: a `PauseKey` registers when it is built, so
+/// a test cannot ask for one that failed without holding the combination
+/// itself.
+///
+/// Empty when both work, which is the ordinary case and must cost nothing.
+fn hotkey_trouble(pause_registered: bool, ocr_registered: bool) -> String {
+    match (pause_registered, ocr_registered) {
+        (true, true) => String::new(),
+        // Pause is the privacy control, so this names the way that still
+        // works rather than only the way that does not.
+        (false, true) => "
+Ctrl+Alt+L을 다른 앱이 쓰고 있습니다 · 클릭해 일시정지"
+            .to_owned(),
+        (true, false) => "
+Ctrl+Alt+O를 다른 앱이 쓰고 있습니다"
+            .to_owned(),
+        (false, false) => "
+단축키를 다른 앱이 쓰고 있습니다 · 클릭해 일시정지"
+            .to_owned(),
+    }
 }
 
 /// How to make a card appear, in one line, for whatever the policy is.
@@ -1566,4 +1613,54 @@ total {}ms from acquisition to card",
 selftest passed: text on screen became a card, pointer untouched."
     );
     std::process::ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tooltip_tests {
+    use super::{hotkey_trouble, korean_how_to};
+    use lens_core::policy::AppPolicy;
+
+    /// The shell gives a tooltip 127 UTF-16 units and truncates the rest, so
+    /// the worst case has to fit or the last line is what disappears.
+    ///
+    /// Built the way `tooltip` builds it, with the longest of everything: both
+    /// hotkeys taken, a long model name, and the policy sentence.
+    #[test]
+    fn the_worst_tooltip_fits_what_the_shell_will_show() {
+        let trouble = hotkey_trouble(false, false);
+        let built = format!(
+            "Mori Lens · {}{trouble}\n{}\n{} · {}",
+            "일시정지",
+            korean_how_to(&AppPolicy::default()),
+            "Korean",
+            // Longer than anything named in the benchmark directory.
+            "qwen2.5-coder:7b-instruct-q8_0",
+        );
+        let units = built.encode_utf16().count();
+        assert!(
+            units < 127,
+            "the tooltip is {units} units and the shell keeps 127:\n{built}",
+        );
+    }
+
+    /// The ordinary case costs nothing.
+    #[test]
+    fn two_working_hotkeys_add_no_line() {
+        assert!(hotkey_trouble(true, true).is_empty());
+    }
+
+    /// Each broken one names itself, and the pause line names the way that
+    /// still works, because pause is the privacy control.
+    #[test]
+    fn a_taken_hotkey_names_itself_and_the_way_round_it() {
+        let pause_gone = hotkey_trouble(false, true);
+        assert!(pause_gone.contains("Ctrl+Alt+L"), "{pause_gone}");
+        assert!(pause_gone.contains("클릭"), "{pause_gone}");
+
+        let ocr_gone = hotkey_trouble(true, false);
+        assert!(ocr_gone.contains("Ctrl+Alt+O"), "{ocr_gone}");
+
+        let both = hotkey_trouble(false, false);
+        assert!(both.contains("클릭"), "{both}");
+    }
 }
