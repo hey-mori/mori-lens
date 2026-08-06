@@ -355,6 +355,20 @@ impl Card {
         }
     }
 
+    /// A card for a second copy of Lens, which is about to exit.
+    ///
+    /// Lens opens no window on launch, so somebody who double-clicks it and
+    /// sees nothing double-clicks it again. Until this, the second copy ran to
+    /// the end and reported both hotkeys as taken by another application,
+    /// which was a sentence about Lens naming something else.
+    pub fn already_running() -> Self {
+        Self {
+            original: String::new(),
+            body: CardBody::Problem("이미 실행 중입니다".to_owned()),
+            footer: "알림 영역에 아이콘이 있습니다".to_owned(),
+        }
+    }
+
     /// Whether this card is safe to show.
     ///
     /// A translation with no original beside it is refused, per the note on
@@ -792,6 +806,7 @@ mod copy_tests {
             "not_acquired unsupported",
             Card::not_acquired(AcquireError::Unsupported),
         );
+        card("already_running", Card::already_running());
         card("needs_a_restart", Card::needs_a_restart("model, ocr"));
         card("too_long_to_show", Card::too_long_to_show());
         card("waiting", Card::waiting("a sentence"));
