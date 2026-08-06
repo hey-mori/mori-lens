@@ -37,7 +37,7 @@ use lens_core::hover::{Generation, HoverConfig};
 use lens_core::icon::Glyph;
 use lens_core::language::{decide, Decision};
 use lens_core::policy::{AppPolicy, AppTier};
-use lens_core::session::{HoverSession, InputState, Resolution};
+use lens_core::session::{HoverSession, InputState, OcrMode, Resolution};
 use lens_core::settings::{self, Problem, Settings};
 use lens_core::theme::{Preset, TextScale, Theme, Translucency};
 use lens_core::translate::{QuickRequest, Translator};
@@ -109,6 +109,11 @@ OPTIONS
                         applications that expose no text at all.
                         Written with every option in it on first run.
     --language <name>   Target language. Default Korean.
+    --ocr <mode>        off, manual, or automatic. Default manual: OCR runs on
+                        Ctrl+Alt+O and never on its own. Automatic reads the
+                        pixels around the pointer whenever an application
+                        exposes no text, with no keypress, which is what an
+                        editor or a messenger needs to be readable by hovering.
     -V, --version       Print the version and the commit this was built from.
     --endpoint <addr>   Where Ollama listens. Default 127.0.0.1:11434, and it
                         must be on this machine: 127.0.0.1, localhost or ::1.
@@ -139,6 +144,8 @@ struct Options {
     model: Option<String>,
     /// Where Ollama is. Loopback only; see `Settings::endpoint`.
     endpoint: String,
+    /// When the OCR fallback may run.
+    ocr_mode: OcrMode,
     dwell: Duration,
     policy: AppPolicy,
     /// Where the settings came from, and anything wrong with them. Printed at
@@ -165,6 +172,7 @@ struct Flags {
     language: Option<String>,
     model: Option<String>,
     endpoint: Option<String>,
+    ocr: Option<String>,
     dwell_ms: Option<u64>,
     theme: Option<String>,
     translucency: Option<String>,
@@ -227,6 +235,7 @@ fn parse_flags() -> Result<Flags, String> {
                 std::process::exit(0);
             }
             "--endpoint" => flags.endpoint = Some(value("--endpoint")?),
+            "--ocr" => flags.ocr = Some(value("--ocr")?),
             "--dwell" => {
                 flags.dwell_ms = Some(
                     value("--dwell")?
@@ -341,6 +350,12 @@ fn parse() -> Result<Options, String> {
             }
             None => settings.endpoint,
         },
+        ocr_mode: flags
+            .ocr
+            .as_deref()
+            .and_then(OcrMode::named)
+            .or_else(|| OcrMode::named(&settings.ocr))
+            .unwrap_or(OcrMode::Manual),
         dwell: Duration::from_millis(flags.dwell_ms.unwrap_or(settings.dwell_ms)),
         policy,
         source,
@@ -423,7 +438,8 @@ fn main() -> std::process::ExitCode {
         }
     );
     println!(
-        "  ocr       {}",
+        "  ocr       {} · {}",
+        options.ocr_mode.as_str(),
         if !pause.ocr_is_registered() {
             "UNAVAILABLE: Ctrl+Alt+O is taken by another application".to_owned()
         } else if ocr::available_languages().is_empty() {
@@ -670,13 +686,33 @@ fn main() -> std::process::ExitCode {
     // flight the pointer loop keeps sampling, cards keep retiring, and the
     // pause key keeps working, none of which was true: a wedged provider took
     // all three with it for as long as it took to give up (issue #42).
+    let worker_ocr = options.ocr_mode;
+    // Hiding the card is the overlay's business, and the overlay lives on
+    // another thread again, so what crosses is a request rather than a handle.
+    let hide_for_ocr = overlay.hider();
     let Some(mut hover) = hover_worker::HoverWorker::start(move || {
         let acquirer = UiaTextAcquirer::new().ok()?;
-        Some(HoverSession::new(
-            worker_config,
-            worker_policy,
-            Box::new(acquirer),
-        ))
+        let session = HoverSession::new(worker_config, worker_policy, Box::new(acquirer));
+        // **Only for `Automatic`.** Installing it for `Manual` would look
+        // tidier and do nothing: the session's manual branch fires on
+        // `InputState::ocr_requested`, which this product never sets, because
+        // `Ctrl+Alt+O` is served by `manual_ocr` instead. That path is not
+        // redundant, it carries things a `TextTarget` has no room for: the
+        // count of misread words for the card's footer, and its own refusals
+        // in the reader's language. Two paths, and the honest arrangement is
+        // to say so rather than to install something that has no effect.
+        Some(match worker_ocr {
+            OcrMode::Automatic => session.with_ocr(
+                Box::new(lens_platform_windows::OcrTextAcquirer::new(Box::new(
+                    hide_for_ocr,
+                ))),
+                OcrMode::Automatic,
+            ),
+            // `Off` and `Manual` both leave the session without a capture
+            // path. They differ in what `Ctrl+Alt+O` does, which is the app's
+            // business rather than the session's.
+            _ => session,
+        })
     }) else {
         eprintln!("the acquisition thread could not be started");
         return std::process::ExitCode::from(1);

@@ -59,6 +59,16 @@ pub struct Settings {
     /// text, and the grant mechanism `EngineId::External` describes does not
     /// exist yet.
     pub endpoint: String,
+    /// When the OCR fallback may run: `off`, `manual`, or `automatic`.
+    ///
+    /// `manual` unless asked otherwise, which is what the product has always
+    /// done: OCR runs on `Ctrl+Alt+O` and never on its own.
+    ///
+    /// `automatic` is what an application exposing no text needs to be usable
+    /// by hovering rather than by pressing a key. It is a setting rather than
+    /// the default because a tool that photographs the screen on its own has to
+    /// be turned on by somebody (`docs/privacy-model.md` §4).
+    pub ocr: String,
     pub text: String,
     /// The tier for an application with no rule of its own.
     pub default_tier: AppTier,
@@ -75,6 +85,7 @@ impl Default for Settings {
             theme: "system".to_owned(),
             translucency: crate::theme::Translucency::DEFAULT.as_str().to_owned(),
             endpoint: "127.0.0.1:11434".to_owned(),
+            ocr: crate::session::OcrMode::Manual.as_str().to_owned(),
             text: "normal".to_owned(),
             // Not `allow`. A tool that reads every window from first launch has
             // to earn that, and the file is where a user grants it
@@ -181,6 +192,10 @@ impl Settings {
                 "system" | "forest" | "night-lake" | "paper" => self.theme = value.to_owned(),
                 _ => reject("system, forest, night-lake, or paper"),
             },
+            "ocr" => match crate::session::OcrMode::named(value) {
+                Some(mode) => self.ocr = mode.as_str().to_owned(),
+                None => reject("off, manual, or automatic"),
+            },
             "endpoint" => {
                 if crate::translate::engine_for(value) == crate::translate::EngineId::LocalOllama {
                     self.endpoint = value.to_owned();
@@ -249,6 +264,9 @@ pub const TEMPLATE: &str = "\
 # theme        = system        # system, forest, night-lake, paper
 # translucency = solid         # clear, balanced, solid
 # endpoint     = 127.0.0.1:11434  # where Ollama listens. This machine only.
+# ocr          = manual        # off, manual, or automatic. Automatic reads
+                               # the pixels around the pointer whenever an
+                               # application exposes no text, with no keypress.
 # text         = normal        # small, normal, large, larger
 
 # What Lens may do in an application it has no rule for.
@@ -503,12 +521,13 @@ mod template_tests {
     #[test]
     fn the_template_describes_the_defaults_it_claims_to() {
         let defaults = Settings::default();
-        let claimed: [(&str, String); 6] = [
+        let claimed: [(&str, String); 7] = [
             ("language", defaults.language.clone()),
             ("dwell_ms", defaults.dwell_ms.to_string()),
             ("theme", defaults.theme.clone()),
             ("translucency", defaults.translucency.clone()),
             ("endpoint", defaults.endpoint.clone()),
+            ("ocr", defaults.ocr.clone()),
             ("text", defaults.text.clone()),
         ];
         for (key, value) in claimed {
