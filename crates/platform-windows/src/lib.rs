@@ -25,6 +25,7 @@ mod inventory;
 pub mod ocr;
 pub mod ocr_acquire;
 pub mod overlay;
+pub mod single;
 pub mod tray;
 mod uia;
 mod window;

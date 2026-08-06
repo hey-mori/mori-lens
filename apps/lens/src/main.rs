@@ -377,6 +377,28 @@ fn main() -> std::process::ExitCode {
         }
     };
 
+    // **Before anything is claimed.** A second Lens used to run to the end:
+    // two tray icons, two overlays racing for the same hover, two model leases,
+    // and both hotkeys reported as taken by another application, which was a
+    // sentence about Lens naming something else. Clicking the tray to pause
+    // then paused one of them.
+    //
+    // Easy to do, because Lens opens no window on launch: somebody who
+    // double-clicks it and sees nothing double-clicks it again.
+    let Some(_only_instance) = lens_platform_windows::single::claim() else {
+        eprintln!("Mori Lens is already running. Its icon is in the notification area.");
+        // On a card too, because a binary started from Explorer has nowhere to
+        // print that and the reader just double-clicked something and is
+        // watching the screen. Briefly: this process exists to say one thing.
+        if let Some(overlay) = Overlay::start() {
+            let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
+            overlay.show(Card::already_running(), ScreenRect::new(at.x, at.y, 1, 1));
+            std::thread::sleep(Duration::from_millis(2600));
+            overlay.hide();
+        }
+        return std::process::ExitCode::SUCCESS;
+    };
+
     // Before any coordinate is read. Without it every rectangle is silently
     // wrong above 100% scaling.
     let dpi = declare_dpi_awareness();
