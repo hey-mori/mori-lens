@@ -87,18 +87,53 @@ impl Watcher {
         now: Duration,
         read_appearance: impl Fn() -> SystemPreferences,
     ) -> Changes {
+        self.poll_reading(now, read_appearance, |path| {
+            std::fs::read_to_string(path).unwrap_or_default()
+        })
+    }
+
+    /// The same, with the file read supplied.
+    ///
+    /// A seam, and it exists for one reason: the guard below refuses a file
+    /// whose modification time moved during the read, and there is no way to
+    /// arrange that from outside without being able to write to the file
+    /// *while* it is being read. A test that only ever hands over a settled
+    /// file proves the ordinary path and says nothing about the guard, which
+    /// is the same as not having tested it.
+    pub fn poll_reading(
+        &mut self,
+        now: Duration,
+        read_appearance: impl Fn() -> SystemPreferences,
+        read_file: impl Fn(&Path) -> String,
+    ) -> Changes {
         let mut changes = Changes::default();
 
         if now.saturating_sub(self.file_checked) >= FILE_INTERVAL {
             self.file_checked = now;
             let stamp = modified(&self.path);
             if stamp != self.stamp {
-                self.stamp = stamp;
                 // A missing file is not an error and not a reason to forget
                 // what the user chose: it re-reads as the defaults, which is
                 // what a fresh install would do.
-                let text = std::fs::read_to_string(&self.path).unwrap_or_default();
-                changes.settings = Some(Settings::parse(&text));
+                let text = read_file(&self.path);
+
+                // **Read again, and only believe a file that held still.**
+                // `Settings::parse` never fails, so a file caught halfway
+                // through being written parses as the defaults plus a list of
+                // complaints, and the defaults are applied. Somebody who wrote
+                // `default = deny` would have it silently become `modifier`
+                // for as long as it took the next poll to come round, which is
+                // the wrong direction for a policy to slip in.
+                //
+                // An editor that writes in place leaves the modification time
+                // moving until it closes the file, so a stamp that has changed
+                // since the read means the read was of something unfinished.
+                if modified(&self.path) == stamp {
+                    self.stamp = stamp;
+                    changes.settings = Some(Settings::parse(&text));
+                }
+                // Otherwise the stamp is deliberately left alone, so the next
+                // poll sees a change and tries again.
             }
         }
 
@@ -123,14 +158,14 @@ fn modified(path: &Path) -> Option<SystemTime> {
 mod tests {
     use super::*;
 
-    fn scratch(name: &str) -> PathBuf {
+    pub(super) fn scratch(name: &str) -> PathBuf {
         let mut path = std::env::temp_dir();
         path.push(format!("mori-lens-refresh-{name}.conf"));
         let _ = std::fs::remove_file(&path);
         path
     }
 
-    fn light() -> SystemPreferences {
+    pub(super) fn light() -> SystemPreferences {
         SystemPreferences::default()
     }
 
@@ -241,6 +276,127 @@ mod tests {
         assert_eq!(
             watcher.poll(Duration::from_secs(6), dark).appearance,
             Some(dark()),
+        );
+    }
+}
+
+#[cfg(test)]
+mod half_written_tests {
+    use super::tests::{light, scratch};
+    use super::*;
+
+    /// A file still being written is not applied.
+    ///
+    /// `Settings::parse` never fails, so a truncated read produces the
+    /// defaults plus complaints, and applying that would turn somebody's
+    /// `default = deny` into `modifier` until the next poll. The watcher
+    /// therefore believes only a file whose modification time held still
+    /// across the read.
+    #[test]
+    fn a_file_that_moved_during_the_read_is_not_applied() {
+        let path = scratch("half-written.conf");
+        std::fs::write(&path, "default = deny\n").expect("write");
+        let mut watcher = Watcher::new(&path, light());
+
+        // The first poll after the interval sees the file it was built on and
+        // has nothing to report.
+        let quiet = watcher.poll(Duration::from_secs(5), light);
+        assert!(quiet.settings.is_none(), "nothing had changed yet");
+
+        // Now it changes, and holds still.
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(&path, "default = allow\n").expect("write");
+        let changed = watcher.poll(Duration::from_secs(10), light);
+        let (settings, problems) = changed.settings.expect("a settled file is applied");
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(settings.default_tier, lens_core::policy::AppTier::Allow);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// And the stamp is left alone when a read is refused, so the next poll
+    /// tries again rather than treating the change as handled.
+    #[test]
+    fn a_refused_read_is_retried() {
+        let path = scratch("retried.conf");
+        std::fs::write(&path, "default = deny\n").expect("write");
+        let mut watcher = Watcher::new(&path, light());
+        assert!(watcher
+            .poll(Duration::from_secs(5), light)
+            .settings
+            .is_none());
+
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(&path, "default = modifier\n").expect("write");
+        // Two polls in a row must not both report it: the first applies it and
+        // the second has nothing new. What must never happen is the first
+        // swallowing the change without applying it.
+        let first = watcher.poll(Duration::from_secs(10), light);
+        let second = watcher.poll(Duration::from_secs(20), light);
+        assert!(first.settings.is_some(), "the change was swallowed");
+        assert!(second.settings.is_none(), "it was reported twice");
+
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::tests::{light, scratch};
+    use super::*;
+
+    /// The guard itself, with a file that moves while it is being read.
+    ///
+    /// The reader writes to the file as its side effect, which is what an
+    /// editor writing in place looks like from here: the read returns
+    /// something, and by the time it does the file is different.
+    #[test]
+    fn a_file_that_moves_during_the_read_is_refused_and_retried() {
+        let path = scratch("moving.conf");
+        std::fs::write(&path, "default = deny\n").expect("write");
+        let mut watcher = Watcher::new(&path, light());
+        assert!(watcher
+            .poll(Duration::from_secs(5), light)
+            .settings
+            .is_none());
+
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(&path, "default = allow\n").expect("write");
+
+        // A read that hands back a truncated file and leaves the real one
+        // moving underneath it.
+        let refused = watcher.poll_reading(Duration::from_secs(10), light, |path| {
+            std::thread::sleep(Duration::from_millis(20));
+            std::fs::write(path, "default = modifier\n").expect("write");
+            // What a half-written file looks like: the beginning of a line.
+            "defau".to_owned()
+        });
+        assert!(
+            refused.settings.is_none(),
+            "a file that moved during the read was applied anyway",
+        );
+
+        // And the change is not lost: the next poll sees it, settled.
+        let settled = watcher.poll(Duration::from_secs(20), light);
+        let (settings, problems) = settled.settings.expect("the retry never happened");
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(settings.default_tier, lens_core::policy::AppTier::Modifier);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The control: without the guard this is what would have been applied.
+    ///
+    /// `Settings::parse` never fails, so half a line yields the defaults and a
+    /// complaint. Applying that turns `default = deny` into `modifier`, which
+    /// is a policy slipping in the permissive direction on its own.
+    #[test]
+    fn half_a_line_parses_as_the_defaults_which_is_why_the_guard_exists() {
+        let (settings, problems) = lens_core::settings::Settings::parse("defau");
+        assert_eq!(problems.len(), 1);
+        assert_eq!(
+            settings.default_tier,
+            lens_core::settings::Settings::default().default_tier,
         );
     }
 }
