@@ -30,9 +30,13 @@ pub enum AcquisitionSource {
     /// The operating system's accessibility tree. The primary path, always
     /// tried first (`docs/decisions/ADR-0002-accessibility-first-acquisition.md`).
     Accessibility,
-    /// Optical recognition of a small crop. The fallback, never automatic in
-    /// v1. Not implemented yet; the variant exists so the router's match is
-    /// exhaustive from the start.
+    /// Optical recognition of a small crop. The fallback, tried after the
+    /// accessibility path has failed or when the reader asks
+    /// (`docs/decisions/ADR-0002-accessibility-first-acquisition.md`).
+    ///
+    /// Implemented on Windows since 2026-08-06. Whether it runs without a
+    /// keypress is [`crate::session::OcrMode`], which defaults to `Manual`:
+    /// the product as installed still captures nothing unasked.
     Ocr,
 }
 
