@@ -228,7 +228,7 @@ mod tests {
         assert!(hit.cached, "a hit did not say it was one");
         assert_eq!(
             hit.latency_ms, 2400,
-            "the measured latency was overwritten, which is how 0ms reached              the screen",
+            "the measured latency was overwritten, which is how 0ms reached the screen",
         );
     }
 
