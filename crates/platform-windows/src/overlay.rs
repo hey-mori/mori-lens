@@ -92,6 +92,24 @@ static CONTENT: Mutex<Option<Card>> = Mutex::new(None);
 /// frame is already correct rather than a default that flashes.
 static THEME: Mutex<Option<Theme>> = Mutex::new(None);
 
+/// Where the card is on screen, or `None` when nothing is shown.
+///
+/// Readable from any thread, which is the point: the OCR acquirer runs on the
+/// acquisition thread and has to know whether the band it is about to
+/// photograph has the card in it. Without that it hides the card before every
+/// capture, and with automatic OCR that is every hover the accessibility path
+/// could not serve. A reader nudging the pointer twenty pixels off a sentence
+/// would watch the answer they were reading disappear, which is exactly what
+/// `KEEP_CARD_WITHIN_PX` exists to prevent.
+static PLACED: Mutex<Option<ScreenRect>> = Mutex::new(None);
+
+/// Remember, or forget, where the card is.
+fn remember_placement(placed: Option<ScreenRect>) {
+    if let Ok(mut slot) = PLACED.lock() {
+        *slot = placed;
+    }
+}
+
 /// The theme to paint with, or a readable fallback.
 ///
 /// A fallback rather than a panic: a card that renders in the wrong colours is
@@ -217,10 +235,23 @@ impl Overlay {
     /// thread and this lives on the hover loop's, so what crosses is a request
     /// rather than a handle: a `Sender` and a thread id, both of which are
     /// `Send`, and neither of which is a window.
-    pub fn hider(&self) -> impl Fn() + Send + 'static {
+    pub fn hider(&self) -> impl Fn(ScreenRect) + Send + 'static {
         let commands = self.commands.clone();
         let thread_id = self.thread_id;
-        move || {
+        move |band: ScreenRect| {
+            // **Only when the card is in the way.** Hiding it unconditionally
+            // costs nothing when nothing is shown and costs the reader their
+            // answer when something is: with automatic OCR this runs on every
+            // hover accessibility could not serve, which over a margin is most
+            // of them.
+            let in_the_way = PLACED
+                .lock()
+                .ok()
+                .and_then(|slot| *slot)
+                .is_some_and(|card| card.overlaps(band));
+            if !in_the_way {
+                return;
+            }
             if commands.send(Command::Hide).is_ok() {
                 // SAFETY: posting a documented message to a thread the overlay
                 // owns, exactly as `wake` does.
@@ -358,6 +389,7 @@ unsafe fn pump(window: HWND, commands: &mpsc::Receiver<Command>) {
                         // The next card is a new hover and places itself
                         // afresh, wherever the reader has moved to.
                         shown = Shown::default();
+                        remember_placement(None);
                     }
                 }
             }
@@ -460,6 +492,7 @@ unsafe fn show_card(
     }
     shown.anchor = Some(anchor);
     shown.placed = Some(placed);
+    remember_placement(Some(placed));
 
     // The Direct2D path positions, sizes and paints in one call, so none of
     // the GDI dance below applies to it.
