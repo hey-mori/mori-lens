@@ -3137,3 +3137,101 @@ fn cropping_before_enlarging_still_finds_the_word() {
         "cropping before enlarging changed the answer at the point that was asked about",
     );
 }
+
+/// What automatic OCR costs a machine, sustained, rather than per hover.
+///
+/// The other half of issue #87. `perf: crop before enlarging` made each
+/// fall-through cheaper and did not stop one happening on every hover the
+/// accessibility path could not serve, which in an editor is 96% of them.
+///
+/// `2026-08-05-idle-cost.md` measures a Lens that captures nothing, so there is
+/// no figure at all for one that does. This produces one: CPU time consumed by
+/// this process across a run of fall-throughs at a rate a reader can actually
+/// produce.
+///
+/// **Process CPU time, not wall clock.** A fall-through spends 60ms of its
+/// wall clock asleep waiting for the compositor and more of it waiting on the
+/// recogniser, and a laptop's battery does not care about sleeping.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn measure_what_automatic_ocr_costs_a_battery() {
+    use std::time::{Duration, Instant};
+
+    use lens_core::acquire::{AcquireContext, TextAcquirer};
+    use lens_core::geometry::ScreenPoint;
+    use lens_core::hover::Generation;
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+
+    /// CPU time this process has used, kernel and user together.
+    fn cpu_used() -> Duration {
+        let mut created = FILETIME::default();
+        let mut exited = FILETIME::default();
+        let mut kernel = FILETIME::default();
+        let mut user = FILETIME::default();
+        // SAFETY: a read-only query about this process, writing only into the
+        // four structures above.
+        let ok = unsafe {
+            GetProcessTimes(
+                GetCurrentProcess(),
+                &mut created,
+                &mut exited,
+                &mut kernel,
+                &mut user,
+            )
+        };
+        if ok.is_err() {
+            return Duration::ZERO;
+        }
+        let hundred_ns = |time: FILETIME| -> u64 {
+            (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime)
+        };
+        // FILETIME is in 100ns units.
+        Duration::from_nanos((hundred_ns(kernel) + hundred_ns(user)) * 100)
+    }
+
+    let acquirer = crate::OcrTextAcquirer::new(Box::new(|_band| {}));
+    let context = AcquireContext::new(Generation(1));
+    // A rate a reader can produce. The dwell is 320ms, so one settled hover
+    // every 500ms is brisk reading rather than a stress test.
+    const EVERY: Duration = Duration::from_millis(500);
+    const ROUNDS: u32 = 20;
+
+    // One discarded, so the figure is a warm recogniser rather than its first
+    // load.
+    let _ = acquirer.acquire(ScreenPoint::new(400, 400), &context);
+
+    let before = cpu_used();
+    let began = Instant::now();
+    for round in 0..ROUNDS {
+        let started = Instant::now();
+        // Walked, so successive readings are not the same picture and the
+        // recogniser cannot be caching anything.
+        let at = ScreenPoint::new(300 + (round as i32 % 5) * 90, 300 + (round as i32 % 3) * 70);
+        let _ = acquirer.acquire(at, &context);
+        if let Some(rest) = EVERY.checked_sub(started.elapsed()) {
+            std::thread::sleep(rest);
+        }
+    }
+    let spent = cpu_used().saturating_sub(before);
+    let over = began.elapsed();
+
+    println!(
+        "\n{ROUNDS} fall-throughs, one every {}ms",
+        EVERY.as_millis()
+    );
+    println!("  wall clock   {:.1}s", over.as_secs_f64());
+    println!("  CPU used     {:.0}ms", spent.as_secs_f64() * 1000.0);
+    println!(
+        "  per reading  {:.0}ms of CPU",
+        spent.as_secs_f64() * 1000.0 / f64::from(ROUNDS),
+    );
+    println!(
+        "  which is     {:.1}% of one core, sustained, while somebody reads",
+        spent.as_secs_f64() * 100.0 / over.as_secs_f64(),
+    );
+    println!(
+        "\n  against 0.16% of a core idle, measured 2026-08-05 on a Lens that\n  \
+         captured nothing."
+    );
+}
