@@ -461,3 +461,105 @@ mod pointer_tests {
         assert!(empty.word_at(ScreenPoint::new(110, 105)).is_none());
     }
 }
+
+/// The size a glyph has to be before `Windows.Media.Ocr` reads it reliably.
+///
+/// Measured, not guessed. The same card drawn at 8pt was read back as 0 of 7
+/// English words at native size and 6 of 7 at three times it, and the
+/// difference between those two runs is nothing but pixels per glyph. At 1.0
+/// scaling the same card scored 5 of 7 native, so the cliff is somewhere just
+/// under this.
+const SMALL_TEXT_PX: i32 = 16;
+
+/// What a glyph should be enlarged to.
+///
+/// Three times a 10px word is 30, which is where the measurement above stopped
+/// improving. Higher costs recognition time for nothing.
+const COMFORTABLE_PX: i32 = 30;
+
+/// The most a capture may be enlarged.
+///
+/// Three. Not a budget: past this the picture is mostly interpolation, and a
+/// recogniser given more of that reads the interpolation.
+const MOST_ENLARGEMENT: u32 = 3;
+
+/// Read, and read again enlarged if what came back was small.
+///
+/// One pass is not enough and two passes on everything is waste, so the first
+/// pass decides. It answers the question the caller cannot: how big the glyphs
+/// on this screen actually are. Below [`SMALL_TEXT_PX`] the same picture is
+/// enlarged and asked again, and that second answer is the one used.
+///
+/// The case this exists for is a code editor. A recogniser measuring VS Code
+/// returned a median word of 28x10px, and what it read at that size was `do은5`
+/// for `does` and `5h0l word_banner` for `show_word`. Lens translated both and
+/// showed the result with no sign that anything had gone wrong, which is worse
+/// than reading nothing.
+pub fn read_best(capture: &Capture, origin: ScreenPoint) -> Option<Recognised> {
+    let first = read(capture, origin)?;
+    let Some(median) = first.median_word_height() else {
+        return Some(first);
+    };
+    if median >= SMALL_TEXT_PX {
+        return Some(first);
+    }
+
+    let wanted = (COMFORTABLE_PX + median - 1) / median.max(1);
+    let factor = u32::try_from(wanted)
+        .unwrap_or(1)
+        .clamp(2, MOST_ENLARGEMENT);
+    let Some(enlarged) = capture.scaled(factor) else {
+        return Some(first);
+    };
+    // Read at the origin, then divided back: the rectangles come out in the
+    // enlarged picture's pixels and every caller of this works in screen ones.
+    let second = read(&enlarged, ScreenPoint::new(0, 0))?;
+    Some(second.shrunk_by(factor, origin))
+}
+
+impl Recognised {
+    /// The median height of a recognised word, or `None` when nothing was read.
+    pub fn median_word_height(&self) -> Option<i32> {
+        let mut heights: Vec<i32> = self
+            .lines
+            .iter()
+            .flat_map(|line| &line.words)
+            .map(|word| word.bounds.height)
+            .collect();
+        if heights.is_empty() {
+            return None;
+        }
+        heights.sort_unstable();
+        Some(heights[heights.len() / 2])
+    }
+
+    /// The same reading, mapped from an enlarged picture back to the screen.
+    fn shrunk_by(self, factor: u32, origin: ScreenPoint) -> Self {
+        let factor = factor.max(1) as i32;
+        let map = |rect: ScreenRect| {
+            ScreenRect::new(
+                origin.x + rect.x / factor,
+                origin.y + rect.y / factor,
+                (rect.width / factor).max(1),
+                (rect.height / factor).max(1),
+            )
+        };
+        Self {
+            lines: self
+                .lines
+                .into_iter()
+                .map(|line| OcrLine {
+                    text: line.text,
+                    words: line
+                        .words
+                        .into_iter()
+                        .map(|word| OcrWord {
+                            text: word.text,
+                            bounds: map(word.bounds),
+                        })
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+}
