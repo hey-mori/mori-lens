@@ -325,6 +325,22 @@ per reading  179 ms of CPU
 against 0.16 percent idle. See
 [`benchmarks/2026-08-05-idle-cost.md`](benchmarks/2026-08-05-idle-cost.md).
 
+**`ocr = automatic`, since 2026-08-06: not twice for the same pixel.** A
+reading comes back with the rectangle of every line in the region it read,
+so it has already answered every other point in that region. The next
+settled hover inside that region, landing on none of those lines, is
+refused without a capture. It is remembered for 1.2 seconds and thrown
+away the moment a scroll, a keystroke or a click could have moved the
+pixels.
+
+What is kept is **where the lines were, never what they said**. That is
+not tidiness. A remembered reading would be a record of what somebody
+looked at, held past the moment it was needed, which is the thing §3
+exists to prevent. It also makes the failure one-sided: reusing remembered
+text could show a translation of a sentence no longer on the screen, while
+reusing remembered emptiness can only fail by showing no card where one was
+possible.
+
 **`ocr = off`.** Never. No capture path exists in the process: the acquirer
 is not constructed.
 

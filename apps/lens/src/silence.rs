@@ -42,6 +42,10 @@ pub fn reason_for(resolution: &Resolution) -> Option<&'static str> {
             AcquireError::Unsupported => "this application does not expose its text",
             AcquireError::Protected(_) => "a protected field, refused before it was read",
             AcquireError::Empty => "no text at that exact point",
+            // Distinguished from `Empty` on purpose: this hover cost no
+            // capture, and a log that said otherwise would make the automatic
+            // fallback look more expensive than it is.
+            AcquireError::KnownEmpty => "no text there, from the previous reading",
             AcquireError::Timeout => "the application did not answer in time",
             AcquireError::ElementGone => "the window changed while it was being read",
             AcquireError::Stale => "the pointer moved first",

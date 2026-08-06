@@ -107,6 +107,17 @@ pub struct HoverSession {
     accessibility: Box<dyn TextAcquirer>,
     ocr: Option<Box<dyn TextAcquirer>>,
     ocr_mode: OcrMode,
+    /// Whether a scroll, a keystroke or a click has been seen since the last
+    /// hover was resolved.
+    ///
+    /// Latched rather than read off the settling sample, because those three
+    /// things **cancel** a hover: by the time one settles they are over, and
+    /// the sample that arrives is a quiet one. An adapter that remembered
+    /// where the lines were would otherwise carry a pre-scroll layout across
+    /// the scroll. See [`crate::barren`].
+    ///
+    /// Starts true, so the first hover of a session trusts nothing.
+    view_may_have_changed: bool,
 }
 
 impl std::fmt::Debug for HoverSession {
@@ -163,6 +174,7 @@ impl HoverSession {
             accessibility,
             ocr: None,
             ocr_mode: OcrMode::Off,
+            view_may_have_changed: true,
         }
     }
 
@@ -208,6 +220,12 @@ impl HoverSession {
     }
 
     pub fn observe(&mut self, sample: PointerSample) -> Option<HoverEvent> {
+        // Anything that could have moved what is under the pointer. Not
+        // `suppressed`, which says where Lens may look and nothing about what
+        // is drawn there.
+        if sample.button_down || sample.scrolling || sample.typing {
+            self.view_may_have_changed = true;
+        }
         self.machine.observe(sample)
     }
 
@@ -225,7 +243,12 @@ impl HoverSession {
             return Resolution::Stale;
         }
 
-        let context = AcquireContext::new(generation);
+        let mut context = AcquireContext::new(generation);
+        context.view_may_have_changed = self.view_may_have_changed;
+        // Cleared here rather than after the acquisition, so a scroll that
+        // arrives while this one is in flight is still seen by the next.
+        self.view_may_have_changed = false;
+
         let target = match self.accessibility.acquire(point, &context) {
             Ok(target) => target,
             Err(error) => match self.ocr_fallback(error, point, &context, input) {

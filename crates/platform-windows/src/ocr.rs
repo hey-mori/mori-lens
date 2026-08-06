@@ -76,22 +76,32 @@ impl OcrLine {
 }
 
 /// Everything read out of one captured rectangle.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// No `Default`. There is no such thing as a reading of nowhere: a reading
+/// without the region it read is the thing [`Recognised::covered`] exists to
+/// prevent, and a zero rectangle is what a caller would get.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Recognised {
     pub lines: Vec<OcrLine>,
+    /// The part of the screen this is a reading of.
+    ///
+    /// Carried rather than recomputed by the caller, because the enlarged pass
+    /// reads a **crop** around the pointer and not the band it was handed, so
+    /// the region a reading covers is not something its caller can work out
+    /// from what it passed in. A consumer that assumed otherwise would treat
+    /// the un-read part of the band as read and empty.
+    pub covered: ScreenRect,
 }
 
-/// How far outside a line's own rectangle still counts as on that line, as a
-/// multiple of the line's height.
-///
-/// Half. A line's glyph box is roughly two thirds of its pitch, so the gap
-/// between two lines is about half a box: half above and half below closes it
-/// exactly, and no further. Anything more would reach past the neighbouring
-/// line, and the nearest-line rule would still resolve it correctly, but the
-/// margin at the end of a paragraph would start answering too.
-const LINE_SLACK: f64 = 0.5;
-
 impl Recognised {
+    /// The rectangle of every line that has one, in order.
+    ///
+    /// What [`lens_core::geometry::line_under`] takes, and what
+    /// [`lens_core::barren::Barren`] remembers: layout without text.
+    pub fn line_bounds(&self) -> Vec<ScreenRect> {
+        self.lines.iter().filter_map(|line| line.bounds()).collect()
+    }
+
     /// The line the pointer is on, and the word within it.
     ///
     /// The same question the accessibility path answers with
@@ -101,11 +111,7 @@ impl Recognised {
     /// gap.
     ///
     /// `None` when the point is on no line, which is the honest answer for a
-    /// pointer in a margin. The accessibility path's equivalent mistake was
-    /// answering with the nearest text anywhere on the page, and
-    /// [ADR-0009](../../../docs/decisions/ADR-0009-pointer-distance-gate.md)
-    /// exists because of it. The tolerance below is what keeps this on the
-    /// right side of that line.
+    /// pointer in a margin.
     ///
     /// # Why there is a tolerance at all
     ///
@@ -117,43 +123,20 @@ impl Recognised {
     /// consecutive `not-under-the-pointer` refusals in an ordinary session is
     /// what that looks like from outside.
     ///
-    /// So the tolerance is a multiple of **the line's own height**, exactly as
-    /// `is_on_target` uses a multiple of line height rather than a pixel
-    /// constant: the slack being forgiven is leading, and leading scales with
-    /// the font and with the display. A constant tuned on 16px text is wrong
-    /// on a 40px heading in both directions.
+    /// The rule itself is [`lens_core::geometry::line_under`], because
+    /// [`lens_core::barren::Barren`] asks the same question of the same
+    /// rectangles and the two answers have to be the same answer.
     pub fn word_at(&self, point: ScreenPoint) -> Option<(&OcrLine, &OcrWord)> {
-        let mut best: Option<(f64, &OcrLine)> = None;
+        // Lines with no rectangle are dropped, which is why the index has to
+        // come back through this vector rather than into `self.lines`.
+        let measured: Vec<(&OcrLine, ScreenRect)> = self
+            .lines
+            .iter()
+            .filter_map(|line| line.bounds().map(|bounds| (line, bounds)))
+            .collect();
+        let bounds: Vec<ScreenRect> = measured.iter().map(|(_, rect)| *rect).collect();
 
-        for line in &self.lines {
-            let Some(bounds) = line.bounds() else {
-                continue;
-            };
-            let slack = f64::from(bounds.height.max(1)) * LINE_SLACK;
-
-            // Horizontal first, and unforgiving beyond one slack: past the end
-            // of a line is the margin, and the margin is where answering with
-            // the nearest text is the mistake ADR-0009 names.
-            let x = f64::from(point.x);
-            if x < f64::from(bounds.x) - slack || x > f64::from(bounds.right()) + slack {
-                continue;
-            }
-
-            let above = f64::from(bounds.y) - f64::from(point.y);
-            let below = f64::from(point.y) - f64::from(bounds.bottom());
-            let gap = above.max(below).max(0.0);
-            if gap > slack {
-                continue;
-            }
-            // Nearest wins, which is what makes the tolerance safe to set wide
-            // enough to close the gap between two lines: a point in that gap
-            // is inside both tolerances and belongs to the closer line.
-            if best.is_none() || best.is_some_and(|(closest, _)| gap < closest) {
-                best = Some((gap, line));
-            }
-        }
-
-        let (_, line) = best?;
+        let (line, _) = measured[lens_core::geometry::line_under(&bounds, point)?];
         let word = line.words.iter().min_by(|a, b| {
             a.bounds
                 .distance_to(point)
@@ -237,7 +220,10 @@ fn read_with(engine: &OcrEngine, capture: &Capture, origin: ScreenPoint) -> Opti
             words,
         });
     }
-    Some(Recognised { lines })
+    Some(Recognised {
+        lines,
+        covered: ScreenRect::new(origin.x, origin.y, capture.width, capture.height),
+    })
 }
 
 fn to_bitmap(capture: &Capture) -> windows::core::Result<SoftwareBitmap> {
@@ -251,6 +237,11 @@ fn to_bitmap(capture: &Capture) -> windows::core::Result<SoftwareBitmap> {
         capture.height,
     )
 }
+
+/// Bigger than any test fixture, because none of them is testing `covered`
+/// and a rectangle that clipped one would fail somewhere else.
+#[cfg(test)]
+const A_WHOLE_BAND: ScreenRect = ScreenRect::new(0, 0, 2000, 2000);
 
 #[cfg(test)]
 mod tests {
@@ -283,6 +274,7 @@ mod tests {
                     ],
                 },
             ],
+            covered: super::A_WHOLE_BAND,
         }
     }
 
@@ -374,6 +366,7 @@ mod pointer_tests {
                 line(1, "gamma delta"),
                 line(2, "epsilon zeta"),
             ],
+            covered: super::A_WHOLE_BAND,
         }
     }
 
@@ -447,6 +440,7 @@ mod pointer_tests {
                     bounds: ScreenRect::new(100, 100, 200, 40),
                 }],
             }],
+            covered: super::A_WHOLE_BAND,
         };
         assert!(heading.word_at(ScreenPoint::new(150, 155)).is_some());
         assert!(
@@ -457,7 +451,10 @@ mod pointer_tests {
 
     #[test]
     fn nothing_recognised_resolves_to_nothing() {
-        let empty = Recognised { lines: Vec::new() };
+        let empty = Recognised {
+            lines: Vec::new(),
+            covered: super::A_WHOLE_BAND,
+        };
         assert!(empty.word_at(ScreenPoint::new(110, 105)).is_none());
     }
 }
@@ -599,6 +596,10 @@ impl Recognised {
             )
         };
         Self {
+            // The crop, mapped back like everything else. The enlarged pass
+            // read a crop around the pointer, so what it covers is that crop
+            // and not the band the caller handed in.
+            covered: map(self.covered),
             lines: self
                 .lines
                 .into_iter()
@@ -680,6 +681,44 @@ pub fn is_misread(word: &str) -> bool {
             let after = characters[at + 1..].iter().any(|c| filler(*c));
             before && after
         })
+}
+
+#[cfg(test)]
+mod covered_tests {
+    use super::*;
+
+    /// A reading of an enlarged crop covers the crop, at screen scale.
+    ///
+    /// The one place `covered` can quietly become a lie. The enlarged pass
+    /// reads a 380x90 crop around the pointer and its rectangles come back in
+    /// the enlarged picture's pixels; `shrunk_by` maps them home. If it mapped
+    /// the words and left the region alone, a reading of a crop would claim to
+    /// be a reading of a 760x180 band, and `lens_core::barren` would answer
+    /// "nothing here" about the four fifths of the band nobody looked at.
+    #[test]
+    fn an_enlarged_reading_covers_the_crop_it_read_and_not_the_band() {
+        // What the enlarged pass produces: a 380x90 crop scaled 3x, read at
+        // origin zero.
+        let enlarged = Recognised {
+            lines: vec![OcrLine {
+                text: "hello".to_owned(),
+                words: vec![OcrWord {
+                    text: "hello".to_owned(),
+                    bounds: ScreenRect::new(90, 30, 60, 30),
+                }],
+            }],
+            covered: ScreenRect::new(0, 0, 380 * 3, 90 * 3),
+        };
+
+        let crop_origin = ScreenPoint::new(1000, 500);
+        let home = enlarged.shrunk_by(3, crop_origin);
+
+        assert_eq!(home.covered, ScreenRect::new(1000, 500, 380, 90));
+        assert_eq!(
+            home.lines[0].words[0].bounds,
+            ScreenRect::new(1030, 510, 20, 10),
+        );
+    }
 }
 
 #[cfg(test)]

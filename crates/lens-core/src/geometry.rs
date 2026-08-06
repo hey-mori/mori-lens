@@ -168,6 +168,70 @@ pub fn nearest_rect(rects: &[ScreenRect], point: ScreenPoint) -> Option<ScreenRe
         })
 }
 
+/// How far outside a line's own rectangle still counts as on that line, as a
+/// multiple of the line's height.
+///
+/// Half. A line's glyph box is roughly two thirds of its pitch, so the gap
+/// between two lines is about half a box: half above and half below closes it
+/// exactly, and no further. Anything more would reach past the neighbouring
+/// line, and the nearest-line rule would still resolve it correctly, but the
+/// margin at the end of a paragraph would start answering too.
+pub const LINE_SLACK: f64 = 0.5;
+
+/// Which of these text lines the point is on, if any.
+///
+/// The index rather than the rectangle, so a caller holding lines and their
+/// text can get back to the one it asked about.
+///
+/// `None` is the honest answer for a pointer in a margin. The accessibility
+/// path's equivalent mistake was answering with the nearest text anywhere on
+/// the page, and
+/// [ADR-0009](../../../docs/decisions/ADR-0009-pointer-distance-gate.md) exists
+/// because of it. [`LINE_SLACK`] is what keeps this on the right side of that.
+///
+/// # Why it is here rather than beside a recogniser
+///
+/// Two callers ask it. The OCR reader asks which line the pointer is on so it
+/// can pick a word, and [`crate::barren`] asks whether the pointer is on any
+/// line at all so it can skip a capture. Those have to agree: a point the
+/// second calls empty and the first would have read is a card that does not
+/// appear. One definition is the only way to promise that, and the rule is
+/// arithmetic on rectangles, so it belongs where it can be tested without a
+/// screen.
+pub fn line_under(lines: &[ScreenRect], point: ScreenPoint) -> Option<usize> {
+    let mut best: Option<(f64, usize)> = None;
+
+    for (at, bounds) in lines.iter().enumerate() {
+        if bounds.is_empty() {
+            continue;
+        }
+        let slack = f64::from(bounds.height.max(1)) * LINE_SLACK;
+
+        // Horizontal first, and unforgiving beyond one slack: past the end of a
+        // line is the margin, and the margin is where answering with the
+        // nearest text is the mistake ADR-0009 names.
+        let x = f64::from(point.x);
+        if x < f64::from(bounds.x) - slack || x > f64::from(bounds.right()) + slack {
+            continue;
+        }
+
+        let above = f64::from(bounds.y) - f64::from(point.y);
+        let below = f64::from(point.y) - f64::from(bounds.bottom());
+        let gap = above.max(below).max(0.0);
+        if gap > slack {
+            continue;
+        }
+        // Nearest wins, which is what makes the tolerance safe to set wide
+        // enough to close the gap between two lines: a point in that gap is
+        // inside both tolerances and belongs to the closer line.
+        if best.is_none() || best.is_some_and(|(closest, _)| gap < closest) {
+            best = Some((gap, at));
+        }
+    }
+
+    best.map(|(_, at)| at)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
