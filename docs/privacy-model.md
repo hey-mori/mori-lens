@@ -257,11 +257,17 @@ wrong trade.
 
 Claims are worth what a user can check.
 
-- The engine is named at startup and in every card's footer. **There is no tray yet**, so this is the printed form of that claim, not the intended one.
+- The engine is named at startup, in every card's footer, and in the
+  tray tooltip. A binary started from Explorer has no console, so the
+  tooltip is the form of this claim most people will meet.
 - **Ctrl+Alt+L** pauses and resumes. Pause means the pointer is not
   sampled, so no accessibility call is made at all, which a process
   monitor can confirm. It is not a hidden card.
-- The per-application tier list is **compiled in and not yet editable**. §6 tracks it as open.
+- The per-application tier list is in
+  `%APPDATA%\Mori Lens\settings.conf`, which the tray menu opens and
+  which is re-read while Lens runs. Password managers are denied before
+  that file is parsed, so writing `default = allow` does not switch them
+  back on.
 - Network calls to anything other than a granted provider are a defect,
   and the local-only case makes zero of them.
 
@@ -279,15 +285,15 @@ Every claim on this page, and whether the code keeps it:
 |---|---|
 | Nothing leaves the machine by default | **kept**, and the reason changed on 2026-08-06. The endpoint is now a setting and a flag, because Ollama does not always listen on the default port. Both go through one check, `translate::engine_for`, which accepts `localhost`, `127.0.0.0/8` and `::1` and refuses everything else as a settings error. A name that might resolve to a loopback address is refused too: this cannot resolve names, and guessing from a string is how a promise gets broken quietly. The HTTP client still has no TLS, which is why the restriction is a refusal rather than a warning. |
 | Nothing is recorded | **kept.** No file is written. The translation cache is in memory and dies with the process. |
-| No screen image written to disk | **kept**, and no longer trivially. A capture path exists as of M4: `Ctrl+Alt+O` captures a band around the pointer, recognises it, and drops the pixels. `Capture` is not `Clone`, holds no path, and its `Debug` omits the buffer. The claim used to be kept because there was nothing to write. |
+| No screen image written to disk | **kept**, and no longer trivially. Two capture paths exist as of M4: `Ctrl+Alt+O` always, and `ocr = automatic` for a hover the accessibility path could not serve, which is off unless a reader turns it on. Both capture a band around the pointer, recognise it, and drop the pixels. `Capture` is not `Clone`, holds no path, and its `Debug` omits the buffer. The claim used to be kept because there was nothing to write. |
 | Protected fields refused before they are read | **kept and executed**, against a real `ES_PASSWORD` control. See §1. |
 | The engine in use is visible | **kept.** Every card's footer names the model and says 로컬 or 외부. |
 | Model output is untrusted | **kept structurally, weaker than it reads.** See §1: two of three local models obeyed an instruction in screen text. Nothing is executed; the mitigation is that the original is always shown beside the answer. |
 | Password managers denied by default | **kept.** Nine are denied by name in `AppPolicy`. |
 | Banking and payment applications denied by default | **not kept.** No banking application is denied by name, and naming them would be a guess that varies by country. What actually protects an unnamed application is the `Modifier` default, which is why the default tier is not `Allow`. This row is the honest version of a sentence in §2 that promised more than the code does. |
 | A pause control stops all acquisition | **kept**, as Ctrl+Alt+L. Paused means no accessibility call is made, not that a card is hidden, so a process monitor can confirm it. |
-| The tray shows the current engine | **not kept.** There is no tray. The engine is printed at startup and on every card footer. |
-| The per-application tier list is visible and editable | **not kept.** The list is compiled in; there is no settings surface. |
+| The tray shows the current engine | **kept**, since 2026-08-05. The tooltip names the model and whether it is local, and the icon says whether Lens is listening or paused. This row said "there is no tray" for a fortnight after there was one, which is the same defect as a stale capability claim pointing the other way: a privacy document that understates the product is one nobody can calibrate against. |
+| The per-application tier list is visible and editable | **kept**, in `%APPDATA%\Mori Lens\settings.conf`, opened from the tray menu and re-read while Lens runs. The denied password managers are not in it and cannot be overridden from it, which is the one part deliberately out of the user's reach. |
 
 Three rows are open. They are listed rather than quietly dropped
 because the point of this page is that a reader can tell which promises
