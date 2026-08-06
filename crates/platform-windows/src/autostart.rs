@@ -31,7 +31,31 @@ const VALUE: PCWSTR = w!("Mori Lens");
 
 /// Whether Lens is set to start with Windows.
 pub fn is_enabled() -> bool {
-    read(RUN_KEY, VALUE).is_some()
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
+    read(RUN_KEY, VALUE).is_some_and(|recorded| points_at(&recorded, &exe))
+}
+
+/// Whether a recorded run-key command starts this exact binary.
+///
+/// **Not whether the value exists**, which is what this used to ask. The run
+/// key holds a path, and the README tells people to put `lens.exe` wherever
+/// they keep such things, so moving it or unzipping a new release beside the
+/// old one leaves an entry pointing at a binary that is not there. The tray
+/// went on showing a tick, which is the product asserting something Windows
+/// would disagree with at the next sign-in.
+///
+/// Compared case-insensitively, because Windows paths are, and with the quotes
+/// stripped from both sides, because the value carries them and a path does
+/// not.
+///
+/// Two copies of Lens in two folders is a real arrangement and this handles it
+/// the only way one run-key value can: the one named is ticked, the other is
+/// not, and ticking the other takes the entry.
+fn points_at(recorded: &str, exe: &std::path::Path) -> bool {
+    let unquoted = recorded.trim().trim_matches('"');
+    unquoted.eq_ignore_ascii_case(&exe.display().to_string())
 }
 
 /// Start with Windows, using this executable's current location.
@@ -178,4 +202,48 @@ pub fn round_trip_against_a_scratch_key() -> (bool, bool, bool) {
 #[cfg(test)]
 pub fn scratch_is_gone() -> bool {
     read(w!("Software\\Mori Lens\\SuiteScratch"), w!("round-trip")).is_none()
+}
+
+#[cfg(test)]
+mod points_at_tests {
+    use super::points_at;
+    use std::path::Path;
+
+    #[test]
+    fn the_quoted_path_this_binary_wrote_is_recognised() {
+        let exe = Path::new(r"C:\Tools\Mori Lens\lens.exe");
+        assert!(points_at(r#""C:\Tools\Mori Lens\lens.exe""#, exe));
+    }
+
+    /// Windows paths are case-insensitive and the registry keeps whatever was
+    /// typed, so a comparison that is not would report a moved binary for one
+    /// that never moved.
+    #[test]
+    fn case_does_not_matter() {
+        let exe = Path::new(r"C:\Tools\lens.exe");
+        assert!(points_at(r#""c:\tools\LENS.EXE""#, exe));
+    }
+
+    /// An entry written before this comparison existed, or by hand, without
+    /// the quotes.
+    #[test]
+    fn an_unquoted_value_still_matches() {
+        let exe = Path::new(r"C:\Tools\lens.exe");
+        assert!(points_at(r"C:\Tools\lens.exe", exe));
+    }
+
+    /// The case this exists for: the binary moved, or a new release was
+    /// unzipped beside the old one.
+    #[test]
+    fn a_different_location_is_not_this_binary() {
+        let exe = Path::new(r"C:\Tools\lens.exe");
+        assert!(!points_at(r#""C:\Downloads\lens.exe""#, exe));
+        assert!(!points_at(r#""C:\Tools\old\lens.exe""#, exe));
+    }
+
+    #[test]
+    fn nothing_recorded_is_not_this_binary() {
+        assert!(!points_at("", Path::new(r"C:\Tools\lens.exe")));
+        assert!(!points_at(r#""""#, Path::new(r"C:\Tools\lens.exe")));
+    }
 }
