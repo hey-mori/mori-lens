@@ -6,6 +6,7 @@ version = 4
 name = "hover-probe"
 version = "0.1.0"
 dependencies = [
+ "lens-build-stamp",
  "lens-core",
  "lens-platform-windows",
  "windows",
@@ -15,11 +16,16 @@ dependencies = [
 name = "lens"
 version = "0.1.0"
 dependencies = [
+ "lens-build-stamp",
  "lens-core",
  "lens-platform-windows",
  "lens-translate",
  "windows",
 ]
+
+[[package]]
+name = "lens-build-stamp"
+version = "0.1.0"
 
 [[package]]
 name = "lens-core"
