@@ -92,8 +92,13 @@ prove the logic and prove nothing about a desktop.
 
 What is still missing before this is something a person installs: a
 signed binary and an installer, so Windows does not warn on first run.
-Building it yourself is the current answer and it is not one most people
-will accept.
+
+Building it yourself is no longer the only answer. `scripts/package.sh`
+runs the gate, builds, and writes a zip named for the version and the
+commit with a SHA-256 beside it, so the thing can be handed over. That is
+the step below both of the missing ones rather than either of them: the
+warning still appears, and the checksum is what a person has instead of a
+signature.
 
 **What the measurement found, since it changes what "works" means
 here:** acquisition succeeds, at p50 10ms, and returns the *right* text
