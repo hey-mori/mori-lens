@@ -157,15 +157,21 @@ the product calls it.
 | Condition | State |
 |---|---|
 | quick-path latency unchanged | measured: 1,607ms before an analysis and 1,668ms after, sharing one process, one endpoint and one model lease |
-| never called without a user action | held by construction: `lens-core::session` has no reference to an `Analyser` and there is no path from a settled hover to one. **Also vacuously true**, because nothing calls it at all yet |
+| never called without a user action | held by construction: `lens-core::session` has no reference to an `Analyser` and there is no path from a settled hover to one. The only caller is a `Ctrl+Alt+D` press |
 | a schema violation degrades | built: a missing field is an empty field, an answer that was not JSON says nothing, and an analysis that says nothing is a typed error rather than a card of headings over blanks |
-| output labelled as an AI explanation | built: `DeepAnalysis::LABEL`. **Unverified**, because no card shows it |
+| output labelled as an AI explanation | built and shown: `DeepAnalysis::LABEL`, first in the footer because a card cuts from the end |
 | the explanations are right | **open**, and the reason the label exists. `passed` came back with 원형 `passed` rather than `pass` |
 
-Not started: copy, save, and the developer and exam profiles. The
-trigger and the card are the next piece, and the overlay passes clicks
-through ([ADR-0004](decisions/ADR-0004-passive-overlay.md)), so it is a
-key rather than a button.
+The trigger and the card are built. `Ctrl+Alt+D`, not a button, because
+the overlay passes clicks through
+([ADR-0004](decisions/ADR-0004-passive-overlay.md)) and a card that could
+be clicked would be a card that takes focus. Verified end to end by
+`lens --selftest`, which now runs the deep path on the sentence it just
+translated.
+
+Not started: **the deep cache**, which ADR-0005 requires to have its own
+key and which does not exist, so the same sentence explained twice costs
+two generations. Then copy, save, and the developer and exam profiles.
 
 ## M6 · macOS acquisition
 

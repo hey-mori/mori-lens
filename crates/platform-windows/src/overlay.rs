@@ -705,6 +705,7 @@ unsafe fn measure(window: HWND, card: &Card) -> i32 {
         let body = match &card.body {
             CardBody::Translation(text) | CardBody::Problem(text) => text,
             CardBody::Waiting(status) => status.as_str(),
+            CardBody::Analysis(text) => text.as_str(),
         };
         let original = text_height(dc, &card.original, inner, theme.small_pt);
         let translated = text_height(dc, body, inner, theme.body_pt);
@@ -884,6 +885,9 @@ unsafe fn paint(window: HWND) {
                 // A status rather than an answer, so it takes the footer's
                 // colour and must not be mistaken for a translation.
                 CardBody::Waiting(status) => (status.as_str(), theme.footer),
+                // See the note in `glass.rs`: a list of headed lines, not an
+                // answer, so it does not take the answer's weight.
+                CardBody::Analysis(text) => (text.as_str(), theme.body),
             };
             y += draw(
                 target,
