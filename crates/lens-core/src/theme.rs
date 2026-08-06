@@ -85,6 +85,22 @@ impl Translucency {
     /// not what a reading tool starts with.
     pub const DEFAULT: Self = Self::Solid;
 
+    /// The name this level is written under in the settings file.
+    ///
+    /// Here so the default can be one fact rather than two. It was two: this
+    /// enum said the default was opaque and `settings.rs` said the string
+    /// `"balanced"`, and since the product builds its theme from the string,
+    /// the enum's default reached the fallback theme and every test fixture
+    /// and nothing a user ever saw. The banner printed `surface alpha 236`
+    /// under a change that claimed to make it 255.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Clear => "clear",
+            Self::Balanced => "balanced",
+            Self::Solid => "solid",
+        }
+    }
+
     /// Surface alpha, 0 to 255.
     ///
     /// None of these reach fully opaque except `Solid`, and none go far below
