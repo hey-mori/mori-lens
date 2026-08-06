@@ -103,6 +103,34 @@ quick after   1668ms
 61ms apart, either side of an analysis. Nothing to see, which is the
 result.
 
+## Through the product, on a real window
+
+`lens --selftest` runs the whole chain against text already on screen and
+now carries on into the deep path. Against a terminal window:
+
+```
+1. acquired   49 chars from WindowsTerminal
+2. translated 44 chars in 3024ms via qwen2.5-coder:7b
+3. shown      card is on screen for 4 seconds
+4. explaining  word=true structure=true
+   analysed   3 lines in 4400ms via qwen2.5-coder:7b
+   원형           6 chars
+   이 문장에서       6 chars
+   구조           27 chars
+   shown      on screen for 4 seconds
+```
+
+Lengths, not values: the headings are this repository's own strings and
+the values are a model's account of text off a screen, which
+[`../privacy-model.md`](../privacy-model.md) §3 forbids printing.
+
+Three lines of five. 품사 came back empty or in English and was dropped,
+which is the same result as the table above and the reason to expect it.
+
+The card was **showable**, which is the part that needed a screen: an
+analysis is the one card body with newlines in it, and until this ran
+nothing had laid one out.
+
 ## What this run does not establish
 
 **Whether the explanations are right.** 비교구로, 두 가지 선택 중에서 더
