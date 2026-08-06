@@ -2777,13 +2777,18 @@ fn measure_what_enlarging_a_capture_does_for_small_text() {
     );
 
     // Small, and at 100%: the point of this is text at the size a code editor
-    // renders, not text at the size a card usually is.
-    for scale in [0.75f32, 1.0] {
+    // renders, not text at the size a card usually is. Light and dark, because
+    // every card a reader photographed with garbage in it was light text on a
+    // dark background, and the readable ones were the other way round.
+    for (scale, dark) in [(0.75f32, false), (0.75, true), (1.0, true)] {
         let theme = Theme::resolve(
             Preset::System,
             Translucency::Solid,
             TextScale::Small,
-            SystemPreferences::default(),
+            SystemPreferences {
+                dark,
+                ..SystemPreferences::default()
+            },
         );
         let laid = glass.lay_out(&card, &theme, 420, scale).expect("layout");
         // SAFETY: the renderer creates and releases its own objects.
@@ -2795,9 +2800,15 @@ fn measure_what_enlarging_a_capture_does_for_small_text() {
         let capture = crate::capture::Capture::from_bgra(width, height, bgra);
 
         println!(
-            "\ncard {width}x{height} at scale {scale}, drawn at {}pt",
-            theme.small_pt
+            "\ncard {width}x{height} at scale {scale}, {}pt, {}",
+            theme.small_pt,
+            if dark {
+                "light on dark"
+            } else {
+                "dark on light"
+            },
         );
+        println!("  brightness   {}", capture.brightness());
         for factor in [1u32, 2, 3] {
             let enlarged;
             let subject = if factor == 1 {
@@ -2852,6 +2863,32 @@ fn measure_what_enlarging_a_capture_does_for_small_text() {
                 subject.height,
             );
             println!("      read: {}", text.replace('\n', " ⏎ "));
+
+            // The same picture inverted, which is what the dark rows are
+            // really asking about.
+            if factor == 3 {
+                let flipped = subject.inverted();
+                println!(
+                    "  inverted brightness {} from {}",
+                    flipped.brightness(),
+                    subject.brightness(),
+                );
+                let read = crate::ocr::read(&flipped, ScreenPoint::new(0, 0));
+                let text = read.map(|read| read.text()).unwrap_or_default();
+                let got: Vec<String> = text
+                    .split_whitespace()
+                    .map(|word| {
+                        word.trim_matches(|c: char| !c.is_alphanumeric())
+                            .to_lowercase()
+                    })
+                    .collect();
+                let hits = known
+                    .split_whitespace()
+                    .filter(|word| got.iter().any(|read| read == &word.to_lowercase()))
+                    .count();
+                println!("  3x inverted  {hits}/{expected} words exact");
+                println!("      read: {}", text.replace('\n', " ⏎ "));
+            }
         }
     }
 }
