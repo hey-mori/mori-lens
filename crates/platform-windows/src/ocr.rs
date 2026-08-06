@@ -81,24 +81,79 @@ pub struct Recognised {
     pub lines: Vec<OcrLine>,
 }
 
+/// How far outside a line's own rectangle still counts as on that line, as a
+/// multiple of the line's height.
+///
+/// Half. A line's glyph box is roughly two thirds of its pitch, so the gap
+/// between two lines is about half a box: half above and half below closes it
+/// exactly, and no further. Anything more would reach past the neighbouring
+/// line, and the nearest-line rule would still resolve it correctly, but the
+/// margin at the end of a paragraph would start answering too.
+const LINE_SLACK: f64 = 0.5;
+
 impl Recognised {
     /// The line the pointer is on, and the word within it.
     ///
     /// The same question the accessibility path answers with
-    /// `RangeFromPoint`, asked of pixels instead. Containment first, and then
-    /// the nearest word on the same line, because a pointer between two words
-    /// is on the line and a reader means the word beside the gap.
+    /// `RangeFromPoint`, asked of pixels instead: the nearest line within a
+    /// tolerance, and then the nearest word on it, because a pointer between
+    /// two words is still on the line and a reader means the word beside the
+    /// gap.
     ///
-    /// `None` when the point is on no line at all, which is the honest answer
-    /// for a pointer in a margin: the accessibility path's equivalent mistake
-    /// was answering with the nearest text anywhere on the page, and
+    /// `None` when the point is on no line, which is the honest answer for a
+    /// pointer in a margin. The accessibility path's equivalent mistake was
+    /// answering with the nearest text anywhere on the page, and
     /// [ADR-0009](../../../docs/decisions/ADR-0009-pointer-distance-gate.md)
-    /// exists because of it.
+    /// exists because of it. The tolerance below is what keeps this on the
+    /// right side of that line.
+    ///
+    /// # Why there is a tolerance at all
+    ///
+    /// This required the point to be **inside** a line's rectangle, and that
+    /// rectangle is the glyphs, not the line. A recogniser measuring VS Code
+    /// returned a median word of 28x10px against a line pitch nearer 16, so
+    /// between every pair of lines is a band several pixels tall where a
+    /// pointer is over text, looks over text, and resolves to nothing. Two
+    /// consecutive `not-under-the-pointer` refusals in an ordinary session is
+    /// what that looks like from outside.
+    ///
+    /// So the tolerance is a multiple of **the line's own height**, exactly as
+    /// `is_on_target` uses a multiple of line height rather than a pixel
+    /// constant: the slack being forgiven is leading, and leading scales with
+    /// the font and with the display. A constant tuned on 16px text is wrong
+    /// on a 40px heading in both directions.
     pub fn word_at(&self, point: ScreenPoint) -> Option<(&OcrLine, &OcrWord)> {
-        let line = self
-            .lines
-            .iter()
-            .find(|line| line.bounds().is_some_and(|bounds| bounds.contains(point)))?;
+        let mut best: Option<(f64, &OcrLine)> = None;
+
+        for line in &self.lines {
+            let Some(bounds) = line.bounds() else {
+                continue;
+            };
+            let slack = f64::from(bounds.height.max(1)) * LINE_SLACK;
+
+            // Horizontal first, and unforgiving beyond one slack: past the end
+            // of a line is the margin, and the margin is where answering with
+            // the nearest text is the mistake ADR-0009 names.
+            let x = f64::from(point.x);
+            if x < f64::from(bounds.x) - slack || x > f64::from(bounds.right()) + slack {
+                continue;
+            }
+
+            let above = f64::from(bounds.y) - f64::from(point.y);
+            let below = f64::from(point.y) - f64::from(bounds.bottom());
+            let gap = above.max(below).max(0.0);
+            if gap > slack {
+                continue;
+            }
+            // Nearest wins, which is what makes the tolerance safe to set wide
+            // enough to close the gap between two lines: a point in that gap
+            // is inside both tolerances and belongs to the closer line.
+            if best.is_none() || best.is_some_and(|(closest, _)| gap < closest) {
+                best = Some((gap, line));
+            }
+        }
+
+        let (_, line) = best?;
         let word = line.words.iter().min_by(|a, b| {
             a.bounds
                 .distance_to(point)
@@ -292,5 +347,117 @@ mod tests {
     #[test]
     fn the_whole_reading_is_available_as_text() {
         assert_eq!(two_lines().text(), "the output files\ncame back empty");
+    }
+}
+
+#[cfg(test)]
+mod pointer_tests {
+    use super::*;
+
+    /// Three lines of 10px glyphs on a 16px pitch, which is what a recogniser
+    /// reported from a real editor: median word 28x10px.
+    fn page() -> Recognised {
+        let line = |row: i32, text: &str| OcrLine {
+            text: text.to_owned(),
+            words: text
+                .split(' ')
+                .enumerate()
+                .map(|(index, word)| OcrWord {
+                    text: word.to_owned(),
+                    bounds: ScreenRect::new(100 + index as i32 * 30, 100 + row * 16, 28, 10),
+                })
+                .collect(),
+        };
+        Recognised {
+            lines: vec![
+                line(0, "alpha beta"),
+                line(1, "gamma delta"),
+                line(2, "epsilon zeta"),
+            ],
+        }
+    }
+
+    #[test]
+    fn a_point_on_a_word_resolves_to_it() {
+        let read = page();
+        let (_, word) = read.word_at(ScreenPoint::new(110, 105)).expect("a word");
+        assert_eq!(word.text, "alpha");
+        let (_, word) = read.word_at(ScreenPoint::new(140, 105)).expect("a word");
+        assert_eq!(word.text, "beta");
+    }
+
+    /// The defect this tolerance exists for. Between two 10px lines on a 16px
+    /// pitch there is a 6px band that is visually text and resolved to
+    /// nothing, and a pointer lands in it a third of the time.
+    #[test]
+    fn a_point_between_two_lines_belongs_to_the_nearer_one() {
+        let read = page();
+        // 112 is two pixels under the first line's box and four above the
+        // second's.
+        let (line, _) = read.word_at(ScreenPoint::new(110, 112)).expect("a line");
+        assert_eq!(line.text, "alpha beta");
+        // 114 is four under the first and two above the second.
+        let (line, _) = read.word_at(ScreenPoint::new(110, 114)).expect("a line");
+        assert_eq!(line.text, "gamma delta");
+    }
+
+    #[test]
+    fn every_pixel_between_the_first_and_last_line_resolves() {
+        // The whole point: no dead bands left inside a paragraph.
+        let read = page();
+        for y in 100..=141 {
+            assert!(
+                read.word_at(ScreenPoint::new(110, y)).is_some(),
+                "y={y} is inside the paragraph and resolved to nothing",
+            );
+        }
+    }
+
+    #[test]
+    fn a_point_in_the_margin_beside_a_line_is_still_nothing() {
+        // The tolerance must not turn into the mistake ADR-0009 names: an
+        // answer for a pointer that is not on text.
+        let read = page();
+        assert!(
+            read.word_at(ScreenPoint::new(400, 105)).is_none(),
+            "far right"
+        );
+        assert!(
+            read.word_at(ScreenPoint::new(20, 105)).is_none(),
+            "far left"
+        );
+    }
+
+    #[test]
+    fn a_point_well_above_or_below_the_text_is_nothing() {
+        let read = page();
+        assert!(read.word_at(ScreenPoint::new(110, 80)).is_none(), "above");
+        assert!(read.word_at(ScreenPoint::new(110, 200)).is_none(), "below");
+    }
+
+    #[test]
+    fn the_tolerance_scales_with_the_text_rather_than_being_a_constant() {
+        // A heading. Five pixels off a 40px line is well inside its leading
+        // and would be far outside a 10px line's.
+        let heading = Recognised {
+            lines: vec![OcrLine {
+                text: "Heading".to_owned(),
+                words: vec![OcrWord {
+                    text: "Heading".to_owned(),
+                    bounds: ScreenRect::new(100, 100, 200, 40),
+                }],
+            }],
+        };
+        assert!(heading.word_at(ScreenPoint::new(150, 155)).is_some());
+        assert!(
+            heading.word_at(ScreenPoint::new(150, 175)).is_none(),
+            "half a line's height is the limit, whatever the line",
+        );
+    }
+
+    #[test]
+    fn nothing_recognised_resolves_to_nothing() {
+        let empty = Recognised { lines: Vec::new() };
+        assert!(empty.word_at(ScreenPoint::new(110, 105)).is_none());
     }
 }
