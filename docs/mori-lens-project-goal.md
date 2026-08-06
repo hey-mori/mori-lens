@@ -66,10 +66,11 @@ not written), **out of v1** (deliberately excluded).
 | Hover probe, sweep mode | **shipped** · produced the 2026-08-04 measurements |
 | Per-application compatibility matrix | **shipped** · all 8 target applications, 2026-08-05 |
 | Native overlay (Windows) | **shipped** · never takes focus, paints without a blank or hidden frame while streaming, clicks pass through, and lands on the monitor its text is on |
+| Tells the reader an application cannot be read | **shipped** · after three settled hovers fail as unsupported in one application, a card names the OCR hotkey, once per application per session. Never for a protected field, and never a key that is unregistered or has no recogniser behind it |
 | Failure messages that say what to do | **shipped** · an absent Ollama names ollama.com, a missing model names the `ollama pull` command, on the card and in the tray tooltip |
 | Quick translation via Ollama | **shipped** · warm median around 1.6s, streamed, cached in memory, model resolved at startup |
 | Deep analysis (grammar, structure) | planned · M5 |
-| Manual OCR fallback (Windows) | **shipped** · Ctrl+Alt+O reads a band around the pointer, hides the card first, resolves the word under it, and feeds the same translation and card path. Never automatic, never to disk |
+| Manual OCR fallback (Windows) | **shipped** · Ctrl+Alt+O reads a band around the pointer, hides the card first, resolves the word under it, and feeds the same translation and card path. Never automatic, never to disk. Measured against VS Code on 2026-08-06, the application that prompted the milestone: 336 words recovered where accessibility resolves 9 points in 260 |
 | macOS acquisition | planned · M6 |
 | macOS overlay and Vision OCR | planned · M7 |
 | Saved vocabulary and sentences | planned · M8 |

@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 use lens_core::cache::{CacheKey, TranslationCache};
 use lens_core::card::Card;
 use lens_core::geometry::{ScreenPoint, ScreenRect};
-use lens_core::hover::{Generation, HoverConfig, HoverEvent};
+use lens_core::hover::{Generation, HoverConfig};
 use lens_core::icon::Glyph;
 use lens_core::language::{decide, Decision};
 use lens_core::policy::{AppPolicy, AppTier};
@@ -48,6 +48,7 @@ use lens_platform_windows::{
 use lens_translate::OllamaTranslator;
 
 mod console;
+mod hover_worker;
 mod lifecycle;
 mod manual_ocr;
 mod pause;
@@ -106,7 +107,10 @@ OPTIONS
                         installed.
     --dwell <ms>        How long the pointer must rest. Default 320.
     --theme <name>      system, forest, night-lake, or paper. Default system.
-    --translucency <t>  clear, balanced, or solid. Default balanced.
+    --translucency <t>  clear, balanced, or solid. Default solid: a translucent
+                        card takes part of its edge colour from the page behind
+                        it, and one hairline then reads unevenly along its own
+                        length. The other two are still there.
     --text <size>       small, normal, large, or larger. Default normal.
     --selftest          Run the whole chain once against text already on
                         screen, without moving the pointer, and report each
@@ -555,8 +559,15 @@ fn main() -> std::process::ExitCode {
         }
     });
 
-    let acquirer = match UiaTextAcquirer::new() {
-        Ok(acquirer) => acquirer,
+    // Built here only to be asked two questions and dropped. UI Automation
+    // interfaces belong to the apartment they were created in, so the acquirer
+    // the product reads with is constructed on the thread that will use it,
+    // which is the acquisition worker started further down. This one exists so
+    // an unreachable accessibility layer is reported before the banner rather
+    // than as a worker that silently answers nothing, and so the guard line
+    // below states a fact about this machine rather than a hope.
+    let bounded = match UiaTextAcquirer::new() {
+        Ok(acquirer) => acquirer.calls_are_bounded(),
         Err(error) => {
             eprintln!("the accessibility layer is unreachable: {error}");
             return std::process::ExitCode::from(1);
@@ -564,15 +575,16 @@ fn main() -> std::process::ExitCode {
     };
 
     // Printed because the alternative is discovering it during a freeze. UI
-    // Automation waits two minutes for a wedged provider unless told not to,
-    // and a hover that inherits that default takes the pointer loop with it
-    // (issue #28).
+    // Automation waits two minutes for a wedged provider unless told not to
+    // (issue #28). It no longer takes the pointer loop with it, because
+    // acquisition is not on that thread any more (issue #42), but a hover that
+    // takes two minutes is still a hover nobody gets an answer to.
     println!(
         "  guard     {}",
-        if acquirer.calls_are_bounded() {
-            "a slow application is given 800ms, then abandoned"
+        if bounded {
+            "a slow application is given 800ms, then abandoned · off the pointer loop"
         } else {
-            "UNBOUNDED: one wedged application can hold the pointer loop for two minutes"
+            "UNBOUNDED: one wedged application can hold a read for two minutes"
         }
     );
 
@@ -585,14 +597,30 @@ fn main() -> std::process::ExitCode {
     // the mode line above it saying something else.
     println!("\n{}\n", how_to_use(&policy, tray.is_some()));
 
-    let mut session = HoverSession::new(
-        HoverConfig {
-            dwell: options.dwell,
-            ..HoverConfig::default()
-        },
-        policy,
-        Box::new(acquirer),
-    );
+    // The policy is kept here as well as sent, because the tray tooltip and
+    // the reload line need it synchronously, and a round trip to a worker to
+    // describe a menu is a strange thing to make anybody wait for.
+    let mut hover_config = HoverConfig {
+        dwell: options.dwell,
+        ..HoverConfig::default()
+    };
+    let worker_config = hover_config;
+    let worker_policy = policy.clone();
+    // **Acquisition runs here and nothing else does.** While a read is in
+    // flight the pointer loop keeps sampling, cards keep retiring, and the
+    // pause key keeps working, none of which was true: a wedged provider took
+    // all three with it for as long as it took to give up (issue #42).
+    let Some(mut hover) = hover_worker::HoverWorker::start(move || {
+        let acquirer = UiaTextAcquirer::new().ok()?;
+        Some(HoverSession::new(
+            worker_config,
+            worker_policy,
+            Box::new(acquirer),
+        ))
+    }) else {
+        eprintln!("the acquisition thread could not be started");
+        return std::process::ExitCode::from(1);
+    };
 
     pointer::install_stop_handler();
     let started = Instant::now();
@@ -615,6 +643,13 @@ fn main() -> std::process::ExitCode {
     // modifier over a window that exposes no text used to look exactly like a
     // product that had crashed.
     let mut narrator = silence::Narrator::default();
+    let mut reach = lens_core::reach::Reach::new();
+    // Resolved once, here, rather than at the moment a card is drawn. The
+    // offer must name a key that will actually do something: taken by another
+    // application, or with no recogniser installed, and the card says what is
+    // wrong without naming a key that does nothing.
+    let ocr_hotkey = (pause.ocr_is_registered() && !ocr::available_languages().is_empty())
+        .then(|| "Ctrl+Alt+O".to_owned());
 
     // Pause has three entrances now: the hotkey, the tray icon, and the tray
     // menu. They set the same flag rather than each doing their own thing,
@@ -674,7 +709,7 @@ fn main() -> std::process::ExitCode {
                     } else {
                         Glyph::Listening
                     },
-                    &tooltip(&language, &engine_line, pause.is_paused(), session.policy()),
+                    &tooltip(&language, &engine_line, pause.is_paused(), &policy),
                     theme.body,
                 );
             }
@@ -693,15 +728,14 @@ fn main() -> std::process::ExitCode {
 
             if let Some(settings) = &settings {
                 language = settings.language.clone();
-                let mut policy = settings.policy();
-                policy.deny_self("lens");
-                session.reconfigure(
-                    HoverConfig {
-                        dwell: Duration::from_millis(settings.dwell_ms),
-                        ..HoverConfig::default()
-                    },
-                    policy,
-                );
+                let mut reloaded = settings.policy();
+                reloaded.deny_self("lens");
+                hover_config = HoverConfig {
+                    dwell: Duration::from_millis(settings.dwell_ms),
+                    ..HoverConfig::default()
+                };
+                policy = reloaded;
+                hover.reconfigure(hover_config, policy.clone());
                 if settings.model != options.model {
                     // The worker owns the translator, and swapping a model
                     // mid-flight would leave a queued job answered by the one
@@ -733,7 +767,7 @@ fn main() -> std::process::ExitCode {
                     } else {
                         Glyph::Listening
                     },
-                    &tooltip(&language, &engine_line, pause.is_paused(), session.policy()),
+                    &tooltip(&language, &engine_line, pause.is_paused(), &policy),
                     theme.body,
                 );
             }
@@ -741,7 +775,7 @@ fn main() -> std::process::ExitCode {
                 "reloaded · {} · dark={} · {}",
                 language,
                 appearance.dark,
-                session.policy_summary(),
+                policy.describe(),
             );
         }
 
@@ -752,7 +786,14 @@ fn main() -> std::process::ExitCode {
             let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
             // SAFETY-free: a read-only monitor query.
             let scale = monitor_scale_at(at);
-            let generation = session.next_generation();
+            // A round trip to the worker, because there is one generation
+            // counter and it lives with the hover machine. If the worker is
+            // mid-read this waits for it, which is the one place a keypress
+            // can still be delayed by acquisition, and it is bounded.
+            let Some(generation) = hover.take_generation() else {
+                println!("ocr   the acquisition thread did not answer");
+                continue;
+            };
             life.hover_settled(generation);
             match manual_ocr::read_around(&overlay, at, scale) {
                 Ok(reading) => {
@@ -811,12 +852,32 @@ fn main() -> std::process::ExitCode {
         };
         let process_name = pointer::process_name_at(position);
         let now = started.elapsed();
-        let sample = session.sample(position, now, input, process_name.as_deref());
+        // Handed over, not performed. This is the line the whole file was
+        // rearranged for: the sample goes to the acquisition thread and this
+        // loop carries on to the pause key and the card timers below.
+        hover.sample(position, now, input, process_name.clone());
 
-        if let Some(HoverEvent::Settled { generation, point }) = session.observe(sample) {
+        while let Some(answer) = hover.try_recv() {
+            let hover_worker::FromHover::Settled {
+                generation,
+                point,
+                now,
+                process_name,
+                resolution,
+            } = answer
+            else {
+                // A generation nobody is waiting for. It can only arrive if a
+                // manual OCR request timed out and its reply came late, and
+                // using it would attach a card to a keypress the reader has
+                // already given up on.
+                continue;
+            };
             life.hover_settled(generation);
-            match session.resolve(generation, point, now, input) {
+            match resolution {
                 Resolution::Presented(target) => {
+                    // This application can be read, so it is never offered the
+                    // fallback again however the pointer wanders afterwards.
+                    reach.readable(process_name.as_deref());
                     let sentence = target.segmented.sentence_text().trim().to_owned();
                     // Text already in the reader's language costs nothing and
                     // shows nothing. Without this a Korean reader hovering
@@ -870,6 +931,29 @@ fn main() -> std::process::ExitCode {
                 other => {
                     if let Some(line) = narrator.line_for(&other, process_name.as_deref()) {
                         println!("{line}");
+                    }
+                    // A console line is not an answer for somebody who started
+                    // this from Explorer: a Windows subsystem binary has no
+                    // console to print it in. Once per application, when the
+                    // application rather than the pointer is what failed, the
+                    // reader is told on the card instead, and told what to
+                    // press. `reach` decides; this only draws.
+                    if let Resolution::Failed(error) = &other {
+                        if reach.unreadable(process_name.as_deref(), error) {
+                            let card = Card::cannot_read_this_app(ocr_hotkey.as_deref());
+                            // **The settled point, not the pointer now.** They
+                            // were the same value while acquisition ran inline
+                            // on this loop. They are not any more: this card is
+                            // shown after a read that failed, and the read is
+                            // allowed 800ms, so anchoring on the live pointer
+                            // puts the card wherever the hand drifted to in the
+                            // meantime rather than on the text it is about.
+                            let anchor = ScreenRect::new(point.x, point.y, 1, 1);
+                            narrator.card_shown();
+                            life.job_dispatched(generation, anchor, now);
+                            life.answer_arrived(generation, anchor);
+                            overlay.show(card, anchor);
+                        }
                     }
                 }
             }
