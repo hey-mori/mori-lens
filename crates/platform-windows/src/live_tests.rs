@@ -2742,3 +2742,116 @@ fn a_plain_edit_in_another_process_answers_the_same_way_every_time() {
     );
     assert_eq!(password_element.is_password, Some(true));
 }
+
+/// How much better the recogniser reads small text when it is enlarged first.
+///
+/// **Scored against text this repository drew**, which is the one way to score
+/// a recogniser without printing anybody's screen. The renderer lays out a
+/// known sentence at a known point size, `Glass::pixels` hands back the bitmap,
+/// and the recogniser is asked to read it back. What it should say is known
+/// before it is asked.
+///
+/// The case this is for: a card in VS Code rendered `do은5` for `does` and
+/// `5h0l word_banner` for `show_word`, and Lens translated both without
+/// noticing. `Windows.Media.Ocr` is trained on text at document sizes and a
+/// code editor is well below them.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn measure_what_enlarging_a_capture_does_for_small_text() {
+    use lens_core::card::Card;
+    use lens_core::geometry::ScreenPoint;
+    use lens_core::theme::{Preset, SystemPreferences, TextScale, Theme, Translucency};
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    let glass = crate::glass::Glass::new().expect("Direct2D");
+    let known = "The test correctly refuses to pass vacuously";
+    let card = Card::translated(
+        known,
+        &QuickTranslation {
+            text: "테스트가 의미 없이 통과하는 것을 올바르게 거부한다".to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "fixture".to_owned(),
+            latency_ms: 0,
+            cached: false,
+        },
+    );
+
+    // Small, and at 100%: the point of this is text at the size a code editor
+    // renders, not text at the size a card usually is.
+    for scale in [0.75f32, 1.0] {
+        let theme = Theme::resolve(
+            Preset::System,
+            Translucency::Solid,
+            TextScale::Small,
+            SystemPreferences::default(),
+        );
+        let laid = glass.lay_out(&card, &theme, 420, scale).expect("layout");
+        // SAFETY: the renderer creates and releases its own objects.
+        let (width, height, argb) = unsafe { glass.pixels(&laid, &theme) }.expect("pixels");
+        let mut bgra = Vec::with_capacity(argb.len() * 4);
+        for pixel in &argb {
+            bgra.extend_from_slice(&pixel.to_le_bytes());
+        }
+        let capture = crate::capture::Capture::from_bgra(width, height, bgra);
+
+        println!(
+            "\ncard {width}x{height} at scale {scale}, drawn at {}pt",
+            theme.small_pt
+        );
+        for factor in [1u32, 2, 3] {
+            let enlarged;
+            let subject = if factor == 1 {
+                &capture
+            } else {
+                enlarged = capture.scaled(factor).expect("enlarged");
+                &enlarged
+            };
+            let began = std::time::Instant::now();
+            let read = crate::ocr::read(subject, ScreenPoint::new(0, 0));
+            let took = began.elapsed();
+            if factor == 1 {
+                // What the product will now do with this same picture, so the
+                // table below has the shipping answer in it rather than only
+                // the ingredients.
+                let began = std::time::Instant::now();
+                let best = crate::ocr::read_best(subject, ScreenPoint::new(0, 0));
+                println!(
+                    "  best {}ms  ·  median word {:?}px",
+                    began.elapsed().as_millis(),
+                    read.as_ref()
+                        .and_then(crate::ocr::Recognised::median_word_height),
+                );
+                println!(
+                    "      read: {}",
+                    best.map(|read| read.text())
+                        .unwrap_or_default()
+                        .replace('\n', " ⏎ "),
+                );
+            }
+            let text = read.map(|read| read.text()).unwrap_or_default();
+
+            // Scored by how many of the known words came back exactly. The
+            // sentence is this repository's own, so printing what was read is
+            // allowed here and is the only way to see *how* it failed.
+            let got: Vec<String> = text
+                .split_whitespace()
+                .map(|word| {
+                    word.trim_matches(|c: char| !c.is_alphanumeric())
+                        .to_lowercase()
+                })
+                .collect();
+            let hits = known
+                .split_whitespace()
+                .filter(|word| got.iter().any(|read| read == &word.to_lowercase()))
+                .count();
+            let expected = known.split_whitespace().count();
+            println!(
+                "  {factor}x  {hits}/{expected} words exact  ·  {}ms  ·  {}x{}",
+                took.as_millis(),
+                subject.width,
+                subject.height,
+            );
+            println!("      read: {}", text.replace('\n', " ⏎ "));
+        }
+    }
+}
