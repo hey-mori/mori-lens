@@ -78,6 +78,18 @@ impl ScreenRect {
         self.width <= 0 || self.height <= 0
     }
 
+    /// Whether these two rectangles share any pixel.
+    ///
+    /// Half-open on the right and bottom, like every other rectangle here: two
+    /// rectangles that merely touch along an edge do not overlap, because the
+    /// pixel at `right` belongs to whatever is next to it.
+    pub fn overlaps(self, other: Self) -> bool {
+        self.x < other.right()
+            && other.x < self.right()
+            && self.y < other.bottom()
+            && other.y < self.bottom()
+    }
+
     pub fn contains(self, point: ScreenPoint) -> bool {
         point.x >= self.x && point.x < self.right() && point.y >= self.y && point.y < self.bottom()
     }
@@ -211,5 +223,46 @@ mod tests {
         ];
         let hit = nearest_rect(&lines, ScreenPoint::new(50, 35)).expect("a line is nearest");
         assert_eq!(hit.y, 30);
+    }
+}
+
+#[cfg(test)]
+mod overlap_tests {
+    use super::ScreenRect;
+
+    #[test]
+    fn two_rectangles_that_share_pixels_overlap() {
+        let card = ScreenRect::new(100, 100, 300, 180);
+        assert!(card.overlaps(ScreenRect::new(200, 150, 100, 100)));
+        assert!(
+            card.overlaps(ScreenRect::new(0, 0, 200, 200)),
+            "a corner counts"
+        );
+        assert!(card.overlaps(card), "a rectangle overlaps itself");
+    }
+
+    #[test]
+    fn two_rectangles_that_only_touch_do_not() {
+        // Half-open on the right and bottom, like every other rectangle here:
+        // the pixel at `right` belongs to whatever is next to it.
+        let card = ScreenRect::new(100, 100, 300, 180);
+        assert!(
+            !card.overlaps(ScreenRect::new(400, 100, 50, 50)),
+            "edge to edge"
+        );
+        assert!(
+            !card.overlaps(ScreenRect::new(100, 280, 50, 50)),
+            "top to bottom"
+        );
+    }
+
+    #[test]
+    fn a_band_away_from_the_card_does_not_overlap_it() {
+        // The case this exists for: a reader hovering a margin while a card
+        // sits somewhere else, with automatic OCR on. The card must stay.
+        let card = ScreenRect::new(900, 400, 300, 180);
+        let band = ScreenRect::new(100, 700, 760, 180);
+        assert!(!card.overlaps(band));
+        assert!(!band.overlaps(card), "and the other way round");
     }
 }
