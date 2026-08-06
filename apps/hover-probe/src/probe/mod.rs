@@ -104,6 +104,10 @@ OCR MODE
 
     Counts only. It never prints recognised text.
 
+    --only <text>       Refuse unless the window in front is this application.
+                        Use it. The commonest wrong number here is the terminal
+                        this was launched from, measured under another name.
+    --wait <s>          Seconds before capturing. Default 4.
     --points <n>        Grid points. Default 240, matching a sweep.
     --expect <text>     Say what is on screen. Reports found or not found
                         without printing anything.
@@ -198,6 +202,17 @@ fn parse_ocr(args: Vec<String>) -> Result<ocr_probe::OcrOptions, String> {
                 std::process::exit(0);
             }
             "--no-compare" => options.compare = false,
+            "--only" => {
+                options.only = Some(args.next().ok_or("--only needs some text to match")?);
+            }
+            "--wait" => {
+                options.wait = Duration::from_secs(
+                    args.next()
+                        .ok_or("--wait needs a number of seconds")?
+                        .parse()
+                        .map_err(|_| "--wait needs a number of seconds")?,
+                );
+            }
             "--expect" => {
                 options.expect = Some(args.next().ok_or("--expect needs some text")?);
             }
@@ -329,14 +344,6 @@ pub fn run() -> ExitCode {
     }
 }
 
-/// Give the operator time to put the right window in front.
-///
-/// The probe is started from a terminal, which means the terminal is the
-/// foreground window at the moment it starts. Without this pause every run
-/// would measure the console it was launched from, and it would look like a
-/// perfectly ordinary result.
-const FOCUS_DELAY: Duration = Duration::from_secs(4);
-
 fn run_ocr(
     acquirer: &UiaTextAcquirer,
     options: &ocr_probe::OcrOptions,
@@ -357,10 +364,14 @@ fn run_ocr(
         lens_platform_windows::ocr::available_languages(),
     );
     println!(
-        "  waiting   {}s · click the window you want measured",
-        FOCUS_DELAY.as_secs(),
+        "  waiting   {}s · click the window you want measured{}",
+        options.wait.as_secs(),
+        match options.only.as_deref() {
+            Some(only) => format!(", which must be {only}"),
+            None => String::new(),
+        },
     );
-    std::thread::sleep(FOCUS_DELAY);
+    std::thread::sleep(options.wait);
 
     match ocr_probe::run(acquirer, options) {
         Ok(row) => {

@@ -89,6 +89,11 @@ pub struct OcrOptions {
     /// it is one capture and one recognition, and if either wedges there is
     /// nothing to salvage.
     pub budget: Duration,
+    /// Refuse unless the window in front is this application.
+    pub only: Option<String>,
+    /// How long to wait before capturing, so the operator can bring the right
+    /// window forward.
+    pub wait: Duration,
 }
 
 impl Default for OcrOptions {
@@ -98,6 +103,8 @@ impl Default for OcrOptions {
             expect: None,
             compare: true,
             budget: Duration::from_secs(20),
+            only: None,
+            wait: Duration::from_secs(4),
         }
     }
 }
@@ -296,15 +303,24 @@ pub fn run(acquirer: &UiaTextAcquirer, options: &OcrOptions) -> Result<OcrRow, S
             ocr::available_languages(),
         ));
     }
-    let Some(WindowInfo {
+    let WindowInfo {
         id,
         process_name,
         client_bounds,
         ..
-    }) = foreground_window()
-    else {
-        return Err("no foreground window with a client area".to_owned());
-    };
+    } = foreground_window().map_err(|problem| problem.explain())?;
+    if let Some(wanted) = options.only.as_deref() {
+        // A named check, because the commonest way to get a wrong number here
+        // is to measure the terminal the probe was launched from and never
+        // notice: it has a client area, it has text, and the row looks
+        // entirely ordinary under the wrong application's name.
+        let actual = process_name.as_deref().unwrap_or("unknown");
+        if !actual.to_lowercase().contains(&wanted.to_lowercase()) {
+            return Err(format!(
+                "the window in front is {actual}, not {wanted}. Nothing was captured.",
+            ));
+        }
+    }
     if client_bounds.width <= 0 || client_bounds.height <= 0 {
         return Err("the foreground window has an empty client area".to_owned());
     }
