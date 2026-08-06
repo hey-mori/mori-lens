@@ -654,3 +654,122 @@ mod footer_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod copy_tests {
+    use super::*;
+    use crate::acquire::{AcquireError, ProtectedReason};
+    use crate::translate::TranslateError;
+
+    /// Every sentence a reader can be shown, gathered so one test can read
+    /// them all.
+    ///
+    /// A list rather than a scan: there is no way to enumerate string literals,
+    /// and a test that checked only what somebody remembered to add would be
+    /// worth less than one that says plainly what it covers. Adding a card
+    /// constructor without adding it here leaves it unchecked, and the comment
+    /// is the only thing standing between that and the next reader.
+    fn everything_a_reader_can_be_shown() -> Vec<(&'static str, String)> {
+        let mut copy: Vec<(&'static str, String)> = Vec::new();
+
+        fn parts(what: &'static str, card: &Card, into: &mut Vec<(&'static str, String)>) {
+            let (CardBody::Translation(text) | CardBody::Problem(text) | CardBody::Waiting(text)) =
+                &card.body;
+            into.push((what, text.clone()));
+            into.push((what, card.original.clone()));
+            into.push((what, card.footer.clone()));
+        }
+        let mut card = |what, made: Card| parts(what, &made, &mut copy);
+
+        card("hold_the_modifier", Card::hold_the_modifier("Alt"));
+        card(
+            "cannot_read_this_app",
+            Card::cannot_read_this_app(Some("Ctrl+Alt+O")),
+        );
+        card(
+            "cannot_read_this_app none",
+            Card::cannot_read_this_app(None),
+        );
+        card("not_readable", Card::not_readable("읽지 못했습니다"));
+        card(
+            "not_acquired protected",
+            Card::not_acquired(AcquireError::Protected(ProtectedReason::Declared)),
+        );
+        card(
+            "not_acquired unsupported",
+            Card::not_acquired(AcquireError::Unsupported),
+        );
+        card("waiting", Card::waiting("a sentence"));
+        card("loading_model", Card::loading_model("a sentence"));
+
+        for error in [
+            TranslateError::Unavailable,
+            TranslateError::ModelMissing("qwen2.5:7b".to_owned()),
+            TranslateError::Timeout,
+            TranslateError::Malformed,
+            TranslateError::NotTranslated,
+            TranslateError::AlreadyReadable,
+            TranslateError::Stale,
+            TranslateError::NotWorthTranslating,
+        ] {
+            copy.push(("user_message", error.user_message()));
+            if let Some(remedy) = error.remedy() {
+                copy.push(("remedy", remedy));
+            }
+            parts(
+                "not_translated",
+                &Card::not_translated("a sentence", &error),
+                &mut copy,
+            );
+        }
+
+        copy
+    }
+
+    /// No sentence a reader sees has a run of spaces in the middle of it.
+    ///
+    /// **This has reached a user twice.** A `\`-continuation inside a Rust
+    /// string literal is meant to swallow the newline and the indentation after
+    /// it, and `rustfmt` has twice rejoined such a literal onto one line with
+    /// the indentation left in. What arrived was
+    ///
+    /// > Lens has no way to                      send text off this machine
+    ///
+    /// in a refusal, and the same shape in a banner line. Both were found by
+    /// reading the output rather than by anything in the suite, which is the
+    /// part worth fixing.
+    #[test]
+    fn no_sentence_shown_to_a_reader_has_a_run_of_spaces_in_it() {
+        for (what, sentence) in everything_a_reader_can_be_shown() {
+            assert!(
+                !sentence.contains("  "),
+                "{what} has a run of spaces in it, from a line continuation \
+                 rustfmt rejoined with its indentation: {sentence:?}",
+            );
+            assert_eq!(
+                sentence.trim(),
+                sentence,
+                "{what} has space at one end: {sentence:?}",
+            );
+            assert!(
+                !sentence.contains('\n'),
+                "{what} has a newline in it, and a card lays out its own lines: \
+                 {sentence:?}",
+            );
+        }
+    }
+
+    /// And the em dash, which this repository bans everywhere.
+    ///
+    /// Checked here as well as by eye because a UI string is the one place it
+    /// would be least noticed and most seen.
+    #[test]
+    fn no_sentence_shown_to_a_reader_contains_an_em_dash() {
+        for (what, sentence) in everything_a_reader_can_be_shown() {
+            assert!(
+                !sentence.contains('\u{2014}'),
+                "{what} contains an em dash: {sentence:?}",
+            );
+        }
+    }
+}
