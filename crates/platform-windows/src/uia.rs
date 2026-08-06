@@ -17,7 +17,7 @@
 //! named applications (`CLAUDE.md`, "Claiming something works").
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr;
 use std::time::{Duration, Instant};
@@ -70,6 +70,20 @@ use crate::window;
 /// (issue #42), so waiting here costs the card some latency and costs the
 /// pointer, the card timers and the pause key nothing.
 const WAKE_PATIENCE: Duration = Duration::from_millis(420);
+
+/// How long before a window that did not wake may be asked again.
+///
+/// The other half of the defect this file records. A window was recorded as
+/// woken the moment the message went out, whether or not it ever answered, so a
+/// renderer that was still building got one message and then silence for the
+/// session. Forgetting it on failure fixed that and broke something worse:
+/// every failing point paid the full wait, and a sweep across one window
+/// managed 45 points in twenty seconds.
+///
+/// Two seconds. Long enough that a loop asking about a hundred points sends one
+/// message, short enough that a reader who tries again gets a real second
+/// attempt rather than the silence they reported.
+const WAKE_RETRY_AFTER: Duration = Duration::from_secs(2);
 
 /// How often to ask, while waiting for a tree to appear.
 ///
@@ -173,7 +187,15 @@ pub struct UiaTextAcquirer {
     /// rather than once per hover. A closed window's handle staying in the set
     /// is harmless: handles are not reused often enough to matter, and the worst
     /// case is one skipped wake on a cold tree.
-    woken: RefCell<HashSet<isize>>,
+    /// When each window was last sent a wake message.
+    ///
+    /// A time rather than a set, and that is the whole of the throttle. A set
+    /// answers "has this window ever been woken", which is the wrong question
+    /// twice over: yes forever means a renderer that was still building its
+    /// tree never gets another message, and forgetting it on failure means the
+    /// next point pays the full wait again. A sweep across one window found 45
+    /// points in twenty seconds that way.
+    woken: RefCell<HashMap<isize, Instant>>,
     /// Whether the per-call limits were actually accepted.
     ///
     /// Recorded rather than assumed. `IUIAutomation2` is Windows 8 and later,
@@ -237,7 +259,7 @@ impl UiaTextAcquirer {
 
         Ok(Self {
             automation,
-            woken: RefCell::new(HashSet::new()),
+            woken: RefCell::new(HashMap::new()),
             bounded,
             _com: com,
         })
@@ -345,30 +367,33 @@ impl UiaTextAcquirer {
         self.woken.borrow_mut().clear();
     }
 
-    /// Send the wake message if this window has not had one. Returns whether it
-    /// was sent, so a retry only happens when something actually changed.
+    /// Send the wake message, unless this window had one recently.
     ///
-    /// No sleep. Waiting is [`Self::read_until_awake`]'s job, because how long
-    /// to wait is a question about whether an answer has arrived and not one a
-    /// constant can settle.
+    /// Returns whether one went out, so the caller only waits when something
+    /// actually changed.
+    ///
+    /// **Throttled rather than once.** Once meant a renderer still building its
+    /// tree got a single message and then silence for the session. Never meant
+    /// every failing point paid the full wait, and a sweep managed 45 points in
+    /// twenty seconds. A reader gets another chance [`WAKE_RETRY_AFTER`] later,
+    /// and a loop asking about a hundred points does not.
+    ///
+    /// No sleep here. Waiting is [`Self::read_until_awake`]'s job, because how
+    /// long to wait is a question about whether an answer has arrived and not
+    /// one a constant can settle.
     fn wake_once(&self, hwnd: windows::Win32::Foundation::HWND) -> bool {
         let key = window::window_key(hwnd);
-        if !self.woken.borrow_mut().insert(key) {
-            return false;
+        let now = Instant::now();
+        let mut woken = self.woken.borrow_mut();
+        if let Some(last) = woken.get(&key) {
+            if now.duration_since(*last) < WAKE_RETRY_AFTER {
+                return false;
+            }
         }
+        woken.insert(key, now);
+        drop(woken);
         window::wake_accessibility(hwnd);
         true
-    }
-
-    /// Forget one window, so the next hover there wakes it again.
-    ///
-    /// **The other half of the defect.** A window was recorded as woken the
-    /// moment the message went out, whether or not it ever answered, so a
-    /// renderer that was still building its tree got one message, one retry,
-    /// and then silence for the rest of the session however many times the
-    /// reader tried. A wake that did not work is not a wake.
-    fn forget(&self, hwnd: windows::Win32::Foundation::HWND) {
-        self.woken.borrow_mut().remove(&window::window_key(hwnd));
     }
 
     /// Read until the tree exists, or until this hover has waited long enough.
@@ -416,22 +441,19 @@ impl TextAcquirer for UiaTextAcquirer {
         let mut reading = self.read_once(native, context);
 
         if let Err(error) = reading {
-            if context.allow_accessibility_wake && Self::wake_could_help(error) {
-                if let Some(hwnd) = hwnd.filter(|hwnd| self.wake_once(*hwnd)) {
-                    woke = true;
-                    // Re-run the whole chain, not just the read: the provider
-                    // that answers after activation is a different object from
-                    // the stub that answered before it
-                    // (`docs/research/inherited-from-mori.md` §3).
-                    reading = self.read_until_awake(native, context);
-                    if reading.is_err() {
-                        // It did not work, so it did not happen. Without this
-                        // the next hover in this window sends no message and
-                        // makes no retry, and a renderer that needed another
-                        // half second never gets one.
-                        self.forget(hwnd);
-                    }
-                }
+            // `wake_once` is last, and deliberately: it has the side effect of
+            // sending the message, so it must not run for a failure a wake
+            // could not repair or for a hover that is not allowed to wake.
+            if context.allow_accessibility_wake
+                && Self::wake_could_help(error)
+                && hwnd.is_some_and(|hwnd| self.wake_once(hwnd))
+            {
+                woke = true;
+                // Re-run the whole chain, not just the read: the provider that
+                // answers after activation is a different object from the stub
+                // that answered before it
+                // (`docs/research/inherited-from-mori.md` §3).
+                reading = self.read_until_awake(native, context);
             }
         }
 
