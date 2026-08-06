@@ -57,6 +57,11 @@ pub struct Reading {
     pub word: String,
     /// Where the line is, for the card to sit clear of.
     pub anchor: ScreenRect,
+    /// Words on the line whose shape says they were misread.
+    ///
+    /// Carried rather than acted on here, because what to do about a doubtful
+    /// reading is a product decision and this function's job is to read.
+    pub misread: usize,
 }
 
 /// Why a reading did not happen, in words a card can show.
@@ -123,6 +128,13 @@ pub fn read_around(
 
     let (line, word) = read.word_at(pointer).ok_or(NoReading::NotUnderThePointer)?;
     Ok(Reading {
+        // Counted over the line that will be translated, not the whole band:
+        // a misreading three lines away says nothing about this sentence.
+        misread: line
+            .words
+            .iter()
+            .filter(|word| ocr::is_misread(&word.text))
+            .count(),
         sentence: line.text.trim().to_owned(),
         word: word.text.clone(),
         // The line, so the card sits clear of what is being read. The
