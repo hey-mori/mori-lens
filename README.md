@@ -161,6 +161,22 @@ cargo build --release -p lens
 no service, no elevation. Put it wherever you keep such things and run
 it. It opens no window and appears in the notification area.
 
+To hand it to somebody else:
+
+```bash
+scripts/package.sh
+```
+
+That runs the gate, builds, and writes a zip named for the version and
+the commit, with a SHA-256 and a short file saying what to do with it. It
+refuses a working tree with changes in it, because a package named for a
+commit it was not built from is a lie that looks exactly like the truth;
+`--dirty` marks the artifact instead.
+
+**It is not signed**, so Windows will warn on first run and it is right
+to: signing needs a certificate nobody has bought. The checksum is there
+so the warning can be answered with something better than a shrug.
+
 ### What happens then
 
 - **Hold Alt and rest the pointer** on a sentence. A card appears beside
