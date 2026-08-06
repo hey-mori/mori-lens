@@ -496,6 +496,37 @@ const MOST_ENLARGEMENT: u32 = 3;
 /// showed the result with no sign that anything had gone wrong, which is worse
 /// than reading nothing.
 pub fn read_best(capture: &Capture, origin: ScreenPoint) -> Option<Recognised> {
+    read_best_around(capture, origin, None)
+}
+
+/// How much of the picture the enlarged pass looks at, around a focus point.
+///
+/// Half a line of prose and three lines tall, at 100% scaling: enough to hold
+/// the word under the pointer and its neighbours, which is all the caller of
+/// the enlarged pass ever wanted.
+///
+/// **Measured, and the reason the focus parameter exists.** Enlarging the whole
+/// 760x180 band three times is 2280x540 pixels of recognition. On a point with
+/// no word under it that cost 887ms, against 191ms on a point with one: the
+/// common case in an editor made four times more expensive than the rare one,
+/// because a band over a margin still has code in it and the median word is
+/// still small. At two settled hovers a second that is more work than a core
+/// has (issue #87).
+const FOCUS_WIDTH: i32 = 380;
+/// See [`FOCUS_WIDTH`].
+const FOCUS_HEIGHT: i32 = 90;
+
+/// Read, and read again enlarged if what came back was small.
+///
+/// `focus` is where the caller's question is. Given one, the enlarged pass
+/// looks at a crop around it rather than at everything; without one it enlarges
+/// the whole picture, which is what `Ctrl+Alt+O` wants, since a reader who
+/// pressed a key is owed the whole line however long it takes.
+pub fn read_best_around(
+    capture: &Capture,
+    origin: ScreenPoint,
+    focus: Option<ScreenPoint>,
+) -> Option<Recognised> {
     let first = read(capture, origin)?;
     let Some(median) = first.median_word_height() else {
         return Some(first);
@@ -508,13 +539,36 @@ pub fn read_best(capture: &Capture, origin: ScreenPoint) -> Option<Recognised> {
     let factor = u32::try_from(wanted)
         .unwrap_or(1)
         .clamp(2, MOST_ENLARGEMENT);
-    let Some(enlarged) = capture.scaled(factor) else {
+
+    // The crop the enlarged pass will look at, and the screen origin it has to
+    // be mapped back through.
+    let (subject, subject_origin) = match focus {
+        Some(focus) => {
+            let region = ScreenRect::new(
+                focus.x - origin.x - FOCUS_WIDTH / 2,
+                focus.y - origin.y - FOCUS_HEIGHT / 2,
+                FOCUS_WIDTH,
+                FOCUS_HEIGHT,
+            );
+            let Some(cropped) = capture.cropped(region) else {
+                return Some(first);
+            };
+            let at = ScreenPoint::new(origin.x + region.x.max(0), origin.y + region.y.max(0));
+            (cropped, at)
+        }
+        None => (
+            capture.cropped(ScreenRect::new(0, 0, capture.width, capture.height))?,
+            origin,
+        ),
+    };
+
+    let Some(enlarged) = subject.scaled(factor) else {
         return Some(first);
     };
     // Read at the origin, then divided back: the rectangles come out in the
     // enlarged picture's pixels and every caller of this works in screen ones.
     let second = read(&enlarged, ScreenPoint::new(0, 0))?;
-    Some(second.shrunk_by(factor, origin))
+    Some(second.shrunk_by(factor, subject_origin))
 }
 
 impl Recognised {

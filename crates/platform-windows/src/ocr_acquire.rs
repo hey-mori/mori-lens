@@ -123,11 +123,16 @@ impl TextAcquirer for OcrTextAcquirer {
         (self.hide_the_card)(region);
         std::thread::sleep(SETTLE);
         let captured = capture::rectangle(region).ok_or(AcquireError::Empty)?;
-        let read = ocr::read_best(&captured, ScreenPoint::new(region.x, region.y))
-            // Not `Empty`: a machine with no recogniser is a machine where this
-            // path cannot work at all, and saying so is different from saying
-            // there was nothing to read.
-            .ok_or(AcquireError::Unavailable)?;
+        // With the focus, so the enlarged pass looks at a crop around the
+        // pointer rather than the whole band. This path runs on every hover
+        // accessibility could not serve, and most of those land on a margin
+        // beside text, where enlarging everything cost 887ms to find nothing.
+        let read =
+            ocr::read_best_around(&captured, ScreenPoint::new(region.x, region.y), Some(point))
+                // Not `Empty`: a machine with no recogniser is a machine where this
+                // path cannot work at all, and saying so is different from saying
+                // there was nothing to read.
+                .ok_or(AcquireError::Unavailable)?;
 
         let (line, word) = read.word_at(point).ok_or(AcquireError::Empty)?;
         let text = line.text.trim();
