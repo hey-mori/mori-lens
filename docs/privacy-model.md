@@ -277,9 +277,9 @@ Every claim on this page, and whether the code keeps it:
 
 | Claim | State |
 |---|---|
-| Nothing leaves the machine by default | **kept.** The only endpoint is `127.0.0.1:11434`. There is no code path to any other host, and the HTTP client has no TLS, so it could not reach one safely even by mistake. |
+| Nothing leaves the machine by default | **kept**, and the reason changed on 2026-08-06. The endpoint is now a setting and a flag, because Ollama does not always listen on the default port. Both go through one check, `translate::engine_for`, which accepts `localhost`, `127.0.0.0/8` and `::1` and refuses everything else as a settings error. A name that might resolve to a loopback address is refused too: this cannot resolve names, and guessing from a string is how a promise gets broken quietly. The HTTP client still has no TLS, which is why the restriction is a refusal rather than a warning. |
 | Nothing is recorded | **kept.** No file is written. The translation cache is in memory and dies with the process. |
-| No screen image written to disk | **kept**, and trivially: no capture path exists at all yet. |
+| No screen image written to disk | **kept**, and no longer trivially. A capture path exists as of M4: `Ctrl+Alt+O` captures a band around the pointer, recognises it, and drops the pixels. `Capture` is not `Clone`, holds no path, and its `Debug` omits the buffer. The claim used to be kept because there was nothing to write. |
 | Protected fields refused before they are read | **kept and executed**, against a real `ES_PASSWORD` control. See §1. |
 | The engine in use is visible | **kept.** Every card's footer names the model and says 로컬 or 외부. |
 | Model output is untrusted | **kept structurally, weaker than it reads.** See §1: two of three local models obeyed an instruction in screen text. Nothing is executed; the mitigation is that the original is always shown beside the answer. |
