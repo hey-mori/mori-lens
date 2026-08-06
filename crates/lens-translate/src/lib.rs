@@ -29,7 +29,7 @@
 use std::time::{Duration, Instant};
 
 use lens_core::translate::{
-    EngineId, QuickRequest, QuickTranslation, TranslateError, Translator, PARTIAL_REDRAW_INTERVAL,
+    QuickRequest, QuickTranslation, TranslateError, Translator, PARTIAL_REDRAW_INTERVAL,
     QUICK_TIMEOUT,
 };
 
@@ -327,6 +327,17 @@ fn fence_for(text: &str) -> String {
 }
 
 impl OllamaTranslator {
+    /// Whether text sent to this translator leaves the machine.
+    ///
+    /// Derived from the address, in one place, rather than stamped on each
+    /// answer. Every construction site here used to write `LocalOllama` by
+    /// hand, which was true only because the address was a constant: the first
+    /// configurable endpoint would have had four call sites all claiming the
+    /// text stayed on the machine whatever it had been pointed at.
+    fn engine(&self) -> lens_core::translate::EngineId {
+        lens_core::translate::engine_for(&self.endpoint)
+    }
+
     /// The request body, identical on both paths except for `stream`.
     ///
     /// Shared so the streaming and buffered answers are the same answer. Two
@@ -434,7 +445,7 @@ impl OllamaTranslator {
         }
         Ok(QuickTranslation {
             text,
-            engine: EngineId::LocalOllama,
+            engine: self.engine(),
             model: self.model.clone(),
             latency_ms: started.elapsed().as_millis(),
             cached: false,
@@ -484,7 +495,7 @@ impl OllamaTranslator {
         }
         Ok(QuickTranslation {
             text,
-            engine: EngineId::LocalOllama,
+            engine: self.engine(),
             model: self.model.clone(),
             latency_ms: started.elapsed().as_millis(),
             cached: false,
@@ -547,7 +558,7 @@ impl Translator for OllamaTranslator {
 
         Ok(QuickTranslation {
             text,
-            engine: EngineId::LocalOllama,
+            engine: self.engine(),
             model: self.model.clone(),
             latency_ms,
             cached: false,
@@ -635,7 +646,7 @@ impl Translator for OllamaTranslator {
 
         Ok(QuickTranslation {
             text,
-            engine: EngineId::LocalOllama,
+            engine: self.engine(),
             model: self.model.clone(),
             latency_ms: started.elapsed().as_millis(),
             cached: false,
