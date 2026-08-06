@@ -179,6 +179,51 @@ nonsense with nothing to say so. And it goes on the card they are still
 looking at a second later, rather than on one shown first and covered by the
 answer.
 
+## What a fall-through costs, and the case that was four times the other
+
+Issue #87. `ocr = automatic` makes a hover the accessibility path could not
+serve fall through to pixels, and in VS Code that path fails at 96% of
+sampled points. So in an editor nearly every settled hover pays this, and
+what "this" costs had not been measured.
+
+Eight readings each, release build, one desktop:
+
+| Where the pointer was | Median | Resolved a word |
+|---|---|---|
+| a margin, with text elsewhere in the band | **887ms** | 0 of 8 |
+| on a word | **191ms** | 8 of 8 |
+
+**The common case was four and a half times the rare one**, which is the
+opposite of what anybody would guess. A band over a margin still has code
+in it, so the median recognised word is still small, so `read_best`
+enlarged the whole 760x180 band to 2280x540 and recognised all of it, to
+answer a question about one point.
+
+At two settled hovers a second, 887ms plus the 60ms compositor wait is
+**189% of one core**. That is not a load, it is a queue: the worker cannot
+keep up and answers arrive late.
+
+## Cropping before enlarging
+
+`read_best_around` takes the point the caller is asking about. Given one,
+the enlarged pass looks at a 380x90 crop around it rather than at
+everything.
+
+```
+a margin: 887ms → 331ms
+```
+
+Two and a half times cheaper on the case that happens most.
+
+**And it still finds the word**, which is the only thing that makes it a
+fix rather than a saving. `cropping_before_enlarging_still_finds_the_word`
+asks both passes about a point whose word is known before either is asked,
+and asserts they agree.
+
+`Ctrl+Alt+O` passes no focus and still enlarges everything. A reader who
+pressed a key is owed the whole line however long it takes; a fall-through
+nobody asked for is not.
+
 ## What this does not fix
 
 **Lens still cannot tell a good reading from a bad one.**

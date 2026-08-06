@@ -3004,3 +3004,136 @@ fn measure_how_much_contrast_the_recogniser_needs() {
         );
     }
 }
+
+/// What one automatic fall-through costs, on text and on a margin.
+///
+/// Issue #87. `ocr = automatic` makes a hover the accessibility path could not
+/// serve fall through to pixels, and in VS Code that path fails at 96% of
+/// sampled points. So in an editor nearly every settled hover pays this, and
+/// nobody had measured what "this" is.
+///
+/// Two cases, because they are not the same cost and the common one is the
+/// cheap one. A band with text in it gets two recognition passes, since
+/// `read_best` enlarges when the median word is small. A band with nothing in
+/// it gets one: there is no median word to be small.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn measure_what_an_automatic_fall_through_costs() {
+    use std::time::Instant;
+
+    use lens_core::acquire::{AcquireContext, TextAcquirer};
+    use lens_core::geometry::ScreenPoint;
+    use lens_core::hover::Generation;
+
+    // No card is shown by this test, so the hook has nothing to hide and the
+    // 60ms compositor wait is skipped. That wait is a real cost in the product
+    // and it is added back in the arithmetic below rather than measured here,
+    // because measuring it would mean drawing a card to hide.
+    let acquirer = crate::OcrTextAcquirer::new(Box::new(|_band| {}));
+    let context = AcquireContext::new(Generation(1));
+
+    // A point with text on it, found the way the OCR probe finds one, and a
+    // point that is almost certainly empty. Off-screen would be refused by the
+    // capture, so the margin case is a corner of the desktop.
+    let mut cases: Vec<(&str, ScreenPoint)> = vec![("a margin", ScreenPoint::new(4, 4))];
+    if let Ok(window) = crate::foreground_window() {
+        cases.push(("the foreground window", window.client_bounds.center()));
+    }
+
+    for (what, point) in cases {
+        let mut samples = Vec::new();
+        let mut found = 0usize;
+        for _ in 0..8 {
+            let began = Instant::now();
+            let outcome = acquirer.acquire(point, &context);
+            samples.push(began.elapsed().as_millis());
+            if outcome.is_ok() {
+                found += 1;
+            }
+        }
+        samples.sort_unstable();
+        let median = samples[samples.len() / 2];
+        println!(
+            "\n{what} at ({}, {}): median {median}ms, {found} of 8 resolved a word",
+            point.x, point.y,
+        );
+        println!("  samples {samples:?}");
+        // What a reader would pay, at a rate a reader can actually produce. The
+        // dwell is 320ms, so two settled hovers a second is a brisk upper
+        // bound rather than a typical one.
+        let with_hide = median + 60;
+        println!(
+            "  with the 60ms compositor wait: {with_hide}ms, which at two settled\n  \
+             hovers a second is {:.0}% of one core",
+            (with_hide as f64 * 2.0) / 10.0,
+        );
+    }
+}
+
+/// The focused pass finds the same word the whole-picture pass does.
+///
+/// Cropping before enlarging took a fall-through over a margin from 887ms to
+/// 331ms (issue #87). That is only a fix if the crop still contains the
+/// answer, and the way to know is to ask both about a point whose word is
+/// known before either is asked.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn cropping_before_enlarging_still_finds_the_word() {
+    use lens_core::card::Card;
+    use lens_core::geometry::ScreenPoint;
+    use lens_core::theme::{Preset, SystemPreferences, TextScale, Theme, Translucency};
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    let glass = crate::glass::Glass::new().expect("Direct2D");
+    let card = Card::translated(
+        "The test correctly refuses to pass vacuously",
+        &QuickTranslation {
+            text: "테스트가 의미 없이 통과하는 것을 올바르게 거부한다".to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "fixture".to_owned(),
+            latency_ms: 0,
+            cached: false,
+        },
+    );
+    let theme = Theme::resolve(
+        Preset::System,
+        Translucency::Solid,
+        TextScale::Small,
+        SystemPreferences::default(),
+    );
+    let laid = glass.lay_out(&card, &theme, 420, 0.75).expect("layout");
+    // SAFETY: the renderer creates and releases its own objects.
+    let (width, height, argb) = unsafe { glass.pixels(&laid, &theme) }.expect("pixels");
+    let mut bgra = Vec::with_capacity(argb.len() * 4);
+    for pixel in &argb {
+        bgra.extend_from_slice(&pixel.to_le_bytes());
+    }
+    let capture = crate::capture::Capture::from_bgra(width, height, bgra);
+    let origin = ScreenPoint::new(0, 0);
+
+    let whole = crate::ocr::read_best_around(&capture, origin, None).expect("whole");
+    // A point inside the first line of the card, which is the English original.
+    let Some((_, word)) = whole
+        .lines
+        .iter()
+        .flat_map(|line| &line.words)
+        .find(|word| word.text.chars().any(char::is_alphabetic))
+        .map(|word| (word, word.clone()))
+    else {
+        println!("nothing was recognised at all, so there is nothing to compare");
+        return;
+    };
+    let at = word.bounds.center();
+
+    let focused = crate::ocr::read_best_around(&capture, origin, Some(at)).expect("focused");
+    let from_whole = whole.word_at(at).map(|(_, word)| word.text.clone());
+    let from_focused = focused.word_at(at).map(|(_, word)| word.text.clone());
+
+    println!("point ({}, {})", at.x, at.y);
+    println!("  whole picture enlarged: {from_whole:?}");
+    println!("  crop enlarged:          {from_focused:?}");
+    assert_eq!(
+        from_whole, from_focused,
+        "cropping before enlarging changed the answer at the point that was asked about",
+    );
+}
