@@ -18,13 +18,33 @@ use crate::translate::{QuickRequest, QuickTranslation};
 ///
 /// Every part is load-bearing. Drop the model and a cache filled by a 3B model
 /// answers for a 27B one. Drop the prompt version and a change to the
-/// instructions silently keeps serving answers shaped by the old ones. Drop the
-/// focused word and pointing at a different word in the same sentence returns
-/// the previous word's sense.
+/// instructions silently keeps serving answers shaped by the old ones.
+///
+/// # The focused word is not in it, and was
+///
+/// It was, on the reasoning that pointing at a different word in the same
+/// sentence should not return the previous word's sense. That reasoning is
+/// sound and the price turned out to be the product.
+///
+/// A reader scanning one sentence hovers word after word. Each word is a
+/// different key, so each is a fresh two to three second translation of a
+/// sentence already translated, and what they reported was that answers do not
+/// arrive and that the same sentence sometimes comes back instantly and
+/// sometimes does not. A run of it is in the log they sent: the same 194
+/// characters answered twice, 2.8s and then 2.7s, with no hit between them.
+///
+/// The focused word is still **sent**, so the model still gets the hint. It is
+/// no longer part of the question the cache thinks it is answering, which
+/// means the first hover into a sentence decides its wording and every hover
+/// after that is free.
+///
+/// What that costs: a second word in the same sentence gets a translation
+/// nudged towards the first word's sense. The card shows a whole sentence
+/// either way, so the difference is a shade of wording against a wait long
+/// enough that a reader stops trusting the product.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CacheKey {
     source: String,
-    focused_word: Option<String>,
     target_language: String,
     model: String,
     prompt_version: u32,
@@ -38,7 +58,6 @@ impl CacheKey {
             // punctuation change meaning, and a cache that ignores them
             // answers a question nobody asked.
             source: normalise(&request.source_text),
-            focused_word: request.focused_word.as_deref().map(normalise),
             target_language: request.target_language.clone(),
             model: model.to_owned(),
             prompt_version,
@@ -233,11 +252,19 @@ mod tests {
             .is_some());
     }
 
+    /// Pointing at another word in the same sentence is the same question.
+    ///
+    /// **This test asserted the opposite until 2026-08-06**, on the reasoning
+    /// that the focused word changes which sense the model picks. It does, and
+    /// keying on it made every word in a sentence a fresh two to three second
+    /// translation of a sentence already translated. A reader reported that
+    /// answers were not arriving; a log of theirs has the same 194 characters
+    /// answered twice, 2.8s then 2.7s, with no hit between them.
+    ///
+    /// The word is still sent to the model. It is no longer part of the
+    /// question the cache thinks it is answering.
     #[test]
-    fn pointing_at_a_different_word_is_a_different_question() {
-        // The focused word changes which sense the model picks, so it must
-        // change the key. Otherwise hovering `produce` returns the answer
-        // shaped for `suite`.
+    fn pointing_at_a_different_word_is_the_same_question() {
         let mut cache = TranslationCache::new(8);
         let sentence = "The suite did not produce anything.";
         let on_produce = CacheKey::of(
@@ -251,8 +278,29 @@ mod tests {
             1,
         );
         cache.insert(on_produce.clone(), answer("생성하다", 1));
-        assert!(cache.get(&on_suite).is_none());
+        assert!(
+            cache.get(&on_suite).is_some(),
+            "the second word in a sentence paid for a whole translation again",
+        );
         assert!(cache.get(&on_produce).is_some());
+    }
+
+    /// And a different sentence is still a different question.
+    #[test]
+    fn a_different_sentence_is_a_different_question() {
+        let mut cache = TranslationCache::new(8);
+        let first = CacheKey::of(
+            &QuickRequest::new("The suite did not produce anything.", "Korean"),
+            "qwen2.5:3b",
+            1,
+        );
+        let second = CacheKey::of(
+            &QuickRequest::new("The suite produced nothing at all.", "Korean"),
+            "qwen2.5:3b",
+            1,
+        );
+        cache.insert(first, answer("생성하다", 1));
+        assert!(cache.get(&second).is_none());
     }
 
     #[test]
