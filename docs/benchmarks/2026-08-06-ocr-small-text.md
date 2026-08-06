@@ -67,6 +67,43 @@ two cards above, against 121ms and 144ms for a single native pass. That is
 the price, and it is paid only on small text, on a path a user reaches by
 pressing a key and already waits over a second for.
 
+## Dark backgrounds, and a hypothesis that was wrong
+
+Every card a reader photographed with garbage in it was **light text on a
+dark background**, in a code editor. `Windows.Media.Ocr` is trained on
+documents, which are the other way round, so inverting a dark capture
+before recognising it looked like the obvious next improvement.
+
+The effect is real. The same sentence, the same 8pt, the same 3x
+enlargement:
+
+| Card | Words exact at 3x |
+|---|---|
+| dark text on light | **6 of 7** |
+| light text on dark | **3 of 7** |
+
+The fix does nothing. Inverting the dark capture returns the **identical
+string**, word for word:
+
+```
+3x           3/7   The test cnrrectly refi」ses tD pass
+3x inverted  3/7   The test cnrrectly refi」ses tD pass
+  inverted brightness 215 from 38
+```
+
+That last line is there because the identical output looked like a broken
+measurement first, and this repository has published broken measurements
+before. The inversion happened: mean luminance went from 38 to 215. The
+recogniser normalises polarity away before its classifier sees anything.
+
+So `Capture::inverted` is kept, used by this benchmark, and not used by the
+product. A negative result that cannot be re-run is a claim rather than a
+measurement.
+
+**What does cost the dark card three words is still unknown.** Contrast and
+antialiasing are the obvious candidates and neither has been measured. One
+run per cell, so the gap itself deserves repeating before it is built on.
+
 ## What this does not fix
 
 **Lens still cannot tell a good reading from a bad one.**
