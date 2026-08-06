@@ -40,6 +40,27 @@
 //! recovered at all**. VS Code yielded 7 acquisitions in a sweep. Whether OCR
 //! yields seven words or seven hundred is the finding.
 //!
+//! # Two instruments on one pixel
+//!
+//! The oldest open condition on the M1 gate is that **no person has confirmed
+//! that a resolved word is the word they were pointing at**. Everything
+//! measured so far uses one proxy: whether the resolved word's rectangle
+//! contains the sample point. That checks a position, not a word. A provider
+//! that returns the right rectangle around the wrong text passes it.
+//!
+//! OCR is a second, independent answer to the same question, arrived at from
+//! pixels rather than from a provider. Where both resolve a word at one point,
+//! they can be compared, and agreement between two methods that share no code
+//! and no assumptions is much stronger evidence than either alone.
+//!
+//! It does not close the gate. Both could be wrong the same way, and only a
+//! person can say that the word either of them found is the word they meant.
+//! What it does is make the human pass cheap: instead of judging every point,
+//! there are the disagreements, which is where a wrong answer must be if there
+//! is one.
+//!
+//! **The words are compared, never printed.** The report is counts.
+//!
 //! # It measures the foreground window, and only that
 //!
 //! A capture reads pixels. The pixels inside a covered window's rectangle
@@ -138,6 +159,14 @@ pub struct OcrRow {
     /// because a Chromium provider wakes on first contact.
     pub cold: Option<UiaPass>,
     pub woken: Option<UiaPass>,
+    /// Points where OCR and accessibility both resolved a word.
+    pub both_read_a_word: usize,
+    /// Of those, how many resolved the **same** word.
+    pub agreed: usize,
+    /// Of those, how many resolved words where one contains the other. A
+    /// provider expanding to a larger unit than asked for produces this, and it
+    /// is neither agreement nor a wrong word.
+    pub overlapped: usize,
     /// Median word box, which says whether a hit is a word or a whole line.
     pub median_word: Option<(i32, i32)>,
     /// `Some(true)` when `--expect` was given and the string was recognised.
@@ -165,6 +194,9 @@ impl OcrRow {
             visible: 0,
             cold: None,
             woken: None,
+            both_read_a_word: 0,
+            agreed: 0,
+            overlapped: 0,
             median_word: None,
             expected_found: None,
         }
@@ -239,6 +271,11 @@ fn recognise(region: ScreenRect) -> Option<(Vec<ocr::OcrLine>, usize, u128, u128
 #[derive(Debug, Default, Clone)]
 pub struct UiaPass {
     pub acquired: usize,
+    /// Points where this pass and OCR both resolved a word, and what came of
+    /// comparing them.
+    pub both_read_a_word: usize,
+    pub agreed: usize,
+    pub overlapped: usize,
     pub on_target: usize,
     /// Of the points inside a recognised word, how many acquired anything.
     pub on_words_acquired: usize,
@@ -250,10 +287,36 @@ pub struct UiaPass {
     pub truncated: bool,
 }
 
+/// Two words, as they compare for the purpose of agreeing.
+///
+/// Lower-cased and stripped of anything that is not a letter, a digit or an
+/// underscore, because `Word,` and `word` are the same word and a provider that
+/// includes the trailing comma is not wrong about which word it is.
+fn same_word(left: &str, right: &str) -> (bool, bool) {
+    let normalise = |text: &str| -> String {
+        text.chars()
+            .filter(|c| c.is_alphanumeric() || *c == '_')
+            .flat_map(char::to_lowercase)
+            .collect()
+    };
+    let (left, right) = (normalise(left), normalise(right));
+    if left.is_empty() || right.is_empty() {
+        return (false, false);
+    }
+    if left == right {
+        return (true, false);
+    }
+    // One inside the other. A provider that expanded to a line where a word was
+    // asked for lands here, and calling that a disagreement would report the
+    // unit as a wrong word.
+    (false, left.contains(&right) || right.contains(&left))
+}
+
 fn uia_pass(
     acquirer: &UiaTextAcquirer,
     window: i64,
     points: &[(ScreenPoint, bool)],
+    read: &ocr::Recognised,
     budget: Duration,
 ) -> UiaPass {
     // The wake is allowed, unlike in a sweep. A sweep separates cold from
@@ -288,6 +351,19 @@ fn uia_pass(
                 pass.on_words_acquired += 1;
                 if on_target {
                     pass.on_words_on_target += 1;
+                }
+                // The second instrument. Both resolved a word here, so they can
+                // be asked whether it is the same one.
+                if let (Some(theirs), Some((_, ours))) =
+                    (target.segmented.word_text(), read.word_at(*point))
+                {
+                    pass.both_read_a_word += 1;
+                    let (agreed, overlapped) = same_word(theirs, &ours.text);
+                    if agreed {
+                        pass.agreed += 1;
+                    } else if overlapped {
+                        pass.overlapped += 1;
+                    }
                 }
             }
         }
@@ -388,8 +464,12 @@ pub fn run(acquirer: &UiaTextAcquirer, options: &OcrOptions) -> Result<OcrRow, S
         // which is a fact about a cold provider and not about Chrome. The
         // second pass is the fair number, and both are printed because the gap
         // between them is worth having on its own.
-        row.cold = Some(uia_pass(acquirer, id, &points, options.budget));
-        row.woken = Some(uia_pass(acquirer, id, &points, options.budget));
+        row.cold = Some(uia_pass(acquirer, id, &points, &read, options.budget));
+        let woken = uia_pass(acquirer, id, &points, &read, options.budget);
+        row.both_read_a_word = woken.both_read_a_word;
+        row.agreed = woken.agreed;
+        row.overlapped = woken.overlapped;
+        row.woken = Some(woken);
     }
     Ok(row)
 }
@@ -474,6 +554,44 @@ pub fn print(row: &OcrRow) {
         of_words(woken.on_words_on_target),
     );
 
+    // The M1 gate's oldest open row, narrowed. Two instruments that share no
+    // code arriving at the same word is far better evidence than one
+    // instrument's rectangle containing a point, and the disagreements are
+    // where a person should look rather than at all of it.
+    if row.both_read_a_word > 0 {
+        let share = |count: usize| -> String {
+            format!("{:.1}%", count as f64 * 100.0 / row.both_read_a_word as f64)
+        };
+        let disagreed = row
+            .both_read_a_word
+            .saturating_sub(row.agreed)
+            .saturating_sub(row.overlapped);
+        println!(
+            "\n  both instruments resolved a word at {} points:",
+            row.both_read_a_word,
+        );
+        println!(
+            "    the same word          {:>4}  {}",
+            row.agreed,
+            share(row.agreed)
+        );
+        println!(
+            "    one inside the other   {:>4}  {}",
+            row.overlapped,
+            share(row.overlapped),
+        );
+        println!(
+            "    different              {:>4}  {}",
+            disagreed,
+            share(disagreed)
+        );
+        println!(
+            "  The words are compared and never printed. Two methods agreeing is not a\n  \
+             person confirming, and does not close that gate row: both could be wrong the\n  \
+             same way. It says where to look."
+        );
+    }
+
     if !woken.latencies_us.is_empty() {
         let mut sorted = woken.latencies_us.clone();
         sorted.sort_unstable();
@@ -549,5 +667,50 @@ mod tests {
             grid(bounds, 240).len(),
             super::super::sweep::grid_len(bounds, 240)
         );
+    }
+}
+
+#[cfg(test)]
+mod agreement_tests {
+    use super::same_word;
+
+    #[test]
+    fn the_same_word_agrees_through_case_and_punctuation() {
+        assert_eq!(same_word("Word", "word"), (true, false));
+        assert_eq!(same_word("word,", "word"), (true, false));
+        assert_eq!(same_word("\"quoted\"", "quoted"), (true, false));
+    }
+
+    #[test]
+    fn an_expanded_unit_is_an_overlap_rather_than_a_disagreement() {
+        // A provider asked for a word that hands back a line is not wrong about
+        // which word the pointer is on, and counting it as a wrong answer would
+        // put the unit's behaviour into the correctness figure.
+        assert_eq!(same_word("the whole line of text", "line"), (false, true));
+        assert_eq!(same_word("line", "the whole line of text"), (false, true));
+    }
+
+    #[test]
+    fn two_different_words_are_a_disagreement() {
+        assert_eq!(same_word("pointer", "printer"), (false, false));
+        assert_eq!(same_word("output", "input"), (false, false));
+    }
+
+    #[test]
+    fn a_word_with_nothing_readable_in_it_agrees_with_nothing() {
+        // Punctuation on its own normalises to an empty string, and an empty
+        // string is inside every string. Without this it would agree with
+        // everything and inflate the figure the whole measure exists to
+        // produce.
+        assert_eq!(same_word("---", "word"), (false, false));
+        assert_eq!(same_word("word", "  "), (false, false));
+        assert_eq!(same_word("", ""), (false, false));
+    }
+
+    #[test]
+    fn korean_and_latin_normalise_the_same_way() {
+        assert_eq!(same_word("포인터", "포인터"), (true, false));
+        assert_eq!(same_word("포인터,", "포인터"), (true, false));
+        assert_eq!(same_word("포인터", "프린터"), (false, false));
     }
 }
