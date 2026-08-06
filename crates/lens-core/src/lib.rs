@@ -30,6 +30,7 @@ pub mod hover;
 pub mod icon;
 pub mod language;
 pub mod policy;
+pub mod reach;
 pub mod session;
 pub mod settings;
 pub mod text;
