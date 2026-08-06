@@ -1061,3 +1061,65 @@ fn measure_warm_latency_of_the_two_candidates() {
         println!("{model:<20} median {median}ms   over {:?}", measured,);
     }
 }
+
+/// Do the identifiers survive, now that they are named?
+///
+/// The line a reader photographed, whose `EngineDataSheetService` came back as
+/// 엔진데이터시트서비스. The system prompt already said identifiers stay verbatim
+/// and that was not enough, so they are now listed by name. This is whether
+/// listing them worked.
+///
+/// Printing is allowed: every sentence below was written into this repository
+/// or handed to it in a message, and none came off a screen.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn measure_whether_named_identifiers_survive() {
+    let Some(translator) = live() else {
+        return;
+    };
+
+    let cases: [(&str, &[&str]); 3] = [
+        (
+            "insway의 EngineDataSheetService 에 export_csv 를 넣고, POST \
+             /projects/{id}/insbase/tables/{table}/export 라우트를 붙였습니다.",
+            &["EngineDataSheetService", "export_csv", "/projects/"],
+        ),
+        (
+            "The build failed because cargo fmt --check found a difference in \
+             src/main.rs before the tests ran.",
+            &["src/main.rs"],
+        ),
+        (
+            "Call getUserProfile with the user_id and the request will return a \
+             row from the accounts table.",
+            &["getUserProfile", "user_id"],
+        ),
+    ];
+
+    let mut kept = 0usize;
+    let mut expected = 0usize;
+    for (source, wanted) in cases {
+        let named = lens_core::translate::identifiers_in(source);
+        let translation = translator.quick(&QuickRequest::new(source, "Korean"));
+        println!("\nEN     {source}");
+        println!("named  {named:?}");
+        match translation {
+            Ok(translation) => {
+                println!("KO     {}", translation.text.replace('\n', " "));
+                for token in wanted {
+                    expected += 1;
+                    let survived = translation.text.contains(token);
+                    if survived {
+                        kept += 1;
+                    }
+                    println!("  {} {token}", if survived { "kept   " } else { "DAMAGED" });
+                }
+            }
+            Err(error) => {
+                expected += wanted.len();
+                println!("  failed [{}]", error.reason());
+            }
+        }
+    }
+    println!("\n{kept} of {expected} identifiers survived");
+}
