@@ -331,6 +331,40 @@ pub enum EngineId {
     External,
 }
 
+/// Which engine an endpoint address describes.
+///
+/// The one place that decides whether text sent to an address leaves the
+/// machine, so the card's 로컬 or 외부 is derived from the address rather than
+/// asserted next to it. It was asserted: the Ollama adapter stamped
+/// `LocalOllama` on every answer regardless of where it had sent the request,
+/// which was true only because the address was a constant.
+///
+/// Loopback is `localhost`, anything in `127.0.0.0/8`, and `::1`. Everything
+/// else is external, including a name that resolves to a loopback address:
+/// this cannot resolve names and guessing from a string is how a promise gets
+/// broken quietly.
+pub fn engine_for(endpoint: &str) -> EngineId {
+    let host = endpoint.trim();
+    // `[::1]:11434`, the bracketed form, before splitting on a colon that the
+    // address itself is full of.
+    let host = if let Some(rest) = host.strip_prefix('[') {
+        rest.split(']').next().unwrap_or_default()
+    } else {
+        host.rsplit_once(':').map_or(host, |(host, _)| host)
+    };
+
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host == "::1"
+        || host
+            .split_once('.')
+            .is_some_and(|(first, _)| first == "127" && host.split('.').count() == 4);
+    if loopback {
+        EngineId::LocalOllama
+    } else {
+        EngineId::External
+    }
+}
+
 impl EngineId {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -752,5 +786,58 @@ mod echo_tests {
     #[test]
     fn an_unrelated_answer_is_not_an_echo() {
         assert!(!reads_as_the_source(SOURCE, "완전히 다른 문장입니다."));
+    }
+}
+
+#[cfg(test)]
+mod endpoint_tests {
+    use super::{engine_for, EngineId};
+
+    #[test]
+    fn the_default_and_its_neighbours_are_local() {
+        for endpoint in [
+            "127.0.0.1:11434",
+            "127.0.0.1:1234",
+            "localhost:11434",
+            "LocalHost:11434",
+            "127.1.2.3:11434",
+            "[::1]:11434",
+        ] {
+            assert_eq!(
+                engine_for(endpoint),
+                EngineId::LocalOllama,
+                "{endpoint} is on this machine",
+            );
+        }
+    }
+
+    #[test]
+    fn anything_else_is_external() {
+        for endpoint in [
+            "192.168.1.10:11434",
+            "10.0.0.5:11434",
+            "ollama.example.com:11434",
+            "0.0.0.0:11434",
+            "1270.0.0.1:11434",
+            "127x0.0.1:11434",
+            "",
+        ] {
+            assert_eq!(
+                engine_for(endpoint),
+                EngineId::External,
+                "{endpoint} is not this machine",
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_that_might_resolve_to_loopback_is_still_external() {
+        // This cannot resolve names, and guessing from the string is how a
+        // promise about where text goes gets broken quietly.
+        assert_eq!(engine_for("my-loopback-host:11434"), EngineId::External);
+        assert_eq!(
+            engine_for("127.0.0.1.example.com:11434"),
+            EngineId::External
+        );
     }
 }

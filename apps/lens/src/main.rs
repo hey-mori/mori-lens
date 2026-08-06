@@ -103,6 +103,10 @@ OPTIONS
                         applications that expose no text at all.
                         Written with every option in it on first run.
     --language <name>   Target language. Default Korean.
+    --endpoint <addr>   Where Ollama listens. Default 127.0.0.1:11434, and it
+                        must be on this machine: 127.0.0.1, localhost or ::1.
+                        Lens has no way to send text off this machine safely
+                        and does not try.
     --model <name>      Ollama model. Default: whichever suitable one is
                         installed.
     --dwell <ms>        How long the pointer must rest. Default 320.
@@ -126,6 +130,8 @@ struct Options {
     text: TextScale,
     language: String,
     model: Option<String>,
+    /// Where Ollama is. Loopback only; see `Settings::endpoint`.
+    endpoint: String,
     dwell: Duration,
     policy: AppPolicy,
     /// Where the settings came from, and anything wrong with them. Printed at
@@ -151,6 +157,7 @@ struct Flags {
     auto: bool,
     language: Option<String>,
     model: Option<String>,
+    endpoint: Option<String>,
     dwell_ms: Option<u64>,
     theme: Option<String>,
     translucency: Option<String>,
@@ -204,6 +211,7 @@ fn parse_flags() -> Result<Flags, String> {
             "--text" => flags.text = Some(value("--text")?),
             "--language" => flags.language = Some(value("--language")?),
             "--model" => flags.model = Some(value("--model")?),
+            "--endpoint" => flags.endpoint = Some(value("--endpoint")?),
             "--dwell" => {
                 flags.dwell_ms = Some(
                     value("--dwell")?
@@ -298,6 +306,26 @@ fn parse() -> Result<Options, String> {
         text: text_named(flags.text.as_ref().unwrap_or(&settings.text))?,
         language: flags.language.unwrap_or(settings.language),
         model: flags.model.or(settings.model),
+        endpoint: match flags.endpoint {
+            // The flag goes through the same check the file does, so a command
+            // line cannot reach a host the settings file would refuse.
+            Some(endpoint)
+                if lens_core::translate::engine_for(&endpoint)
+                    == lens_core::translate::EngineId::LocalOllama =>
+            {
+                endpoint
+            }
+            Some(endpoint) => {
+                return Err(format!(
+                    // One line, deliberately. A `\`-continuation inside this
+                    // literal came back from rustfmt rejoined with its
+                    // indentation intact, so the message reached a user with
+                    // twenty spaces in the middle of a sentence.
+                    "--endpoint {endpoint} is not on this machine, and Lens will not send text off it",
+                ));
+            }
+            None => settings.endpoint,
+        },
         dwell: Duration::from_millis(flags.dwell_ms.unwrap_or(settings.dwell_ms)),
         policy,
         source,
@@ -320,9 +348,9 @@ fn main() -> std::process::ExitCode {
     // wrong above 100% scaling.
     let dpi = declare_dpi_awareness();
 
-    let mut translator = OllamaTranslator::default();
+    let mut translator = OllamaTranslator::choosing(&options.endpoint);
     if let Some(model) = &options.model {
-        translator = OllamaTranslator::new(lens_translate::DEFAULT_ENDPOINT, model);
+        translator = OllamaTranslator::new(&options.endpoint, model);
     }
     // Resolved once at startup rather than per hover, so the first hover does
     // not pay for a listing, and so an absent Ollama is reported now instead of
@@ -353,6 +381,10 @@ fn main() -> std::process::ExitCode {
     }
     println!("  target    {}", options.language);
     println!("  engine    {engine_line}");
+    // Where, as well as what. A user who has pointed this somewhere else has
+    // no other way to confirm the product agreed, and one who has not gets a
+    // line that says the text is not going anywhere.
+    println!("  address   {} · on this machine", options.endpoint);
     println!("  dwell     {}ms", options.dwell.as_millis());
     println!("  mode      {}", options.policy.describe());
     println!(

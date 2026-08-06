@@ -46,6 +46,19 @@ pub struct Settings {
     pub dwell_ms: u64,
     pub theme: String,
     pub translucency: String,
+    /// Where Ollama is listening.
+    ///
+    /// Loopback only, and refused otherwise. `docs/privacy-model.md` records
+    /// "nothing leaves the machine" as a kept promise, and the reason given is
+    /// that no code path to another host exists. This adds one, so it also
+    /// adds the check that keeps the promise: a non-loopback address is
+    /// reported as a settings error and the default is used.
+    ///
+    /// The restriction is not squeamishness. The HTTP client here has no TLS,
+    /// so sending a reader's screen to another host would send it in clear
+    /// text, and the grant mechanism `EngineId::External` describes does not
+    /// exist yet.
+    pub endpoint: String,
     pub text: String,
     /// The tier for an application with no rule of its own.
     pub default_tier: AppTier,
@@ -61,6 +74,7 @@ impl Default for Settings {
             dwell_ms: 320,
             theme: "system".to_owned(),
             translucency: crate::theme::Translucency::DEFAULT.as_str().to_owned(),
+            endpoint: "127.0.0.1:11434".to_owned(),
             text: "normal".to_owned(),
             // Not `allow`. A tool that reads every window from first launch has
             // to earn that, and the file is where a user grants it
@@ -167,6 +181,13 @@ impl Settings {
                 "system" | "forest" | "night-lake" | "paper" => self.theme = value.to_owned(),
                 _ => reject("system, forest, night-lake, or paper"),
             },
+            "endpoint" => {
+                if crate::translate::engine_for(value) == crate::translate::EngineId::LocalOllama {
+                    self.endpoint = value.to_owned();
+                } else {
+                    reject("an address on this machine: 127.0.0.1, localhost or ::1, with a port");
+                }
+            }
             "translucency" => match value {
                 "clear" | "balanced" | "solid" => self.translucency = value.to_owned(),
                 _ => reject("clear, balanced, or solid"),
@@ -227,6 +248,7 @@ pub const TEMPLATE: &str = "\
 # dwell_ms     = 320           # how long the pointer must rest, 80 to 3000
 # theme        = system        # system, forest, night-lake, paper
 # translucency = solid         # clear, balanced, solid
+# endpoint     = 127.0.0.1:11434  # where Ollama listens. This machine only.
 # text         = normal        # small, normal, large, larger
 
 # What Lens may do in an application it has no rule for.
@@ -481,11 +503,12 @@ mod template_tests {
     #[test]
     fn the_template_describes_the_defaults_it_claims_to() {
         let defaults = Settings::default();
-        let claimed: [(&str, String); 5] = [
+        let claimed: [(&str, String); 6] = [
             ("language", defaults.language.clone()),
             ("dwell_ms", defaults.dwell_ms.to_string()),
             ("theme", defaults.theme.clone()),
             ("translucency", defaults.translucency.clone()),
+            ("endpoint", defaults.endpoint.clone()),
             ("text", defaults.text.clone()),
         ];
         for (key, value) in claimed {
