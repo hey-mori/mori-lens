@@ -40,7 +40,7 @@ Standing, 2026-08-05:
 |---|---|
 | Notepad, Chrome, Edge, VS Code, Word, Electron messenger | measured |
 | Windows Settings, Edge PDF viewer | measured 2026-08-05; Edge on HTML measured too, which the earlier run had not been |
-| correct-word judgement by a person | **open**; the on-target rate is a proxy and no human has confirmed a resolved word |
+| correct-word judgement by a person | **open**, and narrowed. A second instrument now reads the same pixel: on one window, 29 points where both accessibility and OCR resolved a word, they agreed on 72.4%, overlapped on 10.3%, and **differed on 17.2%**. Two methods agreeing is not a person confirming, but the human pass is now the disagreements rather than everything |
 | no runaway calls on fast movement | measured: a pointer crossing a monitor costs zero calls, a resting hand costs one |
 | no crash from a closed window's element | measured: a typed error in 153ms, and twenty further reads survive |
 | more than one DPI scale, more than one monitor | measured |
