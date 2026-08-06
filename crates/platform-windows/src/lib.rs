@@ -41,5 +41,5 @@ pub use tray::{Tray, TrayEvent};
 pub use uia::UiaTextAcquirer;
 pub use window::{
     declare_dpi_awareness, foreground_window, monitor_scale_at, process_name_at, root_window_at,
-    top_level_windows, WindowInfo,
+    top_level_windows, ForegroundProblem, WindowInfo,
 };

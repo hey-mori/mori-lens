@@ -271,16 +271,86 @@ pub struct WindowInfo {
 /// the wrong application and reports it under the right name. Rather than
 /// raising windows, which would rearrange the desktop being measured, the probe
 /// measures whatever the operator has put in front.
-pub fn foreground_window() -> Option<WindowInfo> {
+pub fn foreground_window() -> Result<WindowInfo, ForegroundProblem> {
     // SAFETY: a read-only query for a handle, which is then described by the
     // same code that describes every other window.
     let handle = unsafe { GetForegroundWindow() };
     if handle.is_invalid() {
-        return None;
+        // Not a rare state. Windows answers with nothing while activation is
+        // moving between windows, and while a lock screen or a secure desktop
+        // is up.
+        return Err(ForegroundProblem::NoForegroundWindow);
     }
-    top_level_windows()
-        .into_iter()
-        .find(|window| window.id == handle.0 as i64)
+    // The **root**. A click can leave focus on a child, and a child is not what
+    // `EnumWindows` reports, so matching the raw handle against that list finds
+    // nothing and blames the window for not existing.
+    // SAFETY: a read-only walk to the top of a handle the OS just gave us.
+    let root = unsafe { GetAncestor(handle, GA_ROOT) };
+    let wanted = if root.is_invalid() { handle } else { root };
+
+    let windows = top_level_windows();
+    if let Some(found) = windows.iter().find(|window| window.id == wanted.0 as i64) {
+        return Ok(found.clone());
+    }
+    // It is a window and it is in front, so the reason it is not in the list is
+    // one of the enumeration's own filters. Say which, because "no foreground
+    // window" is a dead end and this is a measurement tool.
+    // SAFETY: read-only queries on a handle obtained a moment ago.
+    let bounds = unsafe { client_bounds(wanted) };
+    Err(match bounds {
+        Some(rect) if rect.width < 120 || rect.height < 80 => ForegroundProblem::TooSmall(rect),
+        Some(_) => ForegroundProblem::NotEnumerated {
+            // SAFETY: as above.
+            process: unsafe { executable_stem(wanted) },
+        },
+        None => ForegroundProblem::NoClientArea,
+    })
+}
+
+/// Why the window in front could not be described.
+///
+/// A typed reason rather than `None`, because this is the first thing a probe
+/// run hits when it hits anything, and a tool that answers a measurement
+/// request with "no" has told the operator nothing they can act on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForegroundProblem {
+    /// Windows reported no foreground window at all.
+    NoForegroundWindow,
+    /// It has no client rectangle, which a full-screen exclusive surface and a
+    /// few shell windows do not.
+    NoClientArea,
+    /// Smaller than the enumeration's floor, so it holds no readable layout.
+    TooSmall(ScreenRect),
+    /// It has a client area of a usable size and still is not in the list,
+    /// which means it is invisible or minimised by the shell's reckoning even
+    /// though it is in front. A cloaked virtual-desktop window does this.
+    NotEnumerated { process: Option<String> },
+}
+
+impl ForegroundProblem {
+    pub fn explain(&self) -> String {
+        match self {
+            Self::NoForegroundWindow => "Windows reports no foreground window. That happens \
+                 while activation is moving, and while a lock screen is up. Click the window \
+                 and run this again."
+                .to_owned(),
+            Self::NoClientArea => {
+                "the window in front has no client area, which a full-screen exclusive \
+                 surface does not"
+                    .to_owned()
+            }
+            Self::TooSmall(rect) => format!(
+                "the window in front is {}x{}, under the 120x80 floor for a window worth \
+                 measuring",
+                rect.width, rect.height,
+            ),
+            Self::NotEnumerated { process } => format!(
+                "the window in front ({}) has a usable client area but is not in the \
+                 enumeration, so the shell considers it hidden or minimised",
+                process.as_deref().unwrap_or("unknown"),
+            ),
+        }
+    }
 }
 
 /// Every visible, non-minimised top-level window with a client area.
