@@ -462,6 +462,21 @@ impl OllamaTranslator {
     ///
     /// `started` comes from the first attempt, so the card reports what the
     /// reader actually waited for rather than the faster half of it.
+    /// Which of two opposite things an unchanged answer means.
+    ///
+    /// A model handing back what it was given is a failure **unless the reader
+    /// can already read it**, and then it is the right answer. Deciding by
+    /// blaming the model was wrong on a card: a line of Korean prose carrying
+    /// English identifiers came back correctly unchanged and Lens told the
+    /// reader to try a different model.
+    fn why_it_came_back_unchanged(&self, request: &QuickRequest) -> TranslateError {
+        if lens_core::language::partly_readable(&request.source_text, &request.target_language) {
+            TranslateError::AlreadyReadable
+        } else {
+            TranslateError::NotTranslated
+        }
+    }
+
     fn retry_untranslated(
         &self,
         request: &QuickRequest,
@@ -491,7 +506,7 @@ impl OllamaTranslator {
             .to_owned();
         if text.is_empty() || lens_core::translate::reads_as_the_source(&request.source_text, &text)
         {
-            return Err(TranslateError::NotTranslated);
+            return Err(self.why_it_came_back_unchanged(request));
         }
         Ok(QuickTranslation {
             text,
@@ -553,6 +568,13 @@ impl Translator for OllamaTranslator {
         }
 
         if lens_core::translate::reads_as_the_source(&request.source_text, &text) {
+            // No retry when the reader can already read it: asking again for a
+            // translation of something already in their language spends a
+            // second and a half to arrive at the same correct answer.
+            if lens_core::language::partly_readable(&request.source_text, &request.target_language)
+            {
+                return Err(TranslateError::AlreadyReadable);
+            }
             return self.retry_untranslated(request, started);
         }
 
@@ -641,6 +663,13 @@ impl Translator for OllamaTranslator {
         // arriving word by word over the first is a card rewriting itself in
         // front of somebody who is reading it.
         if lens_core::translate::reads_as_the_source(&request.source_text, &text) {
+            // No retry when the reader can already read it: asking again for a
+            // translation of something already in their language spends a
+            // second and a half to arrive at the same correct answer.
+            if lens_core::language::partly_readable(&request.source_text, &request.target_language)
+            {
+                return Err(TranslateError::AlreadyReadable);
+            }
             return self.retry_untranslated(request, started);
         }
 

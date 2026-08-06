@@ -198,6 +198,50 @@ pub const ALREADY_READABLE_SHARE: f64 = 0.20;
 /// product, and translating one they did not need is a second.
 pub const MIN_LETTERS_TO_JUDGE: usize = 8;
 
+/// Whether a reader of `target_language` can already read a good part of this.
+///
+/// Weaker than [`decide`], and asking a different question. `decide` answers
+/// "should this be translated at all", with a high bar, because refusing to
+/// translate something somebody pointed at is a broken product. This answers
+/// "is a model that returned this unchanged **right**", which needs only that
+/// the target's own writing system is substantially present.
+///
+/// It exists for one card. A line of Korean prose carrying English identifiers
+/// passed `decide`, was sent, came back nearly unchanged because there was
+/// little to change, and the reader was told the model had failed and to try
+/// another one. The model had not failed.
+pub fn partly_readable(text: &str, target_language: &str) -> bool {
+    /// How much of the target's own script has to be there.
+    ///
+    /// Well under [`ALREADY_READABLE_SHARE`], which is the bar for not
+    /// translating at all. This is not a decision to stay silent, it is a
+    /// decision about which of two sentences to put on a card that is
+    /// appearing either way, so it can afford to be generous.
+    ///
+    /// **Calibrated against two lines, and it is worth saying which**, because
+    /// a threshold set by examples is only as good as its examples:
+    ///
+    /// - the line that produced the wrong card, a Korean sentence carrying
+    ///   thirteen English identifiers, measures **0.158**
+    /// - an English sentence with one Korean word dropped in it measures
+    ///   **0.05**, and must not qualify
+    ///
+    /// A fifth was tried first and rejected the first of those, which is the
+    /// case this exists for.
+    const ENOUGH: f64 = 0.12;
+
+    let Some(written) = written_as(target_language) else {
+        return false;
+    };
+    // Latin is nobody's signature: English, French and Spanish share it, so a
+    // high Latin share says nothing about whether a Korean reader can read it.
+    if written.signature.contains(&Script::Latin) {
+        return false;
+    }
+    let profile = ScriptProfile::of(text);
+    profile.letters() >= MIN_LETTERS_TO_JUDGE && profile.share_of(written.signature) >= ENOUGH
+}
+
 /// Whether this text needs translating into `target_language`.
 pub fn decide(text: &str, target_language: &str) -> Decision {
     let Some(written) = written_as(target_language) else {
@@ -365,5 +409,51 @@ mod tests {
         assert_eq!(profile.letters(), 0);
         assert_eq!(profile.share_of(&[Script::Latin]), 0.0);
         assert_eq!(profile.share_of(&[Script::Hangul]), 0.0);
+    }
+}
+
+#[cfg(test)]
+mod readable_tests {
+    use super::partly_readable;
+
+    /// The line that produced the wrong card. Korean prose, English
+    /// identifiers, and a model that was right to hand it back.
+    #[test]
+    fn korean_prose_full_of_identifiers_is_already_readable() {
+        let line = "Compose + k8s 듀얼 트랙, Nexus, k3d culturit-system 토폴로지, \
+                    sap-vpn-proxy 경로, release dir + systemd drop-in 배포";
+        assert!(partly_readable(line, "Korean"));
+    }
+
+    #[test]
+    fn english_is_not_readable_to_a_korean_reader() {
+        let line = "A connection-check approach is better than an environment variable gate.";
+        assert!(!partly_readable(line, "Korean"));
+    }
+
+    /// One Korean word in a paragraph of English is not "a good part of it".
+    #[test]
+    fn a_single_korean_word_is_not_enough() {
+        let line = "The migration ran against the 데이터베이스 and finished without an error \
+                    on the second attempt, which is what the runbook predicted.";
+        assert!(!partly_readable(line, "Korean"));
+    }
+
+    /// Latin is nobody's signature, so this never fires for it.
+    ///
+    /// English, French and Spanish share the script. A high Latin share says
+    /// nothing about whether an English reader can read a French sentence, and
+    /// answering yes would silence the translation they asked for.
+    #[test]
+    fn a_latin_target_is_never_answered_by_script_alone() {
+        assert!(!partly_readable(
+            "Le train part a huit heures du matin depuis la gare du Nord.",
+            "English",
+        ));
+    }
+
+    #[test]
+    fn too_little_text_to_judge_is_not_readable() {
+        assert!(!partly_readable("배포", "Korean"));
     }
 }
