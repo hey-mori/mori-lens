@@ -198,6 +198,179 @@ pub const ALREADY_READABLE_SHARE: f64 = 0.20;
 /// product, and translating one they did not need is a second.
 pub const MIN_LETTERS_TO_JUDGE: usize = 8;
 
+/// How many letters of an unexpected script it takes to call it a third
+/// language.
+///
+/// Four. A Korean sentence can carry one or two Han characters as a gloss and
+/// that is ordinary Korean; four is not, and the case this exists for produced
+/// dozens.
+///
+/// Deliberately not a share. The failure is a **paragraph inserted into an
+/// otherwise correct answer**, so the answer stays mostly in the right script,
+/// and a share threshold set low enough to catch it would fire on a legitimate
+/// gloss.
+pub const ENOUGH_TO_BE_A_THIRD_LANGUAGE: usize = 4;
+
+/// How much shorter than its source a salvaged answer may be, as a divisor.
+///
+/// A quarter. Korean renders English at roughly half to three quarters of the
+/// letter count, so a quarter is well under anything a real translation
+/// reaches, and the case this exists for was **six letters against
+/// seventy-four**.
+///
+/// Compared on letters rather than characters, so the spaces and punctuation
+/// that differ between two writing systems are not part of the comparison.
+const SHORTEST_A_TRANSLATION_GETS: usize = 4;
+
+/// Whether the answer is written partly in a language that is neither the
+/// source's nor the reader's.
+///
+/// **Measured, 2026-08-06.** Asked to translate an English sentence into
+/// Korean, `qwen2.5:7b` answered the Korean translation with a paragraph of
+/// Chinese commentary about the translation task welded into the middle of it.
+/// It is not an echo, so [`crate::translate::reads_as_the_source`] does not see
+/// it, and it is mostly in the right script, so nothing about the target
+/// language sees it either. It goes on a card.
+///
+/// The rule is narrow on purpose: a script present in the **answer**, absent
+/// from the **source**, and not one the target is written in. A Korean answer
+/// carrying the English identifiers from an English source is untouched,
+/// because Latin was in the source. A Japanese answer full of Han is untouched,
+/// because Han is one of Japanese's own scripts.
+///
+/// An unrecognised target language yields `false`. Nothing is known about what
+/// it is written in, and deleting an answer on that basis would be a guess.
+pub fn wrote_in_a_third_language(source: &str, answer: &str, target_language: &str) -> bool {
+    let in_the_answer = ScriptProfile::of(answer);
+    intruding_scripts(source, target_language)
+        .into_iter()
+        .any(|script| in_the_answer.count_of(script) >= ENOUGH_TO_BE_A_THIRD_LANGUAGE)
+}
+
+/// Which scripts would be a third language for this target and this source.
+///
+/// Shared by [`wrote_in_a_third_language`] and
+/// [`without_the_third_language`], because a rule that decided one thing was
+/// wrong and a rule that cut it out would be two chances to disagree, and the
+/// disagreement would show as an answer cut for a reason it did not have.
+fn intruding_scripts(source: &str, target_language: &str) -> Vec<Script> {
+    let Some(written) = written_as(target_language) else {
+        return Vec::new();
+    };
+    let in_the_source = ScriptProfile::of(source);
+    [
+        Script::Hangul,
+        Script::Han,
+        Script::Kana,
+        Script::Cyrillic,
+        Script::Greek,
+        Script::Arabic,
+        Script::Hebrew,
+        Script::Devanagari,
+        Script::Thai,
+        Script::Latin,
+    ]
+    .into_iter()
+    .filter(|script| !written.signature.contains(script) && !written.companions.contains(script))
+    .filter(|script| in_the_source.count_of(*script) == 0)
+    .collect()
+}
+
+/// Punctuation that belongs to the intruding text rather than to the answer.
+///
+/// CJK symbols and fullwidth forms. A model writing a Chinese paragraph
+/// punctuates it with these, and leaving them behind puts a stray `，` in the
+/// middle of a Korean sentence that never had one. Korean prose uses the ASCII
+/// marks.
+fn is_foreign_punctuation(character: char) -> bool {
+    matches!(character, '\u{3000}'..='\u{303F}' | '\u{FF00}'..='\u{FFEF}')
+}
+
+/// The translation, with a third language's text cut out of it.
+///
+/// `None` when there is nothing left worth showing.
+///
+/// # Why this rather than a retry
+///
+/// A retry was the first answer and it is wrong here. Requests go out at
+/// `temperature: 0`, so asking the same question again returns the same reply:
+/// the echo path can retry because it changes the budget and an empty answer is
+/// usually a budget, and nothing about a budget produces a paragraph of
+/// Chinese. The retry would cost two and a half seconds to arrive at the same
+/// text.
+///
+/// # Why the longest segment rather than a strip
+///
+/// The intrusion **splits** the answer. The case this was written for is
+///
+/// ```text
+/// [Korean fragment][Chinese paragraph about the translation task][Korean translation]
+/// ```
+///
+/// so deleting the Chinese leaves a dangling fragment glued to a good
+/// sentence. Taking the segment with the most of the reader's own script keeps
+/// the sentence and drops the fragment, and in that case the segment kept is
+/// the correct translation.
+///
+/// # When it refuses
+///
+/// Two ways, and the second was found by running it.
+///
+/// The best segment holds less than half of the answer's target-script
+/// letters: the model interleaved rather than inserted, and no segment of that
+/// is a sentence.
+///
+/// Or the best segment is **too short to be a translation of the source**.
+/// Measured 2026-08-06: asked for Korean, the model wrote three words of it and
+/// then translated the whole sentence into Chinese instead.
+///
+/// ```text
+/// 빌드가 실패한原因是cargo fmt --check在运行测试之前发现在src/main.rs中存在差异。
+/// ```
+///
+/// There is no Korean translation in that, only the three words before the
+/// switch. The first rule passes it, because those three words are all the
+/// Korean there is, and a six-letter fragment would have gone on a card as the
+/// translation of a seventeen-word sentence.
+pub fn without_the_third_language(
+    source: &str,
+    answer: &str,
+    target_language: &str,
+) -> Option<String> {
+    let intruding = intruding_scripts(source, target_language);
+    if intruding.is_empty() {
+        return None;
+    }
+    let written = written_as(target_language)?;
+
+    let is_intruding = |character: char| {
+        script_of(character).is_some_and(|script| intruding.contains(&script))
+            || is_foreign_punctuation(character)
+    };
+
+    let target_letters = |text: &str| {
+        text.chars()
+            .filter_map(script_of)
+            .filter(|script| written.signature.contains(script))
+            .count()
+    };
+
+    let best = answer
+        .split(is_intruding)
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .max_by_key(|segment| target_letters(segment))?;
+
+    let kept = target_letters(best);
+    if kept == 0 || kept * 2 < target_letters(answer) {
+        return None;
+    }
+    if kept * SHORTEST_A_TRANSLATION_GETS < ScriptProfile::of(source).letters() {
+        return None;
+    }
+    Some(best.to_owned())
+}
+
 /// Whether a reader of `target_language` can already read a good part of this.
 ///
 /// Weaker than [`decide`], and asking a different question. `decide` answers
@@ -455,5 +628,214 @@ mod readable_tests {
     #[test]
     fn too_little_text_to_judge_is_not_readable() {
         assert!(!partly_readable("배포", "Korean"));
+    }
+}
+
+#[cfg(test)]
+mod third_language_tests {
+    use super::*;
+
+    /// The answer that prompted this, shortened. A Korean translation with a
+    /// paragraph of Chinese commentary about the translation task welded into
+    /// the middle of it, from `qwen2.5:7b` on 2026-08-06.
+    #[test]
+    fn a_paragraph_of_chinese_in_a_korean_answer_is_caught() {
+        let source = "The build failed because cargo fmt --check found a difference.";
+        let answer = "빌드가 실패한原因是标记之间的内容已经被翻译并提供给您 cargo fmt --check에서 차이가 발견되었습니다.";
+        assert!(wrote_in_a_third_language(source, answer, "Korean"));
+    }
+
+    /// The ordinary case, which must cost nothing.
+    #[test]
+    fn a_plain_korean_answer_is_not_a_third_language() {
+        assert!(!wrote_in_a_third_language(
+            "The pointer must rest before anything is read.",
+            "포인터가 멈춘 뒤에야 무엇이든 읽습니다.",
+            "Korean",
+        ));
+    }
+
+    /// Identifiers survive, which is the whole point of `identifiers_in`.
+    ///
+    /// Latin is in the source, so a Korean answer carrying it back is exactly
+    /// what this product spent a benchmark making happen.
+    #[test]
+    fn latin_identifiers_kept_from_an_english_source_are_not_a_third_language() {
+        assert!(!wrote_in_a_third_language(
+            "Call getUserProfile with the user_id and it returns a row.",
+            "getUserProfile를 user_id와 함께 호출하면 한 행을 반환합니다.",
+            "Korean",
+        ));
+    }
+
+    /// A gloss is not a paragraph.
+    #[test]
+    fn one_or_two_han_characters_in_korean_are_ordinary_korean() {
+        assert!(!wrote_in_a_third_language(
+            "The Chinese character for water.",
+            "물을 뜻하는 한자 水입니다.",
+            "Korean",
+        ));
+    }
+
+    /// Han is one of Japanese's own scripts, so an answer full of it is a
+    /// Japanese answer rather than a Chinese intrusion.
+    #[test]
+    fn han_in_a_japanese_answer_is_japanese() {
+        assert!(!wrote_in_a_third_language(
+            "The output files came back empty.",
+            "出力ファイルは空のまま返ってきました。",
+            "Japanese",
+        ));
+    }
+
+    /// Translating Chinese into Korean, the Han came from the source, so
+    /// carrying some of it back is an echo rather than a third language. A
+    /// different failure, caught by a different check.
+    #[test]
+    fn han_that_came_from_the_source_is_not_a_third_language() {
+        assert!(!wrote_in_a_third_language(
+            "输出文件返回时是空的，所以整个测试集没有产生任何东西。",
+            "출력 파일이 비어 있었습니다 输出文件返回时是空的",
+            "Korean",
+        ));
+    }
+
+    /// A target nothing is known about deletes nothing.
+    #[test]
+    fn an_unrecognised_target_language_never_fires() {
+        assert!(!wrote_in_a_third_language(
+            "hello",
+            "你好你好你好你好",
+            "Klingon"
+        ));
+    }
+
+    /// The threshold is a count and not a share, because the failure is a
+    /// paragraph inside an otherwise correct answer.
+    #[test]
+    fn the_threshold_is_where_it_says_it_is() {
+        let source = "A sentence with no Han in it at all.";
+        let three = format!("한국어 문장 {}", "水火土");
+        let four = format!("한국어 문장 {}", "水火土木");
+        assert!(!wrote_in_a_third_language(source, &three, "Korean"));
+        assert!(wrote_in_a_third_language(source, &four, "Korean"));
+        assert_eq!(ENOUGH_TO_BE_A_THIRD_LANGUAGE, 4);
+    }
+}
+
+#[cfg(test)]
+mod salvage_tests {
+    use super::*;
+
+    /// The answer that prompted all of this, in full, from `qwen2.5:7b` on
+    /// 2026-08-06. A Korean fragment, a paragraph of Chinese about the
+    /// translation task, and then the actual translation.
+    const SOURCE: &str =
+        "The build failed because cargo fmt --check found a difference in src/main.rs.";
+    const ANSWER: &str = "빌드가 실패한原因是标记之间的内容已经被翻译并提供给您，无需再次进行翻译。请提供需要翻译的新文本或更改请求。由于您要求的是翻译，而给定的文本已经是英文，我将根据您的指示将其翻译成韩语如下：  cargo fmt --check에서 src/main.rs의 차이가 발견되었기 때문에 빌드가 실패했습니다.";
+
+    #[test]
+    fn the_translation_is_kept_and_the_commentary_is_not() {
+        let kept = without_the_third_language(SOURCE, ANSWER, "Korean").expect("something left");
+
+        assert!(!wrote_in_a_third_language(SOURCE, &kept, "Korean"));
+        assert!(kept.contains("빌드가 실패했습니다"), "{kept}");
+        // The identifiers the source carried survive, because Latin was in the
+        // source and is therefore not an intrusion.
+        assert!(kept.contains("cargo fmt --check"), "{kept}");
+        assert!(kept.contains("src/main.rs"), "{kept}");
+    }
+
+    /// The dangling fragment goes with it.
+    ///
+    /// Cutting only the Chinese would leave `빌드가 실패한` glued to the front
+    /// of a complete sentence, which reads as a rendering fault. The segment
+    /// with the most of the reader's own script is the sentence.
+    #[test]
+    fn the_fragment_before_the_intrusion_is_dropped_too() {
+        let kept = without_the_third_language(SOURCE, ANSWER, "Korean").expect("something left");
+        assert!(!kept.starts_with("빌드가 실패한c"), "{kept}");
+        assert_eq!(kept.matches("빌드가 실패").count(), 1, "{kept}");
+    }
+
+    /// No fullwidth punctuation is left behind.
+    #[test]
+    fn the_intruding_punctuation_goes_with_the_intruding_text() {
+        let kept = without_the_third_language(SOURCE, ANSWER, "Korean").expect("something left");
+        for mark in ['\u{ff0c}', '\u{3002}', '\u{ff1a}'] {
+            assert!(!kept.contains(mark), "{mark} survived in {kept}");
+        }
+    }
+
+    /// An answer shredded rather than interrupted has no sentence in it, and
+    /// half a sentence presented as a translation is the thing this whole file
+    /// exists to prevent.
+    #[test]
+    fn an_interleaved_answer_is_refused_rather_than_salvaged() {
+        let shredded = "빌드가 实败 실패한 原因是 이유로 内容 때문에";
+        assert!(wrote_in_a_third_language(SOURCE, shredded, "Korean"));
+        assert_eq!(without_the_third_language(SOURCE, shredded, "Korean"), None);
+    }
+
+    /// An answer with no intrusion in it comes back whole.
+    ///
+    /// The caller only asks after the detector has fired, so this is about the
+    /// cut never damaging something it had no reason to touch.
+    #[test]
+    fn a_clean_answer_comes_back_unchanged() {
+        let clean = "cargo fmt --check가 src/main.rs에서 차이를 발견해 빌드가 실패했습니다.";
+        assert!(!wrote_in_a_third_language(SOURCE, clean, "Korean"));
+        assert_eq!(
+            without_the_third_language(SOURCE, clean, "Korean").as_deref(),
+            Some(clean),
+        );
+    }
+
+    /// A clean answer far too short for its source is still refused.
+    ///
+    /// Not the case this was built for, and worth asserting because it is a
+    /// real one: the length floor does not know why an answer is short.
+    #[test]
+    fn a_clean_answer_that_dropped_most_of_the_sentence_is_refused() {
+        assert_eq!(
+            without_the_third_language(SOURCE, "빌드가 실패했습니다.", "Korean"),
+            None,
+        );
+    }
+}
+
+#[cfg(test)]
+mod switched_language_tests {
+    use super::*;
+
+    /// The model wrote three words of Korean and then translated the sentence
+    /// into Chinese instead. Measured 2026-08-06, `qwen2.5:7b`.
+    ///
+    /// There is no Korean translation in it. The salvage must say so rather
+    /// than hand back the three words, which is what it did until this test.
+    #[test]
+    fn a_switch_to_another_language_leaves_nothing_to_salvage() {
+        let source =
+            "The build failed because cargo fmt --check found a difference in src/main.rs before the tests ran.";
+        let answer =
+            "빌드가 실패한原因是cargo fmt --check在运行测试之前发现在src/main.rs中存在差异。";
+
+        assert!(wrote_in_a_third_language(source, answer, "Korean"));
+        assert_eq!(without_the_third_language(source, answer, "Korean"), None);
+    }
+
+    /// And a real translation of a long sentence is not refused for being
+    /// shorter than its source, which Korean always is.
+    #[test]
+    fn a_compact_korean_rendering_of_a_long_sentence_survives() {
+        let source =
+            "The pointer must rest before anything is read, and neither path runs on a mouse move.";
+        let answer = "포인터가 멈춘 뒤에야 읽으며 어느 경로도 마우스 이동으로는 실행되지 않습니다 中文中文中文中文";
+
+        assert!(wrote_in_a_third_language(source, answer, "Korean"));
+        let kept = without_the_third_language(source, answer, "Korean").expect("the translation");
+        assert!(kept.starts_with("포인터가 멈춘"), "{kept}");
+        assert!(!kept.contains('\u{4e2d}'), "{kept}");
     }
 }
