@@ -2040,42 +2040,70 @@ fn the_process_under_the_pointer_is_cached_without_going_stale() {
          the policy would be given",
     );
 
-    // Two thousand of each, back to back, so both pay the same machine.
+    // Alternating rounds, and the winner counted rather than a ratio compared
+    // against a threshold.
     //
-    // An absolute microsecond threshold was tried first and was flaky: it
-    // passed alone at 8.2us against a 10us bound and failed inside the full
-    // suite. Most of a cached call is `WindowFromPoint` and
-    // `GetWindowThreadProcessId`, which happen either way, so the figure moves
-    // with how busy the box is. A ratio does not.
+    // **Two thresholds have now been wrong here.** An absolute microsecond
+    // bound passed alone at 8.2us and failed inside the full suite. It was
+    // replaced by `uncached > cached * 2.0`, on the reasoning that the shared
+    // cost is in both figures so the ratio would hold where the absolute
+    // number did not. That reasoning is wrong, and this machine showed it:
+    // 33.5us against 53.8us is a working cache at **1.6x**. The shared cost
+    // being in both is exactly what makes the ratio move, because it grows
+    // with load while the part the cache removes does not.
+    //
+    // What the cache claims is not a factor, it is that it removes work. So
+    // the two are run against each other several times and the cached side has
+    // to win nearly every round. Load drifts across a run and lifts both
+    // sides; it does not reverse which is cheaper.
     const SAMPLES: u32 = 2_000;
+    const ROUNDS: usize = 5;
     let mut wrong = 0usize;
+    let mut cached_wins = 0usize;
+    let mut cached_each = Vec::new();
+    let mut uncached_each = Vec::new();
 
-    let began = Instant::now();
-    for _ in 0..SAMPLES {
-        if crate::window::process_name_at(point).as_deref() != Some(own.as_str()) {
-            wrong += 1;
+    for _ in 0..ROUNDS {
+        let began = Instant::now();
+        for _ in 0..SAMPLES {
+            if crate::window::process_name_at(point).as_deref() != Some(own.as_str()) {
+                wrong += 1;
+            }
         }
-    }
-    let cached = began.elapsed().as_secs_f64() * 1e6 / f64::from(SAMPLES);
+        let cached = began.elapsed().as_secs_f64() * 1e6 / f64::from(SAMPLES);
 
-    let began = Instant::now();
-    for _ in 0..SAMPLES {
-        if crate::window::uncached_process_name_at(point).as_deref() != Some(own.as_str()) {
-            wrong += 1;
+        let began = Instant::now();
+        for _ in 0..SAMPLES {
+            if crate::window::uncached_process_name_at(point).as_deref() != Some(own.as_str()) {
+                wrong += 1;
+            }
         }
-    }
-    let uncached = began.elapsed().as_secs_f64() * 1e6 / f64::from(SAMPLES);
+        let uncached = began.elapsed().as_secs_f64() * 1e6 / f64::from(SAMPLES);
 
+        if cached < uncached {
+            cached_wins += 1;
+        }
+        cached_each.push(cached);
+        uncached_each.push(uncached);
+    }
+
+    let best = |mut times: Vec<f64>| -> f64 {
+        times.sort_by(f64::total_cmp);
+        times[0]
+    };
+    let cached = best(cached_each);
+    let uncached = best(uncached_each);
     println!(
-        "{SAMPLES} each · cached {cached:.1}us · uncached {uncached:.1}us · {:.1}x · {wrong} wrong",
-        uncached / cached.max(0.001),
+        "{ROUNDS} rounds of {SAMPLES} · best cached {cached:.1}us · best uncached \
+         {uncached:.1}us · cached won {cached_wins} of {ROUNDS} · {wrong} wrong",
     );
 
     assert_eq!(wrong, 0, "the name changed under repeated lookups");
     assert!(
-        uncached > cached * 2.0,
-        "cached {cached:.1}us against uncached {uncached:.1}us, so the cache is \
-         not saving the process handle the loop opens forty times a second",
+        cached_wins >= ROUNDS - 1,
+        "the cached lookup was faster in only {cached_wins} of {ROUNDS} rounds, \
+         so it is not saving the process handle the loop opens forty times a \
+         second: best cached {cached:.1}us against best uncached {uncached:.1}us",
     );
 }
 
