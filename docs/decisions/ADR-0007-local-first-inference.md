@@ -81,6 +81,28 @@ not by this ADR. What this ADR fixes is that the router must treat the
 model set as **discovered, not assumed**, and degrade in a stated order
 when the preferred model is missing.
 
+**Addendum, 2026-08-06.** The listing above is what the machine held on
+2026-08-04 and stays as written, because it is what the decision was made
+against. Both of the corrections it names have since been resolved by
+running the benchmark it asks for, and a reader arriving here should not
+take either as current:
+
+```
+qwen2.5:7b             4.7 GB
+translategemma:latest  3.3 GB
+```
+
+`translategemma` was pulled and measured on 2026-08-05: it is a chat
+model with a translation-sounding name and it reverses the meaning of a
+sentence this repository uses as a test. `qwen2.5:7b` was pulled and
+measured on 2026-08-06 against `qwen2.5-coder:7b`, and it is what the
+router now chooses
+([`../benchmarks/2026-08-06-model-at-one-size.md`](../benchmarks/2026-08-06-model-at-one-size.md)).
+
+The decision is unchanged and was not the model. It was that the set is
+discovered rather than assumed, and that is what let the model change
+twice without a line of routing code being written for either.
+
 ## Consequences
 
 - Translation quality is bounded by what a small local model can do.
