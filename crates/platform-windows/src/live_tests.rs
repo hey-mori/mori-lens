@@ -2900,7 +2900,8 @@ fn measure_what_enlarging_a_capture_does_for_small_text() {
         for pixel in &argb {
             bgra.extend_from_slice(&pixel.to_le_bytes());
         }
-        let capture = crate::capture::Capture::from_bgra(width, height, bgra);
+        let capture =
+            crate::capture::Capture::from_bgra(width, height, bgra).expect("a well-formed buffer");
 
         println!(
             "\ncard {width}x{height} at scale {scale}, {}pt, {}",
@@ -3069,7 +3070,8 @@ fn measure_how_much_contrast_the_recogniser_needs() {
         for pixel in &argb {
             bgra.extend_from_slice(&pixel.to_le_bytes());
         }
-        let native = crate::capture::Capture::from_bgra(width, height, bgra);
+        let native =
+            crate::capture::Capture::from_bgra(width, height, bgra).expect("a well-formed buffer");
         let score = |capture: &crate::capture::Capture| -> usize {
             let text = crate::ocr::read(capture, ScreenPoint::new(0, 0))
                 .map(|read| read.text())
@@ -3235,7 +3237,8 @@ fn cropping_before_enlarging_still_finds_the_word() {
     for pixel in &argb {
         bgra.extend_from_slice(&pixel.to_le_bytes());
     }
-    let capture = crate::capture::Capture::from_bgra(width, height, bgra);
+    let capture =
+        crate::capture::Capture::from_bgra(width, height, bgra).expect("a well-formed buffer");
     let origin = ScreenPoint::new(0, 0);
 
     let whole = crate::ocr::read_best_around(&capture, origin, None).expect("whole");

@@ -320,16 +320,35 @@ impl Capture {
         }
     }
 
-    /// A capture built from bytes this process produced rather than from the
-    /// screen. Only for measuring the recogniser against text this repository
-    /// drew, which is the one way to score it without printing anybody's.
-    #[cfg(test)]
-    pub(crate) fn from_bgra(width: i32, height: i32, pixels: Vec<u8>) -> Self {
-        Self {
+    /// A capture built from bytes somebody else produced rather than from the
+    /// screen.
+    ///
+    /// Two callers, and neither is the product. The live checks measure the
+    /// recogniser against text this repository drew, which is the one way to
+    /// score it without printing anybody's. And `hover-probe` renders a named
+    /// window with `PrintWindow` so a compatibility run does not have to
+    /// rearrange the desktop
+    /// (`docs/benchmarks/2026-08-07-reading-a-covered-window.md`).
+    ///
+    /// **This does not give the product a way to photograph a window.** It
+    /// wraps bytes that already exist. That capability stays in the probe on
+    /// purpose: `docs/privacy-model.md` bounds what Lens captures to a band
+    /// around the pointer, and a whole-window capture in this crate would be
+    /// one call site away from undoing that.
+    ///
+    /// `None` when the buffer is not four bytes to the pixel, which is the one
+    /// thing a caller can get wrong and which a recogniser would read as
+    /// noise rather than as an error.
+    pub fn from_bgra(width: i32, height: i32, pixels: Vec<u8>) -> Option<Self> {
+        let wanted = (width as i64) * (height as i64) * 4;
+        if width <= 0 || height <= 0 || wanted != pixels.len() as i64 {
+            return None;
+        }
+        Some(Self {
             width,
             height,
             pixels,
-        }
+        })
     }
 }
 
