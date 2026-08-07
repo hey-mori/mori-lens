@@ -74,11 +74,22 @@ What does not exist yet: macOS, saved vocabulary, and a settings
 window. Sequenced in [docs/roadmap.md](docs/roadmap.md).
 
 What is known to be weak, because measuring it is the point of this
-repository: **translation quality**. On five sentences the model this
-picks stated the opposite of the source once, dropped the adverb
-carrying another, and invented a sentence in a third. It is not the
-prompt and not the sampling, both ruled out by measurement. See
-[the quality benchmark](docs/benchmarks/2026-08-06-translation-quality.md).
+repository: **translation quality**. It is not the prompt and not the
+sampling, both ruled out by measurement.
+
+The model was changed on 2026-08-06 after the comparison the earlier
+benchmark said had never been run: `qwen2.5:7b` against
+`qwen2.5-coder:7b`, the same family at the same size. The plain model
+won, and the reversal that benchmark called *the finding* is gone with
+it. See [the one-size comparison](docs/benchmarks/2026-08-06-model-at-one-size.md)
+and [the quality benchmark](docs/benchmarks/2026-08-06-translation-quality.md)
+before it.
+
+Still weak: on one of five sentences both models render `rest` as *be
+positioned*, losing the idea the sentence exists for. And the new model
+sometimes switches language mid-answer, writing a paragraph of Chinese
+into a Korean one; Lens now detects that, cuts it out, and refuses when
+what is left is too short to be a translation.
 
 The authoritative list, capability by capability, is §4 of
 [`docs/mori-lens-project-goal.md`](docs/mori-lens-project-goal.md). This
