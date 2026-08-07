@@ -839,3 +839,37 @@ mod switched_language_tests {
         assert!(!kept.contains('\u{4e2d}'), "{kept}");
     }
 }
+
+#[cfg(test)]
+mod from_a_card_tests {
+    use super::*;
+
+    /// The card a reader photographed on 2026-08-07.
+    ///
+    /// The Korean translation, then a line of Chinese saying it cannot go on
+    /// in Chinese and here is the Korean part, then the Korean translation
+    /// again. Kept here verbatim because a rule tuned on a paraphrase of a
+    /// defect is a rule tuned on the wrong thing.
+    const SOURCE: &str = "For the database separation, since orbita's bootstrap role is a cluster superuser with role bypass RLS, moving to another database on the same server doesn't create a real boundary unless the role loses superuser privileges.";
+    const ANSWER: &str = "데이터베이스 분리에 대해 orbita의 부트스트랩 역할은 클러스터 슈퍼유저 권한을 가지고 있으며 역할 피어스 RLS를 통해 권한을 상실하면 같은 서버상의 문본无法继续使用中文呈现，以下是翻译结果的韩文部分：\n\n데이터베이스 분리에 대해 orbita의 부트스트랩 역할은 클러스터 슈퍼유저 권한을 가지고 있으며 역할 피어스 RLS를 통해 권한을 상실하면 같은 서버에서도 실제 경계가 형성되지 않습니다.";
+
+    #[test]
+    fn the_card_from_the_screenshot_is_caught() {
+        assert!(
+            wrote_in_a_third_language(SOURCE, ANSWER, "Korean"),
+            "the Chinese line was not detected",
+        );
+    }
+
+    #[test]
+    fn what_survives_the_cut_is_the_finished_sentence() {
+        let kept = without_the_third_language(SOURCE, ANSWER, "Korean").expect("something left");
+        println!("kept: {kept}");
+        assert!(!wrote_in_a_third_language(SOURCE, &kept, "Korean"));
+        assert!(kept.contains("실제 경계가 형성되지 않습니다"), "{kept}");
+        assert!(!kept.contains('\u{4e2d}'), "{kept}");
+        // The half-sentence that trails off into the Chinese is not what a
+        // reader is left with.
+        assert!(!kept.ends_with("문본"), "{kept}");
+    }
+}
