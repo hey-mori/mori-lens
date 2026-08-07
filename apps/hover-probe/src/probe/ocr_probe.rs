@@ -89,9 +89,11 @@ use lens_core::acquire::{AcquireContext, TextAcquirer};
 use lens_core::geometry::{ScreenPoint, ScreenRect};
 use lens_core::hover::Generation;
 use lens_platform_windows::{
-    capture, foreground_window, monitor_scale_at, ocr, root_window_at, UiaTextAcquirer, WindowInfo,
+    capture, foreground_window, monitor_scale_at, ocr, root_window_at, top_level_windows,
+    UiaTextAcquirer, WindowInfo,
 };
 
+use super::printed;
 use super::report::{format_us, percentile};
 
 /// How much of a window to sample, and how much work to allow.
@@ -371,7 +373,17 @@ fn uia_pass(
     pass
 }
 
-/// Run the probe against whatever is in front.
+/// Which window is actually in front, for the row to say whether these pixels
+/// came off the screen or out of the window.
+fn front_id_of(only: &Option<String>, chosen: i64) -> i64 {
+    match only {
+        // Nothing was named, so the chosen window *is* the foreground one.
+        None => chosen,
+        Some(_) => foreground_window().map(|window| window.id).unwrap_or(-1),
+    }
+}
+
+/// Run the probe against the window in front, or a named one wherever it is.
 pub fn run(acquirer: &UiaTextAcquirer, options: &OcrOptions) -> Result<OcrRow, String> {
     if !ocr::can_recognise("en") && !ocr::can_recognise("ko") {
         return Err(format!(
@@ -379,31 +391,94 @@ pub fn run(acquirer: &UiaTextAcquirer, options: &OcrOptions) -> Result<OcrRow, S
             ocr::available_languages(),
         ));
     }
+    // The window in front, unless a name was given and something else is
+    // wearing it. `--only` used to be a check on the foreground window and
+    // nothing more, so a named application that was not in front produced a
+    // refusal and a session of moving windows around.
+    let front = foreground_window().map_err(|problem| problem.explain())?;
+    let chosen = match options.only.as_deref() {
+        None => front,
+        Some(wanted) => {
+            let matches = |window: &WindowInfo| {
+                window
+                    .process_name
+                    .as_deref()
+                    .unwrap_or("unknown")
+                    .to_lowercase()
+                    .contains(&wanted.to_lowercase())
+            };
+            if matches(&front) {
+                front
+            } else {
+                // The largest match, because an application often owns several
+                // windows and the one worth measuring is the one with the text
+                // in it rather than a tooltip or a hidden host.
+                top_level_windows()
+                    .into_iter()
+                    .filter(matches)
+                    .max_by_key(|window| {
+                        (window.client_bounds.width as i64) * (window.client_bounds.height as i64)
+                    })
+                    .ok_or_else(|| {
+                        format!("no window belongs to {wanted}. Nothing was captured.")
+                    })?
+            }
+        }
+    };
     let WindowInfo {
         id,
         process_name,
         client_bounds,
         ..
-    } = foreground_window().map_err(|problem| problem.explain())?;
-    if let Some(wanted) = options.only.as_deref() {
-        // A named check, because the commonest way to get a wrong number here
-        // is to measure the terminal the probe was launched from and never
-        // notice: it has a client area, it has text, and the row looks
-        // entirely ordinary under the wrong application's name.
-        let actual = process_name.as_deref().unwrap_or("unknown");
-        if !actual.to_lowercase().contains(&wanted.to_lowercase()) {
-            return Err(format!(
-                "the window in front is {actual}, not {wanted}. Nothing was captured.",
-            ));
-        }
-    }
+    } = chosen;
     if client_bounds.width <= 0 || client_bounds.height <= 0 {
-        return Err("the foreground window has an empty client area".to_owned());
+        return Err("the chosen window has an empty client area".to_owned());
     }
 
-    let Some((lines, tile_count, capture_us, recognise_us)) = recognise(client_bounds) else {
-        return Err("the capture or the recognition failed".to_owned());
+    // In front: read the screen, which is what the product does and therefore
+    // the number that belongs in the matrix.
+    //
+    // Behind: ask the window to draw itself. `ElementFromPoint` still answers
+    // with whatever is on top, so this changes the OCR half only, and that is
+    // stated in the row rather than left for a reader to infer.
+    let in_front = id == front_id_of(&options.only, id);
+    let printed_instead = !in_front;
+    let captured = if printed_instead {
+        printed::window(id, client_bounds).map(|shot| {
+            let began = Instant::now();
+            let read = ocr::read(&shot, ScreenPoint::new(client_bounds.x, client_bounds.y));
+            let elapsed = began.elapsed().as_micros();
+            (
+                read.map(|read| read.lines).unwrap_or_default(),
+                1,
+                0,
+                elapsed,
+                printed::ink(&shot),
+            )
+        })
+    } else {
+        recognise(client_bounds).map(|(lines, tiles, capture_us, recognise_us)| {
+            (lines, tiles, capture_us, recognise_us, f64::NAN)
+        })
     };
+
+    let Some((lines, tile_count, capture_us, recognise_us, ink)) = captured else {
+        return Err(if printed_instead {
+            format!(
+                "{} would not render itself. It is behind another window, and \
+                 PrintWindow declined.",
+                process_name.as_deref().unwrap_or("the window"),
+            )
+        } else {
+            "the capture or the recognition failed".to_owned()
+        });
+    };
+    if printed_instead {
+        println!(
+            "  rendered  the window is behind another; it drew itself, {ink:.1}% ink.\n               Accessibility still answers about whatever is on top, so only the\n               OCR half of this row is about {}.",
+            process_name.as_deref().unwrap_or("this window"),
+        );
+    }
 
     let read = ocr::Recognised {
         lines,
