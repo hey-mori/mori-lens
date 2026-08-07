@@ -156,6 +156,29 @@ impl Settings {
             // out of habit should not silently get a language called `"Korean"`.
             let value = unquote(value.trim());
 
+            // **An empty key is not a rule, and inside `[applications]` it was
+            // a rule that matched everything.** A stray `= allow` under that
+            // heading pushed a rule whose needle is the empty string, and a
+            // needle is matched with `contains`, so every application became
+            // Allow: automatic reading everywhere, from a typo, in a product
+            // whose default is `modifier` precisely so nothing is read without
+            // being asked.
+            //
+            // Outside that section it produced `unknown setting ` with nothing
+            // after it, which is a sentence that trails off rather than one
+            // that says what is wrong.
+            if key.is_empty() {
+                problems.push(Problem {
+                    line,
+                    message: if in_applications {
+                        "an application rule needs a name before the =".to_owned()
+                    } else {
+                        "a setting needs a name before the =".to_owned()
+                    },
+                });
+                continue;
+            }
+
             if value.is_empty() {
                 problems.push(Problem {
                     line,
@@ -646,5 +669,77 @@ mod misplaced_tests {
                 problems[0].message,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod empty_key_tests {
+    use super::*;
+
+    /// The line that turned automatic reading on everywhere.
+    ///
+    /// `= allow` under `[applications]` pushed a rule whose needle is the
+    /// empty string, and a needle is matched with `contains`, so it matched
+    /// every application. Nothing was said about it.
+    #[test]
+    fn an_application_rule_with_no_name_is_reported_and_not_applied() {
+        let (settings, problems) = Settings::parse("[applications]\n= allow\n");
+
+        assert!(
+            settings.applications.is_empty(),
+            "{:?}",
+            settings.applications
+        );
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert_eq!(problems[0].line, 2);
+        assert!(
+            problems[0].message.contains("name"),
+            "{}",
+            problems[0].message
+        );
+
+        // And the policy it builds still holds the default, which is the thing
+        // the reader actually loses when this goes wrong.
+        assert_eq!(
+            settings.policy().tier_for(Some("notepad")),
+            settings.default_tier,
+        );
+    }
+
+    /// Whitespace before the equals is not a name either.
+    #[test]
+    fn spaces_before_the_equals_are_not_an_application_name() {
+        let (settings, problems) = Settings::parse("[applications]\n   = deny\n");
+        assert!(settings.applications.is_empty());
+        assert_eq!(problems.len(), 1, "{problems:?}");
+    }
+
+    /// Outside the section the message used to trail off into nothing.
+    #[test]
+    fn a_setting_with_no_name_says_what_is_wrong() {
+        let (_, problems) = Settings::parse("= modifier\n");
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(
+            !problems[0].message.trim_end().ends_with("setting"),
+            "the message trails off: {:?}",
+            problems[0].message,
+        );
+        assert!(
+            problems[0].message.contains("name"),
+            "{}",
+            problems[0].message
+        );
+    }
+
+    /// A named rule is still read, which is the half a strict check could
+    /// break.
+    #[test]
+    fn a_named_application_rule_still_works() {
+        let (settings, problems) = Settings::parse("[applications]\nchrome = allow\n");
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(
+            settings.policy().tier_for(Some("chrome.exe")),
+            AppTier::Allow
+        );
     }
 }
