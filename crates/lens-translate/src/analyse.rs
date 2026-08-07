@@ -214,6 +214,7 @@ fn parse(answer: &str, model: String, latency_ms: u64) -> DeepAnalysis {
         note: field(FIELDS[4]),
         model,
         latency_ms,
+        cached: false,
     }
 }
 
