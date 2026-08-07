@@ -1369,9 +1369,6 @@ fn main() -> std::process::ExitCode {
                     // This application can be read, so it is never offered the
                     // fallback again however the pointer wanders afterwards.
                     reach.readable(process_name.as_deref());
-                    // And a card is about to appear, so the first-run hint has
-                    // nothing left to explain.
-                    reach.card_shown();
                     let sentence = target.segmented.sentence_text().trim().to_owned();
                     // Text already in the reader's language costs nothing and
                     // shows nothing. Without this a Korean reader hovering
@@ -1404,8 +1401,28 @@ fn main() -> std::process::ExitCode {
                         ) {
                             println!("{line}");
                         }
+                        // Said once a session, on a card, because a release
+                        // binary has no console and a capability nobody can
+                        // discover is the silent product `reach` exists to
+                        // prevent. Only when the key is registered: naming a
+                        // chord another application is holding would be worse
+                        // than saying nothing.
+                        if pause.explain_is_registered() && reach.readable_without_translation() {
+                            let anchor = explainable
+                                .as_ref()
+                                .map(|showing| showing.anchor)
+                                .unwrap_or(ScreenRect::new(point.x, point.y, 1, 1));
+                            reach.card_shown();
+                            overlay.show(Card::already_readable("Ctrl+Alt+D"), anchor);
+                        }
                         continue;
                     }
+                    // A card is about to appear, so the first-run hint has
+                    // nothing left to explain. **Moved below the branch
+                    // above**, which returns without showing one: a reader
+                    // whose screen is their own language had the modifier hint
+                    // cancelled by hovers that drew nothing.
+                    reach.card_shown();
                     // The region the card must not cover, which is the
                     // paragraph when that is near enough and the pointer's own
                     // line when it is not. Anchoring on the word put the
