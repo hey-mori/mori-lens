@@ -393,6 +393,24 @@ fn system_prompt(
     prompt
 }
 
+/// # Per request, and a measurement says leave it that way
+///
+/// Deriving it per request means no two requests share a system prompt, so a
+/// runtime that reuses a KV cache across requests cannot reuse any of it. A
+/// per-**session** marker would be just as unguessable to the threat this
+/// exists for, which is a page the reader hovers, and would put the whole
+/// prompt in a shared prefix.
+///
+/// Measured 2026-08-07, five sentences each way. Two of five fixed-fence runs
+/// prefilled in 35.8ms and 69.5ms against about 400ms, which is the cache hit
+/// the idea predicts. The other three did not, and the totals both ways ranged
+/// from 1.9 to 26.8 seconds. Prompt evaluation is 239 tokens and 400ms of a
+/// number that swings by an order of magnitude, so whatever produces 26
+/// seconds is not this.
+///
+/// A security-relevant design should not move for something the measurement
+/// cannot see. See `docs/benchmarks/2026-08-07-where-the-seconds-go.md`.
+///
 /// A marker the page under the pointer cannot guess.
 ///
 /// The whole value of a fence is that screen text cannot close it. A constant
