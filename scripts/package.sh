@@ -5,16 +5,16 @@
 #   scripts/package.sh          package the current commit
 #   scripts/package.sh --dirty  package a working tree with changes in it
 #
-# What this is for, and what it is not. `docs/mori-lens-project-goal.md` names
-# the missing pieces before Lens is something a person installs: a signed
-# binary and an installer. This is neither. It is the step below both, which
-# was also missing: a build somebody can be handed, with the commit and a
-# checksum attached, instead of "clone it and run cargo".
+# What this is for, and what it is not. `docs/mori-lens-project-goal.md` named
+# two missing pieces before Lens is something a person installs: a signed
+# binary and an installer. The installer now travels in the zip, as
+# `install.ps1`, so one of the two is done.
 #
-# Signing needs a certificate, which is a purchase and a decision, and until
-# there is one Windows will warn on first run. That warning is honest and this
-# script does not try to talk anybody out of it: the README says so and so does
-# the file this writes beside the binary.
+# Signing is the other and it stays missing. It needs a certificate, which is a
+# purchase and a decision, and until there is one Windows will warn on first
+# run. That warning is honest and this script does not try to talk anybody out
+# of it: the README says so, and so do the installer and the file this writes
+# beside the binary.
 #
 # # Why it refuses a dirty tree by default
 #
@@ -62,6 +62,10 @@ step "assembling ${NAME}"
 rm -rf "$OUT"
 mkdir -p "$OUT"
 cp target/release/lens.exe "$OUT/"
+# The installer travels with the binary rather than being fetched. A person who
+# has a zip and no network still has both halves, and an installer downloaded
+# separately from the thing it installs is a supply chain with two ends.
+cp scripts/install.ps1 scripts/uninstall.ps1 "$OUT/"
 
 # What a person needs beside the binary, and nothing else. Not the README:
 # most of it is about working on Lens rather than running it, and a file that
@@ -83,11 +87,28 @@ BEFORE IT CAN TRANSLATE ANYTHING
   Without this Lens still starts and tells you exactly this, on the card
   and in the tray tooltip. It does not fail silently.
 
+INSTALLING IT, OR NOT
+
+  Either works. lens.exe is the whole product: one file, no service, no
+  elevation. Put it wherever you keep such things and run it.
+
+  install.ps1 is there if you would rather it behaved like an installed
+  program. Right-click it and choose Run with PowerShell, or:
+
+      powershell -ExecutionPolicy Bypass -File install.ps1
+
+  It copies the binary to %LOCALAPPDATA%\Programs\Mori Lens, adds a Start
+  Menu entry, and registers it so it appears in Settings > Apps and can be
+  removed from there. This user only. It does not ask for administrator, it
+  does not install a service, and it does not switch on start-with-Windows:
+  that is a tick in the tray menu and it is yours to make.
+
+  uninstall.ps1 reverses all of it and keeps your settings file. Add -Purge
+  to delete that too.
+
 RUNNING IT
 
-  lens.exe is the whole product. One file, no installer, no service, no
-  elevation. Put it wherever you keep such things and run it. It opens no
-  window and appears in the notification area.
+  It opens no window and appears in the notification area.
 
   Hold Alt and rest the pointer on a sentence.
   Ctrl+Alt+L pauses. Paused means no accessibility call is made at all.
