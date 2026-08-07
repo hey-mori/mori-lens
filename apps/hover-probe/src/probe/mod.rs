@@ -3,6 +3,7 @@
 mod inventory;
 mod ocr_probe;
 mod pointer;
+mod printed;
 mod report;
 mod sweep;
 mod wake;
