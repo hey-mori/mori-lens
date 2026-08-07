@@ -37,6 +37,25 @@ read outside the process, and three things bound it:
   explanation, the label saying a model wrote it. Not the model name and
   not the timing.
 
+**One file holds what was read, and a person put every line in it.**
+Since 2026-08-07, `Ctrl+Alt+S` appends the card in front of the reader to
+`saved.md`, beside the settings file. Everything else about a durable
+record still holds: the translation cache is memory and dies with the
+process, because a cache **nobody asked for** that survived a restart
+would be a log of what somebody read.
+
+What makes this one allowed is the trigger, not the format. Every entry
+is one keypress, made while looking at the card, so the file is a record
+of what a person decided to keep rather than of what they looked at.
+Nothing here is reachable from a hover.
+
+It is plain Markdown, and that is the privacy property rather than a
+convenience. **Deletion is selecting a block and pressing delete**, which
+is more real than a button that sets a flag, and the export is the file.
+Lens never reads it back, never parses it, and only ever appends, so a
+reader's own notes in it are safe and nothing Lens does depends on what
+is in there.
+
 **No screen image is ever written to disk.** Including for debugging.
 Including in a debug build. An OCR crop lives in memory for the duration
 of one recognition and is dropped.
