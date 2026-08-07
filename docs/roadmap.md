@@ -169,9 +169,11 @@ be clicked would be a card that takes focus. Verified end to end by
 `lens --selftest`, which now runs the deep path on the sentence it just
 translated.
 
-Not started: **the deep cache**, which ADR-0005 requires to have its own
-key and which does not exist, so the same sentence explained twice costs
-two generations. Then copy, save, and the developer and exam profiles.
+The deep cache is built: its own map, its own keys, its own prompt
+version, per ADR-0005. Measured through `--selftest`, a remembered
+explanation comes back in **7 microseconds** against 4.4 seconds.
+
+Not started: copy, save, and the developer and exam profiles.
 
 ## M6 · macOS acquisition
 

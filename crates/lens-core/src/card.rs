@@ -192,7 +192,13 @@ impl Card {
                 "{} · {} · {}",
                 crate::analyse::DeepAnalysis::LABEL,
                 analysis.model,
-                if analysis.latency_ms >= 1000 {
+                if analysis.cached {
+                    // The same word the translation card uses. A remembered
+                    // explanation costs microseconds, and printing the four
+                    // seconds the first one took would be a number about a
+                    // press the reader has forgotten making.
+                    "캐시".to_owned()
+                } else if analysis.latency_ms >= 1000 {
                     format!("{:.1}초", analysis.latency_ms as f64 / 1000.0)
                 } else {
                     format!("{}ms", analysis.latency_ms)
@@ -886,6 +892,7 @@ mod copy_tests {
                     note: String::new(),
                     model: "qwen2.5-coder:7b".to_owned(),
                     latency_ms: 3670,
+                    cached: false,
                 },
             ),
         );
