@@ -64,9 +64,14 @@ What ships, each of it measured rather than asserted:
   held the modifier is told once, on a card, because a release binary
   has no console to print it in.
 
-What does not exist yet: deep grammar analysis, macOS, saved
-vocabulary, a settings window, and an installer. Sequenced in
-[docs/roadmap.md](docs/roadmap.md).
+- **It explains, when you ask it to.** `Ctrl+Alt+D` takes the sentence
+  on the card and says what it is doing: the dictionary form of the word
+  you were on, its part of speech, what it means in this sentence, the
+  clause structure. Only on a keypress, never on a hover, and labelled
+  as a model's account rather than as fact.
+
+What does not exist yet: macOS, saved vocabulary, and a settings
+window. Sequenced in [docs/roadmap.md](docs/roadmap.md).
 
 What is known to be weak, because measuring it is the point of this
 repository: **translation quality**. On five sentences the model this
@@ -157,9 +162,9 @@ card and in the tray tooltip. It does not fail silently.
 cargo build --release -p lens
 ```
 
-`target/release/lens.exe` is the whole product: one file, no installer,
-no service, no elevation. Put it wherever you keep such things and run
-it. It opens no window and appears in the notification area.
+`target/release/lens.exe` is the whole product: one file, no service, no
+elevation. Put it wherever you keep such things and run it. It opens no
+window and appears in the notification area.
 
 Running it twice does nothing: the second copy says so on a card and
 exits. It opens no window on launch, so double-clicking again is the
@@ -177,6 +182,19 @@ the commit, with a SHA-256 and a short file saying what to do with it. It
 refuses a working tree with changes in it, because a package named for a
 commit it was not built from is a lie that looks exactly like the truth;
 `--dirty` marks the artifact instead.
+
+`install.ps1` travels in the zip for anyone who would rather it behaved
+like an installed program: it copies the binary to
+`%LOCALAPPDATA%\Programs\Mori Lens`, adds a Start Menu entry, and
+registers it in Settings > Apps so it can be removed from there. This
+user only, no elevation, no service. It does **not** switch on
+start-with-Windows, because that is a tick in the tray menu and an
+installer that made the choice for somebody would be deciding something
+about a tool that reads their screen. `uninstall.ps1` reverses all of it
+and keeps the settings file, which is the only thing here a person wrote
+themselves.
+
+Neither is required. One file in a folder is still a complete install.
 
 **It is not signed**, so Windows will warn on first run and it is right
 to: signing needs a certificate nobody has bought. The checksum is there
