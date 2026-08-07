@@ -620,7 +620,7 @@ fn focus_offset(
 /// UI Automation returns a `SAFEARRAY` of doubles in groups of four: left, top,
 /// width, height, in physical screen pixels. An empty array means the range is
 /// scrolled out of view, which is a real state and not an error.
-fn bounding_rectangles(range: &IUIAutomationTextRange) -> Vec<ScreenRect> {
+pub(crate) fn bounding_rectangles(range: &IUIAutomationTextRange) -> Vec<ScreenRect> {
     // SAFETY: returns an owned SAFEARRAY pointer or an error; ownership passes
     // to `read_rect_array`, which destroys it on every path.
     let Ok(array) = (unsafe { range.GetBoundingRectangles() }) else {
