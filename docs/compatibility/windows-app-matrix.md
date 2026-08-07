@@ -51,6 +51,22 @@ forward, sweep it, then the next. The probe deliberately does **not**
 activate windows itself. A measurement tool that rearranged the desktop
 it was measuring would change the thing it is trying to observe.
 
+**Half of that changed on 2026-08-07.** `hover-probe ocr --only <name>`
+now finds the named window wherever it is, and asks it to draw itself
+with `PrintWindow` when it is behind something. VS Code, 74% covered,
+rendered at 99.5% ink and gave 97 lines and 2,232 characters. The row
+says so rather than leaving a reader to infer it:
+
+```
+rendered  the window is behind another; it drew itself, 99.5% ink.
+```
+
+The sweep is unchanged and cannot change. `ElementFromPoint` answers
+with the topmost window whatever the pixels say, so the accessibility
+half of a covered run is `0 over this window` and reports nothing. What
+this removes is the need to arrange a desktop to measure **how much text
+a window has**, which is the question OCR answers.
+
 Record the environment with the run, because these results are not
 portable across machines. The shape, filled in from the actual machine
 rather than an example:
