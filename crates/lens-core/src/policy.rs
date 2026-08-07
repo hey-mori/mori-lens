@@ -103,7 +103,16 @@ impl AppPolicy {
     /// Set the tier for a process name substring. A later call for the same
     /// needle replaces the earlier one rather than stacking, so a rule list
     /// cannot end up with two answers for one application.
+    /// An empty needle is refused. It is not a rule about no applications, it
+    /// is a rule about **every** application, because matching is `contains`
+    /// and every name contains the empty string. The settings parser reports
+    /// it; this is the floor under that, so no other caller can make one by
+    /// accident, in the same spirit as the password-manager list being applied
+    /// before any file is read.
     pub fn set(&mut self, needle: &str, tier: AppTier) -> &mut Self {
+        if needle.trim().is_empty() {
+            return self;
+        }
         let needle = needle.to_lowercase();
         match self.rules.iter_mut().find(|rule| rule.needle == needle) {
             Some(rule) => rule.tier = tier,
@@ -225,5 +234,52 @@ mod tests {
         let mut policy = AppPolicy::default();
         policy.set("Code", AppTier::Allow);
         assert!(policy.allows(Some("CODE"), false));
+    }
+}
+
+#[cfg(test)]
+mod empty_needle_tests {
+    use super::*;
+
+    /// A rule with no application name is a rule about every application.
+    ///
+    /// Matching is `contains`, and every name contains the empty string. A
+    /// stray `= allow` under `[applications]` therefore turned on automatic
+    /// reading in **everything**, silently, in a product whose default is
+    /// `modifier` precisely so nothing is read without being asked.
+    #[test]
+    fn a_rule_with_no_name_is_refused_rather_than_matching_everything() {
+        let mut policy = AppPolicy::new(AppTier::Modifier);
+        policy.set("", AppTier::Allow);
+
+        assert_eq!(policy.tier_for(Some("notepad")), AppTier::Modifier);
+        assert_eq!(policy.tier_for(Some("chrome")), AppTier::Modifier);
+        assert!(!policy.allows(Some("notepad"), false));
+    }
+
+    /// Whitespace is not a name either.
+    #[test]
+    fn a_rule_of_only_spaces_is_refused_too() {
+        let mut policy = AppPolicy::new(AppTier::Modifier);
+        policy.set("   ", AppTier::Allow);
+        assert_eq!(policy.tier_for(Some("notepad")), AppTier::Modifier);
+    }
+
+    /// And an empty deny does not switch the product off, which is the other
+    /// half of the same mistake.
+    #[test]
+    fn a_rule_with_no_name_cannot_deny_everything_either() {
+        let mut policy = AppPolicy::new(AppTier::Allow);
+        policy.set("", AppTier::Deny);
+        assert_eq!(policy.tier_for(Some("notepad")), AppTier::Allow);
+    }
+
+    /// A real name still works, which is the half a strict rule could break.
+    #[test]
+    fn a_named_rule_is_unaffected() {
+        let mut policy = AppPolicy::new(AppTier::Modifier);
+        policy.set("chrome", AppTier::Allow);
+        assert_eq!(policy.tier_for(Some("chrome.exe")), AppTier::Allow);
+        assert_eq!(policy.tier_for(Some("notepad")), AppTier::Modifier);
     }
 }
