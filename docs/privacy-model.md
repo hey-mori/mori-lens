@@ -375,6 +375,12 @@ per reading  179 ms of CPU
 against 0.16 percent idle. See
 [`benchmarks/2026-08-05-idle-cost.md`](benchmarks/2026-08-05-idle-cost.md).
 
+In wall clock it is worse, and worse in the case that matters. A
+fall-through over a desktop corner takes about 390ms; over a window with
+text in it, **1,366ms**, because the recogniser's work follows how much
+it finds rather than how many pixels it was handed
+([`benchmarks/2026-08-06-automatic-fall-through.md`](benchmarks/2026-08-06-automatic-fall-through.md)).
+
 **`ocr = automatic`, since 2026-08-06: not twice for the same pixel.** A
 reading comes back with the rectangle of every line in the region it read,
 so it has already answered every other point in that region. The next
@@ -382,6 +388,12 @@ settled hover inside that region, landing on none of those lines, is
 refused without a capture. It is remembered for 1.2 seconds and thrown
 away the moment a scroll, a keystroke or a click could have moved the
 pixels.
+
+Measured: eight readings at one point, **8 of 8 refused at zero cost**,
+against 387ms and 1,366ms for the same eight without the memory. That is
+the ceiling rather than the average, because a reader's pointer does not
+return to one pixel; what it establishes is that when the answer is
+already known, saying so costs nothing.
 
 What is kept is **where the lines were, never what they said**. That is
 not tidiness. A remembered reading would be a record of what somebody
