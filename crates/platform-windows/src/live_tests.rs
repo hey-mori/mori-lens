@@ -3615,3 +3615,153 @@ fn measure_whether_a_covered_window_can_render_itself() {
          is the failure this was run to find."
     );
 }
+
+/// Would walking up from the point find text where the point itself has none?
+///
+/// The acquirer gives up the moment `ElementFromPoint`'s element has no text
+/// pattern, and answers `Unsupported`. In a Chromium or Electron window a point
+/// very often lands on an overlay or a container, with the text-bearing element
+/// one or two steps above it.
+///
+/// This measures the lift before anything is built on it. For a grid over the
+/// window in front: how many points have a text pattern at the point, and how
+/// many more have one within a few steps up.
+///
+/// Counts only, and no text is read: this asks whether the pattern exists, not
+/// what it holds (`docs/privacy-model.md`).
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn measure_whether_an_ancestor_holds_the_text_a_point_does_not() {
+    use windows::core::Interface;
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+    use windows::Win32::UI::Accessibility::{
+        CUIAutomation, IUIAutomation, IUIAutomationTextPattern, TreeScope_Element,
+        UIA_TextPatternId,
+    };
+
+    /// How far up to look. Two or three is the depth a wrapper adds; a walk to
+    /// the window root would find the document element, whose range covers
+    /// everything and which ADR-0009's distance gate exists to reject.
+    const STEPS: usize = 3;
+
+    let _com = crate::com::ComScope::enter();
+    // SAFETY: creating the documented automation co-class in-process.
+    let Ok(automation) = (unsafe {
+        CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+    }) else {
+        println!("no automation");
+        return;
+    };
+
+    let Ok(front) = crate::foreground_window() else {
+        println!("no foreground window");
+        return;
+    };
+    let bounds = front.client_bounds;
+    let name = front.process_name.clone().unwrap_or_else(|| "?".into());
+    println!("\n{name} · {}x{}", bounds.width, bounds.height);
+
+    let (mut points, mut at_the_point, mut at_an_ancestor, mut depths) = (0, 0, 0, Vec::new());
+    let mut on_target = 0usize;
+    // SAFETY: read-only automation queries; a window that changes mid-walk
+    // yields an error rather than a crash.
+    unsafe {
+        let Ok(walker) = automation.RawViewWalker() else {
+            println!("no tree walker");
+            return;
+        };
+        let step = 32;
+        let mut y = bounds.y + 8;
+        while y < bounds.bottom() - 8 {
+            let mut x = bounds.x + 8;
+            while x < bounds.right() - 8 {
+                let point = windows::Win32::Foundation::POINT { x, y };
+                x += step;
+                let Ok(element) = automation.ElementFromPoint(point) else {
+                    continue;
+                };
+                if crate::root_window_at(lens_core::geometry::ScreenPoint::new(point.x, point.y))
+                    != Some(front.id)
+                {
+                    continue;
+                }
+                points += 1;
+
+                let has_text =
+                    |element: &windows::Win32::UI::Accessibility::IUIAutomationElement| {
+                        element.GetCurrentPattern(UIA_TextPatternId).ok().is_some()
+                    };
+                if has_text(&element) {
+                    at_the_point += 1;
+                    continue;
+                }
+                let mut current = element;
+                for depth in 1..=STEPS {
+                    let Ok(parent) = walker.GetParentElement(&current) else {
+                        break;
+                    };
+                    if has_text(&parent) {
+                        at_an_ancestor += 1;
+                        depths.push(depth);
+                        // **The number that decides whether this is worth
+                        // building.** An ancestor's range covers more than the
+                        // pixel, so it may answer with text that is nowhere
+                        // near it, which is the failure ADR-0009 exists for. A
+                        // pattern being reachable is not the same as its answer
+                        // being usable.
+                        let usable = parent
+                            .GetCurrentPattern(UIA_TextPatternId)
+                            .ok()
+                            .and_then(|pattern| pattern.cast::<IUIAutomationTextPattern>().ok())
+                            .and_then(|pattern| pattern.RangeFromPoint(point).ok())
+                            .map(|range| {
+                                let here = lens_core::geometry::ScreenPoint::new(point.x, point.y);
+                                crate::uia::bounding_rectangles(&range)
+                                    .iter()
+                                    .any(|rect| rect.contains(here))
+                            })
+                            .unwrap_or(false);
+                        if usable {
+                            on_target += 1;
+                        }
+                        break;
+                    }
+                    current = parent;
+                }
+            }
+            y += step;
+        }
+        let _ = TreeScope_Element;
+    }
+
+    let share = |count: usize| {
+        if points == 0 {
+            0.0
+        } else {
+            count as f64 * 100.0 / points as f64
+        }
+    };
+    println!("  points over this window   {points}");
+    println!(
+        "  text pattern at the point {at_the_point} ({:.1}%)",
+        share(at_the_point)
+    );
+    println!(
+        "  text pattern within {STEPS} up   {at_an_ancestor} ({:.1}%)",
+        share(at_an_ancestor)
+    );
+    println!(
+        "  and on target             {on_target} ({:.1}%)",
+        share(on_target)
+    );
+    if !depths.is_empty() {
+        let mut sorted = depths.clone();
+        sorted.sort_unstable();
+        println!("  steps needed, median      {}", sorted[sorted.len() / 2]);
+    }
+    println!(
+        "\n  A large second figure means the acquirer's Unsupported is a wrong\n  \
+         answer rather than a true one, and a walk would reach text a point\n  \
+         cannot. A small one means the text really is not near that pixel."
+    );
+}
