@@ -211,6 +211,30 @@ pub const MIN_LETTERS_TO_JUDGE: usize = 8;
 /// gloss.
 pub const ENOUGH_TO_BE_A_THIRD_LANGUAGE: usize = 4;
 
+/// How much of a script a source must hold before it counts as the source's
+/// own.
+///
+/// **One character does not, and this was measured the hard way.** A reader
+/// hovered a line of this repository's own source, and OCR read
+///
+/// ```text
+/// /// The word the operator says is under the pointer, for a correctness
+/// ```
+///
+/// as `... says 15 under the pointer, 于or' a correct`. `for` became `于or'`,
+/// with a single Han character in it.
+///
+/// That one character made Han look like one of the source's own scripts, so
+/// [`wrote_in_a_third_language`] stopped watching for it, and the answer came
+/// back ending `正確 或者 是一个正确的` and went on a card. A rule disarmed by a
+/// misreading is a rule that switches itself off exactly when the input is
+/// worst.
+///
+/// Four, the same figure as the answer side and for the same reason: a gloss
+/// or a misread is one or two characters, and a source actually written in a
+/// script has many.
+const ENOUGH_TO_BE_THE_SOURCES_OWN: usize = 4;
+
 /// How much shorter than its source a salvaged answer may be, as a divisor.
 ///
 /// A quarter. Korean renders English at roughly half to three quarters of the
@@ -272,7 +296,7 @@ fn intruding_scripts(source: &str, target_language: &str) -> Vec<Script> {
     ]
     .into_iter()
     .filter(|script| !written.signature.contains(script) && !written.companions.contains(script))
-    .filter(|script| in_the_source.count_of(*script) == 0)
+    .filter(|script| in_the_source.count_of(*script) < ENOUGH_TO_BE_THE_SOURCES_OWN)
     .collect()
 }
 
@@ -871,5 +895,69 @@ mod from_a_card_tests {
         // The half-sentence that trails off into the Chinese is not what a
         // reader is left with.
         assert!(!kept.ends_with("문본"), "{kept}");
+    }
+}
+
+#[cfg(test)]
+mod stray_script_tests {
+    use super::*;
+
+    /// The card a reader photographed on 2026-08-07.
+    ///
+    /// The source is a line of this repository's own file, so quoting it is
+    /// allowed: `docs/privacy-model.md` forbids printing what was **read**
+    /// unless this repository wrote it, and it did.
+    ///
+    /// OCR turned `for` into `于or'`. That one Han character made Han look
+    /// like one of the source's own scripts, the third-language rule stopped
+    /// watching for it, and Chinese went on the card.
+    const MISREAD_SOURCE: &str =
+        "/// The word the operator says 15 under the pointer, 于or' a correct";
+    const ANSWER: &str =
+        "포인터 아래에서 운영자가 말한 단어는 15번째 에 있습니다. 正確 或者 是一个正确的";
+
+    #[test]
+    fn one_stray_han_in_the_source_does_not_disarm_the_rule() {
+        assert!(
+            wrote_in_a_third_language(MISREAD_SOURCE, ANSWER, "Korean"),
+            "a single misread character switched the rule off",
+        );
+    }
+
+    #[test]
+    fn what_survives_the_cut_is_the_korean() {
+        let kept =
+            without_the_third_language(MISREAD_SOURCE, ANSWER, "Korean").expect("the Korean part");
+        assert!(kept.contains("포인터 아래에서"), "{kept}");
+        assert!(!kept.contains('\u{6b63}'), "{kept}");
+        assert!(!wrote_in_a_third_language(MISREAD_SOURCE, &kept, "Korean"));
+    }
+
+    /// And a source really written in Han is still exempt, which is the half
+    /// the loosened rule could break.
+    #[test]
+    fn a_source_actually_written_in_han_is_still_its_own() {
+        let source = "输出文件返回时是空的，所以整个测试集没有产生任何东西。";
+        let answer = "출력 파일이 비어 있었습니다 输出文件返回时是空的";
+        assert!(!wrote_in_a_third_language(source, answer, "Korean"));
+    }
+
+    /// The boundary, stated as a number so moving it is deliberate.
+    #[test]
+    fn the_line_between_a_misread_and_a_source_script_is_four_characters() {
+        let answer = "한국어 문장 中文中文中文";
+        // Three is still a misread's worth, so Han stays watched.
+        assert!(wrote_in_a_third_language(
+            "a source with 三个字 in it",
+            answer,
+            "Korean"
+        ));
+        // Four is the source's own.
+        assert!(!wrote_in_a_third_language(
+            "a source with 三个字符 in it",
+            answer,
+            "Korean",
+        ));
+        assert_eq!(ENOUGH_TO_BE_THE_SOURCES_OWN, 4);
     }
 }
