@@ -19,6 +19,7 @@
 mod appearance;
 pub mod autostart;
 pub mod capture;
+pub mod clipboard;
 mod com;
 mod glass;
 mod inventory;

@@ -3440,3 +3440,45 @@ ceiling {ceiling}px, heights {heights:?}"
         );
     }
 }
+
+/// A string put on the clipboard is the string that comes back.
+///
+/// Live because there is nothing to assert without a real clipboard: the whole
+/// function is four Win32 calls and the ownership rule between them.
+///
+/// **It replaces whatever the user had copied**, which is why it is `#[ignore]`
+/// like the rest and why it puts the previous contents back afterwards. A test
+/// that quietly emptied somebody's clipboard would be the kind of thing this
+/// repository writes rules about.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn text_put_on_the_clipboard_comes_back_unchanged() {
+    use crate::clipboard;
+
+    let theirs = clipboard::read_text();
+
+    // Two lines, Korean and Latin, which is the shape a card produces.
+    let written =
+        "The pointer must rest before anything is read.\n포인터가 멈춘 뒤에야 무엇이든 읽습니다.";
+    assert!(clipboard::put_text(written), "the clipboard would not open");
+
+    let read = clipboard::read_text().expect("something on the clipboard");
+    assert_eq!(read, written);
+
+    // A second write replaces rather than appends, which is what `EmptyClipboard`
+    // is there for and the failure a reader would notice first.
+    assert!(clipboard::put_text("second"));
+    assert_eq!(clipboard::read_text().as_deref(), Some("second"));
+
+    // Nothing is written for nothing, so an empty card cannot wipe a clipboard.
+    assert!(!clipboard::put_text(""));
+    assert_eq!(clipboard::read_text().as_deref(), Some("second"));
+
+    match theirs {
+        Some(theirs) => {
+            let _ = clipboard::put_text(&theirs);
+            println!("clipboard restored, {} chars", theirs.chars().count());
+        }
+        None => println!("the clipboard held no text before this ran"),
+    }
+}
