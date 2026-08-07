@@ -373,6 +373,54 @@ fn uia_pass(
     pass
 }
 
+/// Whether the words on a covered window's pixels are in its accessibility
+/// tree at all.
+///
+/// **The question a covered run can answer, and the one issue #14 is open on.**
+/// A sweep of a covered window measures nothing, because `ElementFromPoint`
+/// answers about whatever is on top. The tree can still be asked *by handle*,
+/// which is what `inventory` does, and comparing that against what the pixels
+/// say separates two very different findings:
+///
+/// - a **low** share: the text is not in the tree, and no amount of getting
+///   targeting right would reach it
+/// - a **high** share: the text is there and a pointer cannot get to it, which
+///   is a different problem with a different answer
+///
+/// Counts only. Neither reading is printed, and the tree's words are held as a
+/// set so they cannot reconstruct a document (`docs/privacy-model.md`).
+fn report_the_overlap(id: i64, lines: &[ocr::OcrLine]) {
+    let in_the_tree = lens_platform_windows::text_words_of(id);
+    let seen: std::collections::HashSet<String> = lines
+        .iter()
+        .flat_map(|line| line.text.split_whitespace())
+        .map(comparable_word)
+        .filter(|word| !word.is_empty())
+        .collect();
+    let shared = seen
+        .iter()
+        .filter(|word| in_the_tree.contains(*word))
+        .count();
+    let share = if seen.is_empty() {
+        0.0
+    } else {
+        shared as f64 * 100.0 / seen.len() as f64
+    };
+    println!(
+        "  by handle {} distinct words on the pixels, {shared} of them also in the\n               accessibility tree ({share:.0}%). The tree holds {} distinct words in all.\n               A low share means the text is not in the tree. A high one means it\n               is there and a pointer cannot reach it. OCR misreads pull this\n               down, so a low number is weaker evidence than a high one.",
+        seen.len(),
+        in_the_tree.len(),
+    );
+}
+
+/// The same normalisation the tree side uses, so the two sets are comparable.
+fn comparable_word(word: &str) -> String {
+    word.chars()
+        .filter(|c| c.is_alphanumeric() || *c == '_')
+        .collect::<String>()
+        .to_lowercase()
+}
+
 /// Which window is actually in front, for the row to say whether these pixels
 /// came off the screen or out of the window.
 fn front_id_of(only: &Option<String>, chosen: i64) -> i64 {
@@ -475,9 +523,9 @@ pub fn run(acquirer: &UiaTextAcquirer, options: &OcrOptions) -> Result<OcrRow, S
     };
     if printed_instead {
         println!(
-            "  rendered  the window is behind another; it drew itself, {ink:.1}% ink.\n               Accessibility still answers about whatever is on top, so only the\n               OCR half of this row is about {}.",
-            process_name.as_deref().unwrap_or("this window"),
+            "  rendered  the window is behind another; it drew itself, {ink:.1}% ink.\n               Accessibility by point still answers about whatever is on top,\n               so those columns below are empty by construction."
         );
+        report_the_overlap(id, &lines);
     }
 
     let read = ocr::Recognised {
