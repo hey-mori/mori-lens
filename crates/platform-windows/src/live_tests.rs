@@ -3510,3 +3510,105 @@ fn text_put_on_the_clipboard_comes_back_unchanged() {
         None => println!("the clipboard held no text before this ran"),
     }
 }
+
+/// Can a window that is covered be read at all, and by which path?
+///
+/// A reader asked whether OCR means the window has to be in front. The answer
+/// has three parts and only measurement separates them, so this asks each
+/// window on the desktop to render itself with `PrintWindow` and reports
+/// whether anything came back.
+///
+/// **Shape only, never content** (`docs/privacy-model.md`). What is printed is
+/// the size, whether the bitmap is one flat colour, and the share of pixels
+/// that differ from the corner. Nothing is written anywhere.
+///
+/// This is an experiment, not a product path. Lens captures a band around the
+/// pointer and the pointer is on the topmost window by definition.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn measure_whether_a_covered_window_can_render_itself() {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Gdi::{
+        CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, ReleaseDC,
+        SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+    };
+    use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
+
+    /// `PW_RENDERFULLCONTENT`, which is what makes this worth trying at all:
+    /// without it a composited window renders as a blank rectangle.
+    const FULL_CONTENT: PRINT_WINDOW_FLAGS = PRINT_WINDOW_FLAGS(0x0000_0002);
+
+    println!("\nwindow                 size        rendered   ink");
+
+    for window in crate::top_level_windows() {
+        let bounds = window.client_bounds;
+        let (width, height) = (bounds.width.min(1600), bounds.height.min(1000));
+        if width <= 0 || height <= 0 {
+            continue;
+        }
+        let name = window.process_name.clone().unwrap_or_else(|| "?".into());
+
+        let header = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width,
+                biHeight: -height,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // SAFETY: every handle is released on every path, and the pixels are
+        // read before the bitmap is deleted.
+        let measured = unsafe {
+            let screen = GetDC(None);
+            if screen.is_invalid() {
+                continue;
+            }
+            let memory = CreateCompatibleDC(Some(screen));
+            let mut bits: *mut core::ffi::c_void = std::ptr::null_mut();
+            let made = CreateDIBSection(Some(memory), &header, DIB_RGB_COLORS, &mut bits, None, 0);
+            let outcome = match made {
+                Ok(bitmap) => {
+                    let previous = SelectObject(memory, bitmap.into());
+                    let ok = PrintWindow(HWND(window.id as *mut _), memory, FULL_CONTENT).as_bool();
+                    let ink = if ok && !bits.is_null() {
+                        let count = (width * height) as usize * 4;
+                        let pixels = std::slice::from_raw_parts(bits.cast::<u8>(), count);
+                        let corner = &pixels[..3];
+                        let different = pixels
+                            .chunks_exact(4)
+                            .filter(|pixel| pixel[..3] != *corner)
+                            .count();
+                        different as f64 * 100.0 / (width * height) as f64
+                    } else {
+                        0.0
+                    };
+                    SelectObject(memory, previous);
+                    let _ = DeleteObject(bitmap.into());
+                    Some((ok, ink))
+                }
+                Err(_) => None,
+            };
+            let _ = DeleteDC(memory);
+            ReleaseDC(None, screen);
+            outcome
+        };
+
+        if let Some((ok, ink)) = measured {
+            println!(
+                "{name:<22} {width:>5}x{height:<5} {:<10} {ink:>5.1}%",
+                if ok { "yes" } else { "NO" },
+            );
+        }
+    }
+
+    println!(
+        "\nink is the share of pixels differing from the corner one. A window that\n\
+         rendered but came back at 0.0% answered the call and drew nothing, which\n\
+         is the failure this was run to find."
+    );
+}
