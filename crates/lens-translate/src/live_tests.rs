@@ -1387,3 +1387,54 @@ fn warming_a_model_that_is_not_installed_reports_it() {
         }
     }
 }
+
+/// What the deep path says about text the reader can already read.
+///
+/// The case that had no answer at all until 2026-08-06: a Korean reader
+/// hovering Korean got nothing, correctly refusing to translate it and
+/// stopping there. A word somebody can read and does not know is the
+/// commonest thing on a technical screen.
+///
+/// Printing is allowed: every sentence below was written into this repository
+/// and none came off a screen (`docs/privacy-model.md` §3).
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn analyse_explains_a_term_in_the_readers_own_language() {
+    use lens_core::analyse::{Analyser, DeepRequest};
+
+    let mut translator = OllamaTranslator::choosing(DEFAULT_ENDPOINT);
+    if translator.resolve_model().is_err() {
+        println!("no model");
+        return;
+    }
+    println!("\nmodel: {}", translator.model());
+
+    let cases: [(&str, &str); 3] = [
+        ("RowQuery는 멱등성을 보장하지 않습니다.", "멱등성"),
+        ("이 값은 캐시에 저장되며 TTL이 지나면 만료됩니다.", "TTL"),
+        ("접근성 트리가 차가우면 첫 읽기가 느립니다.", "접근성"),
+    ];
+
+    for (sentence, word) in cases {
+        let request =
+            DeepRequest::about_what_they_can_read(sentence, "Korean").about_the_word(word);
+        println!("\nKO   {sentence}");
+        println!("     asked about: {word}");
+        match translator.deep(&request) {
+            Ok(analysis) => {
+                println!("     {}ms", analysis.latency_ms);
+                for (heading, text) in analysis.lines() {
+                    println!("     {heading:<12} {text}");
+                }
+                // The thing this exists to avoid: an explanation that is the
+                // sentence again. A model told not to restate it that restates
+                // it anyway has answered nothing.
+                assert!(
+                    !analysis.lines().iter().any(|(_, text)| *text == sentence),
+                    "the explanation is the sentence again",
+                );
+            }
+            Err(error) => println!("     failed [{}]", error.reason()),
+        }
+    }
+}
