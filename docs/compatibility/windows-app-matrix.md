@@ -563,6 +563,49 @@ warm-up and is not a latency measurement.
 The gate still needs deliberate hovering over real prose in the eight
 target applications.
 
+### A fourth VS Code run, 2026-08-06, that settles nothing
+
+Build `261ec78`, `hover-probe inventory` and `hover-probe sweep --only
+Code`, on a desktop nobody rearranged for it.
+
+Recorded because it looks at first like a contradiction of everything
+below, and is not, and the next person to run these two commands will
+see the same thing.
+
+The inventory reports VS Code holding **107 elements, all 107 with text,
+8,131 characters**, the largest of any window on the desktop, with 12 of
+12 sampled elements resolving back into themselves.
+
+The sweep over the same window:
+
+```
+Code  1440x900 at (2190, 120)
+  cold   acquired 15/67 (22%)   on-target 15/15 (100%)   (193 occluded)
+         separable 15 distinct targets among 15 on-target hits
+         control 50020x15   unsupported 52
+```
+
+22% against the 2.8% in the table above, and every hit on target and
+separable.
+
+**It settles nothing, and the reason is the occlusion count.** 193 of
+260 points were covered by another window and skipped, so this measured
+the visible **26%** of a mostly-buried window, which is its edges: the
+tab strip, the activity bar, the status bar. That is exactly where the
+`50020` labels live and exactly not where the editor is. A high hit rate
+over the chrome is what the rows below already say.
+
+The inventory number has the same shape. It asks each window by handle
+rather than by coordinate, so it reaches text the pointer cannot, and
+nobody has attributed those 8,131 characters to the editor rather than
+to the file tree, the tabs and the command palette. Counting them is not
+the same as showing a pointer can reach one.
+
+**What would settle it** is the run the section below did: VS Code in
+front, unoccluded, swept and then read with OCR over the same grid. That
+run put the editor at zero three times. Until somebody repeats it with
+`editor.accessibilitySupport` turned on (#14), the answer stands.
+
 ### OCR against VS Code, 2026-08-06: the M4 question, answered
 
 Build `563c9a2`, `hover-probe ocr --only Code --wait 6`, one window at
