@@ -102,6 +102,10 @@ pub struct Reach {
     /// How many separate rests have happened with the modifier not held.
     rests: u32,
     told_about_the_modifier: bool,
+    /// Settled hovers on text the reader can already read, and whether they
+    /// have been told what to press for it.
+    own_language: u32,
+    told_about_explaining: bool,
 }
 
 /// How long the pointer must be still before it counts as a rest.
@@ -123,6 +127,19 @@ const REST_RADIUS: f64 = 12.0;
 /// Two. One pause is somebody reading the sentence under their pointer, which
 /// is the normal way to use a screen and not a request for help.
 pub const RESTS_BEFORE_TELLING: u32 = 2;
+
+/// How many hovers on the reader's own language before the key is mentioned.
+///
+/// Three, and **not three in a row**. The evidence wanted is "this person
+/// reads this language", which a scattered three answers as well as a
+/// consecutive three: an English screen with a Korean menu item on it does not
+/// produce three, and a Korean document produces them in the first few
+/// seconds.
+///
+/// The run rule that [`RUN_BEFORE_OFFERING`] uses is about an **application**,
+/// where an interruption really is evidence that the previous failures were
+/// about the pixel rather than the window. This is about a reader.
+pub const READS_BEFORE_TELLING: u32 = 3;
 
 impl Reach {
     pub fn new() -> Self {
@@ -172,6 +189,35 @@ impl Reach {
         self.remember(app);
         self.run = 0;
         self.current = None;
+        true
+    }
+
+    /// A settled hover produced text the reader can already read.
+    ///
+    /// Nothing is translated, correctly, and until 2026-08-06 nothing else
+    /// happened either. Now `Ctrl+Alt+D` explains it, and a capability nobody
+    /// can discover is the silent product this module exists to prevent.
+    ///
+    /// Returns `true` exactly once per session, on the third such hover.
+    ///
+    /// # Once per session, not once per application
+    ///
+    /// The other offer here is about an application: *this window exposes no
+    /// text, and a key would read it anyway*. That is a fact about the window
+    /// and it has to be made again in the next window.
+    ///
+    /// This is a fact about the **product**, learned once. Repeating it per
+    /// application would be telling somebody the same thing every time they
+    /// switch to a different Korean document.
+    pub fn readable_without_translation(&mut self) -> bool {
+        if self.told_about_explaining {
+            return false;
+        }
+        self.own_language += 1;
+        if self.own_language < READS_BEFORE_TELLING {
+            return false;
+        }
+        self.told_about_explaining = true;
         true
     }
 
@@ -430,5 +476,65 @@ mod modifier_tests {
         );
         assert!(!reach.pointer(here, ms(1950), true));
         assert!(reach.pointer(here, ms(2900), true));
+    }
+}
+
+#[cfg(test)]
+mod own_language_tests {
+    use super::*;
+
+    /// Three hovers on the reader's own language, then the key is named, then
+    /// never again.
+    #[test]
+    fn the_key_is_offered_once_on_the_third_reading() {
+        let mut reach = Reach::new();
+        for round in 1..READS_BEFORE_TELLING {
+            assert!(
+                !reach.readable_without_translation(),
+                "offered on reading {round}",
+            );
+        }
+        assert!(reach.readable_without_translation());
+        for _ in 0..20 {
+            assert!(!reach.readable_without_translation(), "offered twice");
+        }
+    }
+
+    /// Not three in a row. The evidence wanted is that this person reads this
+    /// language, and hovers on other things in between do not make that less
+    /// true.
+    #[test]
+    fn readings_of_other_things_in_between_do_not_reset_it() {
+        let mut reach = Reach::new();
+        assert!(!reach.readable_without_translation());
+        // A hover that produced a translation, in some other application.
+        reach.readable(Some("chrome"));
+        reach.card_shown();
+        assert!(!reach.readable_without_translation());
+        assert!(reach.readable_without_translation());
+    }
+
+    /// A card that draws nothing must not cancel the first-run hint.
+    ///
+    /// `card_shown` used to be called before the branch that returns without
+    /// drawing anything, so a reader whose screen is their own language had
+    /// the modifier hint cancelled by hovers that showed them nothing. This
+    /// asserts the two are independent, which is what makes moving the call
+    /// safe to keep.
+    #[test]
+    fn telling_them_about_the_key_is_not_telling_them_about_the_modifier() {
+        let mut reach = Reach::new();
+        for _ in 0..READS_BEFORE_TELLING {
+            reach.readable_without_translation();
+        }
+        // Two rests with the modifier not held, which is what the other hint
+        // waits for.
+        let point = crate::geometry::ScreenPoint::new(100, 100);
+        let mut told = false;
+        for tick in 0..40u64 {
+            let now = Duration::from_millis(tick * 100);
+            told |= reach.pointer(point, now, true);
+        }
+        assert!(told, "the modifier hint was cancelled by the other one");
     }
 }

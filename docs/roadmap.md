@@ -184,6 +184,11 @@ model the reader can read this and wants the part they did not know.
 That is the first thing this product does that is not translation, and
 it needed no new acquisition, no new card and no new trigger.
 
+It is also offered rather than hidden. `reach` says the key once a
+session, on the third hover that produced text the reader can already
+read, on a card, because a release binary has no console. A capability
+nobody can discover is the silent product that module exists for.
+
 Not started: save, and the developer and exam profiles.
 
 ## M6 · macOS acquisition
