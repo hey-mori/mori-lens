@@ -29,6 +29,7 @@ use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, MSG, PM_REMOVE, WM_H
 const PAUSE_ID: i32 = 0x4C31;
 const OCR_ID: i32 = 0x4C32;
 const EXPLAIN_ID: i32 = 0x4C33;
+const COPY_ID: i32 = 0x4C34;
 
 /// `L`, for Lens.
 const VK_L: u32 = 0x4C;
@@ -38,6 +39,8 @@ const VK_O: u32 = 0x4F;
 /// select-all in whatever has focus, which matters because a global chord that
 /// fails to register is a key that silently does nothing.
 const VK_D: u32 = 0x44;
+/// `C`, for copy, and the letter every other program uses for it.
+const VK_C: u32 = 0x43;
 
 /// What a press asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +59,11 @@ pub enum Pressed {
     /// ([ADR-0004](../../../docs/decisions/ADR-0004-passive-overlay.md)) and a
     /// card that could be clicked would be a card that takes focus.
     Explain,
+    /// Put what the card is showing on the clipboard.
+    ///
+    /// The card cannot be selected, because the overlay passes clicks through,
+    /// so without this there is no way at all to keep an answer.
+    Copy,
 }
 
 /// Registers both global keys and reports presses.
@@ -70,6 +78,7 @@ pub struct PauseKey {
     registered: bool,
     ocr_registered: bool,
     explain_registered: bool,
+    copy_registered: bool,
     paused: bool,
 }
 
@@ -82,13 +91,14 @@ impl PauseKey {
         // to this thread's message queue rather than to a window.
         // SAFETY: registers documented thread-local hotkeys; `None` binds them
         // to this thread's message queue rather than to a window.
-        let (registered, ocr_registered, explain_registered) = unsafe {
+        let (registered, ocr_registered, explain_registered, copy_registered) = unsafe {
             // NOREPEAT so holding a chord does not fire repeatedly.
             let modifiers = HOT_KEY_MODIFIERS(MOD_CONTROL.0 | MOD_ALT.0 | MOD_NOREPEAT.0);
             (
                 RegisterHotKey(None, PAUSE_ID, modifiers, VK_L).is_ok(),
                 RegisterHotKey(None, OCR_ID, modifiers, VK_O).is_ok(),
                 RegisterHotKey(None, EXPLAIN_ID, modifiers, VK_D).is_ok(),
+                RegisterHotKey(None, COPY_ID, modifiers, VK_C).is_ok(),
             )
         };
 
@@ -96,6 +106,7 @@ impl PauseKey {
             registered,
             ocr_registered,
             explain_registered,
+            copy_registered,
             paused: false,
         }
     }
@@ -108,6 +119,11 @@ impl PauseKey {
     /// Whether Ctrl+Alt+D was taken by something else.
     pub fn explain_is_registered(&self) -> bool {
         self.explain_registered
+    }
+
+    /// Whether Ctrl+Alt+C was taken by something else.
+    pub fn copy_is_registered(&self) -> bool {
+        self.copy_registered
     }
 
     pub fn is_registered(&self) -> bool {
@@ -133,7 +149,11 @@ impl PauseKey {
     /// and retire the card without printing a line on every loop iteration.
     pub fn poll(&mut self) -> Vec<Pressed> {
         let mut pressed = Vec::new();
-        if !self.registered && !self.ocr_registered && !self.explain_registered {
+        if !self.registered
+            && !self.ocr_registered
+            && !self.explain_registered
+            && !self.copy_registered
+        {
             return pressed;
         }
         let mut message = MSG::default();
@@ -149,6 +169,7 @@ impl PauseKey {
                 }
                 OCR_ID => pressed.push(Pressed::ReadWithOcr),
                 EXPLAIN_ID => pressed.push(Pressed::Explain),
+                COPY_ID => pressed.push(Pressed::Copy),
                 _ => {}
             }
         }
@@ -166,6 +187,7 @@ impl Drop for PauseKey {
             (self.registered, PAUSE_ID),
             (self.ocr_registered, OCR_ID),
             (self.explain_registered, EXPLAIN_ID),
+            (self.copy_registered, COPY_ID),
         ] {
             if held {
                 // SAFETY: unregisters a hotkey this instance registered.

@@ -69,6 +69,9 @@ What ships, each of it measured rather than asserted:
   you were on, its part of speech, what it means in this sentence, the
   clause structure. Only on a keypress, never on a hover, and labelled
   as a model's account rather than as fact.
+- **It lets you keep it.** `Ctrl+Alt+C` puts the sentence and its answer
+  on the clipboard. The card cannot be selected, because it passes
+  clicks through, so without this there is no way to keep anything.
 
 What does not exist yet: macOS, saved vocabulary, and a settings
 window. Sequenced in [docs/roadmap.md](docs/roadmap.md).
