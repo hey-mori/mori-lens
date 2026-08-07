@@ -174,8 +174,17 @@ version, per ADR-0005. Measured through `--selftest`, a remembered
 explanation comes back in **7 microseconds** against 4.4 seconds.
 
 Copy is built: `Ctrl+Alt+C`, the sentence and its answer, carrying the
-AI-explanation label when what is copied is an explanation. Not started:
-save, and the developer and exam profiles.
+AI-explanation label when what is copied is an explanation.
+
+**The deep path now also answers where the quick path correctly refuses
+to.** Text already in the reader's language is never translated, and
+until 2026-08-06 that meant Lens did nothing with it at all. It is now
+remembered and `Ctrl+Alt+D` explains it, with a prompt that tells the
+model the reader can read this and wants the part they did not know.
+That is the first thing this product does that is not translation, and
+it needed no new acquisition, no new card and no new trigger.
+
+Not started: save, and the developer and exam profiles.
 
 ## M6 · macOS acquisition
 
