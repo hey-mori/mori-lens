@@ -168,6 +168,12 @@ pub struct DeepAnalysis {
     /// Which model said it, for the same reason a translation carries one.
     pub model: String,
     pub latency_ms: u64,
+    /// Whether this came back from memory rather than from the model.
+    ///
+    /// The footer says what just happened, and 4.4초 on a press that cost
+    /// microseconds is a lie about the only number on the card a reader can
+    /// check against their own experience of having waited.
+    pub cached: bool,
 }
 
 impl DeepAnalysis {

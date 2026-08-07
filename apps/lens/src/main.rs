@@ -31,7 +31,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use lens_core::analyse::{Analyser, DeepRequest};
-use lens_core::cache::{CacheKey, TranslationCache};
+use lens_core::cache::{AnalysisCache, CacheKey, TranslationCache};
 use lens_core::card::Card;
 use lens_core::geometry::{ScreenPoint, ScreenRect};
 use lens_core::hover::{Generation, HoverConfig};
@@ -127,13 +127,27 @@ struct Answer {
     final_answer: bool,
 }
 
-/// Bumped whenever the prompt changes, so a cache filled by the old wording is
-/// not served under the new one.
+/// Bumped whenever the quick prompt changes, so a cache filled by the old
+/// wording is not served under the new one.
 const PROMPT_VERSION: u32 = 1;
+
+/// The same, for the deep prompt.
+///
+/// Its own number because the two prompts change independently, and one shared
+/// between them would throw away every translation whenever a heading in the
+/// analysis was reworded (ADR-0005).
+const DEEP_PROMPT_VERSION: u32 = 1;
 
 /// How many sentences to remember. A reader revisits a paragraph, not a book,
 /// and every entry is text the user read, so the bound is small on purpose.
 const CACHE_ENTRIES: usize = 256;
+
+/// How many explanations to remember.
+///
+/// Far fewer than sentences. An explanation is asked for by pressing a key, so
+/// a reader produces a handful in a session against hundreds of hovers, and
+/// each entry is five lines rather than one.
+const ANALYSIS_ENTRIES: usize = 32;
 
 const USAGE: &str = "\
 lens · Mori Lens
@@ -631,6 +645,9 @@ fn main() -> std::process::ExitCode {
         // every request resets it, so within that window the model is
         // certainly still in memory and there is nothing to ask about.
         let mut last_answer: Option<Instant> = None;
+        // Its own map and its own keys, per ADR-0005. Explaining the same
+        // sentence twice was two four-second generations before this.
+        let mut explanations = AnalysisCache::new(ANALYSIS_ENTRIES);
         const LEASE_IS_SAFE_FOR: Duration = Duration::from_secs(20 * 60);
 
         while let Ok(job) = jobs_rx.recv() {
@@ -659,6 +676,20 @@ fn main() -> std::process::ExitCode {
                     if let Some(word) = &job.focused_word {
                         request = request.about_the_word(word);
                     }
+
+                    let key =
+                        CacheKey::for_analysis(&request, translator.model(), DEEP_PROMPT_VERSION);
+                    if let Some(hit) = explanations.get(&key) {
+                        println!("deep  {} lines from memory", hit.lines().len());
+                        let _ = answers_tx.send(Answer {
+                            generation: job.generation,
+                            card: Card::analysed(&job.original, &hit),
+                            anchor: job.anchor,
+                            final_answer: true,
+                        });
+                        continue;
+                    }
+
                     let card = match translator.deep(&request) {
                         Ok(analysis) => {
                             println!(
@@ -666,6 +697,7 @@ fn main() -> std::process::ExitCode {
                                 analysis.lines().len(),
                                 analysis.latency_ms,
                             );
+                            explanations.insert(key, analysis.clone());
                             Card::analysed(&job.original, &analysis)
                         }
                         Err(error) => {
@@ -1844,6 +1876,23 @@ total {}ms from acquisition to card",
                 for (heading, text) in analysis.lines() {
                     println!("   {heading:<12} {} chars", text.chars().count());
                 }
+                // The same press again, which is what a reader who lost the
+                // card and pressed the key a second time produces. Its own
+                // cache, its own key (ADR-0005), and four seconds either way.
+                let mut explanations = AnalysisCache::new(ANALYSIS_ENTRIES);
+                let key = CacheKey::for_analysis(&deep, translator.model(), DEEP_PROMPT_VERSION);
+                explanations.insert(key.clone(), analysis.clone());
+                let again = Instant::now();
+                match explanations.get(&key) {
+                    Some(hit) => println!(
+                        "   cache      the same sentence again in {}us, {} lines, cached={}",
+                        again.elapsed().as_micros(),
+                        hit.lines().len(),
+                        hit.cached,
+                    ),
+                    None => println!("   cache      MISS on an analysis just inserted"),
+                }
+
                 if !overlay.show(Card::analysed(&sentence, &analysis), anchor) {
                     println!("   REFUSED    the analysis card was not showable");
                     return std::process::ExitCode::from(1);
