@@ -275,6 +275,14 @@ pub fn parameter_billions(name: &str) -> Option<f32> {
 /// whenever it is installed. `None` means nobody chose, and the rules below
 /// decide.
 ///
+/// **A named model that is not installed does not fall through to the rules
+/// here**, and the caller is what stops it: `OllamaTranslator::resolve_model`
+/// answers `ModelMissing` before asking. It used to fall through, and a reader
+/// who named a model they had not pulled got a different one with nothing said
+/// about it. This function keeps the fall-through because it is the right
+/// behaviour for the `None` case and because a pure function is the wrong
+/// place to decide whose promise was broken.
+///
 /// The distinction is load-bearing. While the fallback name was passed here as
 /// though it were a choice, a machine that happened to have that exact model
 /// installed short-circuited every rule, and the better model sitting beside it
