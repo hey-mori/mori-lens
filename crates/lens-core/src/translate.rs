@@ -143,7 +143,7 @@ pub fn reads_as_the_source(source: &str, answer: &str) -> bool {
 
 /// Words as they compare: lower-case, stripped of anything but letters,
 /// digits and underscores, and with what is left of an empty word dropped.
-fn comparable_words(text: &str) -> Vec<String> {
+pub(crate) fn comparable_words(text: &str) -> Vec<String> {
     text.split_whitespace()
         .map(|word| {
             word.trim_matches(|c: char| !c.is_alphanumeric() && c != '_')

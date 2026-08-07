@@ -100,7 +100,8 @@ struct Explainable {
     original: String,
     focused_word: Option<String>,
     anchor: ScreenRect,
-    translation: String,
+    /// See [`Explain::translation`].
+    translation: Option<String>,
 }
 
 /// What the worker is asked to explain.
@@ -112,7 +113,9 @@ struct Explainable {
 struct Explain {
     generation: Generation,
     original: String,
-    translation: String,
+    /// `None` when the reader can already read the source, which is not a
+    /// missing value: there is no translation and there should not be one.
+    translation: Option<String>,
     focused_word: Option<String>,
     anchor: ScreenRect,
     language: String,
@@ -678,8 +681,12 @@ fn main() -> std::process::ExitCode {
                     // The deep path. Grounded on the translation already on the
                     // screen, so this is one focused generation rather than a
                     // second full one (ADR-0005).
-                    let mut request =
-                        DeepRequest::new(&job.original, &job.translation, &job.language);
+                    let mut request = match &job.translation {
+                        Some(translation) => {
+                            DeepRequest::new(&job.original, translation, &job.language)
+                        }
+                        None => DeepRequest::about_what_they_can_read(&job.original, &job.language),
+                    };
                     if let Some(word) = &job.focused_word {
                         request = request.about_the_word(word);
                     }
@@ -1215,10 +1222,17 @@ fn main() -> std::process::ExitCode {
                         },
                     );
                     if decide(&reading.sentence, &language) == Decision::AlreadyInTarget {
-                        overlay.show(
-                            Card::not_readable("이미 읽을 수 있는 언어입니다"),
-                            reading.anchor,
-                        );
+                        // Said differently now, because it is no longer the
+                        // end of what Lens can do with this sentence. The card
+                        // that reported a dead end now names the key that is
+                        // not one.
+                        explainable = Some(Explainable {
+                            original: reading.sentence.clone(),
+                            focused_word: Some(reading.word.clone()),
+                            anchor: reading.anchor,
+                            translation: None,
+                        });
+                        overlay.show(Card::already_readable("Ctrl+Alt+D"), reading.anchor);
                     } else {
                         life.job_dispatched(generation, reading.anchor, started.elapsed());
                         pending_original = reading.sentence.clone();
@@ -1365,12 +1379,27 @@ fn main() -> std::process::ExitCode {
                     // re-words their own sentence, which on a mostly-Korean
                     // screen is most hovers.
                     if decide(&sentence, &language) == Decision::AlreadyInTarget {
-                        // The last silent path. A reader hovering Korean saw
-                        // nothing happen and had no way to tell that from an
-                        // application exposing no text, which every other
-                        // quiet outcome now explains.
+                        // No card, for the reason below: a Korean reader
+                        // hovering Korean does not want it re-worded.
+                        //
+                        // **But it is remembered**, so `Ctrl+Alt+D` can
+                        // explain it. A word somebody can read and does not
+                        // know is the commonest thing on a technical screen,
+                        // and until now this branch dropped the sentence on
+                        // the floor and left the whole of the reader's own
+                        // language outside the product.
+                        let anchor = target
+                            .card_anchor(point)
+                            .or_else(|| target.anchor())
+                            .unwrap_or(ScreenRect::new(point.x, point.y, 1, 1));
+                        explainable = Some(Explainable {
+                            original: sentence,
+                            focused_word: target.segmented.word_text().map(str::to_owned),
+                            anchor,
+                            translation: None,
+                        });
                         if let Some(line) = narrator.line_for_skip(
-                            &format!("already in {language}"),
+                            &format!("already in {language}, Ctrl+Alt+D explains it"),
                             process_name.as_deref(),
                         ) {
                             println!("{line}");
@@ -1478,7 +1507,7 @@ fn main() -> std::process::ExitCode {
                         original: answer.card.original.clone(),
                         focused_word: pending_word.clone(),
                         anchor: pending_anchor,
-                        translation: text.clone(),
+                        translation: Some(text.clone()),
                     });
                 }
             }

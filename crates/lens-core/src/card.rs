@@ -281,6 +281,22 @@ impl Card {
         }
     }
 
+    /// Text the reader can already read, which is not a dead end any more.
+    ///
+    /// This card used to say `이미 읽을 수 있는 언어입니다` and stop, and that
+    /// was the whole of what Lens did with somebody's own language. A word you
+    /// can read and do not know is the commonest thing on a technical screen,
+    /// and translating it is not the answer: explaining it is.
+    ///
+    /// So the sentence stayed true and the card stopped ending there.
+    pub fn already_readable(key: &str) -> Self {
+        Self {
+            original: String::new(),
+            body: CardBody::Problem("읽을 수 있는 언어라 번역하지 않았습니다".to_owned()),
+            footer: format!("{key} 를 누르면 뜻을 설명합니다"),
+        }
+    }
+
     /// The card a first-time reader needs, and the one nothing could tell them.
     ///
     /// The default tier puts reading behind a modifier, so a new user rests the
@@ -946,6 +962,7 @@ mod copy_tests {
         );
         card("not_readable", Card::not_readable("읽지 못했습니다"));
         card("explaining", Card::explaining("a sentence"));
+        card("already_readable", Card::already_readable("Ctrl+Alt+D"));
         card(
             "analysed",
             Card::analysed(
