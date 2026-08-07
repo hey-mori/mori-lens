@@ -654,6 +654,18 @@ impl Recognised {
 /// - **`5h0l` for `show`, `0f` for `Off`.** Digits standing in for letters,
 ///   with no Hangul anywhere. Catching that needs a rule about digits inside
 ///   Latin words, and `k8s`, `qwen2.5` and `sha256` are all that shape.
+/// - **`于or'` for `for`.** Measured on 2026-08-07, from a reader's card: a
+///   **Han** character, not Hangul, and leading, so it misses on both counts.
+///   Widening the script set is easy and would not have caught this one;
+///   catching a leading character of any of those scripts is the same false
+///   positive risk the first entry describes, because Chinese and Japanese
+///   run into a following Latin word exactly as Korean does.
+///
+///   That reading also produced `15` for `is`, which this rule cannot see
+///   either, so the line reached a card with `misread 0` on it. What did
+///   catch the consequence was `lens_core::language::wrote_in_a_third_language`,
+///   after it was fixed to stop treating one stray Han character as evidence
+///   that the source was Chinese.
 ///
 /// So this is a floor on what can be detected rather than a ceiling. It
 /// catches the misreadings whose shape is impossible and leaves the ones whose
