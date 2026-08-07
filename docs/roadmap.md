@@ -189,7 +189,13 @@ session, on the third hover that produced text the reader can already
 read, on a card, because a release binary has no console. A capability
 nobody can discover is the silent product that module exists for.
 
-Not started: save, and the developer and exam profiles.
+Save is built too, which is M8's first item arriving early because it is
+the same keypress-and-a-card shape the two before it are. `Ctrl+Alt+S`
+appends the card to `saved.md` beside the settings file, in plain
+Markdown, carrying the AI-explanation label when what is saved is an
+explanation.
+
+Not started: the developer and exam profiles.
 
 ## M6 · macOS acquisition
 
