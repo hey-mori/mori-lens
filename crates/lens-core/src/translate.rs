@@ -34,8 +34,27 @@ impl QuickRequest {
         }
     }
 
+    /// Name the word the reader is looking at, when there is one.
+    ///
+    /// **A focus that is the whole sentence is not a focus**, and is dropped.
+    /// Measured from a reader's log on 2026-08-07:
+    ///
+    /// ```text
+    /// ocr   94 chars on the line, focus 94 chars
+    /// ```
+    ///
+    /// The recogniser had merged an entire line into one "word", so the prompt
+    /// said *the reader is looking at the word "…"* and quoted the sentence
+    /// back at the model. That is not a hint, it is the question restated, and
+    /// it costs tokens on a path where the reader is waiting.
+    ///
+    /// Compared on whitespace-normalised text, because the sentence arrives
+    /// with line-wrapping artefacts and the word does not.
     pub fn with_focus(mut self, word: impl Into<String>) -> Self {
-        self.focused_word = Some(word.into());
+        let word = word.into();
+        let same = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+        self.focused_word =
+            (!word.trim().is_empty() && same(&word) != same(&self.source_text)).then_some(word);
         self
     }
 
@@ -1195,5 +1214,56 @@ mod identifier_tests {
             assert!(!token.contains('"'), "{token:?}");
             assert!(!token.contains('\n'), "{token:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::*;
+
+    /// A word is a word. The whole sentence is not.
+    ///
+    /// From a reader's log on 2026-08-07: `ocr 94 chars on the line, focus 94
+    /// chars`. The recogniser had merged a line into one "word", so the prompt
+    /// quoted the sentence back at the model as a hint about itself.
+    #[test]
+    fn a_focus_that_is_the_whole_sentence_is_not_a_focus() {
+        let sentence = "The pointer must rest before anything is read.";
+        let request = QuickRequest::new(sentence, "Korean").with_focus(sentence);
+        assert_eq!(request.focused_word, None);
+    }
+
+    /// Line-wrapping artefacts must not make it look like a different string.
+    ///
+    /// Accessibility text arrives with them and a recognised word does not, so
+    /// the comparison normalises whitespace exactly as the cache key does.
+    #[test]
+    fn whitespace_does_not_make_the_sentence_a_different_string() {
+        let request = QuickRequest::new("The pointer   must\nrest.", "Korean")
+            .with_focus("The pointer must rest.");
+        assert_eq!(request.focused_word, None);
+    }
+
+    /// A real word still reaches the prompt, which is the half a strict rule
+    /// could break.
+    #[test]
+    fn a_real_word_is_kept() {
+        let request = QuickRequest::new("The pointer must rest before anything is read.", "Korean")
+            .with_focus("rest");
+        assert_eq!(request.focused_word.as_deref(), Some("rest"));
+    }
+
+    /// A one-word sentence has no useful focus either, and dropping it costs
+    /// nothing: the model already has the word as the whole question.
+    #[test]
+    fn a_one_word_sentence_needs_no_hint_about_itself() {
+        let request = QuickRequest::new("vacuously", "Korean").with_focus("vacuously");
+        assert_eq!(request.focused_word, None);
+    }
+
+    #[test]
+    fn an_empty_focus_is_no_focus() {
+        let request = QuickRequest::new("a sentence here", "Korean").with_focus("   ");
+        assert_eq!(request.focused_word, None);
     }
 }
