@@ -219,6 +219,32 @@ const PREFERRED: [&str; 1] = ["qwen2.5"];
 /// the seconds it takes on a card the reader is already waiting for.
 const BIGGEST_WORTH_LOADING: f32 = 9.0;
 
+/// Specialisation suffixes that lose a tie against a plain model.
+///
+/// **Only a tie.** A code model is still chosen over a smaller general one, and
+/// `a_code_model_is_not_excluded_because_of_its_name` is still the measurement
+/// that says so. This decides the case that measurement never covered: two
+/// models of the same family and the same size, one specialised.
+///
+/// Measured 2026-08-06, `qwen2.5:7b` against `qwen2.5-coder:7b`, five
+/// sentences. The plain model was correct on the two the coder failed worst:
+/// it rendered "worse than no card" the right way round, and it did not invent
+/// a second sentence that was not in the source. Warm medians were 2,644ms and
+/// 2,462ms, which is noise, and the coder's spread reached 4,882ms against the
+/// plain model's 2,931ms. See `docs/benchmarks/2026-08-06-model-at-one-size.md`.
+///
+/// Without this the choice was **whichever Ollama happened to list last**, on
+/// any machine with both installed, since equal sizes make the size comparison
+/// a tie. A product whose model depends on a listing order is a product where
+/// nobody can explain the answer.
+const SPECIALISED: [&str; 4] = ["-coder", "-code", "-math", "-vision"];
+
+/// Whether a name carries a specialisation suffix. See [`SPECIALISED`].
+fn is_specialised(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    SPECIALISED.iter().any(|suffix| lower.contains(suffix))
+}
+
 /// Parameter count in billions, from the tag, when the name states one.
 ///
 /// `qwen2.5:3b`, `llama3.1:8b`, `qwen2.5-coder:7b`, and `gemma4:e4b`, whose `e`
@@ -299,7 +325,13 @@ pub fn choose_model(wanted: Option<&str>, installed: &[String]) -> Option<String
                     .filter(|size| *size <= BIGGEST_WORTH_LOADING)
                     .map(|size| (size, (*name).clone()))
             })
-            .max_by(|a, b| a.0.total_cmp(&b.0))
+            // Size first, then the plain model over the specialised one. The
+            // tie-break is second because a bigger code model still beats a
+            // smaller general one, which is what 2026-08-05 measured.
+            .max_by(|a, b| {
+                a.0.total_cmp(&b.0)
+                    .then_with(|| is_specialised(&b.1).cmp(&is_specialised(&a.1)))
+            })
             .map(|(_, name)| name)
             // A family whose members state no size at all still beats an
             // unmeasured stranger.
@@ -762,6 +794,43 @@ mod tests {
     #[test]
     fn a_code_model_is_not_excluded_because_of_its_name() {
         let installed = models(&["qwen2.5-coder:7b"]);
+        assert_eq!(
+            choose_model(None, &installed).as_deref(),
+            Some("qwen2.5-coder:7b"),
+        );
+    }
+
+    /// At the same size, the plain model wins.
+    ///
+    /// The case the 2026-08-05 measurement never covered, and the one this
+    /// machine was actually in. Both are `qwen2.5`, both are 7B, so the size
+    /// comparison is a tie and the winner was **whichever Ollama listed last**.
+    ///
+    /// Measured 2026-08-06 over five sentences: the plain model rendered
+    /// "worse than no card" the right way round where the coder garbled it, and
+    /// did not invent a second sentence where the coder did. Both orderings are
+    /// asserted, because a tie-break that only works one way round is the bug
+    /// it is fixing.
+    #[test]
+    fn at_the_same_size_the_plain_model_beats_the_specialised_one() {
+        for order in [
+            &["qwen2.5:7b", "qwen2.5-coder:7b"],
+            &["qwen2.5-coder:7b", "qwen2.5:7b"],
+        ] {
+            let installed = models(order.as_slice());
+            assert_eq!(
+                choose_model(None, &installed).as_deref(),
+                Some("qwen2.5:7b"),
+                "listed as {order:?}",
+            );
+        }
+    }
+
+    /// And a bigger code model still beats a smaller general one, which is what
+    /// the earlier measurement established and what the tie-break must not undo.
+    #[test]
+    fn a_bigger_code_model_still_beats_a_smaller_plain_one() {
+        let installed = models(&["qwen2.5:3b", "qwen2.5-coder:7b"]);
         assert_eq!(
             choose_model(None, &installed).as_deref(),
             Some("qwen2.5-coder:7b"),
