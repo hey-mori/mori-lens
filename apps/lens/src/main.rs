@@ -165,8 +165,6 @@ OPTIONS
                         held, for this run. The lasting version of this is
                         `default = allow` in the settings file.
     --settings <path>   Use this settings file instead of the one in %APPDATA%.
-                        Ctrl+Alt+O reads under the pointer with OCR, for the
-                        applications that expose no text at all.
                         Written with every option in it on first run.
     --language <name>   Target language. Default Korean.
     --ocr <mode>        off, manual, or automatic. Default manual: OCR runs on
@@ -1747,6 +1745,27 @@ fn selftest(
         eprintln!("the accessibility layer is unreachable");
         return std::process::ExitCode::from(1);
     };
+
+    // Asked before the screen is scanned, because a selftest that spends
+    // twenty seconds looking for a sentence and then says it passed without a
+    // model having answered is a diagnostic saying something it did not test.
+    //
+    // It did exactly that: with no Ollama listening, it found a Korean
+    // sentence, skipped the translation correctly, and printed
+    // `selftest passed`. The reader's whole reason for running it was to find
+    // out whether the thing works.
+    if let Err(error) = translator.installed_models() {
+        println!(
+            "0. no engine  {} ({})",
+            error.user_message(),
+            error.reason()
+        );
+        if let Some(remedy) = error.remedy() {
+            println!("              {remedy}");
+        }
+        println!("\nselftest FAILED: there is nothing to translate with, so nothing was tested.");
+        return std::process::ExitCode::from(1);
+    }
     let context = AcquireContext::new(Generation(1));
 
     // Find a point, in any visible window, that yields a real sentence. A
@@ -1828,9 +1847,15 @@ fn selftest(
         },
     );
     if decision == Decision::AlreadyInTarget {
+        // Honest about its own reach. Acquisition, targeting and the language
+        // decision were all exercised; the model, the card and the overlay
+        // were not, and a line saying "passed" without that distinction is
+        // what sent a reader away satisfied on a machine with no engine.
         println!(
             "
-selftest passed: the text on screen needed no translation, and none was made."
+selftest passed as far as it went: the text on screen needed no translation,
+so nothing after the language check was exercised. Open something in a
+language you do not read and run it again."
         );
         return std::process::ExitCode::SUCCESS;
     }
@@ -1882,9 +1907,16 @@ selftest passed: the text on screen needed no translation, and none was made."
                 error.user_message(),
                 error.reason()
             );
+            if let Some(remedy) = error.remedy() {
+                println!("              {remedy}");
+            }
             Card::not_translated(&sentence, &error)
         }
     };
+    // Remembered, because the card is still worth showing and drawing it is
+    // still worth checking: the reader should see what the product does when
+    // the model refuses. What must not happen is calling that a pass.
+    let translation_failed = translated.is_none();
 
     // The same sentence again, which is what a reader moving back along a line
     // produces several times a minute.
@@ -1974,6 +2006,10 @@ total {}ms from acquisition to card",
 
     overlay.hide();
     std::thread::sleep(Duration::from_millis(200));
+    if translation_failed {
+        println!("\nselftest FAILED: a card was drawn and it says the model could not answer.");
+        return std::process::ExitCode::from(1);
+    }
     println!(
         "
 selftest passed: text on screen became a card, pointer untouched."
