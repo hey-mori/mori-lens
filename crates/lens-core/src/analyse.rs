@@ -154,9 +154,18 @@ impl DeepRequest {
         }
     }
 
+    /// Name the word the reader is looking at, when there is one.
+    ///
+    /// A word that is the whole sentence is dropped, for the reason
+    /// [`crate::translate::QuickRequest::with_focus`] gives: a recogniser that
+    /// merged a line into one word has not found a word, and asking about the
+    /// sentence as though it were one produces
+    /// [`Answerable::the_word`] answers about a sentence.
     pub fn about_the_word(mut self, word: impl Into<String>) -> Self {
         let word = word.into();
-        self.word = (!word.trim().is_empty()).then_some(word);
+        let same = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+        self.word =
+            (!word.trim().is_empty() && same(&word) != same(&self.sentence)).then_some(word);
         self
     }
 
@@ -652,5 +661,35 @@ mod restatement_tests {
         }
         .without_restatements_of(source);
         assert_eq!(dropped.structure, "");
+    }
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::*;
+
+    /// The same rule on the deep path, where getting it wrong is worse: the
+    /// prompt asks for a dictionary form and a part of speech, and a sentence
+    /// has neither.
+    #[test]
+    fn a_word_that_is_the_whole_sentence_is_dropped() {
+        let sentence = "RowQuery는 멱등성을 보장하지 않습니다.";
+        let request =
+            DeepRequest::about_what_they_can_read(sentence, "Korean").about_the_word(sentence);
+        assert_eq!(request.word, None);
+        // And the request is still worth making, for the structure.
+        assert!(request.answerable().the_structure);
+        assert!(!request.answerable().the_word);
+    }
+
+    #[test]
+    fn a_real_word_still_reaches_the_prompt() {
+        let request = DeepRequest::about_what_they_can_read(
+            "RowQuery는 멱등성을 보장하지 않습니다.",
+            "Korean",
+        )
+        .about_the_word("멱등성");
+        assert_eq!(request.word.as_deref(), Some("멱등성"));
+        assert!(request.answerable().the_word);
     }
 }
