@@ -122,6 +122,13 @@ impl OllamaTranslator {
         &self.model
     }
 
+    /// Where this translator is pointed. For a diagnostic that needs to send a
+    /// request this crate builds but does not otherwise make.
+    #[cfg(test)]
+    pub(crate) fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
     /// Whether the endpoint answers, and which models it has.
     ///
     /// Separate from translating so a caller can tell "Ollama is not running"
@@ -595,6 +602,33 @@ impl Translator for OllamaTranslator {
             return self.retry_once(request);
         }
 
+        // A model that welded a paragraph of a third language into the middle
+        // of the answer produced something no other check here sees: it is not
+        // an echo, and it is mostly in the right script, so it goes on a card.
+        //
+        // **Not retried.** Requests go out at `temperature: 0`, so the same
+        // question returns the same reply. The echo path may retry because it
+        // changes the budget and an empty answer is usually a budget; nothing
+        // about a budget produces a paragraph of Chinese, so a retry here
+        // would spend a second and a half arriving at the same text.
+        let mut text = text;
+        if lens_core::language::wrote_in_a_third_language(
+            &request.source_text,
+            &text,
+            &request.target_language,
+        ) {
+            match lens_core::language::without_the_third_language(
+                &request.source_text,
+                &text,
+                &request.target_language,
+            ) {
+                Some(kept) => text = kept,
+                // Nothing left that is a sentence. Better than half of one
+                // presented as a translation.
+                None => return Err(TranslateError::Malformed),
+            }
+        }
+
         if lens_core::translate::reads_as_the_source(&request.source_text, &text) {
             // No retry when the reader can already read it: asking again for a
             // translation of something already in their language spends a
@@ -690,6 +724,33 @@ impl Translator for OllamaTranslator {
         // question. The retry is unstreamed on purpose. A second answer
         // arriving word by word over the first is a card rewriting itself in
         // front of somebody who is reading it.
+        // A model that welded a paragraph of a third language into the middle
+        // of the answer produced something no other check here sees: it is not
+        // an echo, and it is mostly in the right script, so it goes on a card.
+        //
+        // **Not retried.** Requests go out at `temperature: 0`, so the same
+        // question returns the same reply. The echo path may retry because it
+        // changes the budget and an empty answer is usually a budget; nothing
+        // about a budget produces a paragraph of Chinese, so a retry here
+        // would spend a second and a half arriving at the same text.
+        let mut text = text;
+        if lens_core::language::wrote_in_a_third_language(
+            &request.source_text,
+            &text,
+            &request.target_language,
+        ) {
+            match lens_core::language::without_the_third_language(
+                &request.source_text,
+                &text,
+                &request.target_language,
+            ) {
+                Some(kept) => text = kept,
+                // Nothing left that is a sentence. Better than half of one
+                // presented as a translation.
+                None => return Err(TranslateError::Malformed),
+            }
+        }
+
         if lens_core::translate::reads_as_the_source(&request.source_text, &text) {
             // No retry when the reader can already read it: asking again for a
             // translation of something already in their language spends a
