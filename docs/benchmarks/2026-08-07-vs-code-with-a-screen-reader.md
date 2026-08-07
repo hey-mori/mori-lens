@@ -73,11 +73,49 @@ whatever is on top. That measurement still needs VS Code in front, and
 it is now worth running again for the first time since the mode was
 identified.
 
-**It does not identify which elements hold which words.** 107 elements
-and 653 words is consistent with the editor being exposed and also with
-a file tree, a tab strip and a command palette being unusually wordy.
-Pairing a word with the element that holds it is the next measurement
-and it is not this one.
+## Settled: it is the document
+
+The paragraph above used to say this was the next measurement. It was
+run the same afternoon.
+
+`hover-probe inventory --only Code --expect <word>` asks the tree
+whether it holds a word the operator names. Printing is allowed here and
+only here, because the words come **from** the operator: what is
+reported is whether something already known was found, which is the
+exception `../privacy-model.md` names.
+
+First attempt, symbol names from the open file:
+
+```
+Code   2 of 5 expected words, 648 distinct words in all
+    show_word              in the tree
+    interval               in the tree
+```
+
+Not decisive. VS Code's Outline view lists a struct's fields, so a
+symbol being in the tree could be the sidebar rather than the editor.
+
+Second attempt, **prose from a doc comment**, which an outline never
+holds and a file tree cannot:
+
+```
+Code   6 of 6 expected words
+    hand                   in the tree
+    elsewhere              in the tree
+    dependency             in the tree
+    correctness            in the tree
+    judgement              in the tree
+    requiring              in the tree
+```
+
+Every one. Those six words appear together in one `///` comment in
+`apps/hover-probe/src/probe/mod.rs`, which is the file the editor was
+showing. A file tree holds filenames, a tab strip holds filenames, and
+an outline holds symbols. **The document is in the tree.**
+
+The two other VS Code windows on the same desktop answered 0 of 6, which
+is what a different file open in a different window should do and is a
+check that the question is discriminating rather than always saying yes.
 
 ## Why this took so long to notice
 
