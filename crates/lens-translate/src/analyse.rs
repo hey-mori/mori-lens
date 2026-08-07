@@ -136,7 +136,7 @@ fn system_prompt(request: &DeepRequest, fence: &str) -> String {
 }
 
 impl OllamaTranslator {
-    fn deep_body(&self, request: &DeepRequest) -> String {
+    pub(crate) fn deep_body(&self, request: &DeepRequest) -> String {
         let fence = crate::fence_for(&request.sentence);
         // The translation goes inside the fence too. It came from a model, not
         // from the screen, but it is derived from the screen and a sentence
@@ -164,6 +164,8 @@ impl OllamaTranslator {
                     "{{\"temperature\":0,\"num_predict\":{DEEP_BUDGET}}}"
                 )),
             ),
+            // The deep path loads the same model, so it renews the same lease.
+            ("keep_alive", json::Value::Str(crate::MODEL_LEASE)),
         ])
     }
 }
