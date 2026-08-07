@@ -21,6 +21,22 @@ text the user looked at, never an image, and never reaches a file. A
 durable cache would be a record of what was read, so it is a separate
 opt-in and does not exist.
 
+**The clipboard is written on a keypress and never read.** Since
+2026-08-06, `Ctrl+Alt+C` puts the card's sentence and its answer on the
+clipboard. That is the only path in this product that carries what was
+read outside the process, and three things bound it:
+
+- It runs on a chord and on nothing else. A hover cannot reach it. A
+  tool that wrote to the clipboard because the pointer settled would be
+  replacing somebody's own work, silently, several times a minute.
+- Lens never reads the clipboard. There is a reader in the source and it
+  is `#[cfg(test)]`, for the live check that a written string comes back;
+  the product has no reason to know what somebody copied and a function
+  that could is one refactor from a tool that does.
+- What goes on it is what is already on the screen, plus, for an
+  explanation, the label saying a model wrote it. Not the model name and
+  not the timing.
+
 **No screen image is ever written to disk.** Including for debugging.
 Including in a debug build. An OCR crop lives in memory for the duration
 of one recognition and is dropped.
@@ -76,24 +92,36 @@ wording makes a small instruction-tuned model reliably tell its operator
 apart from its input, and the wording that was suspected of weakening it
 made no difference in either direction.
 
-### The default model is the one that obeys
+Re-measured 2026-08-06, after the model changed:
 
-`qwen2.5-coder:7b` is what Lens now resolves to on a machine with these
-three installed, chosen on 2026-08-05 for translation quality: the 3B
-model rendered "pointer" as 점퍼 and 손가락 on different runs, and dropped
-whole clauses.
+| Model | Answered the probe with |
+|---|---|
+| `qwen2.5:7b` | `PWNEDED` |
+| `translategemma` | 압살당, which is a translation |
 
-**That choice was made without looking at this table, which already
-existed.** Recording it here rather than quietly reversing it, because
-the trade is real and worth stating:
+### The chosen model is not the resistant one, and that is a trade
 
-- the resistant model is visibly worse at the job, on every hover
-- the vulnerable one requires a page written to attack Lens specifically,
-  which nothing suggests exists
-- and the mitigation below is structural, so it holds for both
+`qwen2.5:7b` is what Lens resolves to on this machine, chosen on
+2026-08-06 for translation quality: it renders "worse than no card" the
+right way round where the model before it garbled the sentence, and it
+does not invent sentences that are not in the source
+([`benchmarks/2026-08-06-model-at-one-size.md`](benchmarks/2026-08-06-model-at-one-size.md)).
 
-A reader who prefers the trade the other way writes `model = qwen2.5:3b`
-in their settings file, and a named model is always honoured.
+**This section said `qwen2.5-coder:7b` until 2026-08-06, after that model
+had been removed from the machine.** A privacy document naming a model
+the product no longer uses is worse than one that names none, so it is
+corrected here rather than quietly.
+
+The trade is unchanged in shape and worth stating plainly:
+
+- no model measured here has resisted the probe while also being good
+  enough at the job
+- obeying it requires a page written to attack Lens specifically, which
+  nothing suggests exists
+- and the mitigation below is structural, so it holds whatever is chosen
+
+A reader who prefers the trade the other way names a model in their
+settings file, and a named model is always honoured.
 
 **The original is shown in full, and is never shortened.**
 

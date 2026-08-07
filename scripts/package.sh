@@ -114,6 +114,10 @@ RUNNING IT
   Ctrl+Alt+L pauses. Paused means no accessibility call is made at all.
   Ctrl+Alt+O reads the pixels around the pointer, where an application
     exposes no text. Never automatic, and no image is ever written anywhere.
+  Ctrl+Alt+D explains the sentence on the card: the dictionary form of the
+    word you were on, its part of speech, what it means here, the structure.
+  Ctrl+Alt+C copies the card. Lens never reads your clipboard, only writes
+    to it, and only when you press this.
   Right-click the tray icon for the settings file, start-with-Windows, quit.
 
   lens.exe --version   says which build this is
