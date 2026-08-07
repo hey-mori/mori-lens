@@ -67,6 +67,27 @@ pub const DEFAULT_MODEL: &str = "qwen2.5:7b";
 /// back with nothing, so an ordinary hover never sees it.
 const GENEROUS_BUDGET: u32 = 1024;
 
+/// How long Ollama should hold the model after a request.
+///
+/// **Sent on every request that loads it, not only on the warm-up.** The
+/// warm-up asked for thirty minutes and nothing afterwards asked for anything,
+/// so the lease Lens actually ran under was whatever the runtime defaults to,
+/// re-applied by each hover.
+///
+/// Measured 2026-08-07 on this machine: a request with no `keep_alive` set the
+/// expiry thirty minutes out, so the default here happens to match what the
+/// warm-up asked for. That is luck. Ollama documents five minutes,
+/// `OLLAMA_KEEP_ALIVE` overrides it, and neither is something this product
+/// controls.
+///
+/// It matters because of what is built on top. The worker skips its residency
+/// check for twenty minutes, on the stated reasoning that the lease is thirty;
+/// under a five minute default the model is gone after five and the reader
+/// gets twenty seconds of 번역 중 with no 모델을 불러오는 중 card, which reads
+/// as a hung application. Sending it makes that reasoning true rather than
+/// hopeful.
+pub(crate) const MODEL_LEASE: &str = "30m";
+
 /// A translator backed by an Ollama HTTP endpoint.
 #[derive(Debug, Clone)]
 pub struct OllamaTranslator {
@@ -146,9 +167,10 @@ impl OllamaTranslator {
     /// seconds of that reads as a hung application; thirteen seconds of "the
     /// model is loading" reads as a machine doing something.
     ///
-    /// Ollama's lease is thirty minutes and every request resets it, so this
-    /// question only needs asking after a long gap. It costs about 8ms, which
-    /// is worth avoiding on a hover that does not need it.
+    /// Every request Lens sends carries [`MODEL_LEASE`], so the lease is
+    /// thirty minutes from the last hover rather than from the warm-up, and
+    /// this question only needs asking after a long gap. It costs about 8ms,
+    /// which is worth avoiding on a hover that does not need it.
     pub fn is_resident(&self) -> bool {
         let Ok(body) = http::get(&self.endpoint, "/api/ps", Duration::from_secs(2)) else {
             // Unreachable is not the same as unloaded, and the caller's next
@@ -181,7 +203,7 @@ impl OllamaTranslator {
             // Long enough to cover a reading session rather than the few
             // minutes Ollama defaults to. Released on exit, so the lease never
             // outlives the process that took it.
-            ("keep_alive", json::Value::Str("30m")),
+            ("keep_alive", json::Value::Str(MODEL_LEASE)),
         ]);
         let started = Instant::now();
         // A cold 9.6GB model can take 35 seconds, so this timeout is far longer
@@ -474,6 +496,8 @@ impl OllamaTranslator {
                 // characters of explanation.
                 json::Value::RawOwned(format!("{{\"temperature\":0,\"num_predict\":{budget}}}")),
             ),
+            // Every request, not only the warm-up. See `MODEL_LEASE`.
+            ("keep_alive", json::Value::Str(MODEL_LEASE)),
         ])
     }
 
@@ -1075,5 +1099,56 @@ mod prompt_shape_tests {
                 "the {what} prompt has a trailing space:\n{prompt}",
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod lease_tests {
+    use super::*;
+    use lens_core::analyse::DeepRequest;
+
+    /// Every request that loads the model renews the lease.
+    ///
+    /// Not only the warm-up, which is where it used to be. Without this the
+    /// lease Lens runs under is the runtime's default: Ollama documents five
+    /// minutes, `OLLAMA_KEEP_ALIVE` overrides it, and the twenty-minute
+    /// residency skip in the worker is written as if thirty were guaranteed.
+    #[test]
+    fn every_request_that_loads_the_model_renews_the_lease() {
+        let translator = OllamaTranslator::new(DEFAULT_ENDPOINT, "test-model");
+        let quick = QuickRequest::new("A sentence to translate.", "Korean");
+
+        let bodies = [
+            ("buffered", translator.body_for(&quick, false)),
+            ("streamed", translator.body_for(&quick, true)),
+            (
+                "deep",
+                translator.deep_body(&DeepRequest::new("A sentence.", "한 문장.", "Korean")),
+            ),
+        ];
+        for (what, body) in bodies {
+            assert!(
+                body.contains(&format!("\"keep_alive\":\"{MODEL_LEASE}\"")),
+                "the {what} request does not renew the lease: {body}",
+            );
+        }
+    }
+
+    /// And the one that must not.
+    ///
+    /// Exit hands the model back. A lease sent there would be the opposite of
+    /// what the call is for, and a tool that exits leaving gigabytes pinned is
+    /// not the light thing it claims to be.
+    #[test]
+    fn the_release_does_not_renew_it() {
+        // Built the way `release` builds it, since the method sends rather
+        // than returns. The shape is what is under test: a zero lease, and
+        // not the thirty-minute one every other request carries.
+        let body = json::object(&[
+            ("model", json::Value::Str("test-model")),
+            ("keep_alive", json::Value::Raw("0")),
+        ]);
+        assert!(body.contains("\"keep_alive\":0"), "{body}");
+        assert!(!body.contains(MODEL_LEASE), "{body}");
     }
 }
