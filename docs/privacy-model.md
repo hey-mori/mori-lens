@@ -182,6 +182,28 @@ rather than global automatic hover. A tool that reads everything from
 first launch has to earn that, and it cannot earn it before the
 compatibility matrix says how well it reads anything.
 
+**A typo could turn that off everywhere, until 2026-08-06.** An
+application rule is matched as a substring, so a line with nothing before
+the equals sign
+
+```
+[applications]
+= allow
+```
+
+produced a rule whose needle is the empty string, and every name contains
+the empty string. Every application became `Allow`: automatic reading
+everywhere, from a stray character, in a file whose whole purpose is to
+be the answer to "how do I stop it reading that". Nothing was said about
+it at startup, in a file that promises anything not understood is
+reported rather than ignored.
+
+Two things now stop it. The parser reports the line, and `AppPolicy::set`
+refuses a nameless rule whatever asks for one, in the same spirit as the
+password-manager list being applied before any file is read. The deny
+list was never at risk, because deny wins over any other match; what was
+at risk is everything the default protects.
+
 ### Where a user sets this
 
 `%APPDATA%\Mori Lens\settings.conf`, written with every option in it on
