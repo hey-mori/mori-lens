@@ -27,6 +27,61 @@ use std::time::Instant;
 
 use lens_platform_windows::{text_inventory, WindowTextInventory};
 
+/// Ask each matching window's tree whether it holds these words.
+///
+/// **The decisive question the counts cannot answer.** An inventory saying a
+/// window holds 8,131 characters does not say whether those are the document
+/// or the file tree beside it, and 107 elements is consistent with both.
+/// Naming a word that can only be in the document settles it.
+///
+/// Printing is allowed here and only here: the caller supplies the words, so
+/// what is reported is **whether something the operator already knew was
+/// found**, which is the shape `docs/privacy-model.md` names as the exception.
+/// Nothing that was read is printed.
+pub fn expect(only: Option<&str>, wanted: &[String]) {
+    let needle = only.map(str::to_lowercase);
+    for window in lens_platform_windows::top_level_windows() {
+        let name = window.process_name.clone().unwrap_or_else(|| "?".into());
+        if let Some(needle) = &needle {
+            if !name.to_lowercase().contains(needle.as_str()) {
+                continue;
+            }
+        }
+        let held = lens_platform_windows::text_words_of(window.id);
+        if held.is_empty() {
+            println!("{name:<22} nothing in its tree");
+            continue;
+        }
+        let found: Vec<&String> = wanted
+            .iter()
+            .filter(|word| held.contains(&word.to_lowercase()))
+            .collect();
+        println!(
+            "{name:<22} {} of {} expected words, {} distinct words in all",
+            found.len(),
+            wanted.len(),
+            held.len(),
+        );
+        for word in wanted {
+            println!(
+                "    {:<28} {}",
+                word,
+                if held.contains(&word.to_lowercase()) {
+                    "in the tree"
+                } else {
+                    "NOT in the tree"
+                },
+            );
+        }
+    }
+    println!(
+        "\nA word that can only be in the document, found in the tree, means the\n\
+         document is exposed and a pointer failing to reach it is a targeting\n\
+         problem rather than a reach one. A word that is not there proves less:\n\
+         it may be scrolled out of view, or spelt differently by the provider."
+    );
+}
+
 /// Inventory every window, or those matching `only`.
 pub fn run(only: Option<&str>) -> Vec<WindowTextInventory> {
     let needle = only.map(str::to_lowercase);
