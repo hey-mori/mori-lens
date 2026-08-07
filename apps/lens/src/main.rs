@@ -1955,10 +1955,38 @@ fn selftest(
     // screen with no prose on it runs for minutes and looks like a hang. It
     // did exactly that once, which is why the budget is here.
     const SCAN_BUDGET: Duration = Duration::from_secs(20);
+
+    /// How much of the budget one window may spend.
+    ///
+    /// **A quarter, because the first window used to spend all of it.** The
+    /// grid steps 24px over a client area, so a 1440x900 window is 2,220
+    /// points and a point costs 40 to 80ms on a loaded machine. The whole
+    /// budget went on the first window in the list whether or not it was
+    /// promising, and the diagnostic then told a reader with two editors and a
+    /// browser open to "open something with prose in it".
+    ///
+    /// Measured: two runs in a row probed 252 and 258 points, hit the budget,
+    /// and reported nothing found, on a desktop where an earlier run had found
+    /// a sentence in the first window it looked at.
+    const PER_WINDOW: Duration = Duration::from_secs(5);
+
     let scan_started = Instant::now();
     let mut probed = 0usize;
     let mut found = None;
-    'outer: for window in top_level_windows() {
+
+    // The window in front first. It is the one the reader is looking at, so it
+    // is both the likeliest to hold prose and the one they would expect a
+    // diagnostic to try. `foreground_window` failing is ordinary and only
+    // costs the ordering.
+    let mut windows = top_level_windows();
+    if let Ok(front) = lens_platform_windows::foreground_window() {
+        if let Some(at) = windows.iter().position(|window| window.id == front.id) {
+            windows.swap(0, at);
+        }
+    }
+
+    'outer: for window in windows {
+        let window_started = Instant::now();
         let bounds = window.client_bounds;
         let step = 24;
         let mut y = bounds.y + 8;
@@ -1967,6 +1995,12 @@ fn selftest(
             while x < bounds.right() - 8 {
                 if scan_started.elapsed() > SCAN_BUDGET {
                     break 'outer;
+                }
+                if window_started.elapsed() > PER_WINDOW {
+                    // Enough of this one. Another window may answer, and the
+                    // reader is waiting on the first answer rather than on a
+                    // complete survey.
+                    continue 'outer;
                 }
                 probed += 1;
                 let point = ScreenPoint::new(x, y);
@@ -1999,6 +2033,10 @@ fn selftest(
             } else {
                 ""
             },
+        );
+        println!(
+            "The window in front was tried first, then the rest, {}s each.",
+            PER_WINDOW.as_secs(),
         );
         println!("Open something with prose in it and run this again.");
         return std::process::ExitCode::from(1);
@@ -2167,7 +2205,50 @@ total {}ms from acquisition to card",
                     None => println!("   cache      MISS on an analysis just inserted"),
                 }
 
-                if !overlay.show(Card::analysed(&sentence, &analysis), anchor) {
+                let card = Card::analysed(&sentence, &analysis);
+
+                // Step 5, before the card is drawn, because drawing sleeps for
+                // four seconds and this is the part that can fail.
+                //
+                // **Into a temporary file, never the reader's own.** A
+                // diagnostic that appended to somebody's notes every time they
+                // ran it would be writing their file for them, and the whole
+                // point of that file is that they decide what goes in it.
+                let scratch = std::env::temp_dir().join("mori-lens-selftest-saved.md");
+                let _ = std::fs::remove_file(&scratch);
+                match card
+                    .kept_as(Some("selftest"))
+                    .ok_or(keeping::NotKept::NothingToKeep)
+                    .and_then(|entry| {
+                        keeping::append(&scratch, &entry, std::time::SystemTime::now())
+                    }) {
+                    Ok(()) => {
+                        let written = std::fs::read_to_string(&scratch).unwrap_or_default();
+                        // Shape, not content: the file holds a sentence off
+                        // this machine's screen (`docs/privacy-model.md` §3).
+                        println!(
+                            "5. saved      {} lines, {} chars, label {}",
+                            written.lines().count(),
+                            written.chars().count(),
+                            written.contains(lens_core::analyse::DeepAnalysis::LABEL),
+                        );
+                        if !written.contains(lens_core::analyse::DeepAnalysis::LABEL) {
+                            println!("   REFUSED    an explanation was saved without its label");
+                            return std::process::ExitCode::from(1);
+                        }
+                        let _ = std::fs::remove_file(&scratch);
+                    }
+                    Err(refusal) => {
+                        println!(
+                            "5. not saved: {} ({})",
+                            refusal.user_message(),
+                            refusal.reason()
+                        );
+                        return std::process::ExitCode::from(1);
+                    }
+                }
+
+                if !overlay.show(card, anchor) {
                     println!("   REFUSED    the analysis card was not showable");
                     return std::process::ExitCode::from(1);
                 }
