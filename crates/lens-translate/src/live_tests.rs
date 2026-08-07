@@ -1037,7 +1037,11 @@ fn measure_warm_latency_of_the_two_candidates() {
         "The build failed because a check found a difference.",
     ];
 
-    for model in ["qwen2.5-coder:7b", "gemma4:e4b"] {
+    // The same family and the same size, differing only in the code
+    // specialisation. That is the comparison
+    // `docs/benchmarks/2026-08-06-translation-quality.md` said had never been
+    // run and that the choice of model had been resting on.
+    for model in ["qwen2.5:7b", "qwen2.5-coder:7b"] {
         if !installed.iter().any(|name| name == model) {
             println!("{model:<20} not installed");
             continue;
@@ -1250,4 +1254,71 @@ fn analyse_does_not_slow_the_quick_path() {
             "held"
         },
     );
+}
+
+/// What a third-language answer looks like, raw and after the cut.
+///
+/// The defect: asked for Korean, `qwen2.5:7b` returned the Korean translation
+/// with a paragraph of Chinese commentary about the translation task welded
+/// into it. Not an echo, and mostly in the right script, so nothing in the
+/// product saw it and it went on a card.
+///
+/// Printing is allowed: the sentence is written in this repository and none of
+/// it came off a screen (`docs/privacy-model.md` §3).
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn show_what_the_third_language_cut_keeps() {
+    use lens_core::language::{without_the_third_language, wrote_in_a_third_language};
+
+    let mut translator = OllamaTranslator::choosing(DEFAULT_ENDPOINT);
+    if translator.resolve_model().is_err() {
+        println!("no model");
+        return;
+    }
+    println!("\nmodel: {}", translator.model());
+
+    let sources = [
+        "The build failed because cargo fmt --check found a difference in src/main.rs before the tests ran.",
+        "Acquisition is solved and targeting is not.",
+    ];
+
+    for source in sources {
+        // The raw reply, before anything in this crate judges it. Built by
+        // hand rather than through `quick`, which is the thing under test.
+        let request = QuickRequest::new(source, "Korean");
+        let body = translator.body_for(&request, false);
+        let Ok(response) = crate::http::post(
+            translator.endpoint(),
+            "/api/generate",
+            &body,
+            Duration::from_secs(60),
+        ) else {
+            println!("no reply");
+            continue;
+        };
+        let raw = crate::json::string_value_of_key(&response, "response")
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+
+        println!("\nEN   {source}");
+        println!("raw  {raw}");
+        let intruded = wrote_in_a_third_language(source, &raw, "Korean");
+        println!("     third language: {intruded}");
+        if intruded {
+            match without_the_third_language(source, &raw, "Korean") {
+                Some(kept) => println!("cut  {kept}"),
+                None => println!("cut  refused, nothing left that is a sentence"),
+            }
+        }
+        // What the product would actually show. **A separate generation**, so
+        // it may differ from the raw reply above: this model switches language
+        // on this sentence unpredictably, which is the whole finding. One run
+        // rescued a correct translation from behind the Chinese and the next
+        // had none to rescue.
+        match translator.quick(&request) {
+            Ok(answer) => println!("card {}", answer.text),
+            Err(error) => println!("card refused [{}]", error.reason()),
+        }
+    }
 }
