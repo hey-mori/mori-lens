@@ -78,7 +78,7 @@ not written), **out of v1** (deliberately excluded).
 | Manual OCR fallback (Windows) | **shipped** · Ctrl+Alt+O reads a band around the pointer, hides the card first, resolves the word under it, and feeds the same translation and card path. Never automatic, never to disk. Measured against VS Code on 2026-08-06, the application that prompted the milestone: 336 words recovered where accessibility resolves 9 points in 260 |
 | macOS acquisition | planned · M6 |
 | macOS overlay and Vision OCR | planned · M7 |
-| Saved vocabulary and sentences | planned · M8 |
+| Saved vocabulary and sentences | **shipped, partly** · Ctrl+Alt+S appends the card to `saved.md` beside the settings file, in plain Markdown, carrying the AI-explanation label when what is saved is an explanation. Appended and never read back, so the export is the file and deleting a block deletes it. Not done: a review list, and nothing reads the file |
 | Mori integration | planned · after M8, as a process boundary |
 | Automatic full-screen OCR | out of v1 |
 | Browser extension | out of v1 |

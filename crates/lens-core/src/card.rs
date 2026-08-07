@@ -485,20 +485,51 @@ impl Card {
     /// had on their clipboard with 번역 중 is worse than doing nothing, and
     /// doing nothing is what a key with nothing to do should do.
     pub fn for_the_clipboard(&self) -> Option<String> {
-        let original = self.original.trim();
-        match &self.body {
-            CardBody::Translation(text) if !text.trim().is_empty() && !original.is_empty() => {
-                Some(format!("{original}\n{}", text.trim()))
-            }
-            CardBody::Analysis(text) if !text.trim().is_empty() && !original.is_empty() => {
-                Some(format!(
-                    "{original}\n{}\n{}",
-                    text.trim(),
-                    crate::analyse::DeepAnalysis::LABEL
-                ))
-            }
-            _ => None,
+        let (answer, caveat) = self.answer_worth_keeping()?;
+        Some(match caveat {
+            Some(caveat) => format!("{}\n{answer}\n{caveat}", self.original.trim()),
+            None => format!("{}\n{answer}", self.original.trim()),
+        })
+    }
+
+    /// The same card as something to write down.
+    ///
+    /// The application comes from the caller, because a card does not know
+    /// where it was read. Everything else is what is on it.
+    ///
+    /// Whether there is anything at all is [`Self::answer_worth_keeping`],
+    /// shared with the clipboard deliberately. Two rules for what counts as an
+    /// answer would eventually let a card be worth copying and not worth
+    /// keeping, and a reader would have no way to guess which.
+    pub fn kept_as(&self, app: Option<&str>) -> Option<crate::keep::Entry> {
+        let (answer, caveat) = self.answer_worth_keeping()?;
+        Some(crate::keep::Entry {
+            original: self.original.trim().to_owned(),
+            answer: answer.to_owned(),
+            caveat: caveat.map(str::to_owned),
+            app: app
+                .map(str::to_owned)
+                .filter(|name| !name.trim().is_empty()),
+        })
+    }
+
+    /// The answer on this card and the caveat it carries, or nothing.
+    ///
+    /// Nothing for a problem or a waiting card: replacing somebody's clipboard
+    /// or their notes with 번역 중 is worse than doing nothing. Nothing without
+    /// an original either, for the reason [`Self::original`] exists at all, and
+    /// which a file makes sharper than a clipboard does: an answer kept alone
+    /// can never be checked against anything again.
+    fn answer_worth_keeping(&self) -> Option<(&str, Option<&str>)> {
+        if self.original.trim().is_empty() {
+            return None;
         }
+        let (text, caveat) = match &self.body {
+            CardBody::Translation(text) => (text, None),
+            CardBody::Analysis(text) => (text, Some(crate::analyse::DeepAnalysis::LABEL)),
+            _ => return None,
+        };
+        (!text.trim().is_empty()).then(|| (text.trim(), caveat))
     }
 
     /// The same card, marked as having been copied.
@@ -519,6 +550,22 @@ impl Card {
 
     /// What a copied card says. One place, because a test checks for it.
     pub const COPIED: &str = "복사함";
+
+    /// The same card, marked as written down.
+    ///
+    /// Beside the model in the footer, exactly as [`Self::copied`] is, and for
+    /// the same reason: the card stays up, because a confirmation card would
+    /// take the text away at the moment somebody decided to keep it.
+    pub fn kept(mut self) -> Self {
+        if !self.footer.is_empty() {
+            self.footer.push_str(" · ");
+        }
+        self.footer.push_str(Self::KEPT);
+        self
+    }
+
+    /// What a saved card says.
+    pub const KEPT: &str = "저장함";
 
     /// Whether this card is safe to show.
     ///
