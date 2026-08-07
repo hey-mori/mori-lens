@@ -76,6 +76,9 @@ SWEEP MODE
     contains the sample point), latency, and the wake's before-and-after.
 
     --only <text>       Only windows whose process or title contains this.
+    --coverage          Lay a grid over each window and report how many points
+                        fall inside a text element. A rectangle test, so it
+                        works on a covered window where ElementFromPoint cannot.
     --expect <word>     Ask whether the window's tree holds this word, instead
                         of surveying. Repeatable. Name a word that can only be
                         in the document: a count cannot tell a document from
@@ -150,6 +153,9 @@ enum Mode {
         /// Words the operator says the document contains. See
         /// [`inventory::expect`].
         expect: Vec<String>,
+        /// Ask how much of the window a grid would land inside a text
+        /// element. See [`inventory::coverage`].
+        coverage: bool,
     },
     Sweep {
         options: sweep::SweepOptions,
@@ -166,6 +172,7 @@ fn parse_args() -> Result<Mode, String> {
         let mut only = None;
         let mut titles = false;
         let mut expect: Vec<String> = Vec::new();
+        let mut coverage = false;
         let mut rest = args.into_iter();
         while let Some(arg) = rest.next() {
             match arg.as_str() {
@@ -175,6 +182,7 @@ fn parse_args() -> Result<Mode, String> {
                 }
                 "--titles" => titles = true,
                 "--only" => only = Some(rest.next().ok_or("--only needs some text to match")?),
+                "--coverage" => coverage = true,
                 "--expect" => expect.push(
                     rest.next()
                         .ok_or("--expect needs a word the document should contain")?,
@@ -186,6 +194,7 @@ fn parse_args() -> Result<Mode, String> {
             only,
             titles,
             expect,
+            coverage,
         });
     }
     if args.first().is_some_and(|first| first == "wake") {
@@ -406,6 +415,7 @@ pub fn run() -> ExitCode {
             only,
             titles,
             expect,
+            coverage,
         } => {
             println!(
                 "hover-probe inventory · build {}
@@ -417,6 +427,10 @@ pub fn run() -> ExitCode {
                     "  titles    PRINTING WINDOW TITLES. Not their content.
 "
                 );
+            }
+            if coverage {
+                inventory::coverage(only.as_deref());
+                return ExitCode::SUCCESS;
             }
             if !expect.is_empty() {
                 // The decisive question, asked instead of the survey: a count

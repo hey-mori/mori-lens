@@ -66,6 +66,44 @@ So the problem for VS Code is very likely **targeting rather than
 reach**: the text is in the tree and `ElementFromPoint` at a coordinate
 does not land on it.
 
+## And then: the text is there, but not in lines
+
+The paragraph below says the likely diagnosis is targeting rather than
+reach. That is still right about the text being present and **wrong
+about how easy it would be to reach**, and the number that says so was
+measured an hour later.
+
+`hover-probe inventory --coverage` lays the sweep's own 24px grid over a
+window and asks, for each point, whether the **smallest** text element
+containing it is line-shaped.
+
+```
+window                 client        points  on a line              covered
+Code                    1549x908       2432      54 ( 2.2%)        2432
+Code                    1440x900       2220      51 ( 2.3%)        2220
+Code                    1440x900       2220     306 (13.8%)        2220
+```
+
+**2.2%, against the sweep's 2.8% acquisition.** Those two tracking each
+other is the finding. The product acquires almost exactly where a
+line-shaped text element is, and almost nowhere else.
+
+So the 8,131 characters are in the tree and they are **not** laid out as
+one element per line. They are in something large, and a point inside
+something large does not say which sentence is under the pointer.
+
+That is the shape [#34](https://github.com/swarea/mori-lens/issues/34)
+describes for KakaoTalk, in different words: *one text region, so Lens
+cannot tell which message you are on*. Two applications, one problem,
+which nothing before this could have shown.
+
+### The first version of this measurement said 100% and meant nothing
+
+It asked whether a point was inside **any** text element. Every window
+answered 100.0%, because one element covers the whole client area and
+containment is then trivially true. Recorded because the number looked
+like a triumph and was an artefact of the question.
+
 **It does not change the sweep.** Every point-based number in the matrix
 stands. Nothing here shows a pointer resolving into an editor line,
 because the window was covered and `ElementFromPoint` answers about

@@ -394,3 +394,66 @@ fn comparable(text: &str) -> Vec<String> {
         .filter(|word| !word.is_empty())
         .collect()
 }
+
+/// Where a window's text elements are, by handle.
+///
+/// **Layout, never content**, which is the same thing `lens_core::barren`
+/// keeps and for the same reason: a rectangle says where a line was and
+/// nothing about what it said.
+///
+/// It exists to answer a question `ElementFromPoint` cannot be asked about a
+/// covered window. That call returns the deepest element in the **global**
+/// z-order, so over a buried window it answers about whatever is on top. A
+/// rectangle does not care what is in front, so a grid can be tested against
+/// these without arranging a desktop.
+///
+/// What that measures is whether a coordinate falls **inside** an element that
+/// holds text, which is the step before resolving one. If a large share of a
+/// window's points do and `ElementFromPoint` still resolves almost none, the
+/// gap is in turning a point into an element rather than in the text being
+/// absent (#14).
+///
+/// Not used by the product. Ordered as the tree gave them, deepest last,
+/// because a caller testing containment wants the innermost match.
+pub fn text_rectangles_of(window_id: i64) -> Vec<lens_core::geometry::ScreenRect> {
+    let mut found = Vec::new();
+    let _com = ComScope::enter();
+    // SAFETY: creating the documented automation co-class in-process.
+    let Ok(automation) = (unsafe {
+        CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+    }) else {
+        return found;
+    };
+
+    // SAFETY: read-only automation queries on a handle the caller enumerated.
+    unsafe {
+        let Ok(element) = automation.ElementFromHandle(HWND(window_id as *mut _)) else {
+            return found;
+        };
+        let Ok(condition) = automation
+            .CreatePropertyCondition(UIA_IsTextPatternAvailablePropertyId, &VARIANT::from(true))
+        else {
+            return found;
+        };
+        let Ok(children) = element.FindAll(TreeScope_Descendants, &condition) else {
+            return found;
+        };
+        let count = children.Length().unwrap_or(0);
+        for index in 0..count.min(MAX_ELEMENTS) {
+            let Ok(child) = children.GetElement(index) else {
+                continue;
+            };
+            let Ok(rect) = child.CurrentBoundingRectangle() else {
+                continue;
+            };
+            let width = rect.right - rect.left;
+            let height = rect.bottom - rect.top;
+            if width > 0 && height > 0 {
+                found.push(lens_core::geometry::ScreenRect::new(
+                    rect.left, rect.top, width, height,
+                ));
+            }
+        }
+    }
+    found
+}
