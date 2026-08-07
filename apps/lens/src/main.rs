@@ -157,6 +157,7 @@ USAGE
 
     Rest the pointer on a sentence. Hold Alt unless --auto is given.
     Ctrl+Alt+D explains the sentence the card is showing.
+    Ctrl+Alt+C copies it.
     Ctrl+C to quit.
 
 OPTIONS
@@ -552,6 +553,14 @@ fn main() -> std::process::ExitCode {
             "UNAVAILABLE: Ctrl+Alt+D is taken by another application"
         }
     );
+    println!(
+        "  copy      {}",
+        if pause.copy_is_registered() {
+            "Ctrl+Alt+C puts the card on the clipboard, with the sentence it explains"
+        } else {
+            "UNAVAILABLE: Ctrl+Alt+C is taken by another application"
+        }
+    );
     // The one line that tells a first-time user what to do, so it has to
     // agree with the policy above it. It said "Rest the pointer on a sentence"
     // while the mode line two rows up said "hold Alt", and the first person to
@@ -906,6 +915,11 @@ fn main() -> std::process::ExitCode {
     // moment after the card faded meant the sentence they were just reading,
     // and the anchor puts the answer back where it was.
     let mut explainable: Option<Explainable> = None;
+    // The card the reader is looking at, so `Ctrl+Alt+C` has something to put
+    // on the clipboard and can put the same card back with a mark on it. Held
+    // here rather than read out of the overlay, which owns a `Card` for
+    // drawing and is not a place to look things up.
+    let mut on_screen: Option<(Card, ScreenRect)> = None;
     // The word and the region of the outstanding translation, so the pair
     // above can be completed when the answer comes back.
     let mut pending_word: Option<String> = None;
@@ -963,11 +977,57 @@ fn main() -> std::process::ExitCode {
         }
         let mut read_with_ocr = false;
         let mut explain = false;
+        let mut copy = false;
         for press in pause.poll() {
             match press {
                 pause::Pressed::PauseChanged => pause_changed = true,
                 pause::Pressed::ReadWithOcr => read_with_ocr = true,
                 pause::Pressed::Explain => explain = true,
+                pause::Pressed::Copy => copy = true,
+            }
+        }
+
+        if copy && !pause.is_paused() {
+            // Whatever is on the card, not whatever was last translated: a
+            // reader pressing this means the thing in front of them, which may
+            // be an explanation rather than a translation.
+            match on_screen
+                .as_ref()
+                .and_then(|(card, anchor)| card.for_the_clipboard().map(|text| (text, *anchor)))
+            {
+                Some((text, anchor)) => {
+                    // Length and lines, never the text (`docs/privacy-model.md`
+                    // §3). This is the one place in the product that writes
+                    // what was read anywhere at all, and it does it because
+                    // somebody pressed a key for it.
+                    if lens_platform_windows::clipboard::put_text(&text) {
+                        println!(
+                            "copy  {} chars, {} lines",
+                            text.chars().count(),
+                            text.lines().count(),
+                        );
+                        if let Some((card, anchor)) = on_screen.take() {
+                            let marked = card.copied();
+                            overlay.show(marked.clone(), anchor);
+                            on_screen = Some((marked, anchor));
+                        }
+                    } else {
+                        // Another application is holding the clipboard, which
+                        // is ordinary and passes. Said on the card because the
+                        // reader pressed a key and would otherwise conclude
+                        // the key does nothing.
+                        println!("copy  the clipboard would not open");
+                        overlay.show(Card::not_readable("클립보드를 열지 못했습니다"), anchor);
+                    }
+                }
+                None => {
+                    let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
+                    println!("copy  nothing on screen to copy");
+                    overlay.show(
+                        Card::not_readable("복사할 내용이 아직 없습니다"),
+                        ScreenRect::new(at.x, at.y, 1, 1),
+                    );
+                }
             }
         }
 
@@ -1428,6 +1488,7 @@ fn main() -> std::process::ExitCode {
             // hover the reader has left is dropped in one place rather than at
             // each call site that might forget.
             if life.answer_arrived(answer.generation, answer.anchor) == lifecycle::Action::Show {
+                on_screen = Some((answer.card.clone(), answer.anchor));
                 overlay.show(answer.card, answer.anchor);
             }
         }
@@ -1510,6 +1571,7 @@ fn tooltip(
         keys.is_registered(),
         keys.ocr_is_registered(),
         keys.explain_is_registered(),
+        keys.copy_is_registered(),
     );
     format!(
         "Mori Lens · {}{trouble}
@@ -1542,11 +1604,13 @@ fn hotkey_trouble(
     pause_registered: bool,
     ocr_registered: bool,
     explain_registered: bool,
+    copy_registered: bool,
 ) -> String {
     let taken: Vec<&str> = [
         (pause_registered, "Ctrl+Alt+L"),
         (ocr_registered, "Ctrl+Alt+O"),
         (explain_registered, "Ctrl+Alt+D"),
+        (copy_registered, "Ctrl+Alt+C"),
     ]
     .into_iter()
     .filter_map(|(held, name)| (!held).then_some(name))
@@ -1933,10 +1997,10 @@ mod tooltip_tests {
         // Every combination, so the longest is measured rather than assumed.
         // The obvious candidate is all three taken, and it is not: that one
         // collapses to the generic sentence and one named key is longer.
-        let worst = (0..8)
-            .map(|bits| hotkey_trouble(bits & 1 == 0, bits & 2 == 0, bits & 4 == 0))
+        let worst = (0..16)
+            .map(|bits| hotkey_trouble(bits & 1 == 0, bits & 2 == 0, bits & 4 == 0, bits & 8 == 0))
             .max_by_key(|line| line.encode_utf16().count())
-            .expect("eight combinations");
+            .expect("sixteen combinations");
 
         let built = format!(
             "Mori Lens · {}{worst}
@@ -1958,8 +2022,8 @@ mod tooltip_tests {
 
     /// The ordinary case costs nothing.
     #[test]
-    fn three_working_hotkeys_add_no_line() {
-        assert!(hotkey_trouble(true, true, true).is_empty());
+    fn four_working_hotkeys_add_no_line() {
+        assert!(hotkey_trouble(true, true, true, true).is_empty());
     }
 
     /// One taken key names itself, and the pause line names the way that still
@@ -1967,16 +2031,19 @@ mod tooltip_tests {
     /// same thing on a click.
     #[test]
     fn a_taken_hotkey_names_itself_and_the_way_round_it() {
-        let pause_gone = hotkey_trouble(false, true, true);
+        let pause_gone = hotkey_trouble(false, true, true, true);
         assert!(pause_gone.contains("Ctrl+Alt+L"), "{pause_gone}");
         assert!(pause_gone.contains("클릭"), "{pause_gone}");
 
-        let ocr_gone = hotkey_trouble(true, false, true);
+        let ocr_gone = hotkey_trouble(true, false, true, true);
         assert!(ocr_gone.contains("Ctrl+Alt+O"), "{ocr_gone}");
         assert!(!ocr_gone.contains("클릭"), "{ocr_gone}");
 
-        let explain_gone = hotkey_trouble(true, true, false);
+        let explain_gone = hotkey_trouble(true, true, false, true);
         assert!(explain_gone.contains("Ctrl+Alt+D"), "{explain_gone}");
+
+        let copy_gone = hotkey_trouble(true, true, true, false);
+        assert!(copy_gone.contains("Ctrl+Alt+C"), "{copy_gone}");
     }
 
     /// Two or more taken and none is named.
@@ -1986,10 +2053,11 @@ mod tooltip_tests {
     #[test]
     fn several_taken_hotkeys_are_reported_without_naming_one() {
         for line in [
-            hotkey_trouble(false, false, true),
-            hotkey_trouble(false, true, false),
-            hotkey_trouble(true, false, false),
-            hotkey_trouble(false, false, false),
+            hotkey_trouble(false, false, true, true),
+            hotkey_trouble(false, true, false, true),
+            hotkey_trouble(true, false, false, true),
+            hotkey_trouble(true, true, false, false),
+            hotkey_trouble(false, false, false, false),
         ] {
             assert!(!line.is_empty());
             assert!(!line.contains("Ctrl+Alt+"), "{line}");
