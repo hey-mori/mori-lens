@@ -69,6 +69,10 @@ What ships, each of it measured rather than asserted:
   you were on, its part of speech, what it means in this sentence, the
   clause structure. Only on a keypress, never on a hover, and labelled
   as a model's account rather than as fact.
+- **It answers for your own language too.** Lens never translates text
+  you can already read, and used to stop there. `Ctrl+Alt+D` on a Korean
+  sentence full of jargon explains the jargon: a term, an acronym, an
+  unusual sense of an ordinary word.
 - **It lets you keep it.** `Ctrl+Alt+C` puts the sentence and its answer
   on the clipboard. The card cannot be selected, because it passes
   clicks through, so without this there is no way to keep anything.
