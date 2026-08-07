@@ -173,7 +173,9 @@ The deep cache is built: its own map, its own keys, its own prompt
 version, per ADR-0005. Measured through `--selftest`, a remembered
 explanation comes back in **7 microseconds** against 4.4 seconds.
 
-Not started: copy, save, and the developer and exam profiles.
+Copy is built: `Ctrl+Alt+C`, the sentence and its answer, carrying the
+AI-explanation label when what is copied is an explanation. Not started:
+save, and the developer and exam profiles.
 
 ## M6 · macOS acquisition
 

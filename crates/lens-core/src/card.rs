@@ -438,6 +438,72 @@ impl Card {
         }
     }
 
+    /// What this card puts on the clipboard, or `None` when there is nothing
+    /// worth keeping.
+    ///
+    /// A reader handed a translation has no way to keep it: the overlay passes
+    /// clicks through ([ADR-0004](../../../docs/decisions/ADR-0004-passive-overlay.md)),
+    /// so there is nothing to select and nothing to drag. This is the whole of
+    /// the answer to that.
+    ///
+    /// # The source comes with it, always
+    ///
+    /// For the reason [`Self::original`] exists at all. A translation pasted
+    /// into somebody's notes on its own can never be checked against anything
+    /// again, and this product's own benchmarks are a list of confident
+    /// answers that were wrong. What is kept has to carry what it is a
+    /// translation **of**.
+    ///
+    /// # The footer does not, except the part that is a warning
+    ///
+    /// `qwen2.5:7b · 로컬 · 2.6초` is about a press the reader made and will
+    /// not remember. [`crate::analyse::DeepAnalysis::LABEL`] is not: it says a
+    /// model wrote the grammar below it and may be wrong, and a learner
+    /// pasting an explanation into their notes without that is exactly the
+    /// failure [ADR-0005](../../../docs/decisions/ADR-0005-two-speed-ai.md)
+    /// requires the label for.
+    ///
+    /// # Nothing is copied from a card that has no answer on it
+    ///
+    /// A problem or a waiting card yields `None`. Replacing whatever somebody
+    /// had on their clipboard with 번역 중 is worse than doing nothing, and
+    /// doing nothing is what a key with nothing to do should do.
+    pub fn for_the_clipboard(&self) -> Option<String> {
+        let original = self.original.trim();
+        match &self.body {
+            CardBody::Translation(text) if !text.trim().is_empty() && !original.is_empty() => {
+                Some(format!("{original}\n{}", text.trim()))
+            }
+            CardBody::Analysis(text) if !text.trim().is_empty() && !original.is_empty() => {
+                Some(format!(
+                    "{original}\n{}\n{}",
+                    text.trim(),
+                    crate::analyse::DeepAnalysis::LABEL
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// The same card, marked as having been copied.
+    ///
+    /// In the footer, beside the model, because that line is already where a
+    /// card says how it came by what it is showing.
+    ///
+    /// **The card is redrawn rather than replaced.** A confirmation card would
+    /// take the text off the screen at the moment somebody decided to keep it,
+    /// which is the one moment they are still reading it.
+    pub fn copied(mut self) -> Self {
+        if !self.footer.is_empty() {
+            self.footer.push_str(" · ");
+        }
+        self.footer.push_str(Self::COPIED);
+        self
+    }
+
+    /// What a copied card says. One place, because a test checks for it.
+    pub const COPIED: &str = "복사함";
+
     /// Whether this card is safe to show.
     ///
     /// A translation with no original beside it is refused, per the note on
@@ -1115,5 +1181,105 @@ mod cutting_tests {
         let after = problem.clone().with_the_answer_cut_to(2);
         assert_eq!(after.body, problem.body);
         assert_eq!(after.footer, problem.footer);
+    }
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    use super::*;
+    use crate::analyse::DeepAnalysis;
+    use crate::translate::{EngineId, QuickTranslation};
+
+    fn an_answer() -> QuickTranslation {
+        QuickTranslation {
+            text: "포인터가 멈춘 뒤에야 무엇이든 읽습니다.".to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "qwen2.5:7b".to_owned(),
+            latency_ms: 2644,
+            cached: false,
+        }
+    }
+
+    /// What a reader pastes into their notes: the sentence and its answer.
+    #[test]
+    fn a_translation_is_copied_with_the_sentence_it_translates() {
+        let card = Card::translated(
+            "The pointer must rest before anything is read.",
+            &an_answer(),
+        );
+        assert_eq!(
+            card.for_the_clipboard().as_deref(),
+            Some(
+                "The pointer must rest before anything is read.\n포인터가 멈춘 뒤에야 무엇이든 읽습니다."
+            ),
+        );
+    }
+
+    /// The model and the milliseconds are about a press nobody will remember.
+    #[test]
+    fn the_engine_and_the_timing_are_not_copied() {
+        let card = Card::translated("a sentence", &an_answer());
+        let copied = card.for_the_clipboard().expect("something");
+        assert!(!copied.contains("qwen2.5"), "{copied}");
+        assert!(!copied.contains("2.6"), "{copied}");
+        assert!(!copied.contains("로컬"), "{copied}");
+    }
+
+    /// The one part of a footer that is a warning goes with the text.
+    ///
+    /// A learner pasting a model's grammar claim into their notes without the
+    /// caveat is the failure ADR-0005 requires the label for, and a note
+    /// outlives the card it was read from.
+    #[test]
+    fn an_analysis_is_copied_with_the_warning_that_a_model_wrote_it() {
+        let card = Card::analysed(
+            "The pointer must rest.",
+            &DeepAnalysis {
+                lemma: "rest".to_owned(),
+                part_of_speech: "동사".to_owned(),
+                model: "qwen2.5:7b".to_owned(),
+                latency_ms: 3670,
+                ..DeepAnalysis::default()
+            },
+        );
+        let copied = card.for_the_clipboard().expect("something");
+        assert!(copied.starts_with("The pointer must rest."), "{copied}");
+        assert!(copied.contains("원형 · rest"), "{copied}");
+        assert!(copied.ends_with(DeepAnalysis::LABEL), "{copied}");
+        assert!(!copied.contains("3.7초"), "{copied}");
+    }
+
+    /// A key with nothing to do does nothing, rather than replacing whatever
+    /// somebody had on their clipboard with a status message.
+    #[test]
+    fn there_is_nothing_to_copy_from_a_card_with_no_answer_on_it() {
+        assert_eq!(Card::waiting("a sentence").for_the_clipboard(), None);
+        assert_eq!(Card::explaining("a sentence").for_the_clipboard(), None);
+        assert_eq!(Card::too_long_to_show().for_the_clipboard(), None);
+        assert_eq!(
+            Card::not_acquired(AcquireError::Unsupported).for_the_clipboard(),
+            None,
+        );
+        assert_eq!(Card::already_running().for_the_clipboard(), None);
+    }
+
+    /// A translation with no original is refused by `is_showable` and must be
+    /// refused here too, for the same reason: nothing to check it against.
+    #[test]
+    fn a_translation_with_no_sentence_beside_it_is_not_copied() {
+        let card = Card::translated("", &an_answer());
+        assert!(!card.is_showable());
+        assert_eq!(card.for_the_clipboard(), None);
+    }
+
+    /// The confirmation keeps the text on screen.
+    #[test]
+    fn a_copied_card_says_so_without_losing_its_answer() {
+        let card = Card::translated("a sentence", &an_answer());
+        let after = card.clone().copied();
+        assert_eq!(after.body, card.body);
+        assert_eq!(after.original, card.original);
+        assert!(after.footer.ends_with(Card::COPIED), "{}", after.footer);
+        assert!(after.footer.starts_with("qwen2.5:7b"), "{}", after.footer);
     }
 }
