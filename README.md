@@ -74,7 +74,9 @@ What ships, each of it measured rather than asserted:
   sentence full of jargon explains the jargon: a term, an acronym, an
   unusual sense of an ordinary word.
 - **It lets you keep it.** `Ctrl+Alt+C` puts the sentence and its answer
-  on the clipboard. The card cannot be selected, because it passes
+  on the clipboard; `Ctrl+Alt+S` appends it to `saved.md` beside your
+  settings file. Plain Markdown, so the export is the file and deleting
+  a block deletes it. Lens only ever appends and never reads it back. The card cannot be selected, because it passes
   clicks through, so without this there is no way to keep anything.
 
 What does not exist yet: macOS, saved vocabulary, and a settings
