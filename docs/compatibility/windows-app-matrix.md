@@ -254,7 +254,7 @@ So the honest summary of "does it know what you pointed at":
 |---|---|---|
 | labels, chat, most UI | reliable | 86 to 100%, each hit separable |
 | document, editor body | reliable | 3 to 18%; the rest is suppressed rather than shown wrong |
-| VS Code's editor | reliable | nothing is exposed at all (#14) |
+| VS Code's editor | reliable | **the text is exposed and a pointer does not reach it**, measured 2026-08-07 with screen-reader mode on: six words of one doc comment all found in the tree by handle. The point-based rows below stand and the diagnosis under them does not (#14) |
 
 **Which window** is not in doubt anywhere: `ElementFromPoint` performs the same
 hit test that decides where a click goes, and the probe verifies the owning
