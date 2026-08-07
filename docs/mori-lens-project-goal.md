@@ -92,15 +92,23 @@ That gate is [ADR-0008](decisions/ADR-0008-probe-before-product.md).
 Seventeen capabilities have passed it. The rest have unit tests, which
 prove the logic and prove nothing about a desktop.
 
-What is still missing before this is something a person installs: a
-signed binary and an installer, so Windows does not warn on first run.
+What is still missing before this is something a person installs: **a
+signed binary**. That is the whole of the remaining list.
 
-Building it yourself is no longer the only answer. `scripts/package.sh`
-runs the gate, builds, and writes a zip named for the version and the
-commit with a SHA-256 beside it, so the thing can be handed over. That is
-the step below both of the missing ones rather than either of them: the
-warning still appears, and the checksum is what a person has instead of a
-signature.
+`scripts/package.sh` runs the gate, builds, and writes a zip named for
+the version and the commit with a SHA-256 beside it. `install.ps1`
+travels in that zip: it copies the binary to
+`%LOCALAPPDATA%\Programs\Mori Lens`, adds a Start Menu entry, and
+registers it so it appears in Settings > Apps and can be removed from
+there. Per-user throughout, no elevation, no service. It does not switch
+on start-with-Windows, because that is a tick in the tray menu and an
+installer that made it for somebody would be deciding for them.
+`uninstall.ps1` reverses all of it and keeps the settings file, which is
+the only thing in this product a person wrote themselves.
+
+Signing needs a certificate, which is a purchase and a decision. Until
+there is one, SmartScreen will say the publisher is unknown, and it is
+right to: the checksum is what a person has instead.
 
 **What the measurement found, since it changes what "works" means
 here:** acquisition succeeds, at p50 10ms, and returns the *right* text
