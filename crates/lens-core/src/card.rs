@@ -1278,6 +1278,13 @@ mod clipboard_tests {
             None,
         );
         assert_eq!(Card::already_running().for_the_clipboard(), None);
+        // The one the loop draws most often for a Korean reader. Before the
+        // card on screen was recorded, pressing the copy key here copied a
+        // translation of a different sentence.
+        assert_eq!(
+            Card::already_readable("Ctrl+Alt+D").for_the_clipboard(),
+            None
+        );
     }
 
     /// A translation with no original is refused by `is_showable` and must be
