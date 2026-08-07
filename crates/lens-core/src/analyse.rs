@@ -64,6 +64,18 @@ pub const DEEP_TIMEOUT: Duration = Duration::from_secs(60);
 /// where it could not.
 pub const TOO_LONG: usize = 400;
 
+/// How much of the source an explanation may repeat before it is a
+/// restatement of it.
+///
+/// Four fifths. An explanation of a sentence quotes a word or two of it, and
+/// often should: naming the subject is how you describe a clause. Keeping four
+/// fifths of the words is not quoting, it is handing the sentence back.
+///
+/// Measured against the two answers that prompted it, which kept **all** of
+/// their source's words, and against an explanation of the same sentence that
+/// kept a quarter.
+const RESTATEMENT_SHARE: f64 = 0.8;
+
 /// What to explain, and what the reader can already see.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeepRequest {
@@ -71,13 +83,20 @@ pub struct DeepRequest {
     pub sentence: String,
     /// The word the pointer was on, when there was one.
     pub word: Option<String>,
-    /// The translation already on the screen.
+    /// The translation already on the screen, when there is one.
     ///
     /// Sent so the model explains rather than re-translates. It is also the
     /// thing that makes the two answers agree: an analysis derived from a
     /// second, independent translation would explain a sentence the reader is
     /// not looking at.
-    pub translation: String,
+    ///
+    /// **`None` is a real case and not a missing value.** Text already in the
+    /// reader's language is never translated, correctly: a Korean reader
+    /// hovering Korean does not want it re-worded. Until 2026-08-06 that also
+    /// meant Lens did nothing for it at all, which left the whole of somebody's
+    /// own language outside the product. A word you can read and do not know
+    /// is the commonest thing on a technical screen.
+    pub translation: Option<String>,
     /// The language the explanation is written in. The reader's, not the
     /// source's.
     pub target_language: String,
@@ -104,6 +123,7 @@ impl Answerable {
 }
 
 impl DeepRequest {
+    /// A request about a sentence the reader has a translation of.
     pub fn new(
         sentence: impl Into<String>,
         translation: impl Into<String>,
@@ -112,7 +132,24 @@ impl DeepRequest {
         Self {
             sentence: sentence.into(),
             word: None,
-            translation: translation.into(),
+            translation: Some(translation.into()).filter(|text: &String| !text.trim().is_empty()),
+            target_language: target_language.into(),
+        }
+    }
+
+    /// A request about text the reader can already read.
+    ///
+    /// No translation, because there is none and there should not be. What is
+    /// asked for is the same thing minus the grounding: what the word means
+    /// here, what the sentence is doing.
+    pub fn about_what_they_can_read(
+        sentence: impl Into<String>,
+        target_language: impl Into<String>,
+    ) -> Self {
+        Self {
+            sentence: sentence.into(),
+            word: None,
+            translation: None,
             target_language: target_language.into(),
         }
     }
@@ -210,6 +247,61 @@ impl DeepAnalysis {
     /// clothes, and it must not become a card with a heading and no content.
     pub fn says_anything(&self) -> bool {
         !self.lines().is_empty()
+    }
+
+    /// Drop the explanations that are the sentence again.
+    ///
+    /// **Measured 2026-08-06, on the path that has no translation to ground
+    /// on.** Asked what `이 값은 캐시에 저장되며 TTL이 지나면 만료됩니다.` is
+    /// doing, the model answered with that sentence, verbatim, plus an English
+    /// gloss of it. Asked about `접근성 트리가 차가우면 첫 읽기가 느립니다.`, the
+    /// same sentence with a parenthesis inserted.
+    ///
+    /// A reader who can already read the sentence has been handed it back
+    /// under a heading that promised to explain it. That is worse than an
+    /// empty field: an empty field says nothing, and this says something and
+    /// is wrong about what it is.
+    ///
+    /// # Why not [`crate::translate::reads_as_the_source`]
+    ///
+    /// It exists for the neighbouring failure and will not fire here. It
+    /// refuses to judge a source under eight words, because on the translation
+    /// path a short answer that resembles a short source is usually a correct
+    /// translation carrying names through. Both sentences above are six words.
+    ///
+    /// The question is also different. There it is *did you fail to
+    /// translate*; here it is *did you restate*, and a short sentence restated
+    /// is still restated.
+    ///
+    /// [`Self::lemma`] is exempt for the same reason as in
+    /// [`Self::only_what_is_written_in`]: it is a word taken **from** the
+    /// source and is supposed to be.
+    pub fn without_restatements_of(mut self, source: &str) -> Self {
+        let source_words = crate::translate::comparable_words(source);
+        // Below this the measure is too coarse to mean anything: a two-word
+        // source is most of itself after any paraphrase.
+        if source_words.len() < 3 {
+            return self;
+        }
+        let restates = |text: &String| {
+            let words = crate::translate::comparable_words(text);
+            let kept = source_words
+                .iter()
+                .filter(|word| words.contains(word))
+                .count();
+            kept as f64 / source_words.len() as f64 >= RESTATEMENT_SHARE
+        };
+        for field in [
+            &mut self.part_of_speech,
+            &mut self.sense,
+            &mut self.structure,
+            &mut self.note,
+        ] {
+            if !field.trim().is_empty() && restates(field) {
+                field.clear();
+            }
+        }
+        self
     }
 
     /// Drop the explanations that came back in the wrong language.
@@ -416,5 +508,149 @@ mod tests {
     #[test]
     fn the_deep_budget_is_far_longer_than_a_hover_may_wait() {
         assert!(DEEP_TIMEOUT > crate::translate::QUICK_TIMEOUT * 2);
+    }
+}
+
+#[cfg(test)]
+mod own_language_tests {
+    use super::*;
+
+    /// Text in the reader's own language is a request with no grounding, and
+    /// that is a state rather than a gap.
+    #[test]
+    fn a_request_about_readable_text_carries_no_translation() {
+        let request = DeepRequest::about_what_they_can_read(
+            "RowQuery는 멱등성을 보장하지 않습니다.",
+            "Korean",
+        )
+        .about_the_word("멱등성");
+
+        assert_eq!(request.translation, None);
+        let answerable = request.answerable();
+        assert!(answerable.the_word);
+        assert!(answerable.the_structure);
+    }
+
+    /// An empty translation is no translation, so a caller that passes one by
+    /// accident gets the ungrounded prompt rather than an instruction to
+    /// compare against nothing.
+    #[test]
+    fn an_empty_translation_is_the_same_as_none() {
+        assert_eq!(
+            DeepRequest::new("a sentence", "", "Korean").translation,
+            None
+        );
+        assert_eq!(
+            DeepRequest::new("a sentence", "   ", "Korean").translation,
+            None,
+        );
+        assert_eq!(
+            DeepRequest::new("a sentence", "번역", "Korean")
+                .translation
+                .as_deref(),
+            Some("번역"),
+        );
+    }
+
+    /// The length rule does not care which kind it is: a paragraph is still
+    /// not a sentence to explain.
+    #[test]
+    fn a_paragraph_in_the_readers_own_language_is_still_refused() {
+        let long = "단어 ".repeat(TOO_LONG);
+        assert!(!DeepRequest::about_what_they_can_read(long, "Korean")
+            .answerable()
+            .anything());
+    }
+}
+
+#[cfg(test)]
+mod restatement_tests {
+    use super::*;
+
+    /// The two answers that prompted this, from `qwen2.5:7b` on 2026-08-06.
+    #[test]
+    fn an_explanation_that_is_the_sentence_again_is_dropped() {
+        let source = "이 값은 캐시에 저장되며 TTL이 지나면 만료됩니다.";
+        let dropped = DeepAnalysis {
+            structure: "이 값은 캐시에 저장되며, TTL이 지나면 만료됩니다. (This value is stored in the cache.)".to_owned(),
+            sense: "시간 제한(Time To Live)".to_owned(),
+            ..DeepAnalysis::default()
+        }
+        .without_restatements_of(source);
+
+        assert_eq!(dropped.structure, "", "{dropped:?}");
+        assert_eq!(dropped.sense, "시간 제한(Time To Live)");
+    }
+
+    /// The same sentence with a parenthesis inserted is still the sentence.
+    #[test]
+    fn a_paraphrase_that_keeps_every_word_is_a_restatement() {
+        let source = "접근성 트리가 차가우면 첫 읽기가 느립니다.";
+        let dropped = DeepAnalysis {
+            structure: "접근성 트리가 차가우면 (이 조건에서 접근성이 낮다면) 첫 읽기가 느립니다."
+                .to_owned(),
+            ..DeepAnalysis::default()
+        }
+        .without_restatements_of(source);
+        assert_eq!(dropped.structure, "");
+    }
+
+    /// A real description quotes a word or two and is kept.
+    #[test]
+    fn an_explanation_that_quotes_the_subject_survives() {
+        let source = "RowQuery는 멱등성을 보장하지 않습니다.";
+        let kept = DeepAnalysis {
+            structure: "RowQuery가 동일한 요청을 반복할 때 일관된 결과를 보장하지 않는다는 의미."
+                .to_owned(),
+            sense: "동일한 요청을 여러 번 수행해도 같은 결과를 얻는 성질".to_owned(),
+            ..DeepAnalysis::default()
+        }
+        .without_restatements_of(source);
+        assert!(!kept.structure.is_empty(), "{kept:?}");
+        assert!(!kept.sense.is_empty(), "{kept:?}");
+    }
+
+    /// The dictionary form is a word taken from the source and is supposed to
+    /// be, which is the same exemption the language filter makes.
+    #[test]
+    fn the_dictionary_form_is_not_a_restatement() {
+        let kept = DeepAnalysis {
+            lemma: "멱등성".to_owned(),
+            ..DeepAnalysis::default()
+        }
+        .without_restatements_of("멱등성 멱등성 멱등성");
+        assert_eq!(kept.lemma, "멱등성");
+    }
+
+    /// Too short to judge. A two-word source is most of itself after any
+    /// paraphrase, so the measure would fire on a correct answer.
+    #[test]
+    fn a_source_of_two_words_is_not_judged() {
+        let kept = DeepAnalysis {
+            sense: "캐시 만료".to_owned(),
+            ..DeepAnalysis::default()
+        }
+        .without_restatements_of("캐시 만료");
+        assert_eq!(kept.sense, "캐시 만료");
+    }
+
+    /// `reads_as_the_source` will not do this job, and the reason is a number.
+    ///
+    /// It refuses to judge a source under eight words, because on the
+    /// translation path a short answer resembling a short source is usually a
+    /// correct translation carrying names through. Both sentences above are
+    /// six words, so it sees neither.
+    #[test]
+    fn the_echo_check_does_not_cover_this_and_that_is_why_this_exists() {
+        let source = "접근성 트리가 차가우면 첫 읽기가 느립니다.";
+        let restated = "접근성 트리가 차가우면 (이 조건에서) 첫 읽기가 느립니다.";
+        assert!(!crate::translate::reads_as_the_source(source, restated));
+
+        let dropped = DeepAnalysis {
+            structure: restated.to_owned(),
+            ..DeepAnalysis::default()
+        }
+        .without_restatements_of(source);
+        assert_eq!(dropped.structure, "");
     }
 }
