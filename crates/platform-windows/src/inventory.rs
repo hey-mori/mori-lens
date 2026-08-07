@@ -313,3 +313,84 @@ unsafe fn text_pattern(element: &IUIAutomationElement) -> Option<IUIAutomationTe
             .ok()
     }
 }
+
+/// Every word a window's provider will hand over, by handle.
+///
+/// **For comparing one reading of a window against another**, which is the
+/// only question this answers and the only reason it returns text rather than
+/// a count. `hover-probe` renders a covered window's pixels, recognises them,
+/// and asks how many of those words the accessibility tree also holds. That is
+/// the difference between *this window exposes no text* and *this window
+/// exposes text a pointer cannot reach*, and issue #14 has been open on
+/// exactly that distinction.
+///
+/// A set rather than the text, deliberately: it answers overlap and it cannot
+/// reconstruct a document's order. Never printed, and the probe reports counts
+/// (`docs/privacy-model.md`).
+///
+/// Not used by the product, and it must not be. `lens.exe` reads what is under
+/// the pointer, and a function that hands over a whole window's text is a
+/// different tool.
+pub fn text_words_of(window_id: i64) -> std::collections::HashSet<String> {
+    let mut words = std::collections::HashSet::new();
+    let _com = ComScope::enter();
+    // SAFETY: creating the documented automation co-class in-process.
+    let Ok(automation) = (unsafe {
+        CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+    }) else {
+        return words;
+    };
+
+    // SAFETY: read-only automation queries on a handle the caller enumerated;
+    // a window that closes mid-walk yields an error rather than a crash.
+    unsafe {
+        let Ok(element) = automation.ElementFromHandle(HWND(window_id as *mut _)) else {
+            return words;
+        };
+        let Ok(condition) = automation
+            .CreatePropertyCondition(UIA_IsTextPatternAvailablePropertyId, &VARIANT::from(true))
+        else {
+            return words;
+        };
+        let Ok(found) = element.FindAll(TreeScope_Descendants, &condition) else {
+            return words;
+        };
+        let count = found.Length().unwrap_or(0);
+        for index in 0..count.min(MAX_ELEMENTS) {
+            let Ok(child) = found.GetElement(index) else {
+                continue;
+            };
+            let Some(pattern) = text_pattern(&child) else {
+                continue;
+            };
+            let Ok(range) = pattern.DocumentRange() else {
+                continue;
+            };
+            // A larger cap than the inventory's, because this is comparing
+            // against a whole window's pixels rather than sampling.
+            let Ok(text) = range.GetText(20_000) else {
+                continue;
+            };
+            words.extend(comparable(&text.to_string()));
+        }
+    }
+    words
+}
+
+/// Words as they compare between a recogniser and a provider.
+///
+/// Lower-cased and stripped to letters, digits and underscores, so that
+/// punctuation the two disagree about does not count as a difference. The same
+/// normalisation `lens_core::translate` uses on the other comparison of this
+/// kind, and for the same reason.
+fn comparable(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .map(|word| {
+            word.chars()
+                .filter(|c| c.is_alphanumeric() || *c == '_')
+                .collect::<String>()
+                .to_lowercase()
+        })
+        .filter(|word| !word.is_empty())
+        .collect()
+}
