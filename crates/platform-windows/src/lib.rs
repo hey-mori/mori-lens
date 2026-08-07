@@ -38,7 +38,7 @@ mod protected_harness;
 
 pub use appearance::system_preferences;
 pub use capture::Capture;
-pub use inventory::{text_inventory, text_words_of, WindowTextInventory};
+pub use inventory::{text_inventory, text_rectangles_of, text_words_of, WindowTextInventory};
 pub use ocr_acquire::OcrTextAcquirer;
 pub use overlay::Overlay;
 pub use tray::{Tray, TrayEvent};
