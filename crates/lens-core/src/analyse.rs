@@ -156,16 +156,29 @@ impl DeepRequest {
 
     /// Name the word the reader is looking at, when there is one.
     ///
-    /// A word that is the whole sentence is dropped, for the reason
+    /// A word that is the whole **sentence** is dropped, for the reason
     /// [`crate::translate::QuickRequest::with_focus`] gives: a recogniser that
-    /// merged a line into one word has not found a word, and asking about the
-    /// sentence as though it were one produces
-    /// [`Answerable::the_word`] answers about a sentence.
+    /// merged a line into one word has not found a word, and this prompt asks
+    /// that word for a dictionary form and a part of speech, which a sentence
+    /// does not have.
+    ///
+    /// **A one-word source is not that case**, and the difference matters more
+    /// here than on the quick path. There the focus is only a hint and the
+    /// model has the sentence either way; here [`Answerable::the_word`] decides
+    /// whether the lemma, the part of speech and the sense are asked for at
+    /// all, and for a single word those are the *only* useful half.
+    ///
+    /// Dropping it there turned the analysis of one word into an analysis of
+    /// nothing, which is what
+    /// `a_single_word_has_no_structure_to_describe` caught.
     pub fn about_the_word(mut self, word: impl Into<String>) -> Self {
         let word = word.into();
         let same = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
-        self.word =
-            (!word.trim().is_empty() && same(&word) != same(&self.sentence)).then_some(word);
+        // A sentence has whitespace in it; a word does not. That is the whole
+        // distinction, and it is why this is not simply string equality.
+        let the_source_is_a_sentence = self.sentence.split_whitespace().count() > 1;
+        let restates_the_sentence = the_source_is_a_sentence && same(&word) == same(&self.sentence);
+        self.word = (!word.trim().is_empty() && !restates_the_sentence).then_some(word);
         self
     }
 
@@ -671,6 +684,22 @@ mod focus_tests {
     /// The same rule on the deep path, where getting it wrong is worse: the
     /// prompt asks for a dictionary form and a part of speech, and a sentence
     /// has neither.
+    /// The regression this rule caused when it was first written, and the
+    /// reason it is not plain string equality.
+    ///
+    /// A one-word source's word **is** the word. Dropping it turns off the
+    /// lemma, the part of speech and the sense, which for a single word are
+    /// the only half worth asking for.
+    #[test]
+    fn a_one_word_source_keeps_its_word() {
+        let request =
+            DeepRequest::new("vacuously", "공허하게", "Korean").about_the_word("vacuously");
+        assert_eq!(request.word.as_deref(), Some("vacuously"));
+        let answerable = request.answerable();
+        assert!(answerable.the_word);
+        assert!(!answerable.the_structure);
+    }
+
     #[test]
     fn a_word_that_is_the_whole_sentence_is_dropped() {
         let sentence = "RowQuery는 멱등성을 보장하지 않습니다.";
