@@ -1012,9 +1012,7 @@ fn main() -> std::process::ExitCode {
                             text.lines().count(),
                         );
                         if let Some((card, anchor)) = on_screen.take() {
-                            let marked = card.copied();
-                            overlay.show(marked.clone(), anchor);
-                            on_screen = Some((marked, anchor));
+                            show_card(&overlay, &mut on_screen, card.copied(), anchor);
                         }
                     } else {
                         // Another application is holding the clipboard, which
@@ -1022,13 +1020,20 @@ fn main() -> std::process::ExitCode {
                         // reader pressed a key and would otherwise conclude
                         // the key does nothing.
                         println!("copy  the clipboard would not open");
-                        overlay.show(Card::not_readable("클립보드를 열지 못했습니다"), anchor);
+                        show_card(
+                            &overlay,
+                            &mut on_screen,
+                            Card::not_readable("클립보드를 열지 못했습니다"),
+                            anchor,
+                        );
                     }
                 }
                 None => {
                     let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
                     println!("copy  nothing on screen to copy");
-                    overlay.show(
+                    show_card(
+                        &overlay,
+                        &mut on_screen,
                         Card::not_readable("복사할 내용이 아직 없습니다"),
                         ScreenRect::new(at.x, at.y, 1, 1),
                     );
@@ -1050,7 +1055,12 @@ fn main() -> std::process::ExitCode {
                             // measured 2.6 to 4.9 seconds warm, and a card
                             // that sits unchanged for four seconds after a
                             // keypress reads as a key that did nothing.
-                            overlay.show(Card::explaining(&showing.original), showing.anchor);
+                            show_card(
+                                &overlay,
+                                &mut on_screen,
+                                Card::explaining(&showing.original),
+                                showing.anchor,
+                            );
                             translating &= jobs_tx
                                 .send(Job::Explain(Explain {
                                     generation,
@@ -1071,7 +1081,9 @@ fn main() -> std::process::ExitCode {
                 None => {
                     let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
                     println!("deep  nothing on screen to explain");
-                    overlay.show(
+                    show_card(
+                        &overlay,
+                        &mut on_screen,
                         Card::not_readable("설명할 문장이 아직 없습니다"),
                         ScreenRect::new(at.x, at.y, 1, 1),
                     );
@@ -1152,7 +1164,9 @@ fn main() -> std::process::ExitCode {
                     // and the reader is looking at the screen: they just saved
                     // a file and are waiting to see what it did.
                     let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
-                    overlay.show(
+                    show_card(
+                        &overlay,
+                        &mut on_screen,
                         Card::needs_a_restart(&keys),
                         ScreenRect::new(at.x, at.y, 1, 1),
                     );
@@ -1232,7 +1246,12 @@ fn main() -> std::process::ExitCode {
                             anchor: reading.anchor,
                             translation: None,
                         });
-                        overlay.show(Card::already_readable("Ctrl+Alt+D"), reading.anchor);
+                        show_card(
+                            &overlay,
+                            &mut on_screen,
+                            Card::already_readable("Ctrl+Alt+D"),
+                            reading.anchor,
+                        );
                     } else {
                         life.job_dispatched(generation, reading.anchor, started.elapsed());
                         pending_original = reading.sentence.clone();
@@ -1259,7 +1278,9 @@ fn main() -> std::process::ExitCode {
                     // On the card, not only in a terminal nobody is looking
                     // at: the user pressed a key and is owed an answer.
                     println!("ocr   no reading [{}]", refusal.reason());
-                    overlay.show(
+                    show_card(
+                        &overlay,
+                        &mut on_screen,
                         Card::not_readable(refusal.user_message()),
                         ScreenRect::new(at.x, at.y, 1, 1),
                     );
@@ -1288,7 +1309,9 @@ fn main() -> std::process::ExitCode {
                 );
             }
             let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
-            overlay.show(
+            show_card(
+                &overlay,
+                &mut on_screen,
                 Card::not_readable("읽기가 멈췄습니다 · 다시 실행해 주세요"),
                 ScreenRect::new(at.x, at.y, 1, 1),
             );
@@ -1344,7 +1367,12 @@ fn main() -> std::process::ExitCode {
                 life.job_dispatched(generation, anchor, now);
                 life.answer_arrived(generation, anchor);
                 narrator.card_shown();
-                overlay.show(Card::hold_the_modifier("Alt"), anchor);
+                show_card(
+                    &overlay,
+                    &mut on_screen,
+                    Card::hold_the_modifier("Alt"),
+                    anchor,
+                );
             }
         }
 
@@ -1413,7 +1441,12 @@ fn main() -> std::process::ExitCode {
                                 .map(|showing| showing.anchor)
                                 .unwrap_or(ScreenRect::new(point.x, point.y, 1, 1));
                             reach.card_shown();
-                            overlay.show(Card::already_readable("Ctrl+Alt+D"), anchor);
+                            show_card(
+                                &overlay,
+                                &mut on_screen,
+                                Card::already_readable("Ctrl+Alt+D"),
+                                anchor,
+                            );
                         }
                         continue;
                     }
@@ -1489,7 +1522,7 @@ fn main() -> std::process::ExitCode {
                             narrator.card_shown();
                             life.job_dispatched(generation, anchor, now);
                             life.answer_arrived(generation, anchor);
-                            overlay.show(card, anchor);
+                            show_card(&overlay, &mut on_screen, card, anchor);
                         }
                     }
                 }
@@ -1500,7 +1533,12 @@ fn main() -> std::process::ExitCode {
         // that the screen would otherwise be empty. Once per translation, and
         // never for one the cache already answered.
         if let Some(anchor) = life.waited_long_enough(now) {
-            overlay.show(Card::waiting(&pending_original), anchor);
+            show_card(
+                &overlay,
+                &mut on_screen,
+                Card::waiting(&pending_original),
+                anchor,
+            );
         }
 
         // With where the card is, so reading it does not dismiss it. The
@@ -1532,8 +1570,7 @@ fn main() -> std::process::ExitCode {
             // hover the reader has left is dropped in one place rather than at
             // each call site that might forget.
             if life.answer_arrived(answer.generation, answer.anchor) == lifecycle::Action::Show {
-                on_screen = Some((answer.card.clone(), answer.anchor));
-                overlay.show(answer.card, answer.anchor);
+                show_card(&overlay, &mut on_screen, answer.card, answer.anchor);
             }
         }
 
@@ -1732,6 +1769,31 @@ fn korean_how_to(policy: &AppPolicy) -> String {
         AppTier::Modifier => "Alt를 누른 채 문장 위에 포인터를 올려 두세요".to_owned(),
         AppTier::Deny => "허용한 앱에서만 동작합니다".to_owned(),
     }
+}
+
+/// Draw a card and remember that it is the one on the screen.
+///
+/// **One place, because there were fourteen.** `Ctrl+Alt+C` copies "the card",
+/// and only the branch that received a finished translation was recording what
+/// that was. Every other card the loop draws left the previous one recorded, so
+/// a reader looking at `읽을 수 있는 언어라 번역하지 않았습니다` who pressed the
+/// copy key got a translation of a different sentence, copied and redrawn at a
+/// different anchor.
+///
+/// Nothing is recorded when the overlay refuses to draw. A card that was not
+/// shown is not the card on the screen, and `Card::is_showable` refuses more
+/// than one shape.
+fn show_card(
+    overlay: &Overlay,
+    on_screen: &mut Option<(Card, ScreenRect)>,
+    card: Card,
+    anchor: ScreenRect,
+) -> bool {
+    let drawn = overlay.show(card.clone(), anchor);
+    if drawn {
+        *on_screen = Some((card, anchor));
+    }
+    drawn
 }
 
 /// One line per card, shape only.
