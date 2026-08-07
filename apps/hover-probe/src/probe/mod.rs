@@ -76,6 +76,10 @@ SWEEP MODE
     contains the sample point), latency, and the wake's before-and-after.
 
     --only <text>       Only windows whose process or title contains this.
+    --expect <word>     Ask whether the window's tree holds this word, instead
+                        of surveying. Repeatable. Name a word that can only be
+                        in the document: a count cannot tell a document from
+                        the file tree beside it, and this can.
     --points <n>        Roughly how many points per window. Default 240.
     --budget <s>        Seconds allowed per window pass. Default 20.
     --no-wake           Skip the second pass, measuring cold behaviour only.
@@ -143,6 +147,9 @@ enum Mode {
     Inventory {
         only: Option<String>,
         titles: bool,
+        /// Words the operator says the document contains. See
+        /// [`inventory::expect`].
+        expect: Vec<String>,
     },
     Sweep {
         options: sweep::SweepOptions,
@@ -158,6 +165,7 @@ fn parse_args() -> Result<Mode, String> {
         args.remove(0);
         let mut only = None;
         let mut titles = false;
+        let mut expect: Vec<String> = Vec::new();
         let mut rest = args.into_iter();
         while let Some(arg) = rest.next() {
             match arg.as_str() {
@@ -167,10 +175,18 @@ fn parse_args() -> Result<Mode, String> {
                 }
                 "--titles" => titles = true,
                 "--only" => only = Some(rest.next().ok_or("--only needs some text to match")?),
+                "--expect" => expect.push(
+                    rest.next()
+                        .ok_or("--expect needs a word the document should contain")?,
+                ),
                 other => return Err(format!("unknown argument: {other}")),
             }
         }
-        return Ok(Mode::Inventory { only, titles });
+        return Ok(Mode::Inventory {
+            only,
+            titles,
+            expect,
+        });
     }
     if args.first().is_some_and(|first| first == "wake") {
         args.remove(0);
@@ -386,7 +402,11 @@ pub fn run() -> ExitCode {
             wake::print(&rows, &options);
             ExitCode::SUCCESS
         }
-        Mode::Inventory { only, titles } => {
+        Mode::Inventory {
+            only,
+            titles,
+            expect,
+        } => {
             println!(
                 "hover-probe inventory · build {}
 ",
@@ -397,6 +417,14 @@ pub fn run() -> ExitCode {
                     "  titles    PRINTING WINDOW TITLES. Not their content.
 "
                 );
+            }
+            if !expect.is_empty() {
+                // The decisive question, asked instead of the survey: a count
+                // cannot say whether 8,131 characters are the document or the
+                // file tree beside it, and a word that can only be in the
+                // document can.
+                inventory::expect(only.as_deref(), &expect);
+                return ExitCode::SUCCESS;
             }
             let found = inventory::run(only.as_deref());
             inventory::print_report(&found, titles);
