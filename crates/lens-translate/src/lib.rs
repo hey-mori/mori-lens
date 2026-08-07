@@ -186,12 +186,21 @@ impl OllamaTranslator {
         let started = Instant::now();
         // A cold 9.6GB model can take 35 seconds, so this timeout is far longer
         // than a hover's. Nobody is waiting on it.
-        http::post(
+        let response = http::post(
             &self.endpoint,
             "/api/generate",
             &body,
             Duration::from_secs(180),
         )?;
+        // The reply is read, not merely received. Ollama answers a request for
+        // a model it does not have with **200 and an error in the body**, so
+        // without this the banner said `engine warm after 14ms` on the line
+        // below one saying the model was not installed. Two lines about the
+        // same engine, disagreeing, in the output a reader pastes when asking
+        // why nothing works.
+        if let Some(error) = self.error_in(&response) {
+            return Err(error);
+        }
         Ok(started.elapsed())
     }
 
@@ -232,10 +241,30 @@ impl OllamaTranslator {
         if installed.is_empty() {
             return Err(TranslateError::ModelMissing(self.model.clone()));
         }
+        // **A named model that is not installed is missing, not an invitation
+        // to pick another one.** `docs/privacy-model.md` promises that a named
+        // model is always honoured, and it is a promise somebody may have made
+        // a decision on: the model that resists prompt injection is not the
+        // model that translates best, and that trade is theirs to make in
+        // their settings file.
+        //
+        // Before this, `--model llama3.3:70b` on a machine without it printed
+        // `engine qwen2.5:7b` and went on quietly. The reader had asked a
+        // question and been answered by a different model without being told.
+        //
+        // Refusing here is what makes `ModelMissing` reachable at all for this
+        // case, and its remedy is the `ollama pull` line that fixes it.
+        if self.pinned {
+            return if installed.iter().any(|name| name == &self.model) {
+                Ok(&self.model)
+            } else {
+                Err(TranslateError::ModelMissing(self.model.clone()))
+            };
+        }
+
         // The choice itself is pure and lives in `lens-core`, so which model a
         // given set of installs produces is testable without an Ollama.
-        let wanted = self.pinned.then_some(self.model.as_str());
-        let chosen = lens_core::translate::choose_model(wanted, &installed)
+        let chosen = lens_core::translate::choose_model(None, &installed)
             .ok_or_else(|| TranslateError::ModelMissing(self.model.clone()))?;
         self.model = chosen;
         Ok(&self.model)
