@@ -1322,3 +1322,68 @@ fn show_what_the_third_language_cut_keeps() {
         }
     }
 }
+
+/// A model somebody named and has not pulled is missing, not replaced.
+///
+/// `docs/privacy-model.md` promises that a named model is always honoured, and
+/// it is a promise somebody may have made a decision on: the model that
+/// resists prompt injection is not the model that translates best.
+///
+/// Before this, `--model llama3.3:70b` on a machine without it printed
+/// `engine qwen2.5:7b` and carried on. Live because the whole question is what
+/// a real Ollama has installed.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn a_named_model_that_is_not_installed_is_reported_rather_than_swapped() {
+    let probe = OllamaTranslator::default();
+    let installed = probe.installed_models().unwrap_or_default();
+    assert!(!installed.is_empty(), "this needs at least one model");
+    println!("installed: {installed:?}");
+
+    // A name nothing will ever have.
+    let absent = "a-model-nobody-has:0b";
+    let mut named = OllamaTranslator::new(DEFAULT_ENDPOINT, absent);
+    match named.resolve_model() {
+        Ok(model) => panic!("a model nobody has resolved to {model}"),
+        Err(TranslateError::ModelMissing(name)) => {
+            assert_eq!(name, absent);
+            println!("absent model reported as missing, not swapped");
+        }
+        Err(other) => panic!("expected model-missing, got {}", other.reason()),
+    }
+
+    // And one that is installed is still honoured, which is the other half of
+    // the promise and the half a strict rule could break.
+    let present = installed
+        .iter()
+        .find(|name| !name.contains("embed"))
+        .expect("something usable");
+    let mut pinned = OllamaTranslator::new(DEFAULT_ENDPOINT, present.as_str());
+    assert_eq!(pinned.resolve_model().ok(), Some(present.as_str()));
+    println!("named and installed: {present} honoured");
+
+    // Nobody named anything, so the router still chooses.
+    let mut choosing = OllamaTranslator::choosing(DEFAULT_ENDPOINT);
+    let chosen = choosing.resolve_model().expect("a choice").to_owned();
+    assert!(installed.contains(&chosen), "chose {chosen}");
+    println!("nobody named one: {chosen} chosen");
+}
+
+/// Warming a model that is not installed is not a warm.
+///
+/// Ollama answers a request for a missing model with **200 and an error in the
+/// body**, so a caller that only checks the transport reports success. The
+/// banner said `engine warm after 14ms` on the line below one saying the model
+/// was not installed.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn warming_a_model_that_is_not_installed_reports_it() {
+    let translator = OllamaTranslator::new(DEFAULT_ENDPOINT, "a-model-nobody-has:0b");
+    match translator.prewarm() {
+        Ok(elapsed) => panic!("warmed a model nobody has, in {}ms", elapsed.as_millis()),
+        Err(error) => {
+            println!("prewarm refused: {}", error.reason());
+            assert!(matches!(error, TranslateError::ModelMissing(_)));
+        }
+    }
+}
