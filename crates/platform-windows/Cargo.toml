@@ -30,6 +30,8 @@ features = [
   "Win32_Graphics_Dwm",
   "Win32_Graphics_Dxgi_Common",
   "Win32_Graphics_Gdi",
+  # PrintWindow, which lives under Xps rather than WindowsAndMessaging.
+  "Win32_Storage_Xps",
   "Win32_System_Com",
   # The clipboard, and the global memory its data has to be handed to.
   "Win32_System_DataExchange",
