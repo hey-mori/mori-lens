@@ -54,67 +54,11 @@ Counts only. Neither reading is printed, and the tree's words are held
 as a set so they cannot reconstruct a document
 ([`../privacy-model.md`](../privacy-model.md)).
 
-## What this changes, and what it does not
-
-**It changes the diagnosis.** The row on file says the editor exposes
-nothing. On this machine, in this mode, it exposes a great deal, in
-per-line elements, and 65% of it can be matched word for word against
-the pixels. The remaining 35% is bounded from below by OCR misreading,
-which the same session measured doing `is` to `15` and `for` to `于or'`.
-
-So the problem for VS Code is very likely **targeting rather than
-reach**: the text is in the tree and `ElementFromPoint` at a coordinate
-does not land on it.
-
-## And then: the text is there, but not in lines
-
-The paragraph below says the likely diagnosis is targeting rather than
-reach. That is still right about the text being present and **wrong
-about how easy it would be to reach**, and the number that says so was
-measured an hour later.
-
-`hover-probe inventory --coverage` lays the sweep's own 24px grid over a
-window and asks, for each point, whether the **smallest** text element
-containing it is line-shaped.
-
-```
-window                 client        points  on a line              covered
-Code                    1549x908       2432      54 ( 2.2%)        2432
-Code                    1440x900       2220      51 ( 2.3%)        2220
-Code                    1440x900       2220     306 (13.8%)        2220
-```
-
-**2.2%, against the sweep's 2.8% acquisition.** Those two tracking each
-other is the finding. The product acquires almost exactly where a
-line-shaped text element is, and almost nowhere else.
-
-So the 8,131 characters are in the tree and they are **not** laid out as
-one element per line. They are in something large, and a point inside
-something large does not say which sentence is under the pointer.
-
-That is the shape [#34](https://github.com/swarea/mori-lens/issues/34)
-describes for KakaoTalk, in different words: *one text region, so Lens
-cannot tell which message you are on*. Two applications, one problem,
-which nothing before this could have shown.
-
-### The first version of this measurement said 100% and meant nothing
-
-It asked whether a point was inside **any** text element. Every window
-answered 100.0%, because one element covers the whole client area and
-containment is then trivially true. Recorded because the number looked
-like a triumph and was an artefact of the question.
-
-**It does not change the sweep.** Every point-based number in the matrix
-stands. Nothing here shows a pointer resolving into an editor line,
-because the window was covered and `ElementFromPoint` answers about
-whatever is on top. That measurement still needs VS Code in front, and
-it is now worth running again for the first time since the mode was
-identified.
-
 ## Settled: it is the document
 
-The paragraph above used to say this was the next measurement. It was
-run the same afternoon.
+The counts above cannot say whether 8,131 characters are the document or
+the file tree beside it. This is the measurement that can, run the same
+afternoon.
 
 `hover-probe inventory --only Code --expect <word>` asks the tree
 whether it holds a word the operator names. Printing is allowed here and
@@ -154,6 +98,77 @@ an outline holds symbols. **The document is in the tree.**
 The two other VS Code windows on the same desktop answered 0 of 6, which
 is what a different file open in a different window should do and is a
 check that the question is discriminating rather than always saying yes.
+
+## And then: the text is there, but not in lines
+
+Knowing the document is in the tree, I read the diagnosis as *targeting*
+and nearly solved. That is right about the text being present and
+**wrong about how easily it could be reached**, and the number that says
+so was measured an hour later.
+
+`hover-probe inventory --coverage` lays the sweep's own 24px grid over a
+window and asks, for each point, whether the **smallest** text element
+containing it is line-shaped.
+
+```
+window                 client        points  on a line              covered
+Code                    1549x908       2432      54 ( 2.2%)        2432
+Code                    1440x900       2220      51 ( 2.3%)        2220
+Code                    1440x900       2220     306 (13.8%)        2220
+```
+
+**2.2%, against the sweep's 2.8% acquisition.** Those two tracking each
+other is the finding. The product acquires almost exactly where a
+line-shaped text element is, and almost nowhere else.
+
+So the 8,131 characters are in the tree and they are **not** laid out as
+one element per line. They are in something large, and a point inside
+something large does not say which sentence is under the pointer.
+
+That is the shape [#34](https://github.com/swarea/mori-lens/issues/34)
+describes for KakaoTalk, in different words: *one text region, so Lens
+cannot tell which message you are on*. Two applications, one problem,
+which nothing before this could have shown.
+
+### The first version of this measurement said 100% and meant nothing
+
+It asked whether a point was inside **any** text element. Every window
+answered 100.0%, because one element covers the whole client area and
+containment is then trivially true. Recorded because the number looked
+like a triumph and was an artefact of the question.
+
+## What none of this changes
+
+**The sweep.** Every point-based number in the matrix stands. Nothing
+here shows a pointer resolving into an editor line, because the window
+was covered for all of it and `ElementFromPoint` answers about whatever
+is on top. That run still needs VS Code in front, and it is worth doing
+again for the first time since the mode was identified.
+
+**The 65% is bounded from below by OCR.** The same session measured this
+recogniser turning `is` into `15` and `for` into `于or'`, so a word the
+tree does not have is as likely to be a misreading as an absence.
+
+## What does change
+
+The row on file says the editor exposes nothing. **It exposes a great
+deal**, and no amount of getting OCR right was ever going to be the
+answer for it.
+
+What it does not expose is one element per line. That was the shape this
+document assumed for an hour, on the strength of `smallest 16px` in the
+inventory, and the grid measurement above is what corrected it: 16px
+elements exist, and they are not what the editor's text is in.
+
+
+## And then: walking up does not reach it either
+
+The obvious response to *the text is in a container* is to walk up from
+the point until something has a text pattern. That was measured the same
+day and it fails in the worst way: of 43 points where an ancestor had a
+pattern, **one** returned a range containing the point.
+
+[`2026-08-07-walking-up-from-the-point.md`](2026-08-07-walking-up-from-the-point.md).
 
 ## Why this took so long to notice
 
