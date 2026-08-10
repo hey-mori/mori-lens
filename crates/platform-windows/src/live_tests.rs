@@ -3765,3 +3765,163 @@ fn measure_whether_an_ancestor_holds_the_text_a_point_does_not() {
          cannot. A small one means the text really is not near that pixel."
     );
 }
+
+/// Does a big text element hand back its lines as separate rectangles?
+///
+/// The open problem after 2026-08-07: a window's text is exposed in elements
+/// too large to aim inside, so a point tells you the document and not the
+/// sentence. That is #14 and #34 in one sentence.
+///
+/// There is one more thing the provider already knows. `GetBoundingRectangles`
+/// on a range returns **one rectangle per rendered line**, which is exactly the
+/// shape `lens_core::geometry::line_under` was extracted to work on for the OCR
+/// path. If a container's visible range comes back as fifty line rectangles,
+/// then a point can be resolved to a line without `RangeFromPoint` being asked
+/// anything.
+///
+/// This measures whether the rectangles arrive at all and what shape they are.
+/// Counts and sizes, never text.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn measure_whether_a_container_gives_up_its_lines() {
+    use windows::core::Interface;
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+    use windows::Win32::System::Variant::VARIANT;
+    use windows::Win32::UI::Accessibility::{
+        CUIAutomation, IUIAutomation, IUIAutomationTextPattern, TreeScope_Descendants,
+        UIA_IsTextPatternAvailablePropertyId, UIA_TextPatternId,
+    };
+
+    let _com = crate::com::ComScope::enter();
+    // SAFETY: creating the documented automation co-class in-process.
+    let Ok(automation) = (unsafe {
+        CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+    }) else {
+        println!("no automation");
+        return;
+    };
+    let Ok(front) = crate::foreground_window() else {
+        println!("no foreground window");
+        return;
+    };
+    println!(
+        "\n{} · {}x{}",
+        front.process_name.clone().unwrap_or_else(|| "?".into()),
+        front.client_bounds.width,
+        front.client_bounds.height,
+    );
+    println!("  element        rects  median height  tallest  points on a line");
+
+    // SAFETY: read-only automation queries on a handle just enumerated.
+    unsafe {
+        let Ok(element) =
+            automation.ElementFromHandle(windows::Win32::Foundation::HWND(front.id as *mut _))
+        else {
+            return;
+        };
+        let Ok(condition) = automation
+            .CreatePropertyCondition(UIA_IsTextPatternAvailablePropertyId, &VARIANT::from(true))
+        else {
+            return;
+        };
+        let Ok(found) = element.FindAll(TreeScope_Descendants, &condition) else {
+            return;
+        };
+        let count = found.Length().unwrap_or(0);
+
+        // The biggest few, because the question is about containers. A small
+        // element is already a line and does not need taking apart.
+        let mut candidates = Vec::new();
+        for index in 0..count.min(200) {
+            let Ok(child) = found.GetElement(index) else {
+                continue;
+            };
+            let Ok(rect) = child.CurrentBoundingRectangle() else {
+                continue;
+            };
+            let area = (rect.right - rect.left) as i64 * (rect.bottom - rect.top) as i64;
+            candidates.push((area, rect.bottom - rect.top, child));
+        }
+        candidates.sort_by_key(|(area, _, _)| std::cmp::Reverse(*area));
+
+        for (index, (_, height, child)) in candidates.into_iter().take(5).enumerate() {
+            let Ok(pattern) = child.GetCurrentPattern(UIA_TextPatternId) else {
+                continue;
+            };
+            let Ok(pattern) = pattern.cast::<IUIAutomationTextPattern>() else {
+                continue;
+            };
+            // The visible part, not the document: a scrolled document's
+            // rectangles are mostly empty and a hover only ever points at what
+            // is on screen.
+            let ranges = pattern.GetVisibleRanges().ok();
+            let rects: Vec<lens_core::geometry::ScreenRect> = match &ranges {
+                Some(array) => (0..array.Length().unwrap_or(0))
+                    .filter_map(|at| array.GetElement(at).ok())
+                    .flat_map(|range| crate::uia::bounding_rectangles(&range))
+                    .collect(),
+                None => Vec::new(),
+            };
+            let mut heights: Vec<i32> = rects.iter().map(|rect| rect.height).collect();
+            heights.sort_unstable();
+            // The number that decides whether this is worth building: over the
+            // element's own area, how many grid points land inside one of its
+            // line rectangles. `line_under` is the rule that would turn that
+            // into an answer, and it is the one the OCR path already uses.
+            let lines_only: Vec<lens_core::geometry::ScreenRect> = rects
+                .iter()
+                .copied()
+                .filter(|rect| rect.height <= 40)
+                .collect();
+            let area = child
+                .CurrentBoundingRectangle()
+                .map(|rect| {
+                    lens_core::geometry::ScreenRect::new(
+                        rect.left,
+                        rect.top,
+                        rect.right - rect.left,
+                        rect.bottom - rect.top,
+                    )
+                })
+                .unwrap_or(lens_core::geometry::ScreenRect::new(0, 0, 0, 0));
+            let (mut points, mut on_a_line) = (0usize, 0usize);
+            let mut y = area.y + 4;
+            while y < area.bottom() - 4 {
+                let mut x = area.x + 4;
+                while x < area.right() - 4 {
+                    points += 1;
+                    if lens_core::geometry::line_under(
+                        &lines_only,
+                        lens_core::geometry::ScreenPoint::new(x, y),
+                    )
+                    .is_some()
+                    {
+                        on_a_line += 1;
+                    }
+                    x += 24;
+                }
+                y += 24;
+            }
+            let share = if points == 0 {
+                0.0
+            } else {
+                on_a_line as f64 * 100.0 / points as f64
+            };
+            println!(
+                "  {:<14} {:>5}  {:>13}  {:>7}  {on_a_line:>5}/{points:<5} ({share:.0}%)",
+                format!("#{index} h={height}"),
+                rects.len(),
+                heights.get(heights.len() / 2).copied().unwrap_or(0),
+                heights.last().copied().unwrap_or(0),
+            );
+        }
+    }
+
+    println!(
+        "\n  A container answering with many rectangles of a line's height is\n  \
+         the whole idea: `line_under` already turns those into an answer, and\n  \
+         it is the rule the OCR path uses. One rectangle the height of the\n  \
+         element means the provider will not take it apart, and the pointer\n  \
+         has nothing finer to aim at than the document."
+    );
+}
