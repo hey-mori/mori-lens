@@ -731,7 +731,7 @@ unsafe fn measure(window: HWND, card: &Card) -> i32 {
             CardBody::Translation(text) | CardBody::Problem(text) => text,
             CardBody::Waiting(status) => status.as_str(),
             // Measured by the function that draws it, below.
-            CardBody::Analysis(_) => "",
+            CardBody::Analysis { .. } => "",
         };
         let original = text_height(dc, &card.original, inner, theme.small_pt);
         // **Only when there is one to separate from.** `paint` skips the gap
@@ -748,7 +748,9 @@ unsafe fn measure(window: HWND, card: &Card) -> i32 {
         // body with a layout of its own gets one implementation rather than a
         // matching pair.
         let translated = match &card.body {
-            CardBody::Analysis(rows) => analysis(dc, rows, 0, 0, inner, &theme, false),
+            CardBody::Analysis { translation, rows } => {
+                analysis(dc, translation.as_deref(), rows, 0, 0, inner, &theme, false)
+            }
             _ => text_height(dc, body, inner, theme.body_pt),
         };
         // Measured like the others rather than guessed from the point size.
@@ -924,7 +926,16 @@ unsafe fn paint(window: HWND) {
             y += match &card.body {
                 // A list, drawn as one. Every value starts at the same x so a
                 // reader finds that x once instead of five times.
-                CardBody::Analysis(rows) => analysis(target, rows, padding, y, inner, &theme, true),
+                CardBody::Analysis { translation, rows } => analysis(
+                    target,
+                    translation.as_deref(),
+                    rows,
+                    padding,
+                    y,
+                    inner,
+                    &theme,
+                    true,
+                ),
                 body => {
                     let (text, colour) = match body {
                         CardBody::Translation(text) => (text.as_str(), theme.body),
@@ -933,7 +944,7 @@ unsafe fn paint(window: HWND) {
                         // footer's colour and must not be mistaken for one.
                         CardBody::Waiting(status) => (status.as_str(), theme.footer),
                         // Unreachable: the arm above takes it.
-                        CardBody::Analysis(_) => ("", theme.body),
+                        CardBody::Analysis { .. } => ("", theme.body),
                     };
                     draw(
                         target,
@@ -986,8 +997,10 @@ unsafe fn paint(window: HWND) {
 ///
 /// # Safety
 /// `dc` must be a valid device context.
+#[allow(clippy::too_many_arguments)]
 unsafe fn analysis(
     dc: windows::Win32::Graphics::Gdi::HDC,
+    translation: Option<&str>,
     rows: &[(String, String)],
     x: i32,
     top: i32,
@@ -998,6 +1011,31 @@ unsafe fn analysis(
     if rows.is_empty() {
         return 0;
     }
+    let mut before = top;
+    // **The answer stays on the card.** `Ctrl+Alt+D` replaced the translation
+    // with an account of it, so a reader who pressed it to understand an answer
+    // lost the answer. At the answer's size and colour: on this card it is
+    // still the answer, and the rows below it are notes about it.
+    if let Some(text) = translation.map(str::trim).filter(|text| !text.is_empty()) {
+        // SAFETY: on the caller's context, which the caller keeps valid.
+        before += unsafe {
+            if draw_it {
+                draw(
+                    dc,
+                    text,
+                    x,
+                    before,
+                    width,
+                    theme.body_pt,
+                    false,
+                    colorref(theme.body),
+                )
+            } else {
+                text_height(dc, text, width, theme.body_pt)
+            }
+        } + GAP_AFTER_ORIGINAL;
+    }
+    let top = before;
     // SAFETY: measuring only; each call owns and restores its own font.
     let column = rows
         .iter()

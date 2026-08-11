@@ -73,7 +73,19 @@ pub enum CardBody {
     ///
     /// Ordering, headings, and which fields are worth showing at all are
     /// decided once, in [`crate::analyse::DeepAnalysis::lines`].
-    Analysis(Vec<(String, String)>),
+    Analysis {
+        /// The translation the explanation is about, when there was one.
+        ///
+        /// **`Ctrl+Alt+D` used to take the answer off the screen.** A reader
+        /// pressed it to understand a translation and the translation was
+        /// replaced by an account of it, so the two things they needed to hold
+        /// side by side were never on the card at the same time.
+        ///
+        /// `None` is a real case: text already in the reader's language is
+        /// never translated, and it is still explained.
+        translation: Option<String>,
+        rows: Vec<(String, String)>,
+    },
 }
 
 impl CardBody {
@@ -82,6 +94,14 @@ impl CardBody {
     /// For the clipboard, the saved file, and any renderer that has not yet
     /// learnt to draw two columns. One place decides how a row reads as a line,
     /// so what a reader copies and what they see cannot drift apart.
+    /// The rows of an analysis, or nothing for any other body.
+    pub fn analysis_rows(&self) -> &[(String, String)] {
+        match self {
+            Self::Analysis { rows, .. } => rows,
+            _ => &[],
+        }
+    }
+
     pub fn rows_as_text(rows: &[(String, String)]) -> String {
         rows.iter()
             .map(|(label, value)| format!("{label} · {value}"))
@@ -216,7 +236,10 @@ impl Card {
             .collect();
         Self {
             original: original.into(),
-            body: CardBody::Analysis(body),
+            body: CardBody::Analysis {
+                translation: analysis.translation.clone(),
+                rows: body,
+            },
             footer: format!(
                 "{} · {} · {}",
                 crate::analyse::DeepAnalysis::LABEL,
@@ -557,7 +580,7 @@ impl Card {
         }
         let (text, caveat) = match &self.body {
             CardBody::Translation(text) => (text.clone(), None),
-            CardBody::Analysis(rows) => (
+            CardBody::Analysis { rows, .. } => (
                 CardBody::rows_as_text(rows),
                 Some(crate::analyse::DeepAnalysis::LABEL),
             ),
@@ -619,7 +642,7 @@ impl Card {
             // explanation of a sentence, shown without the sentence, cannot be
             // checked against anything: it is a model's account of text the
             // reader would have to remember.
-            CardBody::Analysis(rows) => !rows.is_empty() && !self.original.trim().is_empty(),
+            CardBody::Analysis { rows, .. } => !rows.is_empty() && !self.original.trim().is_empty(),
         }
     }
 }
@@ -1053,7 +1076,10 @@ mod copy_tests {
                 // one string with newlines and was checked a line at a time
                 // for that reason; now it is rows, so each half of each row is
                 // its own thing a reader is shown, and each is checked.
-                CardBody::Analysis(rows) => {
+                CardBody::Analysis { translation, rows } => {
+                    if let Some(text) = translation {
+                        into.push((what, text.clone()));
+                    }
                     for (label, value) in rows {
                         into.push((what, label.clone()));
                         into.push((what, value.clone()));
@@ -1083,6 +1109,7 @@ mod copy_tests {
                 "a sentence",
                 &crate::analyse::DeepAnalysis {
                     counterpart: Some("직사각형".to_owned()),
+                    translation: Some("제공자는 하나의 직사각형을 반환합니다.".to_owned()),
                     lemma: "rest".to_owned(),
                     part_of_speech: "동사".to_owned(),
                     sense: "포인터를 멈추게 하는 것".to_owned(),
@@ -1185,7 +1212,7 @@ mod copy_tests {
                 ..crate::analyse::DeepAnalysis::default()
             },
         );
-        let CardBody::Analysis(rows) = &card.body else {
+        let CardBody::Analysis { rows, .. } = &card.body else {
             panic!("{card:?}");
         };
         // As rows, which is what the card now carries. An empty field is left
