@@ -1438,3 +1438,137 @@ fn analyse_explains_a_term_in_the_readers_own_language() {
         }
     }
 }
+
+/// What does the two-question rule actually keep, using the product's prompts?
+///
+/// `docs/benchmarks/2026-08-11-one-word-and-its-counterpart.md` measured 5 of 8
+/// kept and 5 of 5 right. **Those prompts named the source language**, and Lens
+/// does not know it: acquisition reads characters, not a locale. So the numbers
+/// in that benchmark do not transfer, and this is the instrument that measures
+/// the prompts the product actually sends.
+///
+/// The first run of it found the model agreeing on `틀린` for `sentence`, which
+/// means *wrong*. The benchmark's second question caught that and the
+/// product's does not.
+///
+/// **The assertions are invariants, not opinions.** Which spans a model returns
+/// is a measurement and belongs in the output; that a kept span is inside its
+/// translation and is not most of it is a rule, and belongs in an assert.
+///
+/// ```
+/// cargo test -p lens-translate -- --ignored --nocapture --test-threads=1 \
+///   what_the_two_questions_keep
+/// ```
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn what_the_two_questions_keep() {
+    use lens_core::analyse::{DeepAnalysis, DeepRequest};
+
+    // (sentence, focused word, translation, what a person says the answer is)
+    let cases: [(&str, &str, &str, &str); 8] = [
+        (
+            "The output files came back empty.",
+            "empty",
+            "출력 파일은 비어있었습니다.",
+            "비어",
+        ),
+        (
+            "Rest the pointer on this line and wait without clicking.",
+            "clicking",
+            "이 줄 위에 마우스를 올려놓고 클릭하지 말고 기다리세요.",
+            "클릭",
+        ),
+        (
+            "Nothing you read here leaves this machine.",
+            "machine",
+            "여기 읽은 것은 이 기계에서 나가지 않습니다.",
+            "기계",
+        ),
+        (
+            "A card on the wrong sentence is worse than no card.",
+            "sentence",
+            "틀린 문장에 카드를 넣는 것이 카드를 안 넣는 것보다 더 나쁘다.",
+            "문장",
+        ),
+        (
+            "The provider returns one rectangle per rendered line.",
+            "rectangle",
+            "제공자는 각 렌더링된 줄당 하나의 직사각형을 반환합니다.",
+            "직사각형",
+        ),
+        (
+            "The acquirer returns a typed error and never unwraps a result.",
+            "acquirer",
+            "취득자는 타입 오류를 반환하고 결과를 풀지 않습니다.",
+            "취득자",
+        ),
+        (
+            "A capture is never written to disk.",
+            "capture",
+            "캡처는 절대 디스크에 작성되지 않습니다.",
+            "캡처",
+        ),
+        (
+            "The pointer is the only trigger.",
+            "trigger",
+            "포인터는 유일한 트리거입니다.",
+            "트리거",
+        ),
+    ];
+
+    let translator = OllamaTranslator::default().with_timeout(Duration::from_secs(120));
+    println!("\n  word         kept          first         second        right");
+    let (mut kept, mut kept_right) = (0, 0);
+
+    for (sentence, word, translation, expected) in cases {
+        let request = DeepRequest::new(sentence, translation, "Korean").about_the_word(word);
+        let (first, second) = translator.two_counterparts(&request);
+        let survivor = first
+            .as_deref()
+            .zip(second.as_deref())
+            .and_then(|(a, b)| DeepAnalysis::agreed_counterpart(translation, a, b));
+
+        // Right by one reader's judgement, which is what "right" means here
+        // and is worth naming rather than dressing up as a measurement.
+        let right = survivor
+            .as_deref()
+            .is_some_and(|span| span.contains(expected));
+        kept += usize::from(survivor.is_some());
+        kept_right += usize::from(right);
+
+        println!(
+            "  {:<12} {:<13} {:<13} {:<13} {}",
+            word,
+            format!("{:?}", survivor.as_deref().unwrap_or("-")),
+            format!("{:?}", first.as_deref().unwrap_or("-")),
+            format!("{:?}", second.as_deref().unwrap_or("-")),
+            if survivor.is_none() {
+                "-"
+            } else if right {
+                "yes"
+            } else {
+                "NO"
+            },
+        );
+
+        // The invariants. A kept span is in its translation and is not most of
+        // it, whatever the model thinks: those are this code's promises rather
+        // than the model's.
+        if let Some(span) = &survivor {
+            assert!(
+                translation.contains(span.as_str()),
+                "{span:?} is not in its translation",
+            );
+            let share = span.chars().count() as f64 / translation.chars().count() as f64;
+            assert!(
+                share <= DeepAnalysis::COUNTERPART_SHARE,
+                "{span:?} is {share:.2} of its translation",
+            );
+        }
+    }
+
+    println!("\n  kept {kept} of 8, right {kept_right} of {kept}");
+    println!("  the benchmark's prompts kept 5 of 8 and were right 5 of 5, and they");
+    println!("  named the source language, which this product does not know.");
+    assert!(kept > 0, "the rule kept nothing at all, which is a defect");
+}
