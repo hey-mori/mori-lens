@@ -665,6 +665,16 @@ fn main() -> std::process::ExitCode {
     let releaser = translator.clone();
     // Off the main thread so the window and the pointer loop come up
     // immediately; a user should not wait on a model to see the app start.
+    // Whether the model has finished loading, for the waiting card to say
+    // which wait it is.
+    //
+    // Lens releases the lease when it exits, so **every launch** pays the load
+    // again: 11 to 14 seconds measured on 2026-08-11 with the model already
+    // pulled and nothing left to download. A hover that arrives during it took
+    // 7.4 seconds, and the card said `번역 중` for all of it, which is what a
+    // hung application says.
+    let engine_warm = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let warmed = engine_warm.clone();
     std::thread::spawn(move || {
         // Failure is silent by design: the user did not ask for this, so a
         // warm that fails must not produce an error state. It only means the
@@ -672,6 +682,11 @@ fn main() -> std::process::ExitCode {
         if let Ok(elapsed) = warm_translator.prewarm() {
             println!("engine warm after {}ms", elapsed.as_millis());
         }
+        // **Set on failure too.** An absent Ollama answers a hover with a card
+        // naming ollama.com, not with a wait, so a flag left false would leave
+        // every later card claiming a model was loading that nothing was ever
+        // going to load.
+        warmed.store(true, std::sync::atomic::Ordering::Relaxed);
     });
 
     std::thread::spawn(move || {
@@ -1700,12 +1715,16 @@ fn main() -> std::process::ExitCode {
         // that the screen would otherwise be empty. Once per translation, and
         // never for one the cache already answered.
         if let Some(anchor) = life.waited_long_enough(now) {
-            show_card(
-                &overlay,
-                &mut on_screen,
-                Card::waiting(&pending_original),
-                anchor,
-            );
+            // Which wait it is. `Card::loading_model` and the sentence it
+            // carries were written when the deep path landed and then never
+            // called, so the one wait a reader cannot explain to themselves
+            // was the one the card described wrongly.
+            let card = if engine_warm.load(std::sync::atomic::Ordering::Relaxed) {
+                Card::waiting(&pending_original)
+            } else {
+                Card::loading_model(&pending_original)
+            };
+            show_card(&overlay, &mut on_screen, card, anchor);
         }
 
         // With where the card is, so reading it does not dismiss it. The
