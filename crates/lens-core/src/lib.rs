@@ -39,6 +39,7 @@ pub mod settings;
 pub mod text;
 pub mod theme;
 pub mod translate;
+pub mod welcome;
 
 pub use acquire::{
     AcquireContext, AcquireError, AcquisitionSource, AppIdentity, ProtectedReason, ProviderInfo,

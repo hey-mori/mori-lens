@@ -69,6 +69,13 @@ pub fn any_button_down() -> bool {
     key_down(VK_LBUTTON) || key_down(VK_RBUTTON) || key_down(VK_MBUTTON)
 }
 
+/// What to call the policy modifier when telling a reader to hold it.
+///
+/// One name, because two places tell them: the welcome window's heading and
+/// the card shown when they hover without it. A product that called the same
+/// key two things would be teaching one of them wrongly.
+pub const MODIFIER_NAME: &str = "Alt";
+
 /// The policy modifier. Alt, matching the modifier-tier design.
 pub fn modifier_held() -> bool {
     key_down(VK_MENU)
