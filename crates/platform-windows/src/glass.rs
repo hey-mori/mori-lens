@@ -349,7 +349,22 @@ impl Glass {
             // share can be measured, and only then are the values placed
             // beside it. Every value therefore starts at the same x, and a
             // reader finds that x once instead of five times.
-            CardBody::Analysis(pairs) => {
+            CardBody::Analysis {
+                translation,
+                rows: pairs,
+            } => {
+                // **The answer stays on the card.** `Ctrl+Alt+D` replaced the
+                // translation with an account of it, so a reader who pressed it
+                // to understand an answer lost the answer. At the answer's size
+                // and colour, because on this card it is still the answer and
+                // the rows below it are notes about it.
+                if let Some(text) = translation {
+                    if let Some(index) = make(&mut runs, text, theme.body_pt, false, theme.body) {
+                        runs[index].row = row;
+                        runs[index].gap_after = GAP_AFTER_ORIGINAL * scale;
+                        row += 1;
+                    }
+                }
                 let first_row = row;
                 let mut labelled: Vec<(usize, &String)> = Vec::new();
                 for (label, value) in pairs {
@@ -404,7 +419,7 @@ impl Glass {
                     // the second it is up.
                     CardBody::Waiting(status) => (status.as_str(), theme.footer, theme.small_pt),
                     // Unreachable: the arm above takes it.
-                    CardBody::Analysis(_) => ("", theme.body, theme.small_pt),
+                    CardBody::Analysis { .. } => ("", theme.body, theme.small_pt),
                 };
                 if let Some(index) = make(&mut runs, text, points, false, colour) {
                     runs[index].row = row;

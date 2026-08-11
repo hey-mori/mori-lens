@@ -224,6 +224,13 @@ pub struct DeepAnalysis {
     /// An idiom, a register, or a false friend worth knowing. Often empty, and
     /// that is the correct answer most of the time.
     pub note: String,
+    /// The translation this explanation is about, carried so the card can
+    /// show it beside the explanation rather than instead of it.
+    ///
+    /// Copied from the request rather than asked for: it is already on the
+    /// reader's screen, and a second one from the model would explain a
+    /// sentence they are not looking at.
+    pub translation: Option<String>,
     /// The part of the translation that carries the focused word.
     ///
     /// `None` far more often than not, and that is the design rather than a
@@ -323,6 +330,13 @@ impl DeepAnalysis {
     #[must_use]
     pub fn with_counterpart(mut self, counterpart: Option<String>) -> Self {
         self.counterpart = counterpart;
+        self
+    }
+
+    /// The same analysis, carrying the translation it was grounded on.
+    #[must_use]
+    pub fn about(mut self, translation: Option<String>) -> Self {
+        self.translation = translation.filter(|text| !text.trim().is_empty());
         self
     }
 
