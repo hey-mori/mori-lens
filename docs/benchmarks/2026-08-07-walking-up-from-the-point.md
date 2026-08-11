@@ -17,6 +17,30 @@ cargo test -p lens-platform-windows -- --ignored --nocapture --test-threads=1 \
   measure_whether_an_ancestor
 ```
 
+## The conclusion below is in doubt, and the reason is mine
+
+**Added the same day, before anything was built on it.**
+
+The third row measures whether `RangeFromPoint`'s answer contains the
+point. It tested the range that call **returns**, which is degenerate: a
+caret-shaped sliver between two characters. A rectangle of nearly zero
+width may contain no sampled point at all, in which case the 1-of-43
+figure is an artefact of the question rather than a fact about the
+provider.
+
+The product does not stop there either. It expands to a word and to a
+paragraph before deciding, so the thing measured is not the thing that
+would ship.
+
+The test has been corrected to expand to a line before testing
+containment. **It has not been re-run**, because no window with a client
+area has been in the foreground since. Until it is, treat the conclusion
+below as unproven rather than as a negative result, and do not cite the
+1-of-43.
+
+What stands regardless: the first two rows, which are about where text
+patterns are and were measured directly.
+
 ## The numbers
 
 The window in front, an Electron application, 794 grid points over it:
