@@ -3858,7 +3858,7 @@ fn measure_whether_a_container_gives_up_its_lines() {
         front.client_bounds.width,
         front.client_bounds.height,
     );
-    println!("  element        ranges  rects  median height  tallest  points on a line");
+    println!("  element        ranges  rects  median height  tallest  points on a line   asked at its centre");
 
     // SAFETY: read-only automation queries on a handle just enumerated.
     unsafe {
@@ -3920,6 +3920,48 @@ fn measure_whether_a_container_gives_up_its_lines() {
             };
             let mut heights: Vec<i32> = rects.iter().map(|rect| rect.height).collect();
             heights.sort_unstable();
+            // **Does asking at the line's own centre answer with that line?**
+            //
+            // Walking a range line by line to reach the Nth costs a call per
+            // line. Asking `RangeFromPoint` at a point guaranteed to be on a
+            // glyph does not. The measurement that said `RangeFromPoint` is
+            // useless here asked it at grid points, most of which are margin
+            // and whitespace; this asks it where the text provably is.
+            let mut asked = 0usize;
+            let mut answered_with_itself = 0usize;
+            for rect in rects.iter().filter(|rect| rect.height <= 40) {
+                // Just inside the left edge, vertically centred: on the first
+                // glyph of the line rather than in the gap before it.
+                let probe = windows::Win32::Foundation::POINT {
+                    x: rect.x + 2,
+                    y: rect.y + rect.height / 2,
+                };
+                asked += 1;
+                let answered = pattern
+                    .RangeFromPoint(probe)
+                    .ok()
+                    .and_then(|range| {
+                        range
+                            .ExpandToEnclosingUnit(windows::Win32::UI::Accessibility::TextUnit_Line)
+                            .ok()
+                            .map(|()| range)
+                    })
+                    .map(|range| {
+                        crate::uia::bounding_rectangles(&range)
+                            .iter()
+                            .any(|got| got.y == rect.y && got.height == rect.height)
+                    })
+                    .unwrap_or(false);
+                if answered {
+                    answered_with_itself += 1;
+                }
+            }
+            let hit = if asked == 0 {
+                0.0
+            } else {
+                answered_with_itself as f64 * 100.0 / asked as f64
+            };
+
             // The number that decides whether this is worth building: over the
             // element's own area, how many grid points land inside one of its
             // line rectangles. `line_under` is the rule that would turn that
@@ -3964,7 +4006,7 @@ fn measure_whether_a_container_gives_up_its_lines() {
                 on_a_line as f64 * 100.0 / points as f64
             };
             println!(
-                "  {:<14} {:>6}  {:>5}  {:>13}  {:>7}  {on_a_line:>5}/{points:<5} ({share:.0}%)",
+                "  {:<14} {:>6}  {:>5}  {:>13}  {:>7}  {on_a_line:>5}/{points:<5} ({share:>3.0}%)  {answered_with_itself:>3}/{asked:<3} ({hit:>3.0}%)",
                 format!("#{index} h={height}"),
                 range_count,
                 rects.len(),
