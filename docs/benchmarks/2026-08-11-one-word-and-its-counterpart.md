@@ -123,6 +123,40 @@ already is: the pointer is on a word, Lens knows which, and the answer is one
 span. When the two questions disagree, nothing is highlighted, which is the same
 discipline as everywhere else here. Unprovable is treated as unproven.
 
+## The prompts above are not the ones the product can send
+
+**The measured prompts name the source language.** "Here is an English sentence
+and its Korean translation", "translate into English as". Lens does not know the
+source language: acquisition reads characters and never a locale, and the only
+language in a `DeepRequest` is the reader's own.
+
+So the numbers above do not transfer, and the product's own prompts were
+measured separately, by
+`what_the_two_questions_keep` in `crates/lens-translate/src/live_tests.rs`:
+
+```
+  word         kept          first         second        right
+  empty        "-"           "비어"          "비어있었습니다."    -
+  clicking     "-"           "클릭하지 말고"     "클릭"          -
+  machine      "기계"          "기계"          "기계"          yes
+  sentence     "틀린"          "틀린"          "틀린"          NO
+  rectangle    "직사각형"        "직사각형"        "직사각형"        yes
+  acquirer     "취득자"         "취득자"         "취득자"         yes
+  capture      "캡처"          "캡처"          "캡처"          yes
+  trigger      "트리거"         "트리거"         "트리거"         yes
+
+  kept 6 of 8, right 5 of 6
+```
+
+**Worse, and in the way that matters.** Naming the source language is what made
+the second question independent enough to disagree about `sentence`; without it
+both questions answer `틀린` and the error survives.
+
+That is what ships: **one wrong row in six**, on a card that already carries
+`AI 설명 · 사실 확인 필요`. It is worth saying plainly rather than rounding to
+the benchmark's 5 of 5, and the live check above is in the tree so the figure is
+re-measured rather than remembered.
+
 ## What has not been measured
 
 - **Eight cases, one direction, one model, one judge.** "Right" above is one

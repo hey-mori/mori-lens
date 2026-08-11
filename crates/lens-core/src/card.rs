@@ -1082,6 +1082,7 @@ mod copy_tests {
             Card::analysed(
                 "a sentence",
                 &crate::analyse::DeepAnalysis {
+                    counterpart: Some("직사각형".to_owned()),
                     lemma: "rest".to_owned(),
                     part_of_speech: "동사".to_owned(),
                     sense: "포인터를 멈추게 하는 것".to_owned(),
