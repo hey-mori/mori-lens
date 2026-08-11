@@ -224,6 +224,14 @@ pub struct DeepAnalysis {
     /// An idiom, a register, or a false friend worth knowing. Often empty, and
     /// that is the correct answer most of the time.
     pub note: String,
+    /// The part of the translation that carries the focused word.
+    ///
+    /// `None` far more often than not, and that is the design rather than a
+    /// shortfall. See [`DeepAnalysis::agreed_counterpart`]: this is set only where
+    /// two differently framed questions returned the same span, which on the
+    /// measured sample was five times in eight and was right five times of
+    /// five (`docs/benchmarks/2026-08-11-one-word-and-its-counterpart.md`).
+    pub counterpart: Option<String>,
     /// Which model said it, for the same reason a translation carries one.
     pub model: String,
     pub latency_ms: u64,
@@ -249,17 +257,73 @@ impl DeepAnalysis {
     /// Empty fields are left out entirely rather than shown blank. Built here
     /// rather than in the overlay so the ordering and the headings are one
     /// decision, and so they can be tested without a window.
-    pub fn lines(&self) -> Vec<(&'static str, &str)> {
+    pub fn lines(&self) -> Vec<(&'static str, String)> {
         [
-            ("원형", self.lemma.as_str()),
-            ("품사", self.part_of_speech.as_str()),
-            ("이 문장에서", self.sense.as_str()),
-            ("구조", self.structure.as_str()),
-            ("참고", self.note.as_str()),
+            ("원형", self.lemma.clone()),
+            ("품사", self.part_of_speech.clone()),
+            ("이 문장에서", self.sense.clone()),
+            // Last of the explanations and before the structure, because it is
+            // the only row that points at something already on the card rather
+            // than telling the reader a new fact.
+            ("번역에서", self.counterpart.clone().unwrap_or_default()),
+            ("구조", self.structure.clone()),
+            ("참고", self.note.clone()),
         ]
         .into_iter()
         .filter(|(_, text)| !text.trim().is_empty())
         .collect()
+    }
+
+    /// The largest share of a translation a counterpart may be.
+    ///
+    /// The trivially correct answer to "which part of this means that" is "all of
+    /// it", and a span that is most of the sentence points at nothing. Measured
+    /// counterparts were 6 to 19 per cent of their translation, so this is far
+    /// above every real answer and below the degenerate one.
+    pub const COUNTERPART_SHARE: f64 = 0.6;
+
+    /// Two answers to the same question, kept only if they are the same answer.
+    ///
+    /// # Why exact equality and not containment
+    ///
+    /// The obvious relaxation is to accept one span containing the other, since
+    /// `비어` and `비어있었습니다` disagree only about extent and both are right.
+    /// It was measured and it is wrong: the one error in the sample was `틀린`
+    /// against `틀린 문장`, which is the same relationship. The relaxation buys two
+    /// correct highlights and the single wrong one, and a wrong highlight is the
+    /// thing this must not produce
+    /// (`docs/benchmarks/2026-08-11-one-word-and-its-counterpart.md`).
+    ///
+    /// # Why two questions at all
+    ///
+    /// One question answered eight of eight by every mechanical check, and one of
+    /// those eight was false: `sentence` came back as `틀린`, which means *wrong*.
+    /// Membership in the translation is not correctness, and asking from the other
+    /// end is the cheapest thing that is.
+    pub fn agreed_counterpart(translation: &str, first: &str, second: &str) -> Option<String> {
+        let first = first.trim();
+        if first.is_empty() || first != second.trim() {
+            return None;
+        }
+        if !translation.contains(first) {
+            return None;
+        }
+        let (span, whole) = (first.chars().count(), translation.chars().count());
+        if whole == 0 || span as f64 / whole as f64 > Self::COUNTERPART_SHARE {
+            return None;
+        }
+        Some(first.to_owned())
+    }
+
+    /// The same analysis, carrying a counterpart it did not come with.
+    ///
+    /// A separate step because it is a separate question: the analysis comes
+    /// from one call against a schema, and this comes from two more against
+    /// another. Keeping them apart is what lets either fail without the other.
+    #[must_use]
+    pub fn with_counterpart(mut self, counterpart: Option<String>) -> Self {
+        self.counterpart = counterpart;
+        self
     }
 
     /// Whether this is worth putting on a card.
@@ -444,7 +508,11 @@ mod tests {
             ..DeepAnalysis::default()
         };
         assert_eq!(
-            analysis.lines(),
+            analysis
+                .lines()
+                .iter()
+                .map(|(label, value)| (*label, value.as_str()))
+                .collect::<Vec<_>>(),
             vec![("원형", "rest"), ("구조", "주어 + 조동사 + 동사")],
         );
     }
@@ -720,5 +788,121 @@ mod focus_tests {
         .about_the_word("멱등성");
         assert_eq!(request.word.as_deref(), Some("멱등성"));
         assert!(request.answerable().the_word);
+    }
+}
+
+/// The rule that decides whether a counterpart is shown at all.
+///
+/// Every case here is a row from
+/// `docs/benchmarks/2026-08-11-one-word-and-its-counterpart.md`, which is why
+/// the spans are the ones they are.
+#[cfg(test)]
+mod counterpart_tests {
+    use super::DeepAnalysis;
+
+    const TRANSLATION: &str = "제공자는 각 렌더링된 줄당 하나의 직사각형을 반환합니다.";
+
+    #[test]
+    fn two_answers_that_match_are_kept() {
+        assert_eq!(
+            DeepAnalysis::agreed_counterpart(TRANSLATION, "직사각형", "직사각형"),
+            Some("직사각형".to_owned()),
+        );
+    }
+
+    #[test]
+    fn whitespace_is_not_a_disagreement() {
+        assert_eq!(
+            DeepAnalysis::agreed_counterpart(TRANSLATION, " 직사각형 ", "직사각형"),
+            Some("직사각형".to_owned()),
+        );
+    }
+
+    /// **The case the whole rule exists for.**
+    ///
+    /// `sentence` came back as `틀린`, which means *wrong*, from a question
+    /// that answered every mechanical check. The second question said
+    /// `틀린 문장`. One contains the other, and accepting containment would
+    /// have kept the error.
+    #[test]
+    fn one_span_inside_the_other_is_still_a_disagreement() {
+        let translation = "틀린 문장에 카드를 넣는 것이 카드를 안 넣는 것보다 더 나쁘다.";
+        assert_eq!(
+            DeepAnalysis::agreed_counterpart(translation, "틀린", "틀린 문장"),
+            None,
+        );
+    }
+
+    /// And the two right answers the same rule throws away, on purpose.
+    #[test]
+    fn a_right_answer_of_the_wrong_extent_is_thrown_away_too() {
+        let translation = "출력 파일은 비어있었습니다.";
+        assert_eq!(
+            DeepAnalysis::agreed_counterpart(translation, "비어", "비어있었습니다"),
+            None,
+        );
+    }
+
+    /// A span the model made up colours nothing, whatever the other answer said.
+    #[test]
+    fn a_span_that_is_not_in_the_translation_is_refused() {
+        assert_eq!(
+            DeepAnalysis::agreed_counterpart(TRANSLATION, "사각형들", "사각형들"),
+            None,
+        );
+    }
+
+    #[test]
+    fn an_empty_span_is_not_an_answer() {
+        assert_eq!(DeepAnalysis::agreed_counterpart(TRANSLATION, "", ""), None);
+        assert_eq!(DeepAnalysis::agreed_counterpart("", "가", "가"), None);
+    }
+
+    /// The trivially correct answer to "which part means that" is "all of it".
+    #[test]
+    fn most_of_the_translation_is_not_a_counterpart() {
+        assert_eq!(
+            DeepAnalysis::agreed_counterpart(TRANSLATION, TRANSLATION, TRANSLATION),
+            None,
+        );
+    }
+
+    /// Measured counterparts were 6 to 19 per cent of their translation, so
+    /// every real answer is far under the ceiling and this pins the distance.
+    #[test]
+    fn every_measured_counterpart_is_well_under_the_ceiling() {
+        for (translation, span) in [
+            ("출력 파일은 비어있었습니다.", "비어"),
+            ("여기 읽은 것은 이 기계에서 나가지 않습니다.", "기계"),
+            (
+                "제공자는 각 렌더링된 줄당 하나의 직사각형을 반환합니다.",
+                "직사각형",
+            ),
+            ("포인터는 유일한 트리거입니다.", "트리거"),
+        ] {
+            let share = span.chars().count() as f64 / translation.chars().count() as f64;
+            assert!(
+                share < DeepAnalysis::COUNTERPART_SHARE / 2.0,
+                "{span:?} is {share:.2} of its translation",
+            );
+            assert!(DeepAnalysis::agreed_counterpart(translation, span, span).is_some());
+        }
+    }
+
+    /// A counterpart reaches the card as its own row, and never as a blank one.
+    #[test]
+    fn the_row_appears_only_when_there_is_one() {
+        let with = DeepAnalysis {
+            lemma: "rectangle".to_owned(),
+            counterpart: Some("직사각형".to_owned()),
+            ..DeepAnalysis::default()
+        };
+        assert!(with.lines().iter().any(|(_, value)| value == "직사각형"));
+
+        let without = DeepAnalysis {
+            lemma: "rectangle".to_owned(),
+            ..DeepAnalysis::default()
+        };
+        assert_eq!(without.lines().len(), 1);
     }
 }
