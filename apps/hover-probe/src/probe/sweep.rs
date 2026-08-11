@@ -583,12 +583,54 @@ fn print_pass(label: &str, stats: &PassStats) {
 
 /// State plainly whether the wake earned its cost, so the number is not left
 /// for a reader to work out from two tables.
+/// Whether the two passes even sampled the same thing.
+///
+/// A tenth of drift is allowed. The sweep has a per-window time budget, so two
+/// passes over a still desktop can end a point or two apart; a window
+/// uncovering itself changes the count several-fold.
+fn samples_disagree(cold: &PassStats, woken: &PassStats) -> bool {
+    const CLOSE_ENOUGH: f64 = 0.10;
+
+    let most = cold.sampled.max(woken.sampled);
+    if most == 0 {
+        return false;
+    }
+    (cold.sampled as f64 - woken.sampled as f64).abs() / most as f64 > CLOSE_ENOUGH
+}
+
+/// What the second pass proves, if anything.
+///
+/// **The two passes have to be over the same points.** This compared raw
+/// acquisition counts and could only notice a changed desktop when the count
+/// went *down*. A window that became visible between the passes was sampled 42
+/// points cold and 220 woken, and the verdict credited the wake with the
+/// difference: `+36 acquisitions, so the wake earned its cost here`.
+///
+/// That is a row that would have entered the compatibility matrix as a
+/// measurement of an accessibility wake, and it was a measurement of somebody
+/// alt-tabbing.
+///
+/// Refused rather than corrected: a rate over a different sample is not the
+/// same rate, and nothing here could recover the run.
 fn print_wake_verdict(cold: &PassStats, woken: &PassStats) {
+    if samples_disagree(cold, woken) {
+        // One line per line. A `\` continuing a string literal is rejoined by
+        // rustfmt with the indentation left inside it, which `CLAUDE.md` bans
+        // and which happened in this function's first draft.
+        println!(
+            "           wake: NOT COMPARABLE. {} points cold against {} woken,",
+            cold.sampled, woken.sampled,
+        );
+        println!("                 so the desktop changed under the sweep and any difference");
+        println!("                 is that rather than the wake. Sweep it again undisturbed.");
+        return;
+    }
+
     let gained = woken.acquired as i64 - cold.acquired as i64;
     let verdict = match gained {
         g if g > 0 => format!("+{g} acquisitions, so the wake earned its cost here"),
         0 => "no change, so this provider was never cold".to_owned(),
-        g => format!("{g} acquisitions, which means the window changed under the sweep").to_owned(),
+        g => format!("{g} acquisitions, which means the window changed under the sweep"),
     };
     println!("           wake: {verdict}");
 }
@@ -789,5 +831,46 @@ mod tests {
         assert_eq!(stats.failures.get("empty"), Some(&1));
         assert_eq!(stats.acquired, 0);
         assert_eq!(stats.sampled, 3);
+    }
+}
+
+#[cfg(test)]
+mod wake_verdict_tests {
+    use super::*;
+
+    fn pass(sampled: usize, acquired: usize) -> PassStats {
+        PassStats {
+            sampled,
+            acquired,
+            ..PassStats::default()
+        }
+    }
+
+    /// The run that prompted this: a window uncovered itself between the
+    /// passes, and the verdict credited the wake with the difference.
+    ///
+    /// `print_wake_verdict` prints rather than returns, so the rule it turns
+    /// on is asserted directly. That is the part that decides whether a row
+    /// enters the compatibility matrix as a measurement of a wake or of
+    /// somebody alt-tabbing.
+    #[test]
+    fn two_passes_over_different_samples_are_not_comparable() {
+        let (cold, woken) = (pass(42, 0), pass(220, 36));
+        assert!(samples_disagree(&cold, &woken));
+    }
+
+    /// A time budget can end two passes a point or two apart on a still
+    /// desktop, and that is still the same sample.
+    #[test]
+    fn a_point_or_two_of_drift_is_still_the_same_sample() {
+        assert!(!samples_disagree(&pass(228, 16), &pass(226, 16)));
+        assert!(!samples_disagree(&pass(228, 16), &pass(228, 16)));
+    }
+
+    /// A window that was fully covered in both passes has nothing to compare
+    /// and must not be reported as disagreeing.
+    #[test]
+    fn two_empty_passes_agree() {
+        assert!(!samples_disagree(&pass(0, 0), &pass(0, 0)));
     }
 }
