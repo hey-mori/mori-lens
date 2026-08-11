@@ -209,7 +209,137 @@ impl Analyser for OllamaTranslator {
         if !analysis.says_anything() {
             return Err(TranslateError::Malformed);
         }
-        Ok(analysis)
+        Ok(analysis.with_counterpart(self.counterpart_of(request)))
+    }
+}
+
+/// The schema for a counterpart. One string, and the model may not add to it.
+const COUNTERPART_SCHEMA: &str =
+    "{\"type\":\"object\",\"properties\":{\"counterpart\":{\"type\":\"string\"}},\"required\":[\"counterpart\"]}";
+
+impl OllamaTranslator {
+    /// Which part of the translation carries the focused word, or nothing.
+    ///
+    /// **Asked twice, from opposite ends, and kept only where the two agree.**
+    /// One question answers by every mechanical check and is sometimes false:
+    /// `sentence` came back as `틀린`, which means *wrong*, and it is a
+    /// substring of the translation and a tenth of its length. The second
+    /// question is what notices
+    /// (`docs/benchmarks/2026-08-11-one-word-and-its-counterpart.md`).
+    ///
+    /// Costs two more calls, about 2.3 seconds together, on a path that already
+    /// costs seconds and that the reader asked for by pressing a key
+    /// ([ADR-0005](../../../docs/decisions/ADR-0005-two-speed-ai.md)). It is
+    /// never on the hover path.
+    ///
+    /// Returns `None` for anything missing, malformed, or disagreed, and none
+    /// of those is an error: the card simply does not carry the row.
+    pub(crate) fn counterpart_of(&self, request: &DeepRequest) -> Option<String> {
+        let translation = request.translation.as_deref()?.trim();
+        let (first, second) = self.two_counterparts(request);
+        DeepAnalysis::agreed_counterpart(translation, &first?, &second?)
+    }
+
+    /// Both answers, before they are compared.
+    ///
+    /// Separate from the rule that judges them so a live check can report what
+    /// each question actually said. A bare `None` says the two disagreed and
+    /// nothing about how, which is the whole of what a failure here needs to
+    /// report.
+    ///
+    /// **The target language is named in both prompts.** The measured versions
+    /// said "the Korean translation" and the first written here said "the
+    /// translation", and the first live run came back with no agreement at all
+    /// on a case the benchmark agreed on. The source language is not named,
+    /// because Lens does not know it: acquisition reads characters, not a
+    /// locale.
+    pub(crate) fn two_counterparts(
+        &self,
+        request: &DeepRequest,
+    ) -> (Option<String>, Option<String>) {
+        let Some(word) = request
+            .word
+            .as_deref()
+            .map(str::trim)
+            .filter(|w| !w.is_empty())
+        else {
+            return (None, None);
+        };
+        let Some(translation) = request
+            .translation
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+        else {
+            return (None, None);
+        };
+        let language = request.target_language.as_str();
+
+        let forward = format!(
+            concat!(
+                "Here is a sentence and its {language} translation.\n",
+                "Which part of the {language} translation carries the meaning ",
+                "of the word `{word}`?\n",
+                "Copy that part character for character from the {language} translation.\n",
+                "Copy the smallest part that carries it, never the whole sentence.\n",
+                "Never paraphrase and never invent a word.\n\n",
+                "Sentence: {sentence}\n",
+                "{language}: {translation}\n",
+            ),
+            language = language,
+            word = word,
+            sentence = request.sentence,
+            translation = translation,
+        );
+        // **From the other end.** Not "what translates this word" but "what
+        // would you translate back as this word". The same question to a model
+        // that understands the sentence, and a different one to a model that is
+        // matching shapes, which is why the disagreement lands where the error
+        // is (`docs/benchmarks/2026-08-11-one-word-and-its-counterpart.md`).
+        let backward = format!(
+            concat!(
+                "Here is a {language} sentence and its translation.\n",
+                "Find the shortest run of characters in the {language} sentence ",
+                "that you would translate as `{word}`.\n",
+                "Copy it character for character from the {language} sentence.\n",
+                "Never paraphrase and never invent a word.\n\n",
+                "{language}: {translation}\n",
+                "Translation: {sentence}\n",
+            ),
+            language = language,
+            word = word,
+            sentence = request.sentence,
+            translation = translation,
+        );
+        (
+            self.one_counterpart(&forward),
+            self.one_counterpart(&backward),
+        )
+    }
+
+    /// One schema-constrained answer, or nothing.
+    ///
+    /// Every failure is `None`. A counterpart that did not arrive is a card
+    /// without one row, and turning it into an error would throw away an
+    /// explanation the reader did get.
+    pub(crate) fn one_counterpart(&self, prompt: &str) -> Option<String> {
+        let body = json::object(&[
+            ("model", json::Value::Str(&self.model)),
+            ("prompt", json::Value::Str(prompt)),
+            ("stream", json::Value::Raw("false")),
+            ("format", json::Value::Raw(COUNTERPART_SCHEMA)),
+            (
+                "options",
+                json::Value::Raw("{\"temperature\":0,\"num_predict\":120}"),
+            ),
+            ("keep_alive", json::Value::Str(crate::MODEL_LEASE)),
+        ]);
+        let response = http::post(&self.endpoint, "/api/generate", &body, DEEP_TIMEOUT).ok()?;
+        if self.error_in(&response).is_some() {
+            return None;
+        }
+        let answer = json::string_value_of_key(&response, "response")?;
+        json::string_value_of_key(&answer, "counterpart").map(|span| span.trim().to_owned())
     }
 }
 
@@ -227,6 +357,9 @@ fn parse(answer: &str, model: String, latency_ms: u64) -> DeepAnalysis {
             .to_owned()
     };
     DeepAnalysis {
+        // Never from this reply. It is a separate question asked twice, and it
+        // is filled in by `counterpart_of` after the analysis has parsed.
+        counterpart: None,
         lemma: field(FIELDS[0]),
         part_of_speech: field(FIELDS[1]),
         sense: field(FIELDS[2]),
