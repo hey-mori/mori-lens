@@ -89,6 +89,13 @@ struct Translate {
     /// looking at, rather than on one that is shown and then covered by the
     /// answer.
     doubtful: bool,
+    /// Whether the characters were recognised from pixels at all.
+    ///
+    /// Separate from `doubtful`, which is a shape heuristic over the words.
+    /// This is the certain half: a card built on a screenshot and one built on
+    /// a provider's own string looked identical, and the first is a guess at
+    /// what the screen says.
+    from_pixels: bool,
 }
 
 /// What the card on screen is showing, so the explain key has something to
@@ -800,6 +807,8 @@ fn main() -> std::process::ExitCode {
                 let mut card = Card::translated(&job.original, &hit);
                 if job.doubtful {
                     card = card.built_on_a_doubtful_reading();
+                } else if job.from_pixels {
+                    card = card.read_from_the_screen();
                 }
                 let _ = answers_tx.send(Answer {
                     generation: job.generation,
@@ -838,6 +847,8 @@ fn main() -> std::process::ExitCode {
             // on the card the reader is still looking at a second later.
             let card = if job.doubtful {
                 card.built_on_a_doubtful_reading()
+            } else if job.from_pixels {
+                card.read_from_the_screen()
             } else {
                 card
             };
@@ -1433,6 +1444,8 @@ fn main() -> std::process::ExitCode {
                                 anchor: reading.anchor,
                                 language: language.clone(),
                                 doubtful: reading.misread > 0,
+                                // Ctrl+Alt+O reads pixels and nothing else.
+                                from_pixels: true,
                             }))
                             .is_ok();
                     }
@@ -1666,8 +1679,20 @@ fn main() -> std::process::ExitCode {
                                 focused_word: target.segmented.word_text().map(str::to_owned),
                                 anchor,
                                 language: language.clone(),
-                                // The accessibility path reads text, not pixels.
+                                // No shape heuristic has run on this reading.
+                                // The automatic fall-through does not count
+                                // misread words the way `Ctrl+Alt+O` does, so
+                                // the honest answer is that nobody looked.
                                 doubtful: false,
+                                // **Not always false.** This said "the
+                                // accessibility path reads text, not pixels",
+                                // and it stopped being true when `ocr =
+                                // automatic` gave the session a capture path:
+                                // a hover accessibility could not serve falls
+                                // through to pixels and arrives here with a
+                                // target the reader has no way to tell apart.
+                                from_pixels: target.source
+                                    == lens_core::acquire::AcquisitionSource::Ocr,
                             }))
                             .is_ok();
                     }
