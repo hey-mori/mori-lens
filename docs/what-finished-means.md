@@ -41,6 +41,17 @@ completes must be arranged rather than hoped for**, in a window this
 repository controls and has measured, on a sentence it wrote itself, so
 that the first card is guaranteed rather than probable.
 
+**Built on 2026-08-11**, and two things it found are worth more than the
+window. Lens ships with `modifier` as its default tier, so a lesson
+saying "rest the pointer" would have been wrong for almost every new
+reader; the heading names the key instead. And `deny_self`, which stops
+the card translating its own translation, denied the lesson too, so the
+first version staged a window nothing could read. Both were invisible
+until something tried to perform the gesture.
+
+What is still open is the part that matters: **nobody who did not build
+it has hovered it.** That is §2's measurement, not a second task.
+
 ### 2. The first card is several gigabytes away
 
 Ollama, then a model. Neither is bundled and neither will be:
