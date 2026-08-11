@@ -391,11 +391,68 @@ impl Card {
     /// caveat, not the message: the reading is still the best one available,
     /// and refusing to translate it would leave somebody who pressed a key
     /// with nothing at all.
-    pub fn built_on_a_doubtful_reading(mut self) -> Self {
-        if !self.footer.is_empty() {
-            self.footer.push_str(" · ");
+    pub fn built_on_a_doubtful_reading(self) -> Self {
+        self.say(Self::DOUBTFUL)
+    }
+
+    /// What a card says when its text was recognised from pixels.
+    pub const FROM_PIXELS: &str = "화면 읽기";
+    /// And when that reading also looks wrong.
+    pub const DOUBTFUL: &str = "읽기 불확실";
+
+    /// The same card, marked as built on characters read off the screen.
+    ///
+    /// **The certain fact, where `is_misread` is a guess.** That rule is a
+    /// shape heuristic and says so: it catches misreadings whose shape is
+    /// impossible and leaves the ones whose shape is merely unlikely, and its
+    /// own comment lists `5h0l` for `show` and `于or'` for `for` as ones it
+    /// cannot see. A reader's card carried
+    /// `/// Print the resolved word. 0千f by default` with nothing on it to say
+    /// the characters had been guessed at.
+    ///
+    /// Whether the text came from pixels is not a guess. It is the difference
+    /// between a sentence a provider handed over and one this machine read off
+    /// a screenshot, and it belongs on the line that already says how the card
+    /// came by what it is showing.
+    ///
+    /// **Never both.** `읽기 불확실` already means the characters were read
+    /// from pixels *and* look wrong, so a card that says both spends the
+    /// footer's width saying one thing twice, on the line that sets the card's
+    /// minimum width.
+    pub fn read_from_the_screen(self) -> Self {
+        if self.footer.contains(Self::DOUBTFUL) {
+            return self;
         }
-        self.footer.push_str("읽기 불확실");
+        self.say(Self::FROM_PIXELS)
+    }
+
+    /// Put a caveat on the quiet line, in the model's place.
+    ///
+    /// **The footer is a list ordered by usefulness and it has a width.** It
+    /// sets the card's minimum width, so a fourth entry widens every card that
+    /// carries one. The model name is last because it is the entry a reader has
+    /// no use for, and a caveat is the entry they must not miss, so the caveat
+    /// takes its place rather than queueing behind it.
+    ///
+    /// This was found by adding one: `로컬 · 2.8초 · qwen2.5-coder:7b · 화면
+    /// 읽기` is 36 characters against a 32 ceiling. **`읽기 불확실` had been
+    /// over it since the day it landed** and nothing noticed, because the
+    /// length test only ever measured a card with no caveat on it.
+    ///
+    /// Appends instead when there is nothing to displace: a footer of one or
+    /// two entries is a failure card or a status, and neither has a model name
+    /// in it to give up.
+    fn say(mut self, what: &str) -> Self {
+        if self.footer.is_empty() {
+            self.footer = what.to_owned();
+            return self;
+        }
+        let mut parts: Vec<&str> = self.footer.split(" · ").collect();
+        if parts.len() >= 3 {
+            parts.pop();
+        }
+        parts.push(what);
+        self.footer = parts.join(" · ");
         self
     }
 
@@ -1038,9 +1095,91 @@ mod footer_tests {
         );
     }
 
+    /// A card whose characters were guessed at says so.
+    ///
+    /// The card that prompted this carried
+    /// `/// Print the resolved word. 0千f by default; see `5h0누』 word banner&`
+    /// with a footer reading `로컬 · 캐시 · qwen2.5:7b`, which is what a
+    /// sentence a provider handed over looks like.
+    #[test]
+    fn a_card_read_off_the_screen_says_where_its_characters_came_from() {
+        let card = card_at(2779, false).read_from_the_screen();
+        assert!(card.footer.contains(Card::FROM_PIXELS), "{}", card.footer);
+        // And still leads with the one thing on the line that is not
+        // incidental.
+        assert!(card.footer.starts_with("로컬"), "{}", card.footer);
+    }
+
+    /// **Never both.** `읽기 불확실` already means read from pixels and wrong.
+    #[test]
+    fn a_doubtful_card_does_not_also_say_it_was_read_from_the_screen() {
+        let card = card_at(2779, false)
+            .built_on_a_doubtful_reading()
+            .read_from_the_screen();
+        assert!(card.footer.contains(Card::DOUBTFUL), "{}", card.footer);
+        assert!(!card.footer.contains(Card::FROM_PIXELS), "{}", card.footer);
+    }
+
+    /// And the order the two arrive in must not change the answer.
+    #[test]
+    fn the_stronger_caveat_wins_whichever_is_applied_first() {
+        let first = card_at(2779, false)
+            .read_from_the_screen()
+            .built_on_a_doubtful_reading();
+        assert!(first.footer.contains(Card::DOUBTFUL), "{}", first.footer);
+    }
+
+    /// A caveat takes the model's place rather than queueing behind it.
+    #[test]
+    fn a_caveat_displaces_the_model_and_not_the_privacy_signal() {
+        let card = card_at(2779, false).read_from_the_screen();
+        assert!(card.footer.starts_with("로컬"), "{}", card.footer);
+        assert!(card.footer.contains("2.8초"), "{}", card.footer);
+        assert!(!card.footer.contains("qwen"), "{}", card.footer);
+        assert!(card.footer.ends_with(Card::FROM_PIXELS), "{}", card.footer);
+    }
+
+    /// A footer with nothing to displace keeps what it has.
+    ///
+    /// A failure card's footer is one entry, the reason, and losing it to a
+    /// caveat would replace what went wrong with a note about how it was read.
+    #[test]
+    fn a_short_footer_is_appended_to_rather_than_overwritten() {
+        let card = Card::not_readable("이 부분에서 글자를 찾지 못했습니다").read_from_the_screen();
+        assert_eq!(card.footer, Card::FROM_PIXELS);
+
+        let failed = Card {
+            original: "x".to_owned(),
+            body: CardBody::Translation("y".to_owned()),
+            footer: "timeout".to_owned(),
+        }
+        .read_from_the_screen();
+        assert_eq!(failed.footer, format!("timeout · {}", Card::FROM_PIXELS));
+    }
+
     /// The footer sets the card's minimum width, so its length is a size.
+    /// Every shape of it, not only the one with no caveat on it.
+    ///
+    /// The version that measured a plain card let `읽기 불확실` sit at 33
+    /// characters for as long as it existed.
     #[test]
     fn the_footer_stays_short() {
+        for footer in [
+            card_at(2779, false).footer,
+            card_at(2779, true).footer,
+            card_at(840, false).read_from_the_screen().footer,
+            card_at(2779, false).built_on_a_doubtful_reading().footer,
+            card_at(2779, true)
+                .read_from_the_screen()
+                .built_on_a_doubtful_reading()
+                .footer,
+        ] {
+            assert!(
+                footer.chars().count() <= 32,
+                "{footer:?} is {} chars",
+                footer.chars().count()
+            );
+        }
         let footer = card_at(2779, false).footer;
         assert!(
             footer.chars().count() <= 32,
