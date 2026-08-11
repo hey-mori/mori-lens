@@ -719,10 +719,17 @@ unsafe fn measure(window: HWND, card: &Card) -> i32 {
         }
         let theme = current_theme();
         let inner = CARD_WIDTH - theme.padding * 2;
+        // The joined block lives here so the borrow below outlives the match.
+        // Drawing it as two columns is its own piece of work; this renderer
+        // still measures it as one.
+        let joined;
         let body = match &card.body {
             CardBody::Translation(text) | CardBody::Problem(text) => text,
             CardBody::Waiting(status) => status.as_str(),
-            CardBody::Analysis(text) => text.as_str(),
+            CardBody::Analysis(rows) => {
+                joined = CardBody::rows_as_text(rows);
+                joined.as_str()
+            }
         };
         let original = text_height(dc, &card.original, inner, theme.small_pt);
         // **Only when there is one to separate from.** `paint` skips the gap
@@ -905,6 +912,7 @@ unsafe fn paint(window: HWND) {
                 ) + GAP_AFTER_ORIGINAL;
             }
 
+            let joined;
             let (body, colour) = match &card.body {
                 CardBody::Translation(text) => (text.as_str(), theme.body),
                 CardBody::Problem(text) => (text.as_str(), theme.problem),
@@ -913,7 +921,10 @@ unsafe fn paint(window: HWND) {
                 CardBody::Waiting(status) => (status.as_str(), theme.footer),
                 // See the note in `glass.rs`: a list of headed lines, not an
                 // answer, so it does not take the answer's weight.
-                CardBody::Analysis(text) => (text.as_str(), theme.body),
+                CardBody::Analysis(rows) => {
+                    joined = CardBody::rows_as_text(rows);
+                    (joined.as_str(), theme.body)
+                }
             };
             y += draw(
                 target,
