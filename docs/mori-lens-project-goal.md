@@ -96,6 +96,14 @@ prove the logic and prove nothing about a desktop.
 What is still missing before this is something a person installs: **a
 signed binary**. That is the whole of the remaining list.
 
+It is the whole of the remaining list **for installable**, which is not
+the same as finished. The distance from one to the other is nothing on
+this page: a gesture nobody has performed before, a first card several
+gigabytes away, and no gate anywhere in this repository phrased as a
+person rather than a number.
+[`what-finished-means.md`](what-finished-means.md) is where that is
+written down, and it deliberately adds no milestone.
+
 `scripts/package.sh` runs the gate, builds, and writes a zip named for
 the version and the commit with a SHA-256 beside it. `install.ps1`
 travels in that zip: it copies the binary to
