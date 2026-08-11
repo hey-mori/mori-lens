@@ -40,6 +40,36 @@ Laying the sweep's own 24px grid over that element and asking
 The four smaller elements return nothing, which is what a scrolled-out
 or empty range does and is not a failure of the technique.
 
+## The cheap way to get the line's text does not work
+
+Knowing which rectangle a point is on is not having that line's text.
+The expensive way is to walk a range by `TextUnit_Line` until its
+rectangles match, one cross-process call a line.
+
+The cheap way would be to ask `RangeFromPoint` again at **the line's own
+centre**: a point provably on a glyph rather than in a margin, which is
+where the earlier failure was measured. If that answered with the line
+it was asked about, a point would resolve in two extra calls.
+
+It answers with that line **4 times in 122**.
+
+```
+  element        ranges  rects  median height  tallest  points on a line   asked at its centre
+  #1 h=890           70    124             18      854    620/2331  ( 27%)    4/122 (  3%)
+```
+
+So `RangeFromPoint` on this container is not wrong about *where* it was
+asked. It is wrong wherever it is asked, including at points where the
+provider itself has just said there is a line. That is a third,
+independent way of reaching the conclusion in
+[`2026-08-07-walking-up-from-the-point.md`](2026-08-07-walking-up-from-the-point.md),
+and it closes the last inexpensive route.
+
+**`GetVisibleRanges` does not divide into lines either.** 70 ranges for
+124 rectangles here, and 1 range for 29 rectangles on a terminal. A
+range is not a line, so pairing text with geometry is not free even when
+the geometry is good.
+
 ## What this is not
 
 **Not comparable to the 17% figure** from the ancestor measurement. That
@@ -68,6 +98,23 @@ targeting here, with a rule this repository wrote and tested.
 It is also the same shape the OCR path already has: rectangles in,
 `line_under`, a line out. Two acquisition paths converging on one rule
 is a better position than two paths with two rules.
+
+## Where this leaves it
+
+Three measurements now say the same thing from three directions: the
+text is exposed, the geometry of its lines is available, and **no cheap
+call turns a point into the line's text**.
+
+What is left is the expensive route, and it is not obviously worth it:
+a call per line to walk to the match, on a base rate of 27% of the
+points inside one container, with no way to verify the result without
+the window in front. That is speculative work on an unmeasured cost, and
+this repository has a rule about that.
+
+So this stops here, recorded, until either the cost is measured or a
+different route appears. What would make it worth returning to is a
+provider that returns one visible range per line, which the terminal
+does not and this application does not, but which another might.
 
 ## What would settle it
 
