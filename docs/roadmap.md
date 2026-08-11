@@ -236,6 +236,16 @@ explicit; nothing is captured automatically.
 **Gate** · nothing is stored without a user action; export round-trips;
 deletion is real.
 
+## What no milestone here covers
+
+Every gate condition above is a measurement: an acquisition rate, a
+latency, a window in a matrix. None is about a person, so this roadmap
+can go entirely green while nobody outside the machine that wrote it has
+ever seen a card.
+[`what-finished-means.md`](what-finished-means.md) states the three
+gates that belong at the end and cannot be automated. It adds no
+milestone here, on purpose.
+
 ## After M8 · Mori integration
 
 A process boundary carrying learning items on an explicit user action.
