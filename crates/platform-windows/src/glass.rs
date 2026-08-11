@@ -145,6 +145,14 @@ const LINE_HEIGHT: f32 = 1.38;
 const GAP_AFTER_ORIGINAL: f32 = 11.0;
 /// Gap under the translation, before the footer.
 const GAP_BEFORE_FOOTER: f32 = 7.0;
+/// Gap between two rows of an analysis.
+///
+/// Much smaller than either of the others, because those separate *kinds* of
+/// thing and this separates items of one kind. A list whose rows are as far
+/// apart as its sections is a list that has stopped looking like one.
+const GAP_BETWEEN_ROWS: f32 = 3.0;
+/// Space between an analysis label and the value beside it.
+const LABEL_GUTTER: f32 = 7.0;
 
 /// How much fully opaque ink the last presented frame carried.
 ///
@@ -194,13 +202,39 @@ pub struct Laid {
 
 struct Run {
     layout: IDWriteTextLayout,
+    /// Offset from the card's left padding.
+    ///
+    /// Zero for everything that is a paragraph. Non-zero for the value half of
+    /// an analysis row, which sits beside its label rather than under it.
+    x: f32,
     y: f32,
+    /// Which line of the card this shares a top edge with.
+    ///
+    /// Runs are a flat list and rows are what the card is actually made of: a
+    /// label and its value are two runs on one row. Before this the two were
+    /// the same thing, and the gap under a run was chosen by its **index**,
+    /// which is why a card with no original gave the original's wider gap to a
+    /// boundary that was not there.
+    row: usize,
+    /// Space under this run's row. The widest wins where a row has two.
+    gap_after: f32,
     colour: Rgb,
     /// Text is opaque even when the surface is not. That is the whole point.
     opaque: bool,
 }
 
 impl Laid {
+    /// Where every run landed, as `(x, y)` in card coordinates.
+    ///
+    /// For the live checks and nothing else. Two runs sharing a `y` are a
+    /// label and the value beside it, which is the whole claim the analysis
+    /// layout makes and the one thing a screenshot would show and a test
+    /// otherwise could not.
+    #[cfg(test)]
+    pub(crate) fn placements(&self) -> Vec<(f32, f32)> {
+        self.runs.iter().map(|run| (run.x, run.y)).collect()
+    }
+
     /// The display scaling this was laid out for, so an animation moves the
     /// same physical distance on every monitor.
     pub fn scale(&self) -> f32 {
@@ -258,24 +292,35 @@ impl Glass {
         // comes back is not how wide it *is*: `DWRITE_TEXT_METRICS::width` is
         // the width actually used, which for a short answer is a fraction of
         // what it was offered.
-        let mut runs = Vec::new();
-        let mut push = |text: &str, points: i32, semibold: bool, colour: Rgb| {
+        let mut runs: Vec<Run> = Vec::new();
+        let make = |runs: &mut Vec<Run>,
+                    text: &str,
+                    points: i32,
+                    semibold: bool,
+                    colour: Rgb|
+         -> Option<usize> {
             if text.trim().is_empty() {
-                return;
+                return None;
             }
             let size_px = points as f32 * scale * 96.0 / 72.0;
             // SAFETY: documented layout creation; the interface is owned by the
             // `Run` it goes into.
-            let made = unsafe { self.layout(text, size_px, semibold, widest) };
-            if let Some((layout, _)) = made {
-                runs.push(Run {
-                    layout,
-                    y: 0.0,
-                    colour,
-                    opaque: true,
-                });
-            }
+            let (layout, _) = unsafe { self.layout(text, size_px, semibold, widest) }?;
+            runs.push(Run {
+                layout,
+                x: 0.0,
+                y: 0.0,
+                row: 0,
+                gap_after: 0.0,
+                colour,
+                opaque: true,
+            });
+            Some(runs.len() - 1)
         };
+
+        // Rows are counted as they are made, so an empty original takes no row
+        // and every gap below it belongs to the boundary it is actually under.
+        let mut row = 0usize;
 
         // The original first and quieter. Above the answer because the reader's
         // eye is already there, and present at all because it is the only way
@@ -286,50 +331,118 @@ impl Glass {
         //
         // Never capped. See ORIGINAL_LINES: an elided original put a
         // translation of the end of a sentence beside the start of it.
-        let has_original = !card.original.trim().is_empty();
-        push(&card.original, theme.small_pt, false, theme.original);
+        if let Some(index) = make(
+            &mut runs,
+            &card.original,
+            theme.small_pt,
+            false,
+            theme.original,
+        ) {
+            runs[index].row = row;
+            runs[index].gap_after = GAP_AFTER_ORIGINAL * scale;
+            row += 1;
+        }
 
-        // **Not bold.** The answer was semibold at a size above the original,
-        // which is three signals (weight, size, colour) saying one thing, and a
-        // reader called it too heavy and too large in the same sentence. Two
-        // carry it: the answer is the darkest ink on the card and a point
-        // larger than the original. Bold Hangul is also heavier than bold Latin
-        // at the same weight, because the glyphs fill more of their box, so the
-        // emphasis that looked measured in English did not stay measured here.
-        let joined;
-        let (body, colour, weight, points) = match &card.body {
-            CardBody::Translation(text) => (text.as_str(), theme.body, false, theme.body_pt),
-            CardBody::Problem(text) => (text.as_str(), theme.problem, false, theme.body_pt),
-            // Quiet, and at the footer's colour and size: it is a status, not
-            // an answer, and it must not read as one for the second it is up.
-            CardBody::Waiting(status) => (status.as_str(), theme.footer, false, theme.small_pt),
-            // At the original's size rather than the answer's. An analysis is
-            // five headed lines and a translation is one sentence; giving the
-            // list the answer's point size makes a card that is mostly
-            // explanation shout, and the sentence it explains is the thing the
-            // reader's eye should still find first.
-            CardBody::Analysis(rows) => {
-                joined = CardBody::rows_as_text(rows);
-                (joined.as_str(), theme.body, false, theme.small_pt)
+        match &card.body {
+            // **The one body that is a list.** A label and its value are two
+            // runs on one row: the labels are made first so the column they
+            // share can be measured, and only then are the values placed
+            // beside it. Every value therefore starts at the same x, and a
+            // reader finds that x once instead of five times.
+            CardBody::Analysis(pairs) => {
+                let first_row = row;
+                let mut labelled: Vec<(usize, &String)> = Vec::new();
+                for (label, value) in pairs {
+                    if let Some(index) = make(&mut runs, label, theme.small_pt, false, theme.footer)
+                    {
+                        runs[index].row = row;
+                        labelled.push((index, value));
+                        row += 1;
+                    }
+                }
+                // The widest label decides the column. Measured at `widest`,
+                // where a label of two or three glyphs never wraps, so this is
+                // its real width rather than a wrapped one.
+                let column = labelled
+                    .iter()
+                    // SAFETY: metrics on a layout this function owns.
+                    .filter_map(|(index, _)| unsafe { text_width(&runs[*index].layout) })
+                    .fold(0.0f32, f32::max)
+                    + LABEL_GUTTER * scale;
+                for (offset, (_, value)) in labelled.iter().enumerate() {
+                    let at = first_row + offset;
+                    if let Some(index) = make(&mut runs, value, theme.small_pt, false, theme.body) {
+                        runs[index].row = at;
+                        runs[index].x = column;
+                    }
+                    // Set on the row rather than on either half, so a row whose
+                    // value failed to lay out still ends where it should.
+                    let gap = if at + 1 == row {
+                        GAP_BEFORE_FOOTER
+                    } else {
+                        GAP_BETWEEN_ROWS
+                    };
+                    for run in runs.iter_mut().filter(|run| run.row == at) {
+                        run.gap_after = gap * scale;
+                    }
+                }
             }
-        };
-        push(body, points, weight, colour);
-        push(&card.footer, theme.footer_pt, false, theme.footer);
+            // **Not bold.** The answer was semibold at a size above the
+            // original, which is three signals (weight, size, colour) saying
+            // one thing, and a reader called it too heavy and too large in the
+            // same sentence. Two carry it: the answer is the darkest ink on the
+            // card and a point larger than the original. Bold Hangul is also
+            // heavier than bold Latin at the same weight, because the glyphs
+            // fill more of their box, so the emphasis that looked measured in
+            // English did not stay measured here.
+            body => {
+                let (text, colour, points) = match body {
+                    CardBody::Translation(text) => (text.as_str(), theme.body, theme.body_pt),
+                    CardBody::Problem(text) => (text.as_str(), theme.problem, theme.body_pt),
+                    // Quiet, and at the footer's colour and size: it is a
+                    // status, not an answer, and it must not read as one for
+                    // the second it is up.
+                    CardBody::Waiting(status) => (status.as_str(), theme.footer, theme.small_pt),
+                    // Unreachable: the arm above takes it.
+                    CardBody::Analysis(_) => ("", theme.body, theme.small_pt),
+                };
+                if let Some(index) = make(&mut runs, text, points, false, colour) {
+                    runs[index].row = row;
+                    runs[index].gap_after = GAP_BEFORE_FOOTER * scale;
+                    row += 1;
+                }
+            }
+        }
 
-        // The original is the first run pushed, when there is one at all.
-        // `push` skips empty text, so a card with no original has the answer
-        // first and nothing to cap.
+        if let Some(index) = make(
+            &mut runs,
+            &card.footer,
+            theme.footer_pt,
+            false,
+            theme.footer,
+        ) {
+            runs[index].row = row;
+        }
+        let rows_total = runs.iter().map(|run| run.row + 1).max().unwrap_or(0);
 
         // Fit the card to what is in it. A fixed 420px box holding one short
         // line is mostly empty, which reads as a window that failed to load
         // rather than as an answer.
         //
-        // Never below the floor: a card that shrinks to the width of `네` is a
-        // tooltip, and it also makes the footer wrap.
-        let natural = runs
-            .iter()
-            // SAFETY: metrics on a layout this function owns.
-            .filter_map(|run| unsafe { text_width(&run.layout) })
+        // Per row, and including where the row starts: a value indented past a
+        // label needs the column as well as itself, and measuring runs alone
+        // would make every analysis card exactly one label-column too narrow.
+        //
+        // Never below the floor: a card that shrinks to the width of a single
+        // glyph is a tooltip, and it also makes the footer wrap.
+        let natural = (0..rows_total)
+            .map(|at| {
+                runs.iter()
+                    .filter(|run| run.row == at)
+                    // SAFETY: metrics on a layout this function owns.
+                    .filter_map(|run| unsafe { text_width(&run.layout) }.map(|used| run.x + used))
+                    .fold(0.0f32, f32::max)
+            })
             .fold(0.0f32, f32::max);
         let floor = (MIN_CARD_WIDTH as f32 * scale - padding * 2.0).max(floor_px);
         let inner = natural.max(floor).min(widest).ceil();
@@ -337,35 +450,30 @@ impl Glass {
         // Re-flow at the width actually chosen, and only now find out how tall
         // each run is. Measuring height at one width and drawing at another is
         // how a card ends up with its last line clipped.
+        //
+        // A row is as tall as its tallest run, and the gaps go between rows
+        // rather than after the last one.
         let mut y = padding;
-        let last = runs.len().saturating_sub(1);
-        for (index, run) in runs.iter_mut().enumerate() {
-            // SAFETY: documented calls on a layout this function owns.
-            let height = unsafe {
-                if run.layout.SetMaxWidth(inner).is_err() {
-                    return None;
-                }
-                let mut metrics = DWRITE_TEXT_METRICS::default();
-                run.layout.GetMetrics(&mut metrics).ok()?;
-                metrics.height
-            };
-            run.y = y;
-            y += height;
-            // The gaps belong between the runs, not after the last one, and
-            // **there are not always three**. A card with no original has two,
-            // and this counted to a constant: the footer was followed by a gap
-            // it was the last thing before, so those cards carried empty space
-            // along the bottom edge that nothing was separating.
-            if index < last {
-                // **By what the run is, not by where it landed.** `push` skips
-                // an empty original, so on a card without one the answer is
-                // run zero and took the original's gap: the wider space went
-                // where there was no boundary to widen.
-                y += if index == 0 && has_original {
-                    GAP_AFTER_ORIGINAL * scale
-                } else {
-                    GAP_BEFORE_FOOTER * scale
+        for at in 0..rows_total {
+            let mut tallest = 0.0f32;
+            let mut gap = 0.0f32;
+            for run in runs.iter_mut().filter(|run| run.row == at) {
+                // SAFETY: documented calls on a layout this function owns.
+                let height = unsafe {
+                    if run.layout.SetMaxWidth((inner - run.x).max(1.0)).is_err() {
+                        return None;
+                    }
+                    let mut metrics = DWRITE_TEXT_METRICS::default();
+                    run.layout.GetMetrics(&mut metrics).ok()?;
+                    metrics.height
                 };
+                run.y = y;
+                tallest = tallest.max(height);
+                gap = gap.max(run.gap_after);
+            }
+            y += tallest;
+            if at + 1 < rows_total {
+                y += gap;
             }
         }
 
@@ -655,7 +763,9 @@ impl Glass {
                 };
                 target.DrawTextLayout(
                     windows_numerics::Vector2 {
-                        X: margin + theme.padding as f32 * laid.scale,
+                        // `run.x` is zero for everything that is a paragraph,
+                        // and the label column for the value half of a row.
+                        X: margin + theme.padding as f32 * laid.scale + run.x,
                         Y: margin + run.y,
                     },
                     &run.layout,
