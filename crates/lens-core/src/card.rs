@@ -79,9 +79,16 @@ impl Card {
         Self {
             original: original.into(),
             body: CardBody::Translation(translation.text.clone()),
+            // **Where it ran, then how long, then which model.**
+            //
+            // The model name led this line until 2026-08-11, and it is the one
+            // token on it a reader has no use for. `privacy-model.md` says what
+            // this line is for: it is small and incidental and it carries one
+            // thing that is not, which is whether the answer left the machine.
+            // That token now comes first, where a line nobody finishes reading
+            // puts the thing they must not miss.
             footer: format!(
                 "{} · {} · {}",
-                translation.model,
                 if translation.engine.leaves_the_machine() {
                     "외부"
                 } else {
@@ -101,6 +108,7 @@ impl Card {
                 } else {
                     format!("{}ms", translation.latency_ms)
                 },
+                translation.model,
             ),
         }
     }
@@ -938,19 +946,47 @@ mod footer_tests {
         )
     }
 
+    // These three are about how a duration is written, not where it sits.
+    // They said `ends_with` while the latency happened to be last, and pinned
+    // an ordering they were not about.
     #[test]
     fn a_slow_answer_is_reported_in_seconds() {
-        assert!(card_at(2779, false).footer.ends_with("2.8초"));
+        assert!(card_at(2779, false).footer.contains("2.8초"));
     }
 
     #[test]
     fn a_fast_answer_keeps_its_milliseconds() {
-        assert!(card_at(840, false).footer.ends_with("840ms"));
+        assert!(card_at(840, false).footer.contains("840ms"));
     }
 
     #[test]
     fn a_cached_answer_still_says_so() {
-        assert!(card_at(2779, true).footer.ends_with("캐시"));
+        assert!(card_at(2779, true).footer.contains("캐시"));
+    }
+
+    /// Where it ran comes first, and that is the point of the line.
+    ///
+    /// `privacy-model.md` says the footer is small and incidental and carries
+    /// one thing that is not: whether the answer left the machine. A reader who
+    /// stops partway through this line must have read that much, so it goes
+    /// where a line is started rather than where it is finished.
+    #[test]
+    fn the_footer_says_where_it_ran_before_anything_else() {
+        assert!(
+            card_at(2779, false).footer.starts_with("로컬"),
+            "{}",
+            card_at(2779, false).footer
+        );
+    }
+
+    /// And the model, which a reader has no use for, comes last.
+    #[test]
+    fn the_model_is_the_last_thing_on_the_line() {
+        assert!(
+            card_at(2779, false).footer.ends_with("qwen2.5-coder:7b"),
+            "{}",
+            card_at(2779, false).footer
+        );
     }
 
     /// The footer sets the card's minimum width, so its length is a size.
@@ -1351,6 +1387,6 @@ mod clipboard_tests {
         assert_eq!(after.body, card.body);
         assert_eq!(after.original, card.original);
         assert!(after.footer.ends_with(Card::COPIED), "{}", after.footer);
-        assert!(after.footer.starts_with("qwen2.5:7b"), "{}", after.footer);
+        assert!(after.footer.starts_with("로컬"), "{}", after.footer);
     }
 }

@@ -132,7 +132,17 @@ const MIN_CARD_WIDTH: i32 = 220;
 const LINE_HEIGHT: f32 = 1.38;
 
 /// Gap under the original, before the translation.
-const GAP_AFTER_ORIGINAL: f32 = 6.0;
+///
+/// **The largest gap on the card**, and it was the smallest until 2026-08-11.
+/// This is the one boundary a reader actually crosses: above it is what they
+/// pointed at, below it is what this product made of it. The footer is a line
+/// most readers never reach.
+///
+/// A rule was drawn here first and taken out again. This file already records
+/// what happens when a card says one thing three ways: the answer was semibold
+/// and larger and darker, and a reader called it too heavy and too large in the
+/// same sentence. Space separates as well as a line does and adds no ink.
+const GAP_AFTER_ORIGINAL: f32 = 11.0;
 /// Gap under the translation, before the footer.
 const GAP_BEFORE_FOOTER: f32 = 7.0;
 
@@ -276,6 +286,7 @@ impl Glass {
         //
         // Never capped. See ORIGINAL_LINES: an elided original put a
         // translation of the end of a sentence beside the start of it.
+        let has_original = !card.original.trim().is_empty();
         push(&card.original, theme.small_pt, false, theme.original);
 
         // **Not bold.** The answer was semibold at a size above the original,
@@ -342,7 +353,11 @@ impl Glass {
             // it was the last thing before, so those cards carried empty space
             // along the bottom edge that nothing was separating.
             if index < last {
-                y += if index == 0 {
+                // **By what the run is, not by where it landed.** `push` skips
+                // an empty original, so on a card without one the answer is
+                // run zero and took the original's gap: the wider space went
+                // where there was no boundary to widen.
+                y += if index == 0 && has_original {
                     GAP_AFTER_ORIGINAL * scale
                 } else {
                     GAP_BEFORE_FOOTER * scale
