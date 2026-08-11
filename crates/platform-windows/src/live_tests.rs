@@ -3620,29 +3620,51 @@ fn measure_whether_a_covered_window_can_render_itself() {
 ///
 /// The acquirer gives up the moment `ElementFromPoint`'s element has no text
 /// pattern, and answers `Unsupported`. In a Chromium or Electron window a point
-/// very often lands on an overlay or a container, with the text-bearing element
-/// one or two steps above it.
+/// often lands on an overlay or a container, with the text-bearing element one
+/// or two steps above it.
 ///
-/// This measures the lift before anything is built on it. For a grid over the
-/// window in front: how many points have a text pattern at the point, and how
-/// many more have one within a few steps up.
+/// # It samples the desktop, not a window
 ///
-/// Counts only, and no text is read: this asks whether the pattern exists, not
-/// what it holds (`docs/privacy-model.md`).
+/// The first version measured the foreground window, and could not run at all
+/// when nothing was in the foreground, which is how a measurement this one
+/// contradicts came to stand unchecked for an afternoon.
+///
+/// `ElementFromPoint` answers about whatever is topmost, which is exactly what
+/// a pointer would hit. So there is nothing to arrange: sample points across
+/// the windows that are visible, attribute each to whichever process owns it,
+/// and the numbers are about what a reader's pointer actually meets.
+///
+/// # What the third column is, and why the first version of it was wrong
+///
+/// `RangeFromPoint` returns a **degenerate** range, a caret-shaped sliver
+/// whose rectangle may contain no sampled point at all. Testing containment on
+/// that reported everything off target for a mechanical reason. It is expanded
+/// to a line first, which is what the product does next.
+///
+/// Counts only, and no text is read: this asks whether the pattern exists and
+/// where its line is, not what it holds (`docs/privacy-model.md`).
 #[test]
 #[ignore = "needs a live desktop session; run manually"]
 fn measure_whether_an_ancestor_holds_the_text_a_point_does_not() {
+    use std::collections::BTreeMap;
     use windows::core::Interface;
     use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
     use windows::Win32::UI::Accessibility::{
-        CUIAutomation, IUIAutomation, IUIAutomationTextPattern, TextUnit_Line, TreeScope_Element,
-        UIA_TextPatternId,
+        CUIAutomation, IUIAutomation, IUIAutomationTextPattern, TextUnit_Line, UIA_TextPatternId,
     };
 
     /// How far up to look. Two or three is the depth a wrapper adds; a walk to
     /// the window root would find the document element, whose range covers
     /// everything and which ADR-0009's distance gate exists to reject.
     const STEPS: usize = 3;
+
+    #[derive(Default)]
+    struct Tally {
+        points: usize,
+        at_the_point: usize,
+        at_an_ancestor: usize,
+        on_target: usize,
+    }
 
     let _com = crate::com::ComScope::enter();
     // SAFETY: creating the documented automation co-class in-process.
@@ -3653,16 +3675,13 @@ fn measure_whether_an_ancestor_holds_the_text_a_point_does_not() {
         return;
     };
 
-    let Ok(front) = crate::foreground_window() else {
-        println!("no foreground window");
+    let windows_on_screen = crate::top_level_windows();
+    if windows_on_screen.is_empty() {
+        println!("no windows");
         return;
-    };
-    let bounds = front.client_bounds;
-    let name = front.process_name.clone().unwrap_or_else(|| "?".into());
-    println!("\n{name} · {}x{}", bounds.width, bounds.height);
+    }
+    let mut by_process: BTreeMap<String, Tally> = BTreeMap::new();
 
-    let (mut points, mut at_the_point, mut at_an_ancestor, mut depths) = (0, 0, 0, Vec::new());
-    let mut on_target = 0usize;
     // SAFETY: read-only automation queries; a window that changes mid-walk
     // yields an error rather than a crash.
     unsafe {
@@ -3670,114 +3689,129 @@ fn measure_whether_an_ancestor_holds_the_text_a_point_does_not() {
             println!("no tree walker");
             return;
         };
-        let step = 32;
-        let mut y = bounds.y + 8;
-        while y < bounds.bottom() - 8 {
-            let mut x = bounds.x + 8;
-            while x < bounds.right() - 8 {
-                let point = windows::Win32::Foundation::POINT { x, y };
-                x += step;
-                let Ok(element) = automation.ElementFromPoint(point) else {
-                    continue;
-                };
-                if crate::root_window_at(lens_core::geometry::ScreenPoint::new(point.x, point.y))
-                    != Some(front.id)
-                {
-                    continue;
-                }
-                points += 1;
+        let has_text = |element: &windows::Win32::UI::Accessibility::IUIAutomationElement| {
+            element.GetCurrentPattern(UIA_TextPatternId).ok().is_some()
+        };
 
-                let has_text =
-                    |element: &windows::Win32::UI::Accessibility::IUIAutomationElement| {
-                        element.GetCurrentPattern(UIA_TextPatternId).ok().is_some()
-                    };
-                if has_text(&element) {
-                    at_the_point += 1;
-                    continue;
-                }
-                let mut current = element;
-                for depth in 1..=STEPS {
-                    let Ok(parent) = walker.GetParentElement(&current) else {
-                        break;
-                    };
-                    if has_text(&parent) {
-                        at_an_ancestor += 1;
-                        depths.push(depth);
-                        // **The number that decides whether this is worth
-                        // building.** An ancestor's range covers more than the
-                        // pixel, so it may answer with text that is nowhere
-                        // near it, which is the failure ADR-0009 exists for. A
-                        // pattern being reachable is not the same as its answer
-                        // being usable.
-                        let usable = parent
-                            .GetCurrentPattern(UIA_TextPatternId)
-                            .ok()
-                            .and_then(|pattern| pattern.cast::<IUIAutomationTextPattern>().ok())
-                            .and_then(|pattern| pattern.RangeFromPoint(point).ok())
-                            // **Expanded to a line first.** The first version
-                            // of this tested the range `RangeFromPoint`
-                            // returns, which is degenerate: a caret-shaped
-                            // sliver whose rectangle may contain no point at
-                            // all. That would report every answer off target
-                            // for a mechanical reason rather than a real one,
-                            // and expanding is what the product does next
-                            // anyway.
-                            .and_then(|range| {
-                                range
-                                    .ExpandToEnclosingUnit(TextUnit_Line)
-                                    .ok()
-                                    .map(|()| range)
-                            })
-                            .map(|range| {
-                                let here = lens_core::geometry::ScreenPoint::new(point.x, point.y);
-                                crate::uia::bounding_rectangles(&range)
-                                    .iter()
-                                    .any(|rect| rect.contains(here))
-                            })
-                            .unwrap_or(false);
-                        if usable {
-                            on_target += 1;
-                        }
-                        break;
-                    }
-                    current = parent;
-                }
+        for window in &windows_on_screen {
+            let bounds = window.client_bounds;
+            if bounds.width <= 0 || bounds.height <= 0 {
+                continue;
             }
-            y += step;
+            let owner = window.process_name.clone().unwrap_or_else(|| "?".into());
+            let step = 48;
+            let mut y = bounds.y + 8;
+            while y < bounds.bottom() - 8 {
+                let mut x = bounds.x + 8;
+                while x < bounds.right() - 8 {
+                    let here = lens_core::geometry::ScreenPoint::new(x, y);
+                    x += step;
+                    // Only where this window is the one a pointer would hit,
+                    // so a covered window contributes nothing rather than
+                    // somebody else's numbers.
+                    if crate::root_window_at(here) != Some(window.id) {
+                        continue;
+                    }
+                    let point = windows::Win32::Foundation::POINT {
+                        x: here.x,
+                        y: here.y,
+                    };
+                    let Ok(element) = automation.ElementFromPoint(point) else {
+                        continue;
+                    };
+                    let tally = by_process.entry(owner.clone()).or_default();
+                    tally.points += 1;
+
+                    if has_text(&element) {
+                        tally.at_the_point += 1;
+                        continue;
+                    }
+                    let mut current = element;
+                    for _ in 1..=STEPS {
+                        let Ok(parent) = walker.GetParentElement(&current) else {
+                            break;
+                        };
+                        if has_text(&parent) {
+                            tally.at_an_ancestor += 1;
+                            let usable = parent
+                                .GetCurrentPattern(UIA_TextPatternId)
+                                .ok()
+                                .and_then(|pattern| pattern.cast::<IUIAutomationTextPattern>().ok())
+                                .and_then(|pattern| pattern.RangeFromPoint(point).ok())
+                                .and_then(|range| {
+                                    range
+                                        .ExpandToEnclosingUnit(TextUnit_Line)
+                                        .ok()
+                                        .map(|()| range)
+                                })
+                                .map(|range| {
+                                    crate::uia::bounding_rectangles(&range)
+                                        .iter()
+                                        .any(|rect| rect.contains(here))
+                                })
+                                .unwrap_or(false);
+                            if usable {
+                                tally.on_target += 1;
+                            }
+                            break;
+                        }
+                        current = parent;
+                    }
+                }
+                y += step;
+            }
         }
-        let _ = TreeScope_Element;
     }
 
-    let share = |count: usize| {
-        if points == 0 {
-            0.0
-        } else {
-            count as f64 * 100.0 / points as f64
+    println!("\nprocess              points  at the point   within 3 up   and on target");
+    let mut totals = Tally::default();
+    for (owner, tally) in &by_process {
+        if tally.points < 20 {
+            continue;
         }
-    };
-    println!("  points over this window   {points}");
-    println!(
-        "  text pattern at the point {at_the_point} ({:.1}%)",
-        share(at_the_point)
-    );
-    println!(
-        "  text pattern within {STEPS} up   {at_an_ancestor} ({:.1}%)",
-        share(at_an_ancestor)
-    );
-    println!(
-        "  and on target             {on_target} ({:.1}%)",
-        share(on_target)
-    );
-    if !depths.is_empty() {
-        let mut sorted = depths.clone();
-        sorted.sort_unstable();
-        println!("  steps needed, median      {}", sorted[sorted.len() / 2]);
+        let share = |count: usize| count as f64 * 100.0 / tally.points as f64;
+        println!(
+            "{owner:<20} {:>6}  {:>5} ({:>4.1}%)  {:>4} ({:>4.1}%)  {:>4} ({:>4.1}%)",
+            tally.points,
+            tally.at_the_point,
+            share(tally.at_the_point),
+            tally.at_an_ancestor,
+            share(tally.at_an_ancestor),
+            tally.on_target,
+            share(tally.on_target),
+        );
+        totals.points += tally.points;
+        totals.at_the_point += tally.at_the_point;
+        totals.at_an_ancestor += tally.at_an_ancestor;
+        totals.on_target += tally.on_target;
     }
-    println!(
-        "\n  A large second figure means the acquirer's Unsupported is a wrong\n  \
-         answer rather than a true one, and a walk would reach text a point\n  \
-         cannot. A small one means the text really is not near that pixel."
-    );
+    if totals.points > 0 {
+        let share = |count: usize| count as f64 * 100.0 / totals.points as f64;
+        println!(
+            "{:<20} {:>6}  {:>5} ({:>4.1}%)  {:>4} ({:>4.1}%)  {:>4} ({:>4.1}%)",
+            "all",
+            totals.points,
+            totals.at_the_point,
+            share(totals.at_the_point),
+            totals.at_an_ancestor,
+            share(totals.at_an_ancestor),
+            totals.on_target,
+            share(totals.on_target),
+        );
+    }
+
+    for line in [
+        "",
+        "at the point     what the acquirer uses today. Anything else is",
+        "                 Unsupported and the reader sees nothing.",
+        "within 3 up      how many more have text one to three steps above.",
+        "and on target    of those, how many answer with a line containing",
+        "                 the point. This is the column that decides whether",
+        "                 walking would help or would answer confidently",
+        "                 about the wrong sentence.",
+    ] {
+        println!("{line}");
+    }
 }
 
 /// Does a big text element hand back its lines as separate rectangles?
