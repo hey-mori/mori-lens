@@ -996,6 +996,8 @@ fn main() -> std::process::ExitCode {
     let mut language = options.language.clone();
     // The sentence the outstanding translation belongs to, so a waiting card
     // can show it. One at a time: a second hover replaces the first.
+    // Said once, the first time a hover lands on the staged lesson.
+    let mut lesson_landed = false;
     let mut pending_original = String::new();
     // What the reader is looking at, filled in when a translation finishes.
     // Not cleared when the card is retired: somebody who presses the key a
@@ -1543,6 +1545,25 @@ fn main() -> std::process::ExitCode {
                     // This application can be read, so it is never offered the
                     // fallback again however the pointer wanders afterwards.
                     reach.readable(process_name.as_deref());
+                    // **Say when the staged hover is the one that landed.**
+                    //
+                    // `AcquisitionSource::Lesson` was added so that no log
+                    // could mistake a lesson for an acquisition, and then no
+                    // log said anything at all. The first live run left the
+                    // console unable to answer the only question the welcome
+                    // exists to settle: a card carrying the lesson's own
+                    // sentence appeared, and nothing distinguished a hover
+                    // that reached it from a `Ctrl+Alt+O` that read it off the
+                    // screen.
+                    //
+                    // Once, because it is the answer to a question rather than
+                    // a running commentary.
+                    if target.source == lens_core::acquire::AcquisitionSource::Lesson
+                        && !lesson_landed
+                    {
+                        lesson_landed = true;
+                        println!("lesson     a hover reached the welcome's own sentence");
+                    }
                     let sentence = target.segmented.sentence_text().trim().to_owned();
                     // Text already in the reader's language costs nothing and
                     // shows nothing. Without this a Korean reader hovering
