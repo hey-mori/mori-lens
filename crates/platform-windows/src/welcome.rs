@@ -34,17 +34,19 @@ use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, ClientToScreen, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect,
-    FrameRect, GetDC, ReleaseDC, SelectObject, SetBkMode, SetTextColor, UpdateWindow, DT_CALCRECT,
-    DT_LEFT, DT_NOPREFIX, DT_WORDBREAK, PAINTSTRUCT, TRANSPARENT,
+    FrameRect, GetDC, GetDeviceCaps, ReleaseDC, SelectObject, SetBkMode, SetTextColor,
+    UpdateWindow, DT_CALCRECT, DT_LEFT, DT_NOPREFIX, DT_WORDBREAK, LOGPIXELSY, PAINTSTRUCT,
+    TRANSPARENT,
 };
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
 use windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
     GetClientRect, GetMessageW, GetSystemMetrics, IsWindow, PostQuitMessage, PostThreadMessageW,
-    RegisterClassW, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage, HWND_TOP, MSG,
-    SM_CXSCREEN, SM_CYSCREEN, SWP_NOZORDER, SW_SHOW, WINDOW_EX_STYLE, WM_DESTROY, WM_KEYDOWN,
-    WM_PAINT, WM_QUIT, WNDCLASSW, WS_BORDER, WS_POPUP,
+    RegisterClassW, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage, HWND_TOP,
+    HWND_TOPMOST, MSG, SM_CXSCREEN, SM_CYSCREEN, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    SWP_SHOWWINDOW, SW_SHOW, WM_DESTROY, WM_KEYDOWN, WM_PAINT, WM_QUIT, WNDCLASSW, WS_BORDER,
+    WS_EX_TOPMOST, WS_POPUP,
 };
 
 /// Logical width of the window, before scaling.
@@ -76,6 +78,12 @@ static PAINTING: Mutex<Option<Painted>> = Mutex::new(None);
 struct Painted {
     theme: Theme,
     lesson: [&'static str; 2],
+    /// The window size these rectangles were measured for.
+    ///
+    /// Computed where the density is known rather than by the caller. Every
+    /// length in this file is written at 96 dpi and scaled once, here.
+    width: i32,
+    height: i32,
     /// Client-coordinate rectangles, in the order they are drawn.
     heading: RECT,
     lines: [RECT; 2],
@@ -154,6 +162,7 @@ impl Welcome {
         });
 
         let (placement, thread_id) = ready_rx.recv().ok()??;
+        raise_until_owned(&placement);
         Some(Self {
             window_id: placement.window_id,
             thread_id,
@@ -191,6 +200,53 @@ impl Drop for Welcome {
     }
 }
 
+/// Put the welcome in front until a pointer would actually reach its lines.
+///
+/// `SetForegroundWindow` is refused when the calling process is not already the
+/// foreground one, which is exactly the case here: Lens has just started from a
+/// shortcut, a terminal, or a scheduled task, and something else owns the
+/// screen. The first live run of the check below found the window created,
+/// drawn, correctly measured, and behind the terminal that launched it, which
+/// reads identically to the layout being wrong.
+///
+/// Gives up after a few attempts rather than looping. Something determinedly
+/// on top is the reader's business, and a welcome that fought it would be worse
+/// than one that waits behind it.
+fn raise_until_owned(placement: &Placement) {
+    let reachable = |placement: &Placement| {
+        placement.lines.iter().all(|(rect, _)| {
+            placement
+                .line_under(ScreenPoint::new(
+                    rect.x + rect.width / 2,
+                    rect.y + rect.height / 2,
+                ))
+                .is_some()
+        })
+    };
+    for _ in 0..8 {
+        if reachable(placement) {
+            return;
+        }
+        let window = HWND(placement.window_id as *mut _);
+        // SAFETY: documented window APIs on a window this type owns. Each is
+        // allowed to fail, which is what the retry is for.
+        unsafe {
+            let _ = SetWindowPos(
+                window,
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+            );
+            let _ = BringWindowToTop(window);
+            let _ = SetForegroundWindow(window);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(40));
+    }
+}
+
 /// # Safety
 /// Runs on the window's own thread, which owns everything it creates here.
 unsafe fn create_window(lesson: Lesson, theme: Theme) -> Option<(HWND, Placement)> {
@@ -214,7 +270,19 @@ unsafe fn create_window(lesson: Lesson, theme: Theme) -> Option<(HWND, Placement
     // in so that it carries that monitor's density.
     let window = unsafe {
         CreateWindowExW(
-            WINDOW_EX_STYLE(0),
+            // **Topmost, and it has to be.**
+            //
+            // `SetForegroundWindow` is refused to a process that is not
+            // already the foreground one, and Lens has just started: whatever
+            // the reader launched it from still owns the screen. The first
+            // live run of `the_welcome_puts_its_lines_where_it_says_it_did`
+            // found the window created, drawn, correctly measured, and behind
+            // the terminal, which is indistinguishable from a broken one.
+            //
+            // The card still wins. `overlay` re-asserts `HWND_TOPMOST` every
+            // time it shows one, so the answer to a staged hover appears over
+            // the lesson rather than under it.
+            WS_EX_TOPMOST,
             class,
             w!("Mori Lens"),
             WS_POPUP | WS_BORDER,
@@ -232,11 +300,7 @@ unsafe fn create_window(lesson: Lesson, theme: Theme) -> Option<(HWND, Placement
 
     // SAFETY: measuring against a window this function just created and owns.
     let painted = unsafe { lay_out(window, lesson, theme) }?;
-    // **`footer_key`, not `footer_why`.** The key line is drawn last and sits
-    // lowest, so measuring to the line above it cut "닫으려면 Esc" off the
-    // bottom of a window whose whole purpose is to be understood at a glance.
-    let height = painted.footer_key.bottom + PADDING;
-    let width = painted.heading.right + PADDING;
+    let (width, height) = (painted.width, painted.height);
 
     // SAFETY: read-only metrics for the primary display.
     let (screen_width, screen_height) =
@@ -289,22 +353,38 @@ unsafe fn lay_out(window: HWND, lesson: Lesson, theme: Theme) -> Option<Painted>
     if dc.is_invalid() {
         return None;
     }
-    let inner = WIDTH - PADDING * 2;
-    let mut y = PADDING;
+    // **Every length in this file is written at 96 dpi and scaled here.**
+    //
+    // `logical_height` already scales the *font* by this display's density, so
+    // a box left unscaled shrinks against its own text: on a 125% display the
+    // first lesson line wrapped onto three rows, and the rectangle handed to
+    // the acquirer covered all three. The first live run of this measured a
+    // 560x70 line where 35 was expected, which is what that looks like from
+    // outside.
+    // SAFETY: a read-only capability query on the context above.
+    let dpi = unsafe { GetDeviceCaps(Some(dc), LOGPIXELSY) };
+    let dpi = if dpi > 0 { dpi } else { 96 };
+    let scaled = |value: i32| value * dpi / 96;
+
+    let padding = scaled(PADDING);
+    let between = scaled(BETWEEN_LINES);
+    let width = scaled(WIDTH);
+    let inner = width - padding * 2;
+    let mut y = padding;
 
     // SAFETY: measuring only, against the context taken above, which is valid
     // for the whole block and released at the end of it. Each `measure` selects
     // and restores its own font and draws nothing.
     let (heading, first, second, footer_why, footer_key) = unsafe {
-        let heading = measure(dc, HEADING, inner, CHROME_POINTS, PADDING, &mut y);
-        y += BETWEEN_LINES;
-        let first = measure(dc, lesson.lines[0], inner, LESSON_POINTS, PADDING, &mut y);
-        y += BETWEEN_LINES;
-        let second = measure(dc, lesson.lines[1], inner, LESSON_POINTS, PADDING, &mut y);
-        y += BETWEEN_LINES + BETWEEN_LINES / 2;
-        let footer_why = measure(dc, FOOTER_WHY, inner, CHROME_POINTS, PADDING, &mut y);
-        y += 6;
-        let footer_key = measure(dc, FOOTER_KEY, inner, CHROME_POINTS, PADDING, &mut y);
+        let heading = measure(dc, HEADING, inner, CHROME_POINTS, padding, &mut y);
+        y += between;
+        let first = measure(dc, lesson.lines[0], inner, LESSON_POINTS, padding, &mut y);
+        y += between;
+        let second = measure(dc, lesson.lines[1], inner, LESSON_POINTS, padding, &mut y);
+        y += between + between / 2;
+        let footer_why = measure(dc, FOOTER_WHY, inner, CHROME_POINTS, padding, &mut y);
+        y += scaled(6);
+        let footer_key = measure(dc, FOOTER_KEY, inner, CHROME_POINTS, padding, &mut y);
         ReleaseDC(Some(window), dc);
         (heading, first, second, footer_why, footer_key)
     };
@@ -312,6 +392,12 @@ unsafe fn lay_out(window: HWND, lesson: Lesson, theme: Theme) -> Option<Painted>
     Some(Painted {
         theme,
         lesson: lesson.lines,
+        width,
+        // **`footer_key`, not `footer_why`.** The key line is drawn last and
+        // sits lowest, so measuring to the line above it cut "닫으려면 Esc"
+        // off the bottom of a window whose whole purpose is to be understood
+        // at a glance.
+        height: footer_key.bottom + padding,
         heading,
         lines: [first, second],
         footer_key,
