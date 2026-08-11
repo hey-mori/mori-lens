@@ -59,18 +59,39 @@ pub enum CardBody {
     /// the pointer, which cancels the hover, which means it really does show
     /// nothing. This is the state that breaks that loop.
     Waiting(String),
-    /// What a model said the sentence is doing, one field to a line.
+    /// What a model said the sentence is doing, as `(label, value)` rows.
     ///
-    /// **The one body a reader sees that carries newlines**, and the copy
-    /// tests check it line by line for that reason. Every other card says one
-    /// thing and lets the renderer wrap it; this one is a list of five
-    /// headings, and joining them into a paragraph would make the shortest
-    /// answer the hardest to read.
+    /// **The one body that is not a piece of prose.** Every other card says one
+    /// thing and lets the renderer wrap it; this one is a list of up to five
+    /// headed rows, and a renderer that draws it as a paragraph makes the
+    /// shortest answer the hardest to read.
     ///
-    /// A string rather than the pairs it was built from, so both renderers
-    /// keep laying out one measured block of text. Ordering and headings are
+    /// It was a single string with newlines in it until 2026-08-11, which is
+    /// why both renderers still measure it as one block: they ask
+    /// [`CardBody::rows_as_text`] for the paragraph they used to be handed.
+    /// Drawing the rows as rows is the change that string was in the way of.
+    ///
+    /// Ordering, headings, and which fields are worth showing at all are
     /// decided once, in [`crate::analyse::DeepAnalysis::lines`].
-    Analysis(String),
+    Analysis(Vec<(String, String)>),
+}
+
+impl CardBody {
+    /// The analysis as the block of text it used to be.
+    ///
+    /// For the clipboard, the saved file, and any renderer that has not yet
+    /// learnt to draw two columns. One place decides how a row reads as a line,
+    /// so what a reader copies and what they see cannot drift apart.
+    pub fn rows_as_text(rows: &[(String, String)]) -> String {
+        rows.iter()
+            .map(|(label, value)| format!("{label} · {value}"))
+            .collect::<Vec<_>>()
+            // `"\n"`, not a newline typed inside the quotes. rustfmt keeps the
+            // literal one and it reads as an accident every time somebody
+            // opens this file, which is how `CLAUDE.md`'s string rule was
+            // earned.
+            .join("\n")
+    }
 }
 
 impl Card {
@@ -184,15 +205,15 @@ impl Card {
     /// from the end and this is the part
     /// [ADR-0005](../../../docs/decisions/ADR-0005-two-speed-ai.md) requires.
     pub fn analysed(original: impl Into<String>, analysis: &crate::analyse::DeepAnalysis) -> Self {
+        // **Pairs, not a paragraph.** This joined its rows into one string and
+        // handed the renderers a block of text with newlines in it, so a list
+        // of five headed rows was drawn as five sentences. The rows travel as
+        // rows now, and anything that wants the old block asks for it.
         let body = analysis
             .lines()
             .into_iter()
-            .map(|(heading, text)| format!("{heading} · {text}"))
-            .collect::<Vec<_>>()
-            .join(
-                "
-",
-            );
+            .map(|(heading, text)| (heading.to_owned(), text.to_owned()))
+            .collect();
         Self {
             original: original.into(),
             body: CardBody::Analysis(body),
@@ -528,16 +549,21 @@ impl Card {
     /// an original either, for the reason [`Self::original`] exists at all, and
     /// which a file makes sharper than a clipboard does: an answer kept alone
     /// can never be checked against anything again.
-    fn answer_worth_keeping(&self) -> Option<(&str, Option<&str>)> {
+    /// Owned rather than borrowed, because an analysis is now rows and the
+    /// block a reader copies is made here rather than stored anywhere.
+    fn answer_worth_keeping(&self) -> Option<(String, Option<&str>)> {
         if self.original.trim().is_empty() {
             return None;
         }
         let (text, caveat) = match &self.body {
-            CardBody::Translation(text) => (text, None),
-            CardBody::Analysis(text) => (text, Some(crate::analyse::DeepAnalysis::LABEL)),
+            CardBody::Translation(text) => (text.clone(), None),
+            CardBody::Analysis(rows) => (
+                CardBody::rows_as_text(rows),
+                Some(crate::analyse::DeepAnalysis::LABEL),
+            ),
             _ => return None,
         };
-        (!text.trim().is_empty()).then(|| (text.trim(), caveat))
+        (!text.trim().is_empty()).then(|| (text.trim().to_owned(), caveat))
     }
 
     /// The same card, marked as having been copied.
@@ -593,7 +619,7 @@ impl Card {
             // explanation of a sentence, shown without the sentence, cannot be
             // checked against anything: it is a model's account of text the
             // reader would have to remember.
-            CardBody::Analysis(text) => !text.trim().is_empty() && !self.original.trim().is_empty(),
+            CardBody::Analysis(rows) => !rows.is_empty() && !self.original.trim().is_empty(),
         }
     }
 }
@@ -1019,15 +1045,20 @@ mod copy_tests {
         let mut copy: Vec<(&'static str, String)> = Vec::new();
 
         fn parts(what: &'static str, card: &Card, into: &mut Vec<(&'static str, String)>) {
-            let (CardBody::Translation(text)
-            | CardBody::Problem(text)
-            | CardBody::Waiting(text)
-            | CardBody::Analysis(text)) = &card.body;
-            // An analysis is the one body with lines in it, so it is checked a
-            // line at a time. Pushing it whole would fail the newline rule for
-            // the one card where a newline is the point.
-            for line in text.lines() {
-                into.push((what, line.to_owned()));
+            match &card.body {
+                CardBody::Translation(text) | CardBody::Problem(text) | CardBody::Waiting(text) => {
+                    into.push((what, text.clone()))
+                }
+                // **Every label and every value on its own.** An analysis was
+                // one string with newlines and was checked a line at a time
+                // for that reason; now it is rows, so each half of each row is
+                // its own thing a reader is shown, and each is checked.
+                CardBody::Analysis(rows) => {
+                    for (label, value) in rows {
+                        into.push((what, label.clone()));
+                        into.push((what, value.clone()));
+                    }
+                }
             }
             into.push((what, card.original.clone()));
             into.push((what, card.footer.clone()));
@@ -1153,11 +1184,25 @@ mod copy_tests {
                 ..crate::analyse::DeepAnalysis::default()
             },
         );
-        let CardBody::Analysis(body) = &card.body else {
+        let CardBody::Analysis(rows) = &card.body else {
             panic!("{card:?}");
         };
+        // As rows, which is what the card now carries. An empty field is left
+        // out entirely rather than shown blank, and that is what the missing
+        // sense and note are doing here.
         assert_eq!(
-            body.lines().collect::<Vec<_>>(),
+            rows.iter()
+                .map(|(label, value)| (label.as_str(), value.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("원형", "rest"),
+                ("품사", "동사"),
+                ("구조", "제한 조건을 설정하는 구문"),
+            ],
+        );
+        // And the block a reader copies is still the block they always got.
+        assert_eq!(
+            CardBody::rows_as_text(rows).lines().collect::<Vec<_>>(),
             vec![
                 "원형 · rest",
                 "품사 · 동사",
