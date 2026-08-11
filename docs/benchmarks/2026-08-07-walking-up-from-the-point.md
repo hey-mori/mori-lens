@@ -17,70 +17,61 @@ cargo test -p lens-platform-windows -- --ignored --nocapture --test-threads=1 \
   measure_whether_an_ancestor
 ```
 
-## The conclusion below is in doubt, and the reason is mine
+## Doubted, corrected, and re-run
 
-**Added the same day, before anything was built on it.**
+The first version of this measured whether the range `RangeFromPoint`
+returns contains the point. It tested that range **as returned**, which
+is degenerate: a caret-shaped sliver whose rectangle may contain no
+sampled point at all. That would report everything off target for a
+mechanical reason, and the product expands to a word and a paragraph
+before deciding anything.
 
-The third row measures whether `RangeFromPoint`'s answer contains the
-point. It tested the range that call **returns**, which is degenerate: a
-caret-shaped sliver between two characters. A rectangle of nearly zero
-width may contain no sampled point at all, in which case the 1-of-43
-figure is an artefact of the question rather than a fact about the
-provider.
+It also measured only the **foreground** window, so it could not run when
+nothing was in front, which is how a doubtful figure stood for an
+afternoon with nothing able to check it.
 
-The product does not stop there either. It expands to a word and to a
-paragraph before deciding, so the thing measured is not the thing that
-would ship.
-
-The test has been corrected to expand to a line before testing
-containment. **It has not been re-run**, because no window with a client
-area has been in the foreground since. Until it is, treat the conclusion
-below as unproven rather than as a negative result, and do not cite the
-1-of-43.
-
-What stands regardless: the first two rows, which are about where text
-patterns are and were measured directly.
+Both are fixed. The range is expanded to a line first, and the grid
+samples every window at the points where that window is the one a
+pointer would hit, so there is nothing to arrange and nothing to be in
+front.
 
 ## The numbers
 
-The window in front, an Electron application, 794 grid points over it:
+```
+process              points  at the point   within 3 up   and on target
+WindowsTerminal         325    300 (92.3%)     0 ( 0.0%)     0 ( 0.0%)
+chrome                  610    421 (69.0%)     0 ( 0.0%)     0 ( 0.0%)
+claude                  640     32 ( 5.0%)    17 ( 2.7%)     0 ( 0.0%)
+explorer                 88      0 ( 0.0%)     0 ( 0.0%)     0 ( 0.0%)
+all                    1663    753 (45.3%)    17 ( 1.0%)     0 ( 0.0%)
+```
 
-| | points | share |
-|---|---:|---:|
-| a text pattern **at** the point | 135 | 17.0% |
-| a text pattern within **3 steps up** | 43 | 5.4% |
-| ...whose range is **on target** | **1** | **0.1%** |
+**The conclusion held, and got stronger.** Of the 17 points where an
+ancestor had a text pattern, **none** answered with a line containing the
+point. The correction did not rescue it: 0 of 17 is worse than the 1 of
+43 it replaces.
 
-Median steps to find one: 2.
+**The lift is also much smaller than it looked.** 1.0% of points across
+the desktop, not the 5.4% a single-window run suggested, because that
+run happened to sample the one application where it is least rare.
 
-## What that means
+## The number that was worth the trouble
 
-The first two lines say the idea is real: a third again as many points
-have text reachable above them as have it at them. An acquirer that
-walked would answer where it now says `Unsupported`.
+`at the point` is what the acquirer uses today, and it is **45.3%**
+across the desktop: 92.3% in a terminal, 69.0% in Chrome, and **5.0% in
+an Electron application**.
 
-The third line says what it would answer **with**. Of 43 points where an
-ancestor had a text pattern, `RangeFromPoint` on that pattern returned a
-range containing the point **once**.
-
-Forty-two times out of forty-three it answered with text somewhere else
-in the window. That is precisely the failure
-[ADR-0009](../decisions/ADR-0009-pointer-distance-gate.md) was written
-for, measured then at up to 1,465px from the pointer:
-
-> Inside a document that call never fails.
-
-An ancestor's range covers more than the pixel. Asking it *what is at
-this point* gets an answer, and the answer is about the document rather
-than about the point.
+The failure is not general. It is that one shape of application, and
+this is the first figure in this repository that separates them by
+process on one desktop in one pass.
 
 ## So the change is not worth making
 
-It would raise the acquisition rate and lower the correctness, by
-turning an honest `Unsupported` into a confident answer about the wrong
-sentence. The distance gate would catch most of them and the product
-would show nothing either way, having spent three cross-process calls
-per point to get there.
+It would raise the acquisition rate by one point and lower the
+correctness, by turning an honest `Unsupported` into a confident answer
+about the wrong sentence. The distance gate would reject them and the
+product would show nothing either way, having spent three cross-process
+calls per point to get there.
 
 A card on the wrong sentence is worse than no card, which is the
 sentence this repository uses to test its own translations.
