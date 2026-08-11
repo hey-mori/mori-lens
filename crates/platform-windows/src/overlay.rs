@@ -147,7 +147,7 @@ fn current_theme() -> Theme {
 /// Named rather than inlined because getting it backwards produces colours
 /// that look deliberate: a warm sage theme renders as cold blue and reads as a
 /// design choice somebody made.
-fn colorref(colour: lens_core::theme::Rgb) -> COLORREF {
+pub(crate) fn colorref(colour: lens_core::theme::Rgb) -> COLORREF {
     COLORREF(u32::from(colour.r) | (u32::from(colour.g) << 8) | (u32::from(colour.b) << 16))
 }
 
@@ -766,7 +766,7 @@ unsafe fn text_height(
 ///
 /// # Safety
 /// `dc` must be a valid device context.
-unsafe fn logical_height(dc: windows::Win32::Graphics::Gdi::HDC, points: i32) -> i32 {
+pub(crate) unsafe fn logical_height(dc: windows::Win32::Graphics::Gdi::HDC, points: i32) -> i32 {
     // SAFETY: a read-only capability query.
     let dpi = unsafe { GetDeviceCaps(Some(dc), LOGPIXELSY) };
     let dpi = if dpi > 0 { dpi } else { 96 };
@@ -775,7 +775,7 @@ unsafe fn logical_height(dc: windows::Win32::Graphics::Gdi::HDC, points: i32) ->
 
 /// # Safety
 /// The returned font must be deleted by the caller.
-unsafe fn font(height: i32, semibold: bool) -> HFONT {
+pub(crate) unsafe fn font(height: i32, semibold: bool) -> HFONT {
     // Malgun Gothic carries Hangul; Segoe UI does not. A card whose target
     // language is Korean rendered in a Latin-only face shows boxes.
     // SAFETY: a documented font creation with a static face name.

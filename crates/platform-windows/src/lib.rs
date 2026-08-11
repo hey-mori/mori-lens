@@ -29,6 +29,7 @@ pub mod overlay;
 pub mod single;
 pub mod tray;
 mod uia;
+pub mod welcome;
 mod window;
 
 #[cfg(test)]

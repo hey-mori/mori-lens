@@ -4024,3 +4024,100 @@ fn measure_whether_a_container_gives_up_its_lines() {
          has nothing finer to aim at than the document."
     );
 }
+
+/// Does the welcome window put its lines where it says it did?
+///
+/// The whole first-run lesson rests on one claim: the rectangles handed to the
+/// acquirer are the ones a pointer would hit. Everything else about it is
+/// ordinary product code that `cargo test` already covers, and this is the part
+/// that cannot be asserted without a desktop, a device context, and a font.
+///
+/// It is also the check that would have caught the two ways this can go wrong
+/// silently. A window measured on one monitor's density and shown on another
+/// reports rectangles a pointer misses by a quarter, which is the failure
+/// `protected_harness` was built to recognise. And a layout measured before the
+/// window is resized reports rectangles that are correct and off-screen.
+///
+/// Printing the lesson is allowed here, and only because this repository wrote
+/// it (`docs/privacy-model.md`). Nothing read from a screen appears.
+///
+/// ```
+/// cargo test -p lens-platform-windows -- --ignored --nocapture --test-threads=1 \
+///   the_welcome_puts_its_lines
+/// ```
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn the_welcome_puts_its_lines_where_it_says_it_did() {
+    use lens_core::theme::{Preset, TextScale, Theme, Translucency};
+
+    let Some(lesson) = lens_core::welcome::lesson_for("Korean") else {
+        println!("no lesson for a Korean reader, which is itself a failure");
+        panic!("lesson_for returned nothing");
+    };
+    let theme = Theme::resolve(
+        Preset::System,
+        Translucency::Balanced,
+        TextScale::Normal,
+        crate::appearance::system_preferences(),
+    );
+    // The shipped default tier, so this measures the window a new reader
+    // actually gets rather than a variant of it.
+    let heading = lens_core::welcome::heading_for(lens_core::policy::AppTier::Modifier, "Alt")
+        .expect("the modifier tier has a heading");
+    let Some(welcome) = crate::welcome::Welcome::open(lesson, theme, heading) else {
+        println!("the welcome window could not be created");
+        panic!("Welcome::open returned nothing");
+    };
+    let placement = welcome.placement();
+
+    println!(
+        "\nlesson     {} ({} lines)",
+        lesson.language,
+        placement.lines.len()
+    );
+    assert_eq!(placement.lines.len(), 2, "a lesson is two lines");
+
+    let mut owned = 0;
+    let mut resolved = 0;
+    for (rect, line) in &placement.lines {
+        let centre = lens_core::geometry::ScreenPoint::new(
+            rect.x + rect.width / 2,
+            rect.y + rect.height / 2,
+        );
+        let mine = crate::window::root_window_at(centre) == Some(placement.window_id);
+        let answer = placement.line_under(centre);
+        owned += usize::from(mine);
+        resolved += usize::from(answer == Some((*rect, *line)));
+        println!(
+            "  {:>4}x{:<4} at {:>5},{:<5}  owned {}  resolves {}",
+            rect.width,
+            rect.height,
+            rect.x,
+            rect.y,
+            if mine { "yes" } else { "NO" },
+            if answer.is_some() { "yes" } else { "NO" },
+        );
+    }
+
+    // Far outside any window this test created. A lesson that answered here
+    // would be answering for the reader's own screen, which is the one thing
+    // it must never do.
+    let outside = lens_core::geometry::ScreenPoint::new(2, 2);
+    let elsewhere = placement.line_under(outside);
+    println!(
+        "  a point at 2,2 resolves to {}",
+        if elsewhere.is_some() {
+            "A LESSON LINE, which is wrong"
+        } else {
+            "nothing, as it must"
+        },
+    );
+
+    assert_eq!(owned, 2, "the window does not own the points it reported");
+    assert_eq!(resolved, 2, "a line's own centre does not resolve to it");
+    assert!(
+        elsewhere.is_none(),
+        "the lesson answered off its own window"
+    );
+    assert!(welcome.is_open(), "the window closed on its own");
+}

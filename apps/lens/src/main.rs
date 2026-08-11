@@ -51,6 +51,7 @@ use lens_translate::OllamaTranslator;
 mod console;
 mod hover_worker;
 mod keeping;
+mod lesson;
 mod lifecycle;
 mod manual_ocr;
 mod pause;
@@ -223,6 +224,12 @@ struct SettingsSource {
     path: std::path::PathBuf,
     state: &'static str,
     problems: Vec<Problem>,
+    /// This run created the settings file, so nobody has used this before.
+    ///
+    /// The only signal available. There is no install-time hook to write a
+    /// marker from, and inventing a second file to record what the first one
+    /// already implies would leave two things to disagree.
+    first_run: bool,
 }
 
 /// Only what was actually typed. Everything unset falls through to the file,
@@ -344,6 +351,7 @@ fn load_settings(path: &std::path::Path) -> (Settings, SettingsSource) {
                     path: path.to_owned(),
                     state: "read",
                     problems,
+                    first_run: false,
                 },
             )
         }
@@ -363,6 +371,10 @@ fn load_settings(path: &std::path::Path) -> (Settings, SettingsSource) {
                         "not readable and not writable, so this run is the defaults"
                     },
                     problems: Vec::new(),
+                    // Only when it was actually written. A file that could not
+                    // be created is written again next launch, and a welcome
+                    // that returned every launch would be a nag.
+                    first_run: wrote,
                 },
             )
         }
@@ -875,7 +887,56 @@ fn main() -> std::process::ExitCode {
         ..HoverConfig::default()
     };
     let worker_config = hover_config;
-    let worker_policy = policy.clone();
+    // **The first hover, arranged rather than hoped for.**
+    //
+    // A reader who has not learnt the gesture and a reader whose window is
+    // unsupported see the same thing, which is nothing
+    // (`docs/what-finished-means.md` §1). Held for the life of the process so
+    // its window closes when Lens does; the reader closes it sooner with Esc.
+    //
+    // **The heading names the modifier when the reader's rules need one.** The
+    // shipped default is `modifier`, so the first launch after this window was
+    // built printed `mode  hold Alt` directly under `welcome  staged`: a
+    // lesson telling somebody to rest the pointer, above a product that would
+    // not have read it.
+    let mut welcome = lens_core::welcome::show_on(options.source.first_run)
+        .then(|| lens_core::welcome::lesson_for(&options.language))
+        .flatten()
+        // **Asked of the reader's own default, not of Lens's entry.**
+        //
+        // `deny_self` denies this process, so asking about `lens` answered
+        // `Deny` and staged nothing at all. That rule is right and it is about
+        // the card: the welcome is the other Lens window, and it hands its
+        // sentence over rather than being read, so there is no translation of
+        // a translation to prevent.
+        .zip(lens_core::welcome::heading_for(
+            policy.default_tier(),
+            pointer::MODIFIER_NAME,
+        ))
+        .and_then(|(lesson, heading)| {
+            lens_platform_windows::welcome::Welcome::open(lesson, theme, heading)
+        });
+    if let Some(welcome) = &welcome {
+        println!(
+            "welcome    staged, {} lines, close it with Esc",
+            welcome.placement().lines.len(),
+        );
+    }
+    let taught = welcome.as_ref().map(|welcome| welcome.placement());
+
+    // **The one window `deny_self` must not cover.**
+    //
+    // While the lesson is up, Lens's own process is readable, and nothing else
+    // of Lens's is reachable by a pointer to be read: the card is
+    // `WS_EX_TRANSPARENT`, so `WindowFromPoint` passes straight through it
+    // (ADR-0004). Restored the moment the reader closes the window, below,
+    // rather than left off for the session, because the interactive card
+    // ADR-0004 also describes would not be click-through and this would be the
+    // rule that saved it.
+    let mut worker_policy = policy.clone();
+    if welcome.is_some() {
+        worker_policy.set("lens", policy.default_tier());
+    }
     // **Acquisition runs here and nothing else does.** While a read is in
     // flight the pointer loop keeps sampling, cards keep retiring, and the
     // pause key keeps working, none of which was true: a wedged provider took
@@ -886,7 +947,14 @@ fn main() -> std::process::ExitCode {
     let hide_for_ocr = overlay.hider();
     let Some(mut hover) = hover_worker::HoverWorker::start(move || {
         let acquirer = UiaTextAcquirer::new().ok()?;
-        let session = HoverSession::new(worker_config, worker_policy, Box::new(acquirer));
+        // The lesson answers first and only for its own window, so the staged
+        // hover travels this path rather than a second one built beside it.
+        // Absent on every run but the first, and then this is the acquirer.
+        let acquirer: Box<dyn lens_core::acquire::TextAcquirer> = match taught {
+            Some(placement) => Box::new(lesson::TaughtFirst::new(placement, Box::new(acquirer))),
+            None => Box::new(acquirer),
+        };
+        let session = HoverSession::new(worker_config, worker_policy, acquirer);
         // **Only for `Automatic`.** Installing it for `Manual` would look
         // tidier and do nothing: the session's manual branch fires on
         // `InputState::ocr_requested`, which this product never sets, because
@@ -1180,6 +1248,17 @@ fn main() -> std::process::ExitCode {
                 );
             }
         }
+        // **Put `deny_self` back the moment the lesson is gone.**
+        //
+        // The reader closes the welcome with Esc, on its own thread, without
+        // telling anybody, so this is asked rather than waited for. Until it
+        // happens Lens's own process is readable, which is safe only while the
+        // welcome is the one Lens window a pointer can land on.
+        if welcome.as_ref().is_some_and(|welcome| !welcome.is_open()) {
+            welcome = None;
+            hover.reconfigure(hover_config, policy.clone());
+        }
+
         // Anything edited or switched since the last look. Once a second,
         // and neither of these reads the screen.
         let changes = watcher.poll(started.elapsed(), system_preferences);
@@ -1437,7 +1516,7 @@ fn main() -> std::process::ExitCode {
                 show_card(
                     &overlay,
                     &mut on_screen,
-                    Card::hold_the_modifier("Alt"),
+                    Card::hold_the_modifier(pointer::MODIFIER_NAME),
                     anchor,
                 );
             }
