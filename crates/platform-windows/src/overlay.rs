@@ -42,8 +42,8 @@ use windows::Win32::Graphics::Gdi::{
     DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, FrameRect, GetDC, GetDeviceCaps,
     GetMonitorInfoW, InvalidateRect, MonitorFromPoint, ReleaseDC, SelectObject, SetBkMode,
     SetTextColor, DEFAULT_CHARSET, DEFAULT_PITCH, DT_CALCRECT, DT_END_ELLIPSIS, DT_LEFT,
-    DT_NOPREFIX, DT_WORDBREAK, FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD, HBRUSH, HFONT, LOGPIXELSY,
-    MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT, SRCCOPY, TRANSPARENT,
+    DT_NOPREFIX, DT_SINGLELINE, DT_WORDBREAK, FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD, HBRUSH, HFONT,
+    LOGPIXELSY, MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT, SRCCOPY, TRANSPARENT,
 };
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -82,6 +82,14 @@ const CARD_WIDTH: i32 = 300;
 const GAP_AFTER_ORIGINAL: i32 = 13;
 /// Space under the answer, before the footer.
 const GAP_BEFORE_FOOTER: i32 = 10;
+/// Space between two rows of an analysis.
+///
+/// Much smaller than either of the others, because those separate kinds of
+/// thing and this separates items of one kind. A list whose rows are as far
+/// apart as its sections has stopped looking like a list.
+const GAP_BETWEEN_ROWS: i32 = 3;
+/// Space between an analysis label and the value beside it.
+const LABEL_GUTTER: i32 = 7;
 /// How much of the work area a card may take, at most.
 ///
 /// **A share of the screen rather than a constant, and that took two goes.**
@@ -719,17 +727,11 @@ unsafe fn measure(window: HWND, card: &Card) -> i32 {
         }
         let theme = current_theme();
         let inner = CARD_WIDTH - theme.padding * 2;
-        // The joined block lives here so the borrow below outlives the match.
-        // Drawing it as two columns is its own piece of work; this renderer
-        // still measures it as one.
-        let joined;
         let body = match &card.body {
             CardBody::Translation(text) | CardBody::Problem(text) => text,
             CardBody::Waiting(status) => status.as_str(),
-            CardBody::Analysis(rows) => {
-                joined = CardBody::rows_as_text(rows);
-                joined.as_str()
-            }
+            // Measured by the function that draws it, below.
+            CardBody::Analysis(_) => "",
         };
         let original = text_height(dc, &card.original, inner, theme.small_pt);
         // **Only when there is one to separate from.** `paint` skips the gap
@@ -741,7 +743,14 @@ unsafe fn measure(window: HWND, card: &Card) -> i32 {
         } else {
             GAP_AFTER_ORIGINAL
         };
-        let translated = text_height(dc, body, inner, theme.body_pt);
+        // **The same function that draws it, asked not to draw.** `measure` and
+        // `paint` each had their own arithmetic once and disagreed, so the one
+        // body with a layout of its own gets one implementation rather than a
+        // matching pair.
+        let translated = match &card.body {
+            CardBody::Analysis(rows) => analysis(dc, rows, 0, 0, inner, &theme, false),
+            _ => text_height(dc, body, inner, theme.body_pt),
+        };
         // Measured like the others rather than guessed from the point size.
         // The previous `small_pt + 4` mixed points into a sum of pixels, so
         // the card was the wrong height by a different amount on each monitor.
@@ -912,30 +921,32 @@ unsafe fn paint(window: HWND) {
                 ) + GAP_AFTER_ORIGINAL;
             }
 
-            let joined;
-            let (body, colour) = match &card.body {
-                CardBody::Translation(text) => (text.as_str(), theme.body),
-                CardBody::Problem(text) => (text.as_str(), theme.problem),
-                // A status rather than an answer, so it takes the footer's
-                // colour and must not be mistaken for a translation.
-                CardBody::Waiting(status) => (status.as_str(), theme.footer),
-                // See the note in `glass.rs`: a list of headed lines, not an
-                // answer, so it does not take the answer's weight.
-                CardBody::Analysis(rows) => {
-                    joined = CardBody::rows_as_text(rows);
-                    (joined.as_str(), theme.body)
+            y += match &card.body {
+                // A list, drawn as one. Every value starts at the same x so a
+                // reader finds that x once instead of five times.
+                CardBody::Analysis(rows) => analysis(target, rows, padding, y, inner, &theme, true),
+                body => {
+                    let (text, colour) = match body {
+                        CardBody::Translation(text) => (text.as_str(), theme.body),
+                        CardBody::Problem(text) => (text.as_str(), theme.problem),
+                        // A status rather than an answer, so it takes the
+                        // footer's colour and must not be mistaken for one.
+                        CardBody::Waiting(status) => (status.as_str(), theme.footer),
+                        // Unreachable: the arm above takes it.
+                        CardBody::Analysis(_) => ("", theme.body),
+                    };
+                    draw(
+                        target,
+                        text,
+                        padding,
+                        y,
+                        inner,
+                        theme.body_pt,
+                        true,
+                        colorref(colour),
+                    )
                 }
-            };
-            y += draw(
-                target,
-                body,
-                padding,
-                y,
-                inner,
-                theme.body_pt,
-                true,
-                colorref(colour),
-            ) + GAP_BEFORE_FOOTER;
+            } + GAP_BEFORE_FOOTER;
 
             draw(
                 target,
@@ -958,6 +969,116 @@ unsafe fn paint(window: HWND) {
         }
 
         let _ = EndPaint(window, &ps);
+    }
+}
+
+/// Lay out an analysis as label and value columns, and return its height.
+///
+/// **Measuring and drawing are the same code.** `measure` and `paint` each had
+/// their own arithmetic once and disagreed about a footer, so the one body with
+/// a layout of its own is laid out in one place and `draw_it` decides whether
+/// any ink lands. A pair that disagrees is a card with its last row clipped.
+///
+/// The labels decide a column and every value starts at it, so a reader finds
+/// that x once instead of five times. Both halves are at the original's size:
+/// an analysis is a list beside a sentence, and giving the list the answer's
+/// size makes a card that is mostly explanation shout.
+///
+/// # Safety
+/// `dc` must be a valid device context.
+unsafe fn analysis(
+    dc: windows::Win32::Graphics::Gdi::HDC,
+    rows: &[(String, String)],
+    x: i32,
+    top: i32,
+    width: i32,
+    theme: &lens_core::theme::Theme,
+    draw_it: bool,
+) -> i32 {
+    if rows.is_empty() {
+        return 0;
+    }
+    // SAFETY: measuring only; each call owns and restores its own font.
+    let column = rows
+        .iter()
+        .map(|(label, _)| unsafe { text_width(dc, label, theme.small_pt) })
+        .max()
+        .unwrap_or(0)
+        + LABEL_GUTTER;
+    // A column wider than the card leaves no room for a value. Nothing here
+    // produces one, and a label a model invented could.
+    let column = column.min(width / 2);
+
+    let mut y = top;
+    for (index, (label, value)) in rows.iter().enumerate() {
+        // SAFETY: both calls are on the caller's context and restore its state.
+        let (label_height, value_height) = unsafe {
+            if draw_it {
+                (
+                    draw(
+                        dc,
+                        label,
+                        x,
+                        y,
+                        column,
+                        theme.small_pt,
+                        false,
+                        colorref(theme.footer),
+                    ),
+                    draw(
+                        dc,
+                        value,
+                        x + column,
+                        y,
+                        width - column,
+                        theme.small_pt,
+                        false,
+                        colorref(theme.body),
+                    ),
+                )
+            } else {
+                (
+                    text_height(dc, label, column, theme.small_pt),
+                    text_height(dc, value, width - column, theme.small_pt),
+                )
+            }
+        };
+        y += label_height.max(value_height);
+        if index + 1 < rows.len() {
+            y += GAP_BETWEEN_ROWS;
+        }
+    }
+    y - top
+}
+
+/// How wide one line of text wants to be, unwrapped.
+///
+/// # Safety
+/// `dc` must be a valid device context.
+unsafe fn text_width(dc: windows::Win32::Graphics::Gdi::HDC, text: &str, point_size: i32) -> i32 {
+    if text.trim().is_empty() {
+        return 0;
+    }
+    // SAFETY: creates a font it owns, measures, restores and deletes it.
+    unsafe {
+        let font = font(logical_height(dc, point_size), false);
+        let previous = SelectObject(dc, font.into());
+        let mut rect = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        let mut wide: Vec<u16> = text.encode_utf16().collect();
+        DrawTextW(
+            dc,
+            &mut wide,
+            &mut rect,
+            DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX | DT_LEFT,
+        );
+        SelectObject(dc, previous);
+        let _ = DeleteObject(font.into());
+        rect.right - rect.left
     }
 }
 

@@ -4167,3 +4167,89 @@ fn the_welcome_puts_its_lines_where_it_says_it_did() {
     );
     assert!(welcome.is_open(), "the window closed on its own");
 }
+
+/// Does an analysis card put its values in a column?
+///
+/// The claim the row layout makes is that a label and its value share a top
+/// edge and every value starts at the same x, so a reader finds that x once
+/// instead of five times. Nothing about that is visible to `cargo test`: the
+/// layout is DirectWrite's, the widths are the font's, and a card that draws
+/// five sentences instead of five rows is green all the way down.
+///
+/// This asks the real layout where every run landed.
+///
+/// ```
+/// cargo test -p lens-platform-windows -- --ignored --nocapture --test-threads=1 \
+///   an_analysis_card_puts_its_values_in_a_column
+/// ```
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn an_analysis_card_puts_its_values_in_a_column() {
+    use std::collections::BTreeMap;
+
+    use lens_core::card::Card;
+    use lens_core::theme::{Preset, TextScale, Theme, Translucency};
+
+    let glass = crate::glass::Glass::new().expect("Direct2D");
+    let theme = Theme::resolve(
+        Preset::System,
+        Translucency::DEFAULT,
+        TextScale::Normal,
+        crate::appearance::system_preferences(),
+    );
+    let card = Card::analysed(
+        "The provider returns one rectangle per rendered line.",
+        &lens_core::analyse::DeepAnalysis {
+            lemma: "rectangle".to_owned(),
+            part_of_speech: "명사".to_owned(),
+            sense: "화면에서 글자가 차지하는 사각 영역".to_owned(),
+            ..lens_core::analyse::DeepAnalysis::default()
+        },
+    );
+    let laid = glass
+        .lay_out_between(&card, &theme, (240, 420), 1.0)
+        .expect("the card lays out");
+
+    // Group by the top edge. A row is everything that shares one.
+    let mut rows: BTreeMap<i64, Vec<f32>> = BTreeMap::new();
+    for (x, y) in laid.placements() {
+        rows.entry((y * 100.0).round() as i64).or_default().push(x);
+    }
+
+    println!("\n  row   runs  x offsets");
+    for (top, xs) in &rows {
+        println!(
+            "  {:>5.1} {:>5}   {}",
+            *top as f32 / 100.0,
+            xs.len(),
+            xs.iter()
+                .map(|x| format!("{x:.0}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
+
+    // The original, three analysis rows, and the footer. The sense, structure
+    // and note fields left empty are dropped rather than shown blank, which is
+    // why three and not five.
+    let paired: Vec<&Vec<f32>> = rows.values().filter(|xs| xs.len() == 2).collect();
+    assert_eq!(
+        paired.len(),
+        3,
+        "expected three rows carrying a label and a value, got {}",
+        paired.len()
+    );
+
+    // Every label at the card's left edge, every value at one column.
+    let column = paired[0][1];
+    for xs in &paired {
+        assert_eq!(xs[0], 0.0, "a label is not at the left edge: {xs:?}");
+        assert!(xs[1] > 0.0, "a value is not indented: {xs:?}");
+        assert!(
+            (xs[1] - column).abs() < 0.5,
+            "values start at different x: {} and {column}",
+            xs[1],
+        );
+    }
+    println!("\n  three rows, labels at 0, values all at {column:.0}");
+}
