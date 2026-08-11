@@ -296,18 +296,22 @@ impl Glass {
         // larger than the original. Bold Hangul is also heavier than bold Latin
         // at the same weight, because the glyphs fill more of their box, so the
         // emphasis that looked measured in English did not stay measured here.
+        let joined;
         let (body, colour, weight, points) = match &card.body {
-            CardBody::Translation(text) => (text, theme.body, false, theme.body_pt),
-            CardBody::Problem(text) => (text, theme.problem, false, theme.body_pt),
+            CardBody::Translation(text) => (text.as_str(), theme.body, false, theme.body_pt),
+            CardBody::Problem(text) => (text.as_str(), theme.problem, false, theme.body_pt),
             // Quiet, and at the footer's colour and size: it is a status, not
             // an answer, and it must not read as one for the second it is up.
-            CardBody::Waiting(status) => (status, theme.footer, false, theme.small_pt),
+            CardBody::Waiting(status) => (status.as_str(), theme.footer, false, theme.small_pt),
             // At the original's size rather than the answer's. An analysis is
             // five headed lines and a translation is one sentence; giving the
             // list the answer's point size makes a card that is mostly
             // explanation shout, and the sentence it explains is the thing the
             // reader's eye should still find first.
-            CardBody::Analysis(text) => (text, theme.body, false, theme.small_pt),
+            CardBody::Analysis(rows) => {
+                joined = CardBody::rows_as_text(rows);
+                (joined.as_str(), theme.body, false, theme.small_pt)
+            }
         };
         push(body, points, weight, colour);
         push(&card.footer, theme.footer_pt, false, theme.footer);
