@@ -165,13 +165,11 @@ elements exist, and they are not what the editor's text is in.
 
 The obvious response to *the text is in a container* is to walk up from
 the point until something has a text pattern. That was measured the same
-day and appeared to fail in the worst way: of 43 points where an
-ancestor had a pattern, **one** returned a range containing the point.
-
-That measurement is **in doubt**: it tested the degenerate range
-`RangeFromPoint` returns rather than one expanded to a line, and a
-caret-shaped rectangle may contain no sampled point for reasons that
-have nothing to do with the provider. Corrected and not yet re-run.
+day. The first attempt measured it wrongly, testing the degenerate range
+`RangeFromPoint` returns rather than one expanded to a line; corrected
+and re-run across the whole desktop, the answer got worse rather than
+better. Of 17 points where an ancestor had a pattern, **none** returned
+a line containing the point.
 
 [`2026-08-07-walking-up-from-the-point.md`](2026-08-07-walking-up-from-the-point.md).
 
