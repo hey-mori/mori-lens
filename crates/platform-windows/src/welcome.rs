@@ -59,12 +59,12 @@ const LESSON_POINTS: i32 = 15;
 /// Chrome above and below, in the reader's own language.
 const CHROME_POINTS: i32 = 11;
 
-/// The heading, and the two lines under the lesson.
+/// The two lines under the lesson.
 ///
 /// Korean, because this is product UI copy rather than a repository artefact
-/// (`docs/git-workflow.md` §7). The heading names the gesture in words and the
-/// lines beneath name the only key this window answers to.
-const HEADING: &str = "포인터를 문장 위에 올려 두면 카드가 나타납니다";
+/// (`docs/git-workflow.md` §7). The heading is not here: it depends on the
+/// reader's own rules, which only the application knows
+/// ([`lens_core::welcome::heading_for`]).
 const FOOTER_KEY: &str = "닫으려면 Esc";
 const FOOTER_WHY: &str = "누르지 않아도 됩니다. 멈추기만 하면 됩니다.";
 
@@ -77,6 +77,7 @@ static PAINTING: Mutex<Option<Painted>> = Mutex::new(None);
 #[derive(Clone)]
 struct Painted {
     theme: Theme,
+    heading: String,
     lesson: [&'static str; 2],
     /// The window size these rectangles were measured for.
     ///
@@ -85,7 +86,7 @@ struct Painted {
     width: i32,
     height: i32,
     /// Client-coordinate rectangles, in the order they are drawn.
-    heading: RECT,
+    heading_at: RECT,
     lines: [RECT; 2],
     footer_key: RECT,
     footer_why: RECT,
@@ -133,7 +134,7 @@ impl Welcome {
     /// Returns `None` if the window cannot be created, which is not an error
     /// worth stopping a launch for: the product works without ever having
     /// taught anybody, it just works less often.
-    pub fn open(lesson: Lesson, theme: Theme) -> Option<Self> {
+    pub fn open(lesson: Lesson, theme: Theme, heading: String) -> Option<Self> {
         crate::window::declare_dpi_awareness();
         let (ready, ready_rx) = mpsc::channel::<Option<(Placement, u32)>>();
 
@@ -141,7 +142,7 @@ impl Welcome {
             // SAFETY: every call below is a documented window API on a window
             // this thread creates, owns, and destroys before returning.
             unsafe {
-                let Some((window, placement)) = create_window(lesson, theme) else {
+                let Some((window, placement)) = create_window(lesson, theme, heading) else {
                     let _ = ready.send(None);
                     return;
                 };
@@ -249,7 +250,11 @@ fn raise_until_owned(placement: &Placement) {
 
 /// # Safety
 /// Runs on the window's own thread, which owns everything it creates here.
-unsafe fn create_window(lesson: Lesson, theme: Theme) -> Option<(HWND, Placement)> {
+unsafe fn create_window(
+    lesson: Lesson,
+    theme: Theme,
+    heading: String,
+) -> Option<(HWND, Placement)> {
     let class = w!("MoriLensWelcome");
     // SAFETY: a documented class registration with a static name. Registering
     // twice returns an error that is ignored, which is what re-opening from the
@@ -299,7 +304,7 @@ unsafe fn create_window(lesson: Lesson, theme: Theme) -> Option<(HWND, Placement
     .ok()?;
 
     // SAFETY: measuring against a window this function just created and owns.
-    let painted = unsafe { lay_out(window, lesson, theme) }?;
+    let painted = unsafe { lay_out(window, lesson, theme, heading) }?;
     let (width, height) = (painted.width, painted.height);
 
     // SAFETY: read-only metrics for the primary display.
@@ -347,7 +352,7 @@ unsafe fn create_window(lesson: Lesson, theme: Theme) -> Option<(HWND, Placement
 ///
 /// # Safety
 /// `window` must be a valid window this thread owns.
-unsafe fn lay_out(window: HWND, lesson: Lesson, theme: Theme) -> Option<Painted> {
+unsafe fn lay_out(window: HWND, lesson: Lesson, theme: Theme, heading: String) -> Option<Painted> {
     // SAFETY: a device context for this window, released below.
     let dc = unsafe { GetDC(Some(window)) };
     if dc.is_invalid() {
@@ -375,8 +380,8 @@ unsafe fn lay_out(window: HWND, lesson: Lesson, theme: Theme) -> Option<Painted>
     // SAFETY: measuring only, against the context taken above, which is valid
     // for the whole block and released at the end of it. Each `measure` selects
     // and restores its own font and draws nothing.
-    let (heading, first, second, footer_why, footer_key) = unsafe {
-        let heading = measure(dc, HEADING, inner, CHROME_POINTS, padding, &mut y);
+    let (heading_at, first, second, footer_why, footer_key) = unsafe {
+        let heading_at = measure(dc, &heading, inner, CHROME_POINTS, padding, &mut y);
         y += between;
         let first = measure(dc, lesson.lines[0], inner, LESSON_POINTS, padding, &mut y);
         y += between;
@@ -386,11 +391,12 @@ unsafe fn lay_out(window: HWND, lesson: Lesson, theme: Theme) -> Option<Painted>
         y += scaled(6);
         let footer_key = measure(dc, FOOTER_KEY, inner, CHROME_POINTS, padding, &mut y);
         ReleaseDC(Some(window), dc);
-        (heading, first, second, footer_why, footer_key)
+        (heading_at, first, second, footer_why, footer_key)
     };
 
     Some(Painted {
         theme,
+        heading,
         lesson: lesson.lines,
         width,
         // **`footer_key`, not `footer_why`.** The key line is drawn last and
@@ -398,7 +404,7 @@ unsafe fn lay_out(window: HWND, lesson: Lesson, theme: Theme) -> Option<Painted>
         // off the bottom of a window whose whole purpose is to be understood
         // at a glance.
         height: footer_key.bottom + padding,
-        heading,
+        heading_at,
         lines: [first, second],
         footer_key,
         footer_why,
@@ -530,7 +536,13 @@ unsafe fn draw(dc: windows::Win32::Graphics::Gdi::HDC, window: HWND, painted: &P
 
     // SAFETY: each call owns, selects, restores and deletes one font.
     unsafe {
-        write(dc, HEADING, painted.heading, CHROME_POINTS, theme.footer);
+        write(
+            dc,
+            &painted.heading,
+            painted.heading_at,
+            CHROME_POINTS,
+            theme.footer,
+        );
         write(
             dc,
             painted.lesson[0],
