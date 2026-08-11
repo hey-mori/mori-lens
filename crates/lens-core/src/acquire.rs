@@ -38,6 +38,17 @@ pub enum AcquisitionSource {
     /// keypress is [`crate::session::OcrMode`], which defaults to `Manual`:
     /// the product as installed still captures nothing unasked.
     Ocr,
+    /// Lens's own words, handed over rather than read.
+    ///
+    /// The first-run lesson ([`crate::welcome`]) and nothing else. It exists so
+    /// that a staged hover can travel the ordinary path, and it is a separate
+    /// variant so that no log, benchmark, or compatibility row can count a
+    /// lesson as evidence that this machine can read anything.
+    ///
+    /// It is also the one source whose text this repository may print, because
+    /// it is the one source whose text this repository wrote
+    /// (`docs/privacy-model.md`).
+    Lesson,
 }
 
 impl AcquisitionSource {
@@ -45,6 +56,7 @@ impl AcquisitionSource {
         match self {
             Self::Accessibility => "accessibility",
             Self::Ocr => "ocr",
+            Self::Lesson => "lesson",
         }
     }
 }
