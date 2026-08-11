@@ -74,6 +74,16 @@ showing nothing, because a reader learning a language cannot tell.
 
 ## What this means for the feature
 
+**Two of the three conclusions below were wrong**, and the measurement that
+overturned them is
+[`2026-08-11-one-word-and-its-counterpart.md`](2026-08-11-one-word-and-its-counterpart.md),
+run the same day. Asking for the linkage without the roles made every figure
+worse, not better, and verify-and-drop turns out to protect against a model that
+invents text rather than against one that pairs real text wrongly, which is what
+this one does. What survives is the third point: this belongs on the slow lane.
+
+The rest of this section is left as it was written.
+
 **It is not dead.** Three things follow from the measurement rather than from
 an opinion.
 
