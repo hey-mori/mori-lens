@@ -971,6 +971,13 @@ fn main() -> std::process::ExitCode {
     // Hiding the card is the overlay's business, and the overlay lives on
     // another thread again, so what crosses is a request rather than a handle.
     let hide_for_ocr = overlay.hider();
+    // **How often this photographs the screen, counted.** Issue #87 says the
+    // automatic fall-through captures far more often than a reader would
+    // guess, that the privacy model says what is captured and never how often,
+    // and that the change it proposes must be measured first. Nothing counted,
+    // so nothing could be measured. Reported once, on the way out.
+    let capture_cost = std::sync::Arc::new(lens_platform_windows::CaptureCost::default());
+    let worker_cost = capture_cost.clone();
     let Some(mut hover) = hover_worker::HoverWorker::start(move || {
         let acquirer = UiaTextAcquirer::new().ok()?;
         // The lesson answers first and only for its own window, so the staged
@@ -991,9 +998,10 @@ fn main() -> std::process::ExitCode {
         // to say so rather than to install something that has no effect.
         Some(match worker_ocr {
             OcrMode::Automatic => session.with_ocr(
-                Box::new(lens_platform_windows::OcrTextAcquirer::new(Box::new(
-                    hide_for_ocr,
-                ))),
+                Box::new(lens_platform_windows::OcrTextAcquirer::new(
+                    Box::new(hide_for_ocr),
+                    worker_cost,
+                )),
                 OcrMode::Automatic,
             ),
             // `Off` and `Manual` both leave the session without a capture
@@ -1793,6 +1801,9 @@ fn main() -> std::process::ExitCode {
     // Hand the model back. Without this the runtime holds it for the rest of
     // the lease, so a tool that has exited goes on occupying gigabytes of
     // somebody's memory.
+    if let Some(line) = capture_cost.summary() {
+        println!("{line}");
+    }
     releaser.release();
     println!("\nstopped, and the model released");
     std::process::ExitCode::SUCCESS
