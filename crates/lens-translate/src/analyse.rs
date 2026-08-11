@@ -209,7 +209,9 @@ impl Analyser for OllamaTranslator {
         if !analysis.says_anything() {
             return Err(TranslateError::Malformed);
         }
-        Ok(analysis.with_counterpart(self.counterpart_of(request)))
+        Ok(analysis
+            .with_counterpart(self.counterpart_of(request))
+            .about(request.translation.clone()))
     }
 }
 
@@ -357,9 +359,10 @@ fn parse(answer: &str, model: String, latency_ms: u64) -> DeepAnalysis {
             .to_owned()
     };
     DeepAnalysis {
-        // Never from this reply. It is a separate question asked twice, and it
-        // is filled in by `counterpart_of` after the analysis has parsed.
+        // Neither of these is in this reply. The counterpart is a separate
+        // question asked twice, and the translation is the request's own.
         counterpart: None,
+        translation: None,
         lemma: field(FIELDS[0]),
         part_of_speech: field(FIELDS[1]),
         sense: field(FIELDS[2]),

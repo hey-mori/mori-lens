@@ -2003,12 +2003,17 @@ fn log_card(card: &Card) {
             // are this repository's own strings and the values are a model's
             // account of text off somebody's screen, so the values are counted
             // and not printed.
-            lens_core::card::CardBody::Analysis(rows) => format!(
-                "analysis={} rows, {} chars",
+            lens_core::card::CardBody::Analysis { translation, rows } => format!(
+                "analysis={} rows, {} chars, translation={}",
                 rows.len(),
                 rows.iter()
                     .map(|(label, value)| label.chars().count() + value.chars().count())
                     .sum::<usize>(),
+                // Its length, like every other reader's text in this line.
+                translation
+                    .as_deref()
+                    .map(|text| format!("{} chars", text.chars().count()))
+                    .unwrap_or_else(|| "none".to_owned()),
             ),
         },
         card.footer,

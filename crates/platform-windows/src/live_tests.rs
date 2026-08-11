@@ -4203,6 +4203,8 @@ fn an_analysis_card_puts_its_values_in_a_column() {
             lemma: "rectangle".to_owned(),
             part_of_speech: "명사".to_owned(),
             sense: "화면에서 글자가 차지하는 사각 영역".to_owned(),
+            // The answer stays on the card now, so the layout has to hold it.
+            translation: Some("제공자는 각 렌더링된 줄당 하나의 직사각형을 반환합니다.".to_owned()),
             ..lens_core::analyse::DeepAnalysis::default()
         },
     );
@@ -4251,5 +4253,12 @@ fn an_analysis_card_puts_its_values_in_a_column() {
             xs[1],
         );
     }
+    // The original, the translation it explains, and the footer. Each is a
+    // paragraph and takes a row to itself.
+    let alone = rows.values().filter(|xs| xs.len() == 1).count();
+    assert_eq!(
+        alone, 3,
+        "expected the original, the translation and the footer to stand alone, got {alone}",
+    );
     println!("\n  three rows, labels at 0, values all at {column:.0}");
 }
