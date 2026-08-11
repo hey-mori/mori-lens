@@ -48,6 +48,9 @@ use std::time::{Duration, Instant};
 use lens_core::acquire::{
     AcquireContext, AcquireError, AcquisitionSource, ProviderInfo, TextAcquirer, TextTarget,
 };
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
 use lens_core::barren::Barren;
 use lens_core::geometry::{ScreenPoint, ScreenRect};
 
@@ -94,6 +97,8 @@ pub struct OcrTextAcquirer {
     /// doing at once anyway. This acquirer lives on the hover worker's thread
     /// and nothing else touches it.
     barren: RefCell<Barren>,
+    /// How much of the screen this has photographed, for whoever asks.
+    cost: Arc<CaptureCost>,
     /// A monotonic origin, so the memory can be timed without an `Instant` in
     /// `lens-core`.
     since: Instant,
@@ -106,11 +111,12 @@ impl std::fmt::Debug for OcrTextAcquirer {
 }
 
 impl OcrTextAcquirer {
-    pub fn new(hide_the_card: Box<dyn Fn(ScreenRect)>) -> Self {
+    pub fn new(hide_the_card: Box<dyn Fn(ScreenRect)>, cost: Arc<CaptureCost>) -> Self {
         Self {
             hide_the_card,
             barren: RefCell::new(Barren::new()),
             since: Instant::now(),
+            cost,
         }
     }
 
@@ -124,6 +130,58 @@ impl OcrTextAcquirer {
     }
 }
 
+/// What the automatic fall-through has cost this session.
+///
+/// **The number [#87](https://github.com/swarea/mori-lens/issues/87) asks for
+/// and nobody has.** That issue says the fall-through photographs the screen
+/// far more often than a reader would guess, that the privacy model says what
+/// is captured and never how often, and that the change it proposes has to be
+/// measured first. None of that could be measured, because nothing counted.
+///
+/// Shared with the application rather than reported by the acquirer: the
+/// acquirer runs on the hover worker and has no console, and a line printed
+/// per capture would itself be the noise.
+///
+/// Counts and durations only. Nothing here records what was read or where
+/// (`docs/privacy-model.md`).
+#[derive(Debug, Default)]
+pub struct CaptureCost {
+    /// Hovers the accessibility path could not serve, so this was offered one.
+    pub asked: AtomicU64,
+    /// Of those, the ones `barren` refused because the last reading already
+    /// found nothing on that pixel.
+    pub refused: AtomicU64,
+    /// Screenshots actually taken.
+    pub captured: AtomicU64,
+    /// Time inside capture and recognition, which is the work being counted.
+    pub micros: AtomicU64,
+}
+
+impl CaptureCost {
+    /// One line for the console, or nothing if it never ran.
+    pub fn summary(&self) -> Option<String> {
+        let asked = self.asked.load(Ordering::Relaxed);
+        if asked == 0 {
+            return None;
+        }
+        let captured = self.captured.load(Ordering::Relaxed);
+        let refused = self.refused.load(Ordering::Relaxed);
+        let millis = self.micros.load(Ordering::Relaxed) as f64 / 1000.0;
+        let each = if captured > 0 {
+            millis / captured as f64
+        } else {
+            0.0
+        };
+        // Built in pieces rather than as one literal continued with a trailing
+        // backslash. rustfmt rejoins those and leaves the indentation inside
+        // the string, which has reached a reader twice (`CLAUDE.md`).
+        let mut line = format!("capture   {captured} screenshots in {asked} fall-throughs");
+        line.push_str(&format!(", {refused} refused by memory"));
+        line.push_str(&format!(", {millis:.0}ms total, {each:.0}ms each"));
+        Some(line)
+    }
+}
+
 impl TextAcquirer for OcrTextAcquirer {
     fn acquire(
         &self,
@@ -131,12 +189,14 @@ impl TextAcquirer for OcrTextAcquirer {
         context: &AcquireContext,
     ) -> Result<TextTarget, AcquireError> {
         let now = self.since.elapsed();
+        self.cost.asked.fetch_add(1, Ordering::Relaxed);
         if context.view_may_have_changed {
             self.barren.borrow_mut().forget();
         } else if self.barren.borrow().nothing_is_at(point, now) {
             // The previous capture already read this pixel and found no line
             // on it. Photographing the screen again to be told the same thing
             // is the cost issue #87 is about.
+            self.cost.refused.fetch_add(1, Ordering::Relaxed);
             return Err(AcquireError::KnownEmpty);
         }
 
@@ -149,6 +209,11 @@ impl TextAcquirer for OcrTextAcquirer {
         // margin.
         (self.hide_the_card)(region);
         std::thread::sleep(SETTLE);
+        // From here to the end of recognition is the work #87 is about. The
+        // settle above is deliberately outside it: that is a wait for the
+        // compositor and not this product spending anything.
+        let spent = Instant::now();
+        self.cost.captured.fetch_add(1, Ordering::Relaxed);
         let captured = capture::rectangle(region).ok_or(AcquireError::Empty)?;
         // With the focus, so the enlarged pass looks at a crop around the
         // pointer rather than the whole band. This path runs on every hover
@@ -160,6 +225,10 @@ impl TextAcquirer for OcrTextAcquirer {
                 // path cannot work at all, and saying so is different from saying
                 // there was nothing to read.
                 .ok_or(AcquireError::Unavailable)?;
+
+        self.cost
+            .micros
+            .fetch_add(spent.elapsed().as_micros() as u64, Ordering::Relaxed);
 
         // Remembered whether or not this point resolved. A reading that found a
         // word still says where the rest of its region is empty, and that is
@@ -239,9 +308,12 @@ mod tests {
 
         let hides = Arc::new(AtomicUsize::new(0));
         let theirs = Arc::clone(&hides);
-        let acquirer = OcrTextAcquirer::new(Box::new(move |_band| {
-            theirs.fetch_add(1, Ordering::SeqCst);
-        }));
+        let acquirer = OcrTextAcquirer::new(
+            Box::new(move |_band| {
+                theirs.fetch_add(1, Ordering::SeqCst);
+            }),
+            Arc::new(CaptureCost::default()),
+        );
 
         // The read itself will fail on a test runner with nothing under the
         // point, and that is fine: what is under test is that the hook ran
@@ -251,5 +323,54 @@ mod tests {
             &AcquireContext::new(lens_core::hover::Generation(1)),
         );
         assert_eq!(hides.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[cfg(test)]
+mod cost_tests {
+    use super::*;
+
+    /// A session that never fell through says nothing.
+    ///
+    /// The default is `Manual`, under which this acquirer is not installed at
+    /// all, and a line reading `0 screenshots` on every exit would be a product
+    /// telling almost every reader about a path they never used.
+    #[test]
+    fn a_session_that_never_captured_reports_nothing() {
+        assert_eq!(CaptureCost::default().summary(), None);
+    }
+
+    /// And one that did says how much of the screen it looked at.
+    #[test]
+    fn a_session_that_captured_says_how_often_and_how_long() {
+        let cost = CaptureCost::default();
+        cost.asked.store(40, Ordering::Relaxed);
+        cost.refused.store(15, Ordering::Relaxed);
+        cost.captured.store(25, Ordering::Relaxed);
+        cost.micros.store(11_000_000, Ordering::Relaxed);
+
+        let line = cost.summary().expect("it captured, so it reports");
+        assert!(line.contains("25 screenshots"), "{line}");
+        assert!(line.contains("40 fall-throughs"), "{line}");
+        assert!(line.contains("15 refused"), "{line}");
+        assert!(line.contains("440ms each"), "{line}");
+        // The rule this whole file lives under: counts and durations, never
+        // what was read or where it was (`docs/privacy-model.md`).
+        assert!(!line.contains("x="), "{line}");
+    }
+
+    /// Refusals must not be counted as work.
+    ///
+    /// `barren` refusing a capture is the saving being measured. Dividing the
+    /// total by every fall-through rather than by the captures would report a
+    /// per-capture cost that falls as the memory works better.
+    #[test]
+    fn the_time_is_divided_by_captures_and_not_by_fall_throughs() {
+        let cost = CaptureCost::default();
+        cost.asked.store(100, Ordering::Relaxed);
+        cost.refused.store(90, Ordering::Relaxed);
+        cost.captured.store(10, Ordering::Relaxed);
+        cost.micros.store(5_000_000, Ordering::Relaxed);
+        assert!(cost.summary().unwrap().contains("500ms each"));
     }
 }
