@@ -4060,7 +4060,11 @@ fn the_welcome_puts_its_lines_where_it_says_it_did() {
         TextScale::Normal,
         crate::appearance::system_preferences(),
     );
-    let Some(welcome) = crate::welcome::Welcome::open(lesson, theme) else {
+    // The shipped default tier, so this measures the window a new reader
+    // actually gets rather than a variant of it.
+    let heading = lens_core::welcome::heading_for(lens_core::policy::AppTier::Modifier, "Alt")
+        .expect("the modifier tier has a heading");
+    let Some(welcome) = crate::welcome::Welcome::open(lesson, theme, heading) else {
         println!("the welcome window could not be created");
         panic!("Welcome::open returned nothing");
     };
