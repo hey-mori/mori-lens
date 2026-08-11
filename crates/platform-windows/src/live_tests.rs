@@ -3635,7 +3635,7 @@ fn measure_whether_an_ancestor_holds_the_text_a_point_does_not() {
     use windows::core::Interface;
     use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
     use windows::Win32::UI::Accessibility::{
-        CUIAutomation, IUIAutomation, IUIAutomationTextPattern, TreeScope_Element,
+        CUIAutomation, IUIAutomation, IUIAutomationTextPattern, TextUnit_Line, TreeScope_Element,
         UIA_TextPatternId,
     };
 
@@ -3714,6 +3714,20 @@ fn measure_whether_an_ancestor_holds_the_text_a_point_does_not() {
                             .ok()
                             .and_then(|pattern| pattern.cast::<IUIAutomationTextPattern>().ok())
                             .and_then(|pattern| pattern.RangeFromPoint(point).ok())
+                            // **Expanded to a line first.** The first version
+                            // of this tested the range `RangeFromPoint`
+                            // returns, which is degenerate: a caret-shaped
+                            // sliver whose rectangle may contain no point at
+                            // all. That would report every answer off target
+                            // for a mechanical reason rather than a real one,
+                            // and expanding is what the product does next
+                            // anyway.
+                            .and_then(|range| {
+                                range
+                                    .ExpandToEnclosingUnit(TextUnit_Line)
+                                    .ok()
+                                    .map(|()| range)
+                            })
                             .map(|range| {
                                 let here = lens_core::geometry::ScreenPoint::new(point.x, point.y);
                                 crate::uia::bounding_rectangles(&range)
@@ -3810,7 +3824,7 @@ fn measure_whether_a_container_gives_up_its_lines() {
         front.client_bounds.width,
         front.client_bounds.height,
     );
-    println!("  element        rects  median height  tallest  points on a line");
+    println!("  element        ranges  rects  median height  tallest  points on a line");
 
     // SAFETY: read-only automation queries on a handle just enumerated.
     unsafe {
@@ -3855,6 +3869,14 @@ fn measure_whether_a_container_gives_up_its_lines() {
             // rectangles are mostly empty and a hover only ever points at what
             // is on screen.
             let ranges = pattern.GetVisibleRanges().ok();
+            // **The number that decides the cost.** If a visible range is
+            // already one line, a point resolves in two calls: find the
+            // rectangle, take that range's text. If one range carries all the
+            // lines, the text of the Nth needs walking to it, one call a line.
+            let range_count = ranges
+                .as_ref()
+                .and_then(|array| array.Length().ok())
+                .unwrap_or(0);
             let rects: Vec<lens_core::geometry::ScreenRect> = match &ranges {
                 Some(array) => (0..array.Length().unwrap_or(0))
                     .filter_map(|at| array.GetElement(at).ok())
@@ -3908,8 +3930,9 @@ fn measure_whether_a_container_gives_up_its_lines() {
                 on_a_line as f64 * 100.0 / points as f64
             };
             println!(
-                "  {:<14} {:>5}  {:>13}  {:>7}  {on_a_line:>5}/{points:<5} ({share:.0}%)",
+                "  {:<14} {:>6}  {:>5}  {:>13}  {:>7}  {on_a_line:>5}/{points:<5} ({share:.0}%)",
                 format!("#{index} h={height}"),
+                range_count,
                 rects.len(),
                 heights.get(heights.len() / 2).copied().unwrap_or(0),
                 heights.last().copied().unwrap_or(0),
