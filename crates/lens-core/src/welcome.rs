@@ -43,6 +43,7 @@
 
 use crate::geometry::{line_under, ScreenPoint, ScreenRect};
 use crate::language::{decide, Decision};
+use crate::policy::AppTier;
 
 /// The lesson in each language this ships with.
 ///
@@ -149,6 +150,39 @@ pub fn lesson_for(reader_language: &str) -> Option<Lesson> {
                     .all(|line| decide(line, reader_language) != Decision::AlreadyInTarget)
             })
         })
+}
+
+/// What to write above the lesson, given how this reader's rules are set.
+///
+/// # The gesture is not the same for everybody, and the lesson must not lie
+///
+/// Lens ships with [`AppTier::Modifier`] as the default, so nothing on the
+/// screen is read unless `Alt` is held
+/// ([`docs/privacy-model.md`](../../../docs/privacy-model.md)). A welcome that
+/// said "rest the pointer and a card appears" would therefore be wrong for
+/// almost every new reader: they would rest the pointer on the lesson, nothing
+/// would happen, and the first thing they learnt about this product would be
+/// that it does not work.
+///
+/// The first live launch after this window was built printed
+/// `mode  hold Alt` immediately under `welcome  staged`, which is exactly that
+/// failure with both halves visible at once.
+///
+/// The alternative was to exempt Lens's own window from the reader's rules.
+/// That is worse: it teaches a gesture that then fails everywhere else, and it
+/// puts a hole in the one policy that decides what this product is allowed to
+/// read.
+///
+/// Returns `None` for [`AppTier::Deny`], where nothing can be read by any
+/// gesture and the honest thing is to stage nothing at all.
+pub fn heading_for(tier: AppTier, modifier: &str) -> Option<String> {
+    match tier {
+        AppTier::Allow => Some("문장 위에 포인터를 올려 두면 카드가 나타납니다".to_owned()),
+        AppTier::Modifier => Some(format!(
+            "{modifier} 키를 누른 채로 문장 위에 포인터를 올려 두세요"
+        )),
+        AppTier::Deny => None,
+    }
 }
 
 /// Whether the welcome should be staged at all.
@@ -277,6 +311,25 @@ mod tests {
             ScreenRect::new(100, 160, 400, 20),
         ];
         assert_eq!(lesson.line_under(&drawn, ScreenPoint::new(200, 165)), None);
+    }
+
+    /// The heading names the key when the key is what makes it work.
+    #[test]
+    fn a_modifier_reader_is_told_about_the_modifier() {
+        let heading = heading_for(AppTier::Modifier, "Alt").expect("modifier readers get one");
+        assert!(heading.contains("Alt"), "{heading}");
+    }
+
+    #[test]
+    fn a_reader_who_allows_everything_is_not_told_to_hold_anything() {
+        let heading = heading_for(AppTier::Allow, "Alt").expect("allow readers get one");
+        assert!(!heading.contains("Alt"), "{heading}");
+    }
+
+    /// Nothing is staged where nothing can be read.
+    #[test]
+    fn a_deny_reader_is_shown_no_lesson() {
+        assert_eq!(heading_for(AppTier::Deny, "Alt"), None);
     }
 
     #[test]
