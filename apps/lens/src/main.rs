@@ -51,6 +51,7 @@ use lens_translate::OllamaTranslator;
 mod console;
 mod hover_worker;
 mod keeping;
+mod lesson;
 mod lifecycle;
 mod manual_ocr;
 mod pause;
@@ -223,6 +224,12 @@ struct SettingsSource {
     path: std::path::PathBuf,
     state: &'static str,
     problems: Vec<Problem>,
+    /// This run created the settings file, so nobody has used this before.
+    ///
+    /// The only signal available. There is no install-time hook to write a
+    /// marker from, and inventing a second file to record what the first one
+    /// already implies would leave two things to disagree.
+    first_run: bool,
 }
 
 /// Only what was actually typed. Everything unset falls through to the file,
@@ -344,6 +351,7 @@ fn load_settings(path: &std::path::Path) -> (Settings, SettingsSource) {
                     path: path.to_owned(),
                     state: "read",
                     problems,
+                    first_run: false,
                 },
             )
         }
@@ -363,6 +371,10 @@ fn load_settings(path: &std::path::Path) -> (Settings, SettingsSource) {
                         "not readable and not writable, so this run is the defaults"
                     },
                     problems: Vec::new(),
+                    // Only when it was actually written. A file that could not
+                    // be created is written again next launch, and a welcome
+                    // that returned every launch would be a nag.
+                    first_run: wrote,
                 },
             )
         }
@@ -875,6 +887,24 @@ fn main() -> std::process::ExitCode {
         ..HoverConfig::default()
     };
     let worker_config = hover_config;
+    // **The first hover, arranged rather than hoped for.**
+    //
+    // A reader who has not learnt the gesture and a reader whose window is
+    // unsupported see the same thing, which is nothing
+    // (`docs/what-finished-means.md` §1). Held for the life of the process so
+    // its window closes when Lens does; the reader closes it sooner with Esc.
+    let welcome = lens_core::welcome::show_on(options.source.first_run)
+        .then(|| lens_core::welcome::lesson_for(&options.language))
+        .flatten()
+        .and_then(|lesson| lens_platform_windows::welcome::Welcome::open(lesson, theme));
+    if let Some(welcome) = &welcome {
+        println!(
+            "welcome    staged, {} lines, close it with Esc",
+            welcome.placement().lines.len(),
+        );
+    }
+    let taught = welcome.as_ref().map(|welcome| welcome.placement());
+
     let worker_policy = policy.clone();
     // **Acquisition runs here and nothing else does.** While a read is in
     // flight the pointer loop keeps sampling, cards keep retiring, and the
@@ -886,7 +916,14 @@ fn main() -> std::process::ExitCode {
     let hide_for_ocr = overlay.hider();
     let Some(mut hover) = hover_worker::HoverWorker::start(move || {
         let acquirer = UiaTextAcquirer::new().ok()?;
-        let session = HoverSession::new(worker_config, worker_policy, Box::new(acquirer));
+        // The lesson answers first and only for its own window, so the staged
+        // hover travels this path rather than a second one built beside it.
+        // Absent on every run but the first, and then this is the acquirer.
+        let acquirer: Box<dyn lens_core::acquire::TextAcquirer> = match taught {
+            Some(placement) => Box::new(lesson::TaughtFirst::new(placement, Box::new(acquirer))),
+            None => Box::new(acquirer),
+        };
+        let session = HoverSession::new(worker_config, worker_policy, acquirer);
         // **Only for `Automatic`.** Installing it for `Manual` would look
         // tidier and do nothing: the session's manual branch fires on
         // `InputState::ocr_requested`, which this product never sets, because

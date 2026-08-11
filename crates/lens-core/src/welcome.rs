@@ -59,20 +59,26 @@ const LESSONS: [Lesson; 2] = [
     Lesson {
         language: "English",
         lines: [
-            "Rest the pointer on this line and wait. Do not click.",
+            "Rest the pointer on this line and wait without clicking.",
             "Nothing you read here leaves this machine.",
         ],
     },
     Lesson {
         language: "Korean",
         lines: [
-            "이 줄에 포인터를 올려 두고 기다리세요. 누르지 마세요.",
+            "이 줄에 포인터를 올려 두고 누르지 말고 기다리세요.",
             "여기서 읽은 것은 이 컴퓨터를 떠나지 않습니다.",
         ],
     },
 ];
 
 /// One language's version of the lesson.
+///
+/// Each line is **one sentence**, and `every_line_is_one_sentence` holds it to
+/// that. [`crate::text::segment`] hands the card the sentence at the pointer,
+/// so a two-sentence line would show a different card depending on where along
+/// it the reader stopped, on the one hover where the product most needs to look
+/// like it knows what it is doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Lesson {
     /// What language its lines are written in, in the spelling
@@ -226,6 +232,21 @@ mod tests {
     fn an_unknown_language_still_gets_the_first_lesson() {
         let lesson = lesson_for("Klingon").expect("an unjudgeable reader still gets one");
         assert_eq!(lesson.language, "English");
+    }
+
+    /// The invariant that keeps one line from producing two different cards.
+    #[test]
+    fn every_line_is_one_sentence() {
+        for lesson in LESSONS {
+            for line in lesson.lines() {
+                assert_eq!(
+                    crate::text::segment(line, 0).sentence_text(),
+                    line,
+                    "the {} lesson has a line that is more than one sentence",
+                    lesson.language,
+                );
+            }
+        }
     }
 
     #[test]
