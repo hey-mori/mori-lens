@@ -3134,7 +3134,10 @@ fn measure_what_an_automatic_fall_through_costs() {
     // 60ms compositor wait is skipped. That wait is a real cost in the product
     // and it is added back in the arithmetic below rather than measured here,
     // because measuring it would mean drawing a card to hide.
-    let acquirer = crate::OcrTextAcquirer::new(Box::new(|_band| {}));
+    let acquirer = crate::OcrTextAcquirer::new(
+        Box::new(|_band| {}),
+        std::sync::Arc::new(crate::CaptureCost::default()),
+    );
     let context = AcquireContext::new(Generation(1));
 
     // A point with text on it, found the way the OCR probe finds one, and a
@@ -3320,7 +3323,10 @@ fn measure_what_automatic_ocr_costs_a_battery() {
         Duration::from_nanos((hundred_ns(kernel) + hundred_ns(user)) * 100)
     }
 
-    let acquirer = crate::OcrTextAcquirer::new(Box::new(|_band| {}));
+    let acquirer = crate::OcrTextAcquirer::new(
+        Box::new(|_band| {}),
+        std::sync::Arc::new(crate::CaptureCost::default()),
+    );
     let context = AcquireContext::new(Generation(1));
     // A rate a reader can produce. The dwell is 320ms, so one settled hover
     // every 500ms is brisk reading rather than a stress test.
