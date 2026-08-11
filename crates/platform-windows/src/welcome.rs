@@ -313,7 +313,8 @@ unsafe fn create_window(
     let left = ((screen_width - width) / 2).max(0);
     let top = ((screen_height - height) / 2).max(0);
 
-    // SAFETY: moving and showing a window this function owns.
+    // SAFETY: moving a window this function owns. It is positioned but not
+    // shown: see below for why the order matters.
     unsafe {
         let _ = SetWindowPos(
             window,
@@ -324,19 +325,37 @@ unsafe fn create_window(
             height,
             SWP_NOZORDER,
         );
-        let _ = ShowWindow(window, SW_SHOW);
-        let _ = UpdateWindow(window);
     }
 
     let mut lines = Vec::with_capacity(2);
     for (index, rect) in painted.lines.iter().enumerate() {
         // SAFETY: converting this window's client coordinates to screen ones.
+        // `ClientToScreen` answers for a positioned window whether or not it is
+        // visible, which is why this can happen before the window is shown.
         let screen = unsafe { to_screen(window, *rect) };
         lines.push((screen, lesson.lines[index]));
     }
 
+    // **Before `ShowWindow`, and this is the whole of the bug it fixes.**
+    //
+    // Showing a window paints it, `WM_PAINT` draws whatever is in this slot,
+    // and this used to be filled afterwards. So the first paint drew nothing,
+    // and nothing ever invalidated the window again: the first reader to run
+    // this got a correctly sized, correctly placed, perfectly reachable
+    // **blank white rectangle** in the middle of their screen.
+    //
+    // `the_welcome_puts_its_lines_where_it_says_it_did` passed throughout. A
+    // blank window owns its points exactly as well as a painted one, which is
+    // why that check now also counts ink.
     if let Ok(mut slot) = PAINTING.lock() {
         *slot = Some(painted);
+    }
+
+    // SAFETY: showing a window this function owns, now that there is something
+    // for its first paint to draw.
+    unsafe {
+        let _ = ShowWindow(window, SW_SHOW);
+        let _ = UpdateWindow(window);
     }
 
     Some((

@@ -4113,8 +4113,54 @@ fn the_welcome_puts_its_lines_where_it_says_it_did() {
         },
     );
 
+    // **Is anything actually drawn on it?**
+    //
+    // Everything above passed while the window was blank. `ShowWindow` paints,
+    // and what to paint was stored afterwards, so the first paint drew nothing
+    // and nothing invalidated the window again. A reader got a correctly
+    // sized, correctly placed, perfectly reachable white rectangle, and every
+    // assertion here was green.
+    //
+    // Sampled from the screen at the same points the assertions above just
+    // proved this window owns, so it asks what an eye would meet there rather
+    // than what the window believes it drew. A count is reported and nothing
+    // is captured, written, or printed (`docs/privacy-model.md`).
+    let surface = crate::overlay::colorref(theme.surface);
+    let mut ink = 0;
+    let mut sampled = 0;
+    // SAFETY: a screen device context, released below. `GetPixel` is read-only.
+    unsafe {
+        let dc = windows::Win32::Graphics::Gdi::GetDC(None);
+        assert!(!dc.is_invalid(), "no screen device context");
+        for (rect, _) in &placement.lines {
+            let y = rect.y + rect.height / 2;
+            let mut x = rect.x;
+            while x < rect.x + rect.width {
+                sampled += 1;
+                if windows::Win32::Graphics::Gdi::GetPixel(dc, x, y) != surface {
+                    ink += 1;
+                }
+                x += 2;
+            }
+        }
+        windows::Win32::Graphics::Gdi::ReleaseDC(None, dc);
+    }
+    println!("  ink        {ink} of {sampled} sampled pixels differ from the surface");
+
     assert_eq!(owned, 2, "the window does not own the points it reported");
     assert_eq!(resolved, 2, "a line's own centre does not resolve to it");
+    // **A band, not "more than none".**
+    //
+    // The window that shipped blank was *white*, and this theme's surface is
+    // not, so every sampled pixel differed from it and `ink > 0` would have
+    // passed the very failure it was written for. A painted line of text
+    // covers some of its row and not all of it; a solid fill of any colour is
+    // either all or nothing.
+    let share = ink as f64 / sampled as f64;
+    assert!(
+        (0.05..0.95).contains(&share),
+        "{ink} of {sampled} pixels differ from the surface, which is a solid fill rather than text",
+    );
     assert!(
         elsewhere.is_none(),
         "the lesson answered off its own window"
