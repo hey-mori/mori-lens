@@ -86,8 +86,21 @@ repository's own measurements, not in a preference:
 
 | Application | Acquired | What that means |
 |---|---|---|
-| VS Code ([#14](https://github.com/swarea/mori-lens/issues/14)) | 7 of 247 points, all `50020` labels | the editing surface exposes nothing |
+| VS Code ([#14](https://github.com/swarea/mori-lens/issues/14)) | 7 of 247 points, all `50020` labels | a pointer reaches almost none of the editing surface |
 | KakaoTalk ([#34](https://github.com/swarea/mori-lens/issues/34)) | 14 of 104, **1 separable target** | one blob, no way to aim inside it |
+
+**That first row said "the editing surface exposes nothing" until
+2026-08-07, and it was wrong.** VS Code's document *is* in the
+accessibility tree: six words of one doc comment were found in it by
+handle, and the tree holds three times as many distinct words as the
+screen shows. What it does not do is hand a **point** to a sentence,
+because the text is in elements too large to aim inside
+([`benchmarks/2026-08-07-vs-code-with-a-screen-reader.md`](benchmarks/2026-08-07-vs-code-with-a-screen-reader.md)).
+
+The swap stands, and for a better reason than the one it was made on.
+OCR is still what reads that window, and the two rows turn out to be the
+**same** problem rather than two: a blob you cannot aim inside, in an
+editor and in a messenger.
 
 Those are a code editor and a messenger: the two surfaces the first user
 spends the day in. Deep analysis explains a sentence Lens has already
