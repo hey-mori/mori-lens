@@ -65,6 +65,23 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// number of pixels, so the card was physically narrower and taller than the
 /// one beside it on a 100% screen.
 const CARD_WIDTH: i32 = 300;
+
+/// Space under the original, before the answer.
+///
+/// **The largest gap on the card**, and it was the smaller of the two until
+/// 2026-08-11. This is the one boundary a reader crosses: above it is what they
+/// pointed at, below it is what this product made of it. The footer is a line
+/// most readers never reach.
+///
+/// A hairline rule was drawn here first and taken out again. `glass.rs` already
+/// records what happens when a card says one thing three ways, and space
+/// separates as well as a line does while adding no ink.
+///
+/// Shared with [`measure`] rather than written twice. The two disagreed once
+/// already, over a footer measured in points and summed with pixels.
+const GAP_AFTER_ORIGINAL: i32 = 13;
+/// Space under the answer, before the footer.
+const GAP_BEFORE_FOOTER: i32 = 10;
 /// How much of the work area a card may take, at most.
 ///
 /// **A share of the screen rather than a constant, and that took two goes.**
@@ -708,13 +725,22 @@ unsafe fn measure(window: HWND, card: &Card) -> i32 {
             CardBody::Analysis(text) => text.as_str(),
         };
         let original = text_height(dc, &card.original, inner, theme.small_pt);
+        // **Only when there is one to separate from.** `paint` skips the gap
+        // for a card with no original and this added it anyway, so every
+        // refusal card was measured taller than it drew and carried a strip of
+        // empty surface along its bottom edge.
+        let after_original = if card.original.trim().is_empty() {
+            0
+        } else {
+            GAP_AFTER_ORIGINAL
+        };
         let translated = text_height(dc, body, inner, theme.body_pt);
         // Measured like the others rather than guessed from the point size.
         // The previous `small_pt + 4` mixed points into a sum of pixels, so
         // the card was the wrong height by a different amount on each monitor.
         let footer = text_height(dc, &card.footer, inner, theme.small_pt);
         ReleaseDC(Some(window), dc);
-        theme.padding * 2 + original + 8 + translated + 10 + footer
+        theme.padding * 2 + original + after_original + translated + GAP_BEFORE_FOOTER + footer
     }
 }
 
@@ -876,7 +902,7 @@ unsafe fn paint(window: HWND) {
                     theme.small_pt,
                     false,
                     colorref(theme.original),
-                ) + 8;
+                ) + GAP_AFTER_ORIGINAL;
             }
 
             let (body, colour) = match &card.body {
@@ -898,7 +924,7 @@ unsafe fn paint(window: HWND) {
                 theme.body_pt,
                 true,
                 colorref(colour),
-            ) + 10;
+            ) + GAP_BEFORE_FOOTER;
 
             draw(
                 target,
