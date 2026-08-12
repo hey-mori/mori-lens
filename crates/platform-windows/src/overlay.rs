@@ -748,9 +748,9 @@ unsafe fn measure(window: HWND, card: &Card) -> i32 {
         // body with a layout of its own gets one implementation rather than a
         // matching pair.
         let translated = match &card.body {
-            CardBody::Analysis { translation, rows } => {
-                analysis(dc, translation.as_deref(), rows, 0, 0, inner, &theme, false)
-            }
+            CardBody::Analysis {
+                translation, rows, ..
+            } => analysis(dc, translation.as_deref(), rows, 0, 0, inner, &theme, false),
             _ => text_height(dc, body, inner, theme.body_pt),
         };
         // Measured like the others rather than guessed from the point size.
@@ -926,7 +926,9 @@ unsafe fn paint(window: HWND) {
             y += match &card.body {
                 // A list, drawn as one. Every value starts at the same x so a
                 // reader finds that x once instead of five times.
-                CardBody::Analysis { translation, rows } => analysis(
+                CardBody::Analysis {
+                    translation, rows, ..
+                } => analysis(
                     target,
                     translation.as_deref(),
                     rows,
