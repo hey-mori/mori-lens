@@ -84,16 +84,44 @@ pub enum CardBody {
         /// `None` is a real case: text already in the reader's language is
         /// never translated, and it is still explained.
         translation: Option<String>,
+        /// Where the focused word sits in [`Card::original`], for a renderer
+        /// that can mark part of a line.
+        ///
+        /// Byte offsets, because that is what the string is indexed by. A
+        /// renderer that needs another unit converts, and the one that does is
+        /// documented where it does it.
+        word_at: Option<(usize, usize)>,
+        /// And where its counterpart sits in `translation`.
+        counterpart_at: Option<(usize, usize)>,
         rows: Vec<(String, String)>,
     },
 }
 
 impl CardBody {
-    /// The analysis as the block of text it used to be.
+    /// Where `needle` sits inside `text`, if it sits there exactly once.
     ///
-    /// For the clipboard, the saved file, and any renderer that has not yet
-    /// learnt to draw two columns. One place decides how a row reads as a line,
-    /// so what a reader copies and what they see cannot drift apart.
+    /// **Once, and that is the whole rule.** A word that appears twice in a
+    /// sentence has no single place the pointer was on, and marking the first
+    /// one is a guess dressed as an answer. The reader who hovered the second
+    /// `card` in `A card on the wrong sentence is worse than no card` would be
+    /// shown a mark on the first, and nothing about the card would say it had
+    /// chosen.
+    ///
+    /// Nothing is marked instead, which is what this product does everywhere
+    /// else it cannot prove which thing it is looking at.
+    pub fn mark_of(text: &str, needle: &str) -> Option<(usize, usize)> {
+        let needle = needle.trim();
+        if needle.is_empty() {
+            return None;
+        }
+        let mut found = text.match_indices(needle);
+        let (at, _) = found.next()?;
+        if found.next().is_some() {
+            return None;
+        }
+        Some((at, at + needle.len()))
+    }
+
     /// The rows of an analysis, or nothing for any other body.
     pub fn analysis_rows(&self) -> &[(String, String)] {
         match self {
@@ -102,6 +130,11 @@ impl CardBody {
         }
     }
 
+    /// The analysis as the block of text it used to be.
+    ///
+    /// For the clipboard, the saved file, and any renderer that has not yet
+    /// learnt to draw two columns. One place decides how a row reads as a line,
+    /// so what a reader copies and what they see cannot drift apart.
     pub fn rows_as_text(rows: &[(String, String)]) -> String {
         rows.iter()
             .map(|(label, value)| format!("{label} · {value}"))
@@ -225,6 +258,7 @@ impl Card {
     /// from the end and this is the part
     /// [ADR-0005](../../../docs/decisions/ADR-0005-two-speed-ai.md) requires.
     pub fn analysed(original: impl Into<String>, analysis: &crate::analyse::DeepAnalysis) -> Self {
+        let original = original.into();
         // **Pairs, not a paragraph.** This joined its rows into one string and
         // handed the renderers a block of text with newlines in it, so a list
         // of five headed rows was drawn as five sentences. The rows travel as
@@ -235,11 +269,20 @@ impl Card {
             .map(|(heading, text)| (heading.to_owned(), text.to_owned()))
             .collect();
         Self {
-            original: original.into(),
             body: CardBody::Analysis {
+                word_at: analysis
+                    .word
+                    .as_deref()
+                    .and_then(|word| CardBody::mark_of(&original, word)),
+                counterpart_at: analysis
+                    .translation
+                    .as_deref()
+                    .zip(analysis.counterpart.as_deref())
+                    .and_then(|(text, span)| CardBody::mark_of(text, span)),
                 translation: analysis.translation.clone(),
                 rows: body,
             },
+            original,
             footer: format!(
                 "{} · {} · {}",
                 crate::analyse::DeepAnalysis::LABEL,
@@ -1215,7 +1258,9 @@ mod copy_tests {
                 // one string with newlines and was checked a line at a time
                 // for that reason; now it is rows, so each half of each row is
                 // its own thing a reader is shown, and each is checked.
-                CardBody::Analysis { translation, rows } => {
+                CardBody::Analysis {
+                    translation, rows, ..
+                } => {
                     if let Some(text) = translation {
                         into.push((what, text.clone()));
                     }
@@ -1248,6 +1293,7 @@ mod copy_tests {
                 "a sentence",
                 &crate::analyse::DeepAnalysis {
                     counterpart: Some("직사각형".to_owned()),
+                    word: Some("rectangle".to_owned()),
                     translation: Some("제공자는 하나의 직사각형을 반환합니다.".to_owned()),
                     lemma: "rest".to_owned(),
                     part_of_speech: "동사".to_owned(),
@@ -1600,5 +1646,106 @@ mod clipboard_tests {
         assert_eq!(after.original, card.original);
         assert!(after.footer.ends_with(Card::COPIED), "{}", after.footer);
         assert!(after.footer.starts_with("로컬"), "{}", after.footer);
+    }
+}
+
+/// Where a card marks a word, and when it refuses to.
+#[cfg(test)]
+mod mark_tests {
+    use super::*;
+
+    const SENTENCE: &str = "The provider returns one rectangle per rendered line.";
+
+    #[test]
+    fn a_word_that_appears_once_is_found_where_it_is() {
+        let (from, to) = CardBody::mark_of(SENTENCE, "rectangle").expect("it is in there");
+        assert_eq!(&SENTENCE[from..to], "rectangle");
+    }
+
+    /// **The case the rule exists for.**
+    ///
+    /// This sentence is the one this repository tests its own translations
+    /// against, and `card` is in it twice. A reader who hovered the second
+    /// would be shown a mark on the first, with nothing on the card to say it
+    /// had chosen.
+    #[test]
+    fn a_word_that_appears_twice_is_not_marked_at_all() {
+        let twice = "A card on the wrong sentence is worse than no card.";
+        assert_eq!(CardBody::mark_of(twice, "card"), None);
+    }
+
+    #[test]
+    fn a_word_that_is_not_there_is_not_marked() {
+        assert_eq!(CardBody::mark_of(SENTENCE, "triangle"), None);
+        assert_eq!(CardBody::mark_of(SENTENCE, "  "), None);
+        assert_eq!(CardBody::mark_of("", "x"), None);
+    }
+
+    /// Byte offsets, and Korean is three bytes a character.
+    ///
+    /// The offsets have to slice the string they came from. A renderer that
+    /// counts something else converts, and the one that does says so where it
+    /// does it.
+    #[test]
+    fn korean_offsets_slice_the_string_they_came_from() {
+        let translation = "제공자는 각 렌더링된 줄당 하나의 직사각형을 반환합니다.";
+        let (from, to) = CardBody::mark_of(translation, "직사각형").expect("it is in there");
+        assert_eq!(&translation[from..to], "직사각형");
+        assert!(from > 4, "byte offsets, not character ones: {from}");
+    }
+
+    /// The card computes both halves, or neither, and never a wrong one.
+    #[test]
+    fn the_card_marks_the_word_and_its_counterpart() {
+        let card = Card::analysed(
+            SENTENCE,
+            &crate::analyse::DeepAnalysis {
+                lemma: "rectangle".to_owned(),
+                word: Some("rectangle".to_owned()),
+                translation: Some("제공자는 하나의 직사각형을 반환합니다.".to_owned()),
+                counterpart: Some("직사각형".to_owned()),
+                ..crate::analyse::DeepAnalysis::default()
+            },
+        );
+        let CardBody::Analysis {
+            translation,
+            word_at,
+            counterpart_at,
+            ..
+        } = &card.body
+        else {
+            panic!("{card:?}");
+        };
+        let (from, to) = word_at.expect("the word is in the original once");
+        assert_eq!(&card.original[from..to], "rectangle");
+        let (from, to) = counterpart_at.expect("the counterpart is in the translation once");
+        assert_eq!(&translation.as_deref().unwrap()[from..to], "직사각형");
+    }
+
+    /// No counterpart, no mark, and the card is otherwise the same card.
+    #[test]
+    fn a_card_with_nothing_agreed_marks_nothing() {
+        let card = Card::analysed(
+            SENTENCE,
+            &crate::analyse::DeepAnalysis {
+                lemma: "rectangle".to_owned(),
+                word: Some("rectangle".to_owned()),
+                translation: Some("제공자는 하나의 직사각형을 반환합니다.".to_owned()),
+                ..crate::analyse::DeepAnalysis::default()
+            },
+        );
+        let CardBody::Analysis {
+            counterpart_at,
+            word_at,
+            ..
+        } = &card.body
+        else {
+            panic!("{card:?}");
+        };
+        assert_eq!(*counterpart_at, None);
+        // The word half still stands. Half a pair is still a true thing to
+        // show: it says which word the pointer was on, which the card could
+        // not say at all before.
+        assert!(word_at.is_some());
     }
 }

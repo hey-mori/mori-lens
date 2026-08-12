@@ -4268,3 +4268,114 @@ fn an_analysis_card_puts_its_values_in_a_column() {
     );
     println!("\n  three rows, labels at 0, values all at {column:.0}");
 }
+
+/// Does the mark on a pair actually reach the screen?
+///
+/// The card carries byte offsets and the renderer turns them into a
+/// DirectWrite range. Neither half is visible to `cargo test`: the offsets are
+/// pure code and pass their own tests, the conversion to UTF-16 is arithmetic
+/// nobody can see, and a range DirectWrite rejects leaves a card that is
+/// correct in every other way.
+///
+/// So this draws the same card twice and counts the ink. **An underline is
+/// ink.**
+///
+/// # The two cards differ by one underline and nothing else
+///
+/// `DeepAnalysis::word` appears in no row on the card. It is not `lemma`, which
+/// is the dictionary form and does get a row; it is the surface word, and the
+/// only thing it produces is `word_at`. So misspelling it removes exactly one
+/// underline and changes not a glyph anywhere else.
+///
+/// The first version of this compared a card carrying a counterpart against one
+/// carrying none, measured `+5700` pixels, and proved nothing: the marked card
+/// also had a whole extra row on it.
+///
+/// ```
+/// cargo test -p lens-platform-windows -- --ignored --nocapture --test-threads=1 \
+///   a_marked_pair_puts_more_ink_on_the_card
+/// ```
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn a_marked_pair_puts_more_ink_on_the_card() {
+    use lens_core::analyse::DeepAnalysis;
+    use lens_core::card::Card;
+    use lens_core::theme::{Preset, TextScale, Theme, Translucency};
+
+    let glass = crate::glass::Glass::new().expect("Direct2D");
+    let theme = Theme::resolve(
+        Preset::System,
+        Translucency::DEFAULT,
+        TextScale::Normal,
+        crate::appearance::system_preferences(),
+    );
+
+    let sentence = "The provider returns one rectangle per rendered line.";
+    let korean = "제공자는 각 렌더링된 줄당 하나의 직사각형을 반환합니다.";
+    let card_with = |word: &str, counterpart: Option<&str>| {
+        Card::analysed(
+            sentence,
+            &DeepAnalysis {
+                lemma: "rectangle".to_owned(),
+                part_of_speech: "명사".to_owned(),
+                word: Some(word.to_owned()),
+                translation: Some(korean.to_owned()),
+                counterpart: counterpart.map(str::to_owned),
+                ..DeepAnalysis::default()
+            },
+        )
+    };
+    // **Pixels that are not the surface**, which is what ink is.
+    //
+    // The first version counted pixels with any alpha at all and got the card's
+    // *area*: the surface is translucent, so every pixel inside the card
+    // passes that test and two cards of the same size score identically
+    // whatever is written on them. It reported `+0` and the fault was in the
+    // question.
+    //
+    // The surface is by far the commonest value in the bitmap, so it is found
+    // rather than assumed, which also survives a theme change.
+    let ink = |card: Card| {
+        let laid = glass
+            .lay_out_between(&card, &theme, (300, 300), 1.0)
+            .expect("the card lays out");
+        // SAFETY: rendering to a bitmap this call owns, for verification.
+        let (_, _, argb) = unsafe { glass.pixels(&laid, &theme) }.expect("pixels");
+        let mut seen: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+        for pixel in &argb {
+            *seen.entry(*pixel).or_default() += 1;
+        }
+        let surface = seen
+            .iter()
+            .max_by_key(|(_, count)| **count)
+            .map(|(pixel, _)| *pixel)
+            .unwrap_or(0);
+        argb.iter()
+            .filter(|pixel| **pixel != surface && **pixel >> 24 > 0)
+            .count()
+    };
+
+    // Identical cards. One knows where its word is and the other does not.
+    let unmarked = ink(card_with("rectangel", Some("직사각형")));
+    let marked = ink(card_with("rectangle", Some("직사각형")));
+
+    println!("\n  word misspelt   {unmarked} opaque pixels");
+    println!(
+        "  word underlined {marked} opaque pixels  ({:+})",
+        marked as i64 - unmarked as i64
+    );
+
+    assert!(
+        marked > unmarked,
+        "underlining the word drew no more ink than not underlining it",
+    );
+
+    // And a counterpart that is not in its translation marks nothing, so a
+    // model that answered with a paraphrase cannot underline a guess.
+    let invented = ink(card_with("rectangle", Some("삼각형")));
+    println!("  counterpart absent from the translation: {invented} opaque pixels");
+    assert!(
+        invented < marked,
+        "a counterpart that is not in the translation was marked anyway",
+    );
+}

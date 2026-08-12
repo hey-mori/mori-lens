@@ -2039,7 +2039,9 @@ fn log_card(card: &Card) {
             // are this repository's own strings and the values are a model's
             // account of text off somebody's screen, so the values are counted
             // and not printed.
-            lens_core::card::CardBody::Analysis { translation, rows } => format!(
+            lens_core::card::CardBody::Analysis {
+                translation, rows, ..
+            } => format!(
                 "analysis={} rows, {} chars, translation={}",
                 rows.len(),
                 rows.iter()
