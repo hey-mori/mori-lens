@@ -89,7 +89,7 @@ use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteTextLayout, DWRITE_FACTORY_TYPE_SHARED,
     DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_NORMAL,
     DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_LINE_SPACING_METHOD_UNIFORM, DWRITE_TEXT_METRICS,
-    DWRITE_WORD_WRAPPING_WRAP,
+    DWRITE_TEXT_RANGE, DWRITE_WORD_WRAPPING_WRAP,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{
@@ -321,6 +321,10 @@ impl Glass {
         // Rows are counted as they are made, so an empty original takes no row
         // and every gap below it belongs to the boundary it is actually under.
         let mut row = 0usize;
+        // Kept so the pair can be marked once both halves exist. The word is in
+        // the original and its counterpart is in the translation below it, and
+        // neither is worth marking without the other.
+        let mut original_run: Option<usize> = None;
 
         // The original first and quieter. Above the answer because the reader's
         // eye is already there, and present at all because it is the only way
@@ -340,6 +344,7 @@ impl Glass {
         ) {
             runs[index].row = row;
             runs[index].gap_after = GAP_AFTER_ORIGINAL * scale;
+            original_run = Some(index);
             row += 1;
         }
 
@@ -351,6 +356,8 @@ impl Glass {
             // reader finds that x once instead of five times.
             CardBody::Analysis {
                 translation,
+                word_at,
+                counterpart_at,
                 rows: pairs,
             } => {
                 // **The answer stays on the card.** `Ctrl+Alt+D` replaced the
@@ -362,8 +369,16 @@ impl Glass {
                     if let Some(index) = make(&mut runs, text, theme.body_pt, false, theme.body) {
                         runs[index].row = row;
                         runs[index].gap_after = GAP_AFTER_ORIGINAL * scale;
+                        // SAFETY: marking a range of a layout this function
+                        // owns and has not yet drawn.
+                        unsafe { underline(&runs[index].layout, text, *counterpart_at) };
                         row += 1;
                     }
+                }
+                // The other half of the pair, on the original above.
+                if let Some(index) = original_run {
+                    // SAFETY: as above.
+                    unsafe { underline(&runs[index].layout, &card.original, *word_at) };
                 }
                 let first_row = row;
                 let mut labelled: Vec<(usize, &String)> = Vec::new();
@@ -893,5 +908,50 @@ unsafe fn surface(
         };
         let previous = SelectObject(dc, bitmap.into());
         Some((dc, bitmap, previous, bits))
+    }
+}
+
+/// Underline one range of a laid-out line, in the text's own colour.
+///
+/// **Underline and not colour, and that is a design decision rather than a
+/// shortcut.** The plan was four colours with four underline styles beside
+/// them, because a reader who cannot see hue needs a second cue and four
+/// coloured pairs need telling apart. Measurement cut the feature down to
+/// **one** pair
+/// (`docs/benchmarks/2026-08-11-one-word-and-its-counterpart.md`), and with one
+/// pair there is nothing to tell it apart from: two marks on two lines are the
+/// pair. So the second cue is the only cue, which survives a colour-blind
+/// reader, high contrast mode, and this file's own rule about saying one thing
+/// three ways.
+///
+/// Byte offsets in, UTF-16 offsets out. `lens-core` indexes strings by bytes
+/// because that is what Rust strings are; DirectWrite counts UTF-16 code units.
+/// A Korean counterpart is three bytes and one unit per character, so handing
+/// the byte offsets straight over would underline roughly three times too much,
+/// starting in the wrong place.
+///
+/// Does nothing when there is no range. A failure to mark is not a failure to
+/// draw: the card is the same card with one fewer thing said on it.
+///
+/// # Safety
+/// `layout` must be a layout this caller owns and has not yet drawn.
+unsafe fn underline(layout: &IDWriteTextLayout, text: &str, at: Option<(usize, usize)>) {
+    let Some((from, to)) = at else { return };
+    let Some(head) = text.get(..from) else { return };
+    let Some(span) = text.get(from..to) else {
+        return;
+    };
+    let range = DWRITE_TEXT_RANGE {
+        startPosition: head.encode_utf16().count() as u32,
+        length: span.encode_utf16().count() as u32,
+    };
+    if range.length == 0 {
+        return;
+    }
+    // SAFETY: a documented range attribute on a layout the caller owns. A
+    // rejected range leaves the line unmarked, which is what happens anyway
+    // when there is nothing to mark.
+    unsafe {
+        let _ = layout.SetUnderline(true, range);
     }
 }
