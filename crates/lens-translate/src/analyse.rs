@@ -211,7 +211,7 @@ impl Analyser for OllamaTranslator {
         }
         Ok(analysis
             .with_counterpart(self.counterpart_of(request))
-            .about(request.translation.clone()))
+            .about(request.translation.clone(), request.word.clone()))
     }
 }
 
@@ -363,6 +363,7 @@ fn parse(answer: &str, model: String, latency_ms: u64) -> DeepAnalysis {
         // question asked twice, and the translation is the request's own.
         counterpart: None,
         translation: None,
+        word: None,
         lemma: field(FIELDS[0]),
         part_of_speech: field(FIELDS[1]),
         sense: field(FIELDS[2]),

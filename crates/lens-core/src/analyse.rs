@@ -224,6 +224,12 @@ pub struct DeepAnalysis {
     /// An idiom, a register, or a false friend worth knowing. Often empty, and
     /// that is the correct answer most of the time.
     pub note: String,
+    /// The word the pointer was on, as it appears in the sentence.
+    ///
+    /// Not `lemma`, which is the dictionary form and often a different string:
+    /// a card cannot underline `pass` in a sentence that says `passed`. This is
+    /// the surface form, carried so the card can find it in the original.
+    pub word: Option<String>,
     /// The translation this explanation is about, carried so the card can
     /// show it beside the explanation rather than instead of it.
     ///
@@ -333,10 +339,11 @@ impl DeepAnalysis {
         self
     }
 
-    /// The same analysis, carrying the translation it was grounded on.
+    /// The same analysis, carrying the translation and word it was about.
     #[must_use]
-    pub fn about(mut self, translation: Option<String>) -> Self {
+    pub fn about(mut self, translation: Option<String>, word: Option<String>) -> Self {
         self.translation = translation.filter(|text| !text.trim().is_empty());
+        self.word = word.filter(|text| !text.trim().is_empty());
         self
     }
 
