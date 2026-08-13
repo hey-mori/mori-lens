@@ -177,7 +177,7 @@ the product calls it.
 
 The trigger and the card are built. `Ctrl+Alt+D`, not a button, because
 the overlay passes clicks through
-([ADR-0004](decisions/ADR-0004-passive-overlay.md)) and a card that could
+([ADR-0004](decisions/ADR-0004-native-overlay.md)) and a card that could
 be clicked would be a card that takes focus. Verified end to end by
 `lens --selftest`, which now runs the deep path on the sentence it just
 translated.

@@ -610,7 +610,7 @@ impl Card {
     /// worth keeping.
     ///
     /// A reader handed a translation has no way to keep it: the overlay passes
-    /// clicks through ([ADR-0004](../../../docs/decisions/ADR-0004-passive-overlay.md)),
+    /// clicks through ([ADR-0004](../../../docs/decisions/ADR-0004-native-overlay.md)),
     /// so there is nothing to select and nothing to drag. This is the whole of
     /// the answer to that.
     ///
