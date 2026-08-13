@@ -14,7 +14,7 @@
 //!
 //! Showing the menu calls `SetForegroundWindow`, which everywhere else in this
 //! product would be a defect: the card must never take focus
-//! ([ADR-0004](../../../docs/decisions/ADR-0004-passive-overlay.md)). The
+//! ([ADR-0004](../../../docs/decisions/ADR-0004-native-overlay.md)). The
 //! difference is who asked. A card appears because a pointer stopped moving; a
 //! menu appears because a person clicked on it. Windows also requires the call,
 //! since a popup menu whose owner is not foreground never receives the click
