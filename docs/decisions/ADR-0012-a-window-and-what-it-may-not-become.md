@@ -46,7 +46,23 @@ One window, opened from the tray, holding three things:
    last answers took, what the fall-through has cost
    ([#87](https://github.com/swarea/mori-lens/issues/87)).
 
-### What it may not become, and why each is a rule rather than a preference
+### What it may not become, and what would change that
+
+**These are not laws.** This repository already supersedes its own
+decisions: ADR-0008 is partly superseded by ADR-0010, and the benchmark
+folder contains a measurement overturned by a second one run the same
+afternoon. The roadmap's exclusion list says adding one of its entries is
+*a decision, not a task*, which is not a refusal. It is a receipt saying
+somebody thought about it, and a price: bring the argument that the
+original one did.
+
+What a rule here prevents is not a wrong decision. It is an
+**unrecorded** one, arrived at by adding a small piece each week until
+the product is something else and nobody chose it.
+
+So each refusal below carries the thing that would overturn it. A
+refusal whose author cannot say what would change their mind is a
+preference wearing a rule's clothes.
 
 **Not a second store.** `saved.md` stays the store, and the window is a
 **reader** of it. `keep.rs` records why the file is plain Markdown, and
@@ -61,8 +77,15 @@ file back today and so nothing can break by writing in it.
 
 **If the file ever gets too large to read, the answer is an index beside
 it and not a store instead of it.** An index is derived, rebuildable, and
-deletable without losing anything. That distinction is the whole of it,
-and a change that blurs it needs its own ADR.
+deletable without losing anything.
+
+*What would change this:* a real reader with enough saved items that
+reading the file is slow, measured rather than imagined. A database can
+satisfy both gate clauses too, with an export that round-trips and a
+delete that deletes; what a file has is that it satisfies them **without
+code anybody has to trust**, and that advantage is worth exactly as much
+as the file is cheap to read. The day it stops being cheap, the argument
+is even, and the tie is broken by whoever is holding the measurement.
 
 **No accounts.** They are on the roadmap's exclusion list, beside cloud
 sync, and that list says adding one is a decision rather than a task.
@@ -73,9 +96,22 @@ whole claim is that nothing goes to a server
 who you are while promising it never phones home is asking a reader to
 hold two beliefs that cannot both be true.
 
-**No sync.** Same list, same reason. Two machines with two `saved.md`
-files are two files, and a reader who wants them merged has a folder that
-syncs, which is theirs and not this product's.
+*What would change this:* an account that does a job Lens actually has.
+The two it might do belong elsewhere. **Identity for Mori** is Mori's:
+the roadmap's integration is a process boundary carrying items on an
+explicit action, and the program on the other side of that boundary is
+the one that knows who its user is. **Settings and saved items on two
+machines** is sync, below. So the case is not blocked by a rule; there is
+just no job left for it to do. Name a job that survives both of those and
+the answer changes with it, in an ADR that supersedes this one.
+
+**No sync.** Same list. Two machines with two `saved.md` files are two
+files, and a reader who wants them merged has a folder that syncs, which
+is theirs and not this product's.
+
+*What would change this:* a reader who uses two machines, has tried the
+folder, and can say why it was not enough. That is a cheap thing to find
+out and nobody has asked, which is the actual state of the evidence.
 
 **Not the card, and never in the pointer's way.** ADR-0004 makes the card
 passive and click-through, and none of that changes: this window is an
@@ -127,3 +163,10 @@ no reader outside this machine has used the product at all. It is
 proposed on the strength of three recorded gaps, which is weaker evidence
 than this repository usually acts on, and that is worth saying in the
 record rather than discovering later.
+
+**And this record expects to be argued with.** Two of its three refusals
+are answers to *what is this for*, and the answer to that changes as soon
+as somebody uses the product for something. The first version of this ADR
+wrote them as settled, which was the mistake this section exists to
+avoid: a decision that cannot name its own exit is not safer than one
+that can, it is only harder to revisit.
