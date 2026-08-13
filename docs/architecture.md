@@ -180,6 +180,11 @@ foreign application must not be able to block that decision.
 
 ## 6. What is deliberately not here yet
 
+**These are staging notes, not prohibitions**, and the heading has always
+said so. Each entry is dated where it has been overtaken. An entry with a
+condition in it is spent when the condition is met, and the one below
+about a service split names its own: *until there is a UI to protect*.
+
 - **No IPC, no service split.** One process. Splitting the engine from
   the UI adds lifecycle, versioning, install, and log-correlation
   problems that buy nothing until there is a UI to protect. The seam that
@@ -189,8 +194,18 @@ foreign application must not be able to block that decision.
   No async runtime entered with the HTTP client: it is a hand-written
   loopback client on blocking sockets, and translation runs on a worker
   thread rather than a runtime.
-- **No storage layer.** Nothing is persisted. The translation cache is
-  in memory and dies with the process. A durable one would be a record of
-  what the user read, so it stays a separate opt-in with its own
-  decision rather than arriving as a performance detail.
-- **No settings UI.** Configuration is command-line flags on the probe.
+- **No structured storage layer.** *Written before `keep.rs`; corrected
+  2026-08-13.* Two files are persisted today: `settings.conf`, which the
+  user typed, and `saved.md`, which they appended to one keypress at a
+  time. Neither is a store this code reads back. The translation cache is
+  still memory and still dies with the process, because a durable one
+  would be a record of what the user read; that stays a separate opt-in
+  with its own decision rather than arriving as a performance detail.
+  Whether a structured store replaces the flat file is
+  [#162](https://github.com/swarea/mori-lens/issues/162).
+- **No settings UI.** *Written when the probe was the only binary;
+  corrected 2026-08-13.* The product reads
+  `%APPDATA%\Mori Lens\settings.conf` and writes a commented template
+  on first run. The probe's command-line flags are the probe's. There is
+  no interface for either, which is
+  [#165](https://github.com/swarea/mori-lens/issues/165).

@@ -59,7 +59,7 @@ pub enum Pressed {
     /// [ADR-0005](../../../docs/decisions/ADR-0005-two-speed-ai.md), and the
     /// user action that whole path is gated on. A key rather than a button on
     /// the card, because the overlay passes clicks through
-    /// ([ADR-0004](../../../docs/decisions/ADR-0004-passive-overlay.md)) and a
+    /// ([ADR-0004](../../../docs/decisions/ADR-0004-native-overlay.md)) and a
     /// card that could be clicked would be a card that takes focus.
     Explain,
     /// Put what the card is showing on the clipboard.
