@@ -20,7 +20,7 @@
 //!
 //! # It is not the overlay
 //!
-//! [ADR-0004](../../../docs/decisions/ADR-0004-passive-overlay.md) requires the
+//! [ADR-0004](../../../docs/decisions/ADR-0004-native-overlay.md) requires the
 //! **card** to be passive and click-through, and it still is. This is an
 //! ordinary window that the reader looks at once, and the card will be drawn
 //! over it by the same overlay as everywhere else.
