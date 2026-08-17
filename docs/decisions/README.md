@@ -63,3 +63,4 @@ Each file is `ADR-NNNN-kebab-slug.md` and holds:
 | [ADR-0010](ADR-0010-acquisition-is-proven-enough.md) | Acquisition is proven enough to build on | Accepted |
 | [ADR-0011](ADR-0011-glass-needs-direct2d.md) | The card is themed now and made of glass later | Accepted |
 | [ADR-0012](ADR-0012-three-product-surfaces.md) | Three product surfaces, amending ADR-0004 | **Proposed** |
+| [ADR-0013](ADR-0013-the-local-library.md) | The local library is SQLite, and the file survives it | **Proposed** |
