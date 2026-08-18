@@ -18,6 +18,15 @@ pub struct QuickRequest {
     /// The sentence around the pointer. Always sent, even when the user is
     /// pointing at one word: a bare word makes a model guess, and it guesses
     /// confidently. `gift` is a present in English and a poison in German.
+    ///
+    /// Measured on 2026-08-18, six ambiguous words on `qwen2.5:7b` sent inside
+    /// their sentence and alone: the lone word gave the reading its sentence
+    /// forces **1 time in 6**, and saved about 540ms doing it. `bank` came back
+    /// as a financial bank, `spring` as the season, `lead` as a leader on one
+    /// run and as initiative on the next. See
+    /// `docs/benchmarks/2026-08-18-a-word-without-its-sentence.md`, and
+    /// `live_tests::measure_what_a_word_scoped_request_loses` for the check
+    /// that re-measures it rather than remembering this paragraph.
     pub source_text: String,
     /// The word under the pointer, when there is one.
     pub focused_word: Option<String>,
