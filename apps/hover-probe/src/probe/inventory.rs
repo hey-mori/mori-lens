@@ -75,10 +75,7 @@ pub fn expect(only: Option<&str>, wanted: &[String]) {
         }
     }
     println!(
-        "\nA word that can only be in the document, found in the tree, means the\n\
-         document is exposed and a pointer failing to reach it is a targeting\n\
-         problem rather than a reach one. A word that is not there proves less:\n\
-         it may be scrolled out of view, or spelt differently by the provider."
+        "\nA word that can only be in the document, found in the tree, means the\ndocument is exposed and a pointer failing to reach it is a targeting\nproblem rather than a reach one. A word that is not there proves less:\nit may be scrolled out of view, or spelt differently by the provider."
     );
 }
 

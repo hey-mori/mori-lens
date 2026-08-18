@@ -917,7 +917,7 @@ mod tests {
 mod echo_tests {
     use super::reads_as_the_source;
 
-    const SOURCE: &str = "For the mechanics: I'd dump the two schemas and history table from                           the current database, create a fresh `insbase` database owned by                           `insbase_app`, then drop the old schemas after a grace period.";
+    const SOURCE: &str = "For the mechanics: I'd dump the two schemas and history table from the current database, create a fresh `insbase` database owned by `insbase_app`, then drop the old schemas after a grace period.";
 
     #[test]
     fn the_answer_that_was_the_question_is_caught() {
@@ -938,7 +938,7 @@ mod echo_tests {
         // What a good answer to that sentence looks like: every name kept,
         // every word around them replaced. This is the case the ratio has to
         // survive, and it is why the bar is 0.8 rather than something lower.
-        let good = "구조적으로는 현재 데이터베이스에서 두 스키마와 이력 테이블을 덤프하고,                     `insbase_app`이 소유하는 새 `insbase` 데이터베이스를 만든 다음, 유예 기간이                     지나면 예전 스키마를 삭제합니다.";
+        let good = "구조적으로는 현재 데이터베이스에서 두 스키마와 이력 테이블을 덤프하고, `insbase_app`이 소유하는 새 `insbase` 데이터베이스를 만든 다음, 유예 기간이 지나면 예전 스키마를 삭제합니다.";
         assert!(!reads_as_the_source(SOURCE, good));
     }
 
@@ -1017,22 +1017,16 @@ mod half_translated_tests {
     /// sentence in English, verbatim, with nothing to say so.
     #[test]
     fn a_translation_that_gives_up_halfway_is_caught() {
-        let source = "A connection-check approach is better than an environment variable gate \
-                      here, it is honest about what is needed and keeps the test green in \
-                      environments with a database while avoiding false failures.";
-        let half = "환경 변수 게이트보다 연결 확인 접근법이 더 나은 것 같습니다. it is honest \
-                    about what is needed and keeps the test green in environments with a \
-                    database while avoiding false failures.";
+        let source = "A connection-check approach is better than an environment variable gate here, it is honest about what is needed and keeps the test green in environments with a database while avoiding false failures.";
+        let half = "환경 변수 게이트보다 연결 확인 접근법이 더 나은 것 같습니다. it is honest about what is needed and keeps the test green in environments with a database while avoiding false failures.";
         assert!(reads_as_the_source(source, half));
     }
 
     /// And a whole one is not, however many names it keeps.
     #[test]
     fn a_translation_that_keeps_names_is_not_caught() {
-        let source = "The build failed because cargo fmt --check found a difference in \
-                      src/main.rs, so the pipeline stopped before the tests ran.";
-        let good = "cargo fmt --check 가 src/main.rs 에서 차이를 찾아 빌드가 실패했고, 그래서 \
-                    파이프라인은 테스트가 돌기 전에 멈췄습니다.";
+        let source = "The build failed because cargo fmt --check found a difference in src/main.rs, so the pipeline stopped before the tests ran.";
+        let good = "cargo fmt --check 가 src/main.rs 에서 차이를 찾아 빌드가 실패했고, 그래서 파이프라인은 테스트가 돌기 전에 멈췄습니다.";
         assert!(!reads_as_the_source(source, good));
     }
 
@@ -1043,10 +1037,8 @@ mod half_translated_tests {
     /// firing on those would refuse answers that are right.
     #[test]
     fn a_short_quoted_fragment_survives_without_being_an_echo() {
-        let source = "The error message says connection refused by the server, which usually \
-                      means the port is wrong rather than the host.";
-        let good = "오류 메시지는 connection refused by the 라고 말하는데, 이는 보통 호스트가 \
-                    아니라 포트가 잘못됐다는 뜻입니다.";
+        let source = "The error message says connection refused by the server, which usually means the port is wrong rather than the host.";
+        let good = "오류 메시지는 connection refused by the 라고 말하는데, 이는 보통 호스트가 아니라 포트가 잘못됐다는 뜻입니다.";
         assert!(!reads_as_the_source(source, good));
     }
 }
@@ -1165,8 +1157,7 @@ mod identifier_tests {
     /// The line from the card, and the token it damaged.
     #[test]
     fn the_identifiers_a_model_transliterated_are_found() {
-        let line = "insway의 EngineDataSheetService 에 export_csv 를 넣고, \
-                    POST /projects/{id}/insbase/tables/{table}/export 라우트를 붙였습니다.";
+        let line = "insway의 EngineDataSheetService 에 export_csv 를 넣고, POST /projects/{id}/insbase/tables/{table}/export 라우트를 붙였습니다.";
         let found = identifiers_in(line);
         assert!(
             found.iter().any(|token| token == "EngineDataSheetService"),
