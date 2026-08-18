@@ -1734,3 +1734,92 @@ fn measure_how_often_a_model_changes_language_partway() {
         "\n  a caveat is the right answer to a rare fault and the wrong one to a common fault"
     );
 }
+
+/// What happens to a word the translation does not have a counterpart for?
+///
+/// `docs/benchmarks/2026-08-11-one-word-and-its-counterpart.md` named this as
+/// the untested case, in the words of the day it was written:
+///
+/// > A particle, an article, or a word the translation drops entirely is the
+/// > case that will produce a confident wrong answer, and none was tried.
+///
+/// A selftest then walked straight into it: the focused word was
+/// `workloom.orbit.app`, a URL, and the card carried a `번역에서` row with
+/// fourteen characters in it. A URL has no counterpart in a Korean sentence.
+///
+/// **The two-question rule is the only thing standing between that and a wrong
+/// highlight**, and whether it holds here is what this measures. Every case
+/// below should come back `None`.
+///
+/// ```
+/// cargo test -p lens-translate -- --ignored --nocapture --test-threads=1 \
+///   what_happens_to_a_word_with_no_counterpart
+/// ```
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn what_happens_to_a_word_with_no_counterpart() {
+    use lens_core::analyse::DeepRequest;
+
+    let translator = OllamaTranslator::default().with_timeout(Duration::from_secs(120));
+
+    // (sentence, translation, focused word, why it has no counterpart)
+    let cases: [(&str, &str, &str, &str); 6] = [
+        (
+            "Open workloom.orbit.app to see the dashboard.",
+            "대시보드를 보려면 workloom.orbit.app을 여세요.",
+            "workloom.orbit.app",
+            "a URL, carried through untranslated",
+        ),
+        (
+            "The provider returns one rectangle per rendered line.",
+            "제공자는 각 렌더링된 줄당 하나의 직사각형을 반환합니다.",
+            "the",
+            "an article, and Korean has none",
+        ),
+        (
+            "A capture is never written to disk.",
+            "캡처는 절대 디스크에 작성되지 않습니다.",
+            "a",
+            "an article again, and a single letter",
+        ),
+        (
+            "The pointer is the only trigger.",
+            "포인터는 유일한 트리거입니다.",
+            "is",
+            "a copula, which Korean folds into the ending",
+        ),
+        (
+            "Rest the pointer on this line and wait.",
+            "이 줄에 포인터를 올려 두고 기다리세요.",
+            "on",
+            "a preposition, which Korean marks with a particle",
+        ),
+        (
+            "The acquirer returns a typed error.",
+            "취득자는 타입 오류를 반환합니다.",
+            "rectangle",
+            "a word that is not in this sentence at all",
+        ),
+    ];
+
+    println!("\n  word                 first          second         kept    why");
+    let mut wrongly_kept = 0;
+    for (sentence, translation, word, why) in cases {
+        let request = DeepRequest::new(sentence, translation, "Korean").about_the_word(word);
+        let (first, second) = translator.two_counterparts(&request);
+        let kept = first.as_deref().zip(second.as_deref()).and_then(|(a, b)| {
+            lens_core::analyse::DeepAnalysis::agreed_counterpart(translation, a, b)
+        });
+        wrongly_kept += usize::from(kept.is_some());
+        println!(
+            "  {:<20} {:<14} {:<14} {:<7} {}",
+            word,
+            format!("{:?}", first.as_deref().unwrap_or("-")),
+            format!("{:?}", second.as_deref().unwrap_or("-")),
+            format!("{:?}", kept.as_deref().unwrap_or("-")),
+            why,
+        );
+    }
+    println!("\n  {wrongly_kept} of 6 produced a counterpart where there is none to produce");
+    println!("  every one of these should be nothing, and a kept span here is a wrong highlight");
+}
