@@ -23,8 +23,18 @@ app. Mori Lens is a separate product with a separate binary, and it
 runs with Mori not installed. The split is deliberate and recorded in
 [ADR-0001](docs/decisions/ADR-0001-independent-repository.md).
 
-- **Mori Lens** discovers and explains language on the screen.
-- **Mori** accumulates and reviews what was learned.
+- **Mori Lens** understands language on the screen, and keeps and
+  reviews what a reader chose to keep of it.
+- **Mori** is the broader work memory: projects, tasks, conversations,
+  and knowledge across sources.
+
+**That first line said "discovers and explains" until 2026-08-13**, with
+accumulating and reviewing given to Mori. It made Lens partial by
+definition, which was never the intention and is not what
+[ADR-0012](docs/decisions/ADR-0012-three-product-surfaces.md) and
+[ADR-0013](docs/decisions/ADR-0013-the-local-library.md) describe. A
+language library is Lens's own; sending an item to Mori stays an
+explicit act across a process boundary.
 
 There is no shared package, no shared database, and no runtime
 dependency in either direction. If the two are ever connected it will
@@ -138,7 +148,12 @@ common case stays fast: see
 - Local inference: Ollama over `127.0.0.1`, never bundled
   ([ADR-0007](docs/decisions/ADR-0007-local-first-inference.md)), spoken
   to over hand-written HTTP with no client dependency
-- Storage (later): SQLite, opt-in history
+- Storage (later): SQLite for the library
+  ([ADR-0013](docs/decisions/ADR-0013-the-local-library.md)), with
+  history in three tiers of which one is on by default
+  ([ADR-0014](docs/decisions/ADR-0014-three-tiers-of-history.md)).
+  **Neither is built.** Today one Markdown file is appended to on a
+  keypress and nothing reads it back
 
 ## Layout
 
