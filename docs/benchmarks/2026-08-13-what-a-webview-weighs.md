@@ -34,9 +34,16 @@ builds, so the gate inherits whatever the shell brings. The gate is run before
 every commit in this repository and its speed is a working condition rather
 than a detail.
 
-Two ways out exist and both are decisions rather than tricks: exclude the shell
-from the default members, or put it in a second workspace. Either splits the
+Two ways out exist and both are decisions rather than tricks: `exclude` the
+shell from the workspace, or put it in a second workspace. Either splits the
 gate, which is its own cost.
+
+**`default-members` is not one of them**, which an earlier draft of this file got
+wrong. It only chooses what a bare `cargo build` selects, and `check.sh` passes
+`--workspace` explicitly, so every member is built regardless. `exclude` is what
+holds, and [`2026-08-13-does-a-webview-fit.md`](2026-08-13-does-a-webview-fit.md)
+is the run that confirms it: the spike is in the tree and the gate still sees 22
+crates.
 
 **907 MB of build artefacts** for a crate whose `main` is empty. That is a
 developer's disk rather than a reader's, and this machine ran out of disk once
@@ -55,14 +62,18 @@ links almost nothing, so its 119 KB says nothing. A real size needs a window,
 which needs `tauri-build`, a config and a frontend, and that belongs with the
 integration attempt rather than with a weighing.
 
-**Coexistence**, which is the actual stage two question: whether a webview lives
-in a process that already owns a Win32 message loop, a tray icon, global
-hotkeys, a layered click-through overlay and a UI Automation apartment. Nothing
-here touches it.
+~~**Coexistence**~~, which is the actual stage two question: whether a webview
+lives in a process that already owns a Win32 message loop, a tray icon, global
+hotkeys, a layered click-through overlay and a UI Automation apartment. Measured
+the same day in
+[`2026-08-13-does-a-webview-fit.md`](2026-08-13-does-a-webview-fit.md). All five
+coexist and nothing refused.
 
-**Idle memory**, for the same reason. The floor to beat is in
+~~**Idle memory**~~, for the same reason. The floor to beat is in
 [`2026-08-13-the-shell-baseline.md`](2026-08-13-the-shell-baseline.md): 53 to 55
-MB, and a native window inside this process adds nothing measurable to it.
+MB, and a native window inside this process adds nothing measurable to it. The
+webview adds about 33 MB on a machine already running one, which is the best
+case rather than the general one.
 
 ## What it means for the decision
 
