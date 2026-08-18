@@ -1923,3 +1923,116 @@ fn trim_to(text: &str, chars: usize) -> String {
     }
     text.chars().take(chars).collect()
 }
+
+/// Which model takes the wrong sense when the sentence rules it out.
+///
+/// [`2026-08-18-a-word-without-its-sentence.md`] found something it was not
+/// looking for: `The bank of the river had eroded` came back from `qwen2.5:7b`
+/// as `강의 은행`, a financial bank on a river, **with the sentence present and
+/// the river named**. That is not a scope question, it is a model question, and
+/// it is the one axis of a model comparison a machine can settle on its own.
+///
+/// Counting wrong is sound here. Counting right is not: an answer that avoids
+/// the listed wrong reading may still be a bad translation for a reason nothing
+/// here looks at. So this reports **failures only**, and prints every answer so
+/// a reader can judge the rest.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn measure_which_model_takes_the_wrong_sense() {
+    let Some(probe) = live() else {
+        return;
+    };
+    let Ok(installed) = probe.installed_models() else {
+        println!("could not list models");
+        return;
+    };
+
+    // (sentence, the word, the reading the sentence rules out). Every sentence
+    // names the thing that rules it out: a river, a stamp, a window frame.
+    let cases: [(&str, &str, &str); 8] = [
+        (
+            "The bank of the river had eroded after a week of rain.",
+            "bank",
+            "은행",
+        ),
+        (
+            "A spring in the animation made the card overshoot its resting place.",
+            "spring",
+            "봄",
+        ),
+        (
+            "The mouse moved across the desk to the edge of the screen.",
+            "mouse",
+            "쥐",
+        ),
+        (
+            "The pitcher of water sat beside the keyboard all afternoon.",
+            "pitcher",
+            "투수",
+        ),
+        (
+            "The seal on the window frame had cracked and let the rain in.",
+            "seal",
+            "물개",
+        ),
+        (
+            "The letter arrived in the post without a stamp on it.",
+            "letter",
+            "글자",
+        ),
+        (
+            "He left the meeting early and the tray icon stayed behind.",
+            "left",
+            "왼쪽",
+        ),
+        (
+            "The plant on the desk had not been watered for a fortnight.",
+            "plant",
+            "공장",
+        ),
+    ];
+
+    for name in &installed {
+        let translator = OllamaTranslator::new(crate::DEFAULT_ENDPOINT, name);
+        let warm = translator.prewarm();
+        println!();
+        println!("=== {name} (warm in {warm:?})");
+
+        let (mut wrong, mut answered, mut total) = (0usize, 0usize, 0u128);
+        for (sentence, word, ruled_out) in cases {
+            match translator.quick(&QuickRequest::new(sentence, "Korean").with_focus(word)) {
+                Ok(answer) => {
+                    answered += 1;
+                    total += answer.latency_ms;
+                    let took = answer.text.contains(ruled_out);
+                    if took {
+                        wrong += 1;
+                    }
+                    println!(
+                        "  {:<9} {:<4} {}",
+                        word,
+                        if took { "WRONG" } else { "" },
+                        answer.text,
+                    );
+                }
+                Err(error) => println!("  {:<9} ---- [{}]", word, error.reason()),
+            }
+        }
+        println!(
+            "  took a ruled-out reading   {wrong} of {answered}, mean {}ms",
+            total / answered.max(1) as u128,
+        );
+        // Handed back before the next one loads, or both sit resident.
+        translator.release();
+    }
+
+    println!();
+    println!("  a miss is not a pass: this counts only the readings each sentence rules out.");
+
+    // The result above is only actionable if the chooser can reach the winner.
+    println!(
+        "  installed {:?}, and Lens would choose {:?}",
+        installed,
+        lens_core::translate::choose_model(None, &installed),
+    );
+}
