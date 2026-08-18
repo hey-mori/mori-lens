@@ -49,6 +49,18 @@ is one keypress, made while looking at the card, so the file is a record
 of what a person decided to keep rather than of what they looked at.
 Nothing here is reachable from a hover.
 
+**The deferral this page has carried since it was written now has an
+answer, and the answer is not yet code.**
+[ADR-0013](decisions/ADR-0013-the-local-library.md) records that the
+library becomes SQLite with this file preserved as its export, and
+[ADR-0014](decisions/ADR-0014-three-tiers-of-history.md) records three
+tiers of history of which only a memory-only one is on by default. Both
+are **Proposed**, and **nothing described in either exists**. Everything
+on this page still describes what the code does today, which is one
+appended file and a cache that dies with the process. When either is
+built, this section changes and says so with a date, in the same way §2
+already had to.
+
 It is plain Markdown, and that is the privacy property rather than a
 convenience. **Deletion is selecting a block and pressing delete**, which
 is more real than a button that sets a flag, and the export is the file.
