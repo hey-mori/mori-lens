@@ -278,6 +278,7 @@ mod tests {
             model: "qwen2.5:3b".to_owned(),
             latency_ms,
             cached: false,
+            part_was_removed: false,
         }
     }
 

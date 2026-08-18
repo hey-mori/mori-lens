@@ -150,7 +150,7 @@ impl CardBody {
 impl Card {
     /// A card for a finished translation.
     pub fn translated(original: impl Into<String>, translation: &QuickTranslation) -> Self {
-        Self {
+        let card = Self {
             original: original.into(),
             body: CardBody::Translation(translation.text.clone()),
             // **Where it ran, then how long, then which model.**
@@ -184,6 +184,14 @@ impl Card {
                 },
                 translation.model,
             ),
+        };
+        // Said on the card the reader ends up looking at, for the same reason
+        // the other two caveats are: a warning that is not on the answer is a
+        // warning nobody reads.
+        if translation.part_was_removed {
+            card.say(Self::PART_REMOVED)
+        } else {
+            card
         }
     }
 
@@ -442,6 +450,16 @@ impl Card {
     pub const FROM_PIXELS: &str = "화면 읽기";
     /// And when that reading also looks wrong.
     pub const DOUBTFUL: &str = "읽기 불확실";
+    /// What a card says when part of the answer was taken off it.
+    ///
+    /// A model that switches language mid-sentence gives back a correct first
+    /// half and a second half in a third language.
+    /// [`crate::language::without_the_third_language`] keeps the first half,
+    /// which is right, and the reader then saw a sentence ending mid-phrase
+    /// under a footer saying it took 3.9 seconds. Nothing said the end was
+    /// missing, so the card read as a complete answer that simply stopped
+    /// making sense.
+    pub const PART_REMOVED: &str = "일부만 번역됨";
 
     /// The same card, marked as built on characters read off the screen.
     ///
@@ -816,6 +834,7 @@ mod tests {
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 900,
             cached: false,
+            part_was_removed: false,
         }
     }
 
@@ -1050,6 +1069,7 @@ mod streaming_tests {
                 model: "m".to_owned(),
                 latency_ms: 900,
                 cached: false,
+                part_was_removed: false,
             },
         );
         assert_eq!(body_of(&finished), "나는 다른 파일에서 삽입 스크립트를");
@@ -1086,6 +1106,7 @@ mod footer_tests {
         Card::translated(
             "original",
             &QuickTranslation {
+                part_was_removed: false,
                 text: "번역".to_owned(),
                 engine: EngineId::LocalOllama,
                 model: "qwen2.5-coder:7b".to_owned(),
@@ -1170,6 +1191,39 @@ mod footer_tests {
             .read_from_the_screen()
             .built_on_a_doubtful_reading();
         assert!(first.footer.contains(Card::DOUBTFUL), "{}", first.footer);
+    }
+
+    /// A card whose answer had a foreign tail cut off it says so.
+    ///
+    /// The card that prompted this ended at `두 번째 테스트의`, mid-phrase,
+    /// under a footer reading `로컬 · 3.9초 · qwen2.5:7b`. The model had
+    /// switched to Chinese partway through, the third-language rule removed the
+    /// Chinese, and what was left was a correct Korean translation of the first
+    /// half of the sentence presented as the whole answer.
+    #[test]
+    fn a_card_missing_part_of_its_answer_says_so() {
+        // Through `Card::translated`, so this checks the path the reader's
+        // card took rather than the builder it ends with.
+        let card = Card::translated(
+            "original",
+            &QuickTranslation {
+                text: "번역".to_owned(),
+                engine: EngineId::LocalOllama,
+                model: "qwen2.5:7b".to_owned(),
+                latency_ms: 3900,
+                cached: false,
+                part_was_removed: true,
+            },
+        );
+        assert!(card.footer.contains(Card::PART_REMOVED), "{}", card.footer);
+        assert!(card.footer.starts_with("로컬"), "{}", card.footer);
+    }
+
+    /// And an ordinary answer does not.
+    #[test]
+    fn an_answer_that_kept_all_of_itself_says_nothing() {
+        let card = card_at(2779, false);
+        assert!(!card.footer.contains(Card::PART_REMOVED), "{}", card.footer);
     }
 
     /// A caveat takes the model's place rather than queueing behind it.
@@ -1491,6 +1545,7 @@ mod cutting_tests {
                 model: "fixture".to_owned(),
                 latency_ms: 900,
                 cached: false,
+                part_was_removed: false,
             },
         )
     }
@@ -1555,6 +1610,7 @@ mod clipboard_tests {
             model: "qwen2.5:7b".to_owned(),
             latency_ms: 2644,
             cached: false,
+            part_was_removed: false,
         }
     }
 

@@ -1572,3 +1572,84 @@ fn what_the_two_questions_keep() {
     println!("  named the source language, which this product does not know.");
     assert!(kept > 0, "the rule kept nothing at all, which is a defect");
 }
+
+/// Does a long sentence come back whole?
+///
+/// A reader's card ended at `두 번째 테스트의`, mid-phrase, under a footer
+/// reading `로컬 · 3.9초 · qwen2.5:7b`. The source was 308 characters.
+///
+/// # The obvious cause was the wrong one
+///
+/// `token_budget` scales at three tokens per source character and clamps at
+/// 256, so the scaling stops mattering above 77 characters. That looked like
+/// the answer: the sentence wanted 948 tokens and got 256.
+///
+/// **Raising the ceiling to 1024 changed nothing.** Same cut, same 87
+/// characters, same 3.8 seconds. The budget was never binding.
+///
+/// # What it actually was
+///
+/// The model produced 144 characters and **switched to Chinese partway
+/// through**: the tail was `写入拒绝，因此它们仍然成立。`.
+/// `wrote_in_a_third_language` caught it and `without_the_third_language` cut
+/// it back to 89, which is correct and is what those rules are for.
+///
+/// What was missing is that the reader was then shown the surviving Korean as
+/// though it were the whole answer. The comment on the rule that does the
+/// cutting already made the argument, about the case where nothing survives:
+/// *better than half of one presented as a translation*. Half of one was being
+/// presented as a translation.
+///
+/// So the card now says `일부만 번역됨`, and this check exists to notice the
+/// day a long sentence stops coming back whole for some third reason.
+///
+/// ```
+/// cargo test -p lens-translate -- --ignored --nocapture --test-threads=1 ///   a_long_sentence_comes_back_whole
+/// ```
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn a_long_sentence_comes_back_whole() {
+    let Some(translator) = live() else { return };
+
+    // Lengths across the clamp, so the shape of the failure is visible rather
+    // than one example of it.
+    let sentences = [
+        "The provider returns one rectangle per rendered line.",
+        "The acquirer gives up the moment the element at the point has no text pattern, and answers Unsupported.",
+        "I am second-guessing the test ordering because the annotation does not guarantee execution order between the two tests, but looking closer, the second test's assertions hold regardless of whether the first ran, since it checks seed data and stale-write rejection independently of migration state.",
+    ];
+
+    println!("\n  src   budget  out   ends   secs  last 20");
+    for sentence in sentences {
+        let budget = lens_core::translate::token_budget(sentence.chars().count());
+        let started = std::time::Instant::now();
+        match translator.quick(&QuickRequest::new(sentence, "Korean")) {
+            Ok(answer) => {
+                let text = answer.text.trim();
+                // A sentence that stopped because it ran out of room does not
+                // end the way a finished one does. Not proof, and the only
+                // signal a `QuickTranslation` carries.
+                let finished = text.ends_with(['.', '!', '?', '요', '다', '까']);
+                let tail: String = text
+                    .chars()
+                    .rev()
+                    .take(20)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                println!(
+                    "  {:<5} {:<7} {:<5} {:<6} {:<5.1} {:?}",
+                    sentence.chars().count(),
+                    budget,
+                    text.chars().count(),
+                    if finished { "yes" } else { "NO" },
+                    started.elapsed().as_secs_f64(),
+                    tail,
+                );
+            }
+            Err(error) => println!("  {:<5} {:<7} {error}", sentence.chars().count(), budget),
+        }
+    }
+    println!("\n  budget clamps at 256, so every source over 77 characters gets the same room");
+}

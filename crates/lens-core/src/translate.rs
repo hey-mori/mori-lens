@@ -419,6 +419,19 @@ pub struct QuickTranslation {
     /// something different, and "zero milliseconds" is not a different thing to
     /// say, it is a wrong one.
     pub cached: bool,
+    /// Whether part of the answer was removed before the reader saw it.
+    ///
+    /// **The one case where a card shows less than the engine said.** A model
+    /// that switches language mid-sentence produces an answer whose first half
+    /// is a correct translation and whose second half is in a third language,
+    /// and [`crate::language::without_the_third_language`] keeps the first half.
+    ///
+    /// That is the right thing to keep. What was missing is that a reader was
+    /// then shown a sentence ending mid-phrase with a footer saying it took 3.9
+    /// seconds, which reads as a finished answer and is not one. The comment on
+    /// the rule that does the cutting already said so: *better than half of one
+    /// presented as a translation*, of the case where nothing is left.
+    pub part_was_removed: bool,
 }
 
 /// Which engine produced an answer.
