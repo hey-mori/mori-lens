@@ -62,8 +62,7 @@ fn request(
     let mut stream = stream;
     let payload = body.unwrap_or_default();
     let mut head = format!(
-        "{method} {path} HTTP/1.1\r\nHost: {endpoint}\r\nConnection: close\r\n\
-         Accept: application/json\r\n",
+        "{method} {path} HTTP/1.1\r\nHost: {endpoint}\r\nConnection: close\r\nAccept: application/json\r\n",
     );
     if body.is_some() {
         head.push_str(&format!(
@@ -159,8 +158,7 @@ pub fn post_streaming(
     let mut stream = stream;
 
     let head = format!(
-        "POST {path} HTTP/1.1\r\nHost: {endpoint}\r\nConnection: close\r\n\
-         Content-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+        "POST {path} HTTP/1.1\r\nHost: {endpoint}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
         body.len(),
     );
     stream

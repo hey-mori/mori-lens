@@ -113,15 +113,18 @@ State which of code, test, or a live run is the basis for each claim.
   `AcquireError`; it never unwraps a COM result.
 - **Never continue a string literal with a trailing `\`.** `rustfmt`
   rejoins such a literal onto one line and leaves the indentation
-  *inside the string*. It has done this four times in this repository
-  and reached a user twice, once as a refusal reading
+  *inside the string*. A sweep on 2026-08-18 found ten strings it had
+  already done this to, carrying sixteen runs of spaces between them:
+  one was a refusal reading
   `Lens has no way to                      send text off this machine`,
-  and once inside a test fixture sentence that carried twenty-five
-  spaces in the middle of it while a test measured it. Use one long
-  line, or `concat!`, or build the string in pieces. Runs of spaces in
-  a `println!` used for column alignment are fine and are not this.
-  `lens_core::card`'s copy tests catch it for anything a reader sees;
-  nothing catches it anywhere else, which is why this is a rule.
+  four were assertion messages, and the rest were fixtures a test
+  measured, including one whose identifier sat split as
+  `` `orbbase                     _app` ``. Use one long line, or
+  `concat!`, or build the string in pieces. Runs of spaces in a
+  `println!` used for column alignment are fine and are not this.
+  `scripts/check.sh` fails on the trailing `\` itself, so this is
+  enforced rather than remembered, and `lens_core::card`'s copy tests
+  stay the check on what a reader actually sees.
 
 ## Do not
 

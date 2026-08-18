@@ -304,8 +304,7 @@ impl Settings {
 /// `balanced` for as long as it was, and went on saying so after the default
 /// changed. A comment that is wrong about the product is worse than no comment,
 /// because it is the only description most people will read.
-pub const TEMPLATE: &str = "\
-# Mori Lens settings.
+pub const TEMPLATE: &str = "# Mori Lens settings.
 #
 # Edited by hand, read at startup. Command line flags win over this file, so a
 # one-off run can override it without editing anything.
@@ -546,15 +545,7 @@ mod tests {
     #[test]
     fn a_full_file_round_trips_every_setting() {
         let (settings, problems) = Settings::parse(
-            "language = Japanese\n\
-             model = gemma3:4b\n\
-             dwell_ms = 250\n\
-             theme = night-lake\n\
-             translucency = clear\n\
-             text = large\n\
-             default = allow\n\
-             [applications]\n\
-             code = deny\n",
+            "language = Japanese\nmodel = gemma3:4b\ndwell_ms = 250\ntheme = night-lake\ntranslucency = clear\ntext = large\ndefault = allow\n[applications]\ncode = deny\n",
         );
         assert_eq!(problems, Vec::new());
         assert_eq!(settings.language, "Japanese");

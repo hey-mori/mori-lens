@@ -41,9 +41,7 @@ fn the_built_binary_does_not_ask_windows_for_a_console() {
 
     assert_ne!(
         subsystem, WINDOWS_CUI,
-        "lens.exe is a console application, so double-clicking it opens a \
-         terminal window that has to stay open for the product to keep \
-         running. Restore #![windows_subsystem = \"windows\"] in main.rs.",
+        "lens.exe is a console application, so double-clicking it opens a terminal window that has to stay open for the product to keep running. Restore #![windows_subsystem = \"windows\"] in main.rs.",
     );
     assert_eq!(
         subsystem, WINDOWS_GUI,
