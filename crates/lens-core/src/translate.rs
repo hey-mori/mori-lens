@@ -739,6 +739,42 @@ mod tests {
         names.iter().map(|name| (*name).to_string()).collect()
     }
 
+    /// A model whose name carries no size is reachable, and does not win.
+    ///
+    /// Filed as a bug on 2026-08-18 and it is not one, which is worth a test
+    /// rather than a closed issue. `parameter_billions` returns nothing for
+    /// `translategemma:latest`, so it is dropped from both size rankings. The
+    /// last fallback still reaches it, so the behaviour is: **loses to anything
+    /// measured, wins when it is all there is.**
+    ///
+    /// What is real about that report is a different thing, and it is in
+    /// `PREFERRED`'s own comment rather than here: `translategemma` is out of
+    /// that list because it was run on 2026-08-05 and lost.
+    #[test]
+    fn a_name_with_no_size_loses_but_is_still_reachable() {
+        let alone = vec!["translategemma:latest".to_owned()];
+        assert_eq!(
+            choose_model(None, &alone).as_deref(),
+            Some("translategemma:latest"),
+            "the only installed model must be chosen even with no size in its name",
+        );
+
+        let beside_a_measured_family =
+            vec!["qwen2.5:7b".to_owned(), "translategemma:latest".to_owned()];
+        assert_eq!(
+            choose_model(None, &beside_a_measured_family).as_deref(),
+            Some("qwen2.5:7b"),
+            "a measured family outranks a name nobody can size",
+        );
+
+        // And naming it still works, which is the reader's way past all of this.
+        assert_eq!(
+            choose_model(Some("translategemma:latest"), &beside_a_measured_family).as_deref(),
+            Some("translategemma:latest"),
+            "a model named in settings is used whatever the ranking thinks",
+        );
+    }
+
     #[test]
     fn a_model_the_user_named_wins_over_every_preference() {
         let installed = models(&["gemma3:4b", "qwen2.5:3b"]);
