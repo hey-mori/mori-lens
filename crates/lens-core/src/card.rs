@@ -1513,8 +1513,7 @@ mod copy_tests {
         for (what, sentence) in everything_a_reader_can_be_shown() {
             assert!(
                 !sentence.contains("  "),
-                "{what} has a run of spaces in it, from a line continuation \
-                 rustfmt rejoined with its indentation: {sentence:?}",
+                "{what} has a run of spaces in it, from a line continuation rustfmt rejoined with its indentation: {sentence:?}",
             );
             assert_eq!(
                 sentence.trim(),
@@ -1523,8 +1522,7 @@ mod copy_tests {
             );
             assert!(
                 !sentence.contains('\n'),
-                "{what} has a newline in it, and a card lays out its own lines: \
-                 {sentence:?}",
+                "{what} has a newline in it, and a card lays out its own lines: {sentence:?}",
             );
         }
     }

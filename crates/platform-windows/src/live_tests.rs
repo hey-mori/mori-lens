@@ -35,8 +35,7 @@ use crate::UiaTextAcquirer;
 fn require_ownership(harness: &ProtectedHarness, point: ScreenPoint, what: &str) {
     assert!(
         harness_owns(harness.window_id(), point),
-        "another window covers the {what} at {point:?}, so this run measured \
-         someone else's window rather than the harness. Not a product defect.",
+        "another window covers the {what} at {point:?}, so this run measured someone else's window rather than the harness. Not a product defect.",
     );
 }
 
@@ -104,8 +103,7 @@ fn the_refusal_is_specific_to_the_protected_field() {
     );
     assert!(
         !matches!(plain, Err(AcquireError::Protected(_))),
-        "the plain field was also refused, so the refusal is not discriminating \
-         and the guarantee proves nothing",
+        "the plain field was also refused, so the refusal is not discriminating and the guarantee proves nothing",
     );
 }
 
@@ -281,8 +279,7 @@ fn a_shown_card_has_text_painted_on_it() {
     // sample the product's own surface and never the user's desktop.
     assert!(
         ink > 200,
-        "the presented frame carried {ink} opaque pixels, so the card is blank. \
-         Text is not being painted.",
+        "the presented frame carried {ink} opaque pixels, so the card is blank. Text is not being painted.",
     );
 
     assert!(overlay.hide());
@@ -438,7 +435,7 @@ fn a_streamed_answer_does_not_blank_or_disappear_between_redraws() {
 
     let Some(seen) = observed else {
         panic!(
-            "the sampler never got enough turns to see a 25ms flicker, so nothing was              measured: {attempts:?}",
+            "the sampler never got enough turns to see a 25ms flicker, so nothing was measured: {attempts:?}",
         );
     };
     assert_eq!(
@@ -500,7 +497,7 @@ fn the_flicker_detector_catches_a_card_that_disappears() {
 
     assert!(
         seen.hidden > 0,
-        "the detector did not notice a card that was hidden three times;          it is blind and the test above proves nothing",
+        "the detector did not notice a card that was hidden three times; it is blind and the test above proves nothing",
     );
 }
 
@@ -799,8 +796,7 @@ fn a_click_on_the_card_passes_through_to_what_is_underneath() {
 
     assert_ne!(
         hit.0 as isize, window.0 as isize,
-        "the card is hit-testable, so it swallows clicks meant for the text \
-         underneath, which ADR-0004 forbids",
+        "the card is hit-testable, so it swallows clicks meant for the text underneath, which ADR-0004 forbids",
     );
 
     assert!(overlay.hide());
@@ -904,8 +900,7 @@ fn what_a_window_exposes_without_raising_it() {
         }
         any = true;
         println!(
-            "{name:<18} {elements:>4} text elements, {with_text:>3} with content, \
-             {chars:>6} chars, smallest {}px",
+            "{name:<18} {elements:>4} text elements, {with_text:>3} with content, {chars:>6} chars, smallest {}px",
             if smallest == i32::MAX {
                 "?".to_owned()
             } else {
@@ -916,8 +911,7 @@ fn what_a_window_exposes_without_raising_it() {
 
     assert!(
         any,
-        "no window exposed text through ElementFromHandle, so this route is \
-         not an alternative to raising windows",
+        "no window exposed text through ElementFromHandle, so this route is not an alternative to raising windows",
     );
 }
 
@@ -980,8 +974,7 @@ fn reading_where_a_window_just_closed_is_an_error_not_a_crash() {
     // crashing rather than about the transition.
     assert!(
         elapsed < std::time::Duration::from_secs(5),
-        "reading a closed window's coordinate took {}ms, which is a hang rather \
-         than an error",
+        "reading a closed window's coordinate took {}ms, which is a hang rather than an error",
         elapsed.as_millis(),
     );
 
@@ -1096,10 +1089,7 @@ fn a_wedged_application_in_another_process_is_a_timeout() {
     assert_eq!(
         wedged,
         Some(AcquireError::Timeout),
-        "a wedged application must be recorded as slow rather than as \
-         unsupported or protected: the compatibility matrix is built from \
-         these names and would otherwise carry a verdict about an application \
-         that never answered the question",
+        "a wedged application must be recorded as slow rather than as unsupported or protected: the compatibility matrix is built from these names and would otherwise carry a verdict about an application that never answered the question",
     );
     // The whole point. Without the guard this is the two-minute default.
     assert!(
@@ -1146,13 +1136,11 @@ fn the_guard_does_not_reach_a_provider_inside_this_process() {
     assert_ne!(
         wedged,
         Some(AcquireError::Timeout),
-        "the in-process path is now bounded too. Good news, but this test \
-         records the opposite; check what changed before deleting it.",
+        "the in-process path is now bounded too. Good news, but this test records the opposite; check what changed before deleting it.",
     );
     assert!(
         elapsed >= Duration::from_secs(2),
-        "the call returned in {}ms, so it was not actually blocked and this \
-         test is measuring nothing",
+        "the call returned in {}ms, so it was not actually blocked and this test is measuring nothing",
         elapsed.as_millis(),
     );
 }
@@ -1402,19 +1390,15 @@ fn one_attempt_at_reading_through_a_card() -> Result<String, String> {
     // against logging captured text does not carve out exceptions.
     assert!(
         !text.contains(ORIGINAL) && !text.contains(TRANSLATED),
-        "the acquirer read the card's own text through UI Automation, so Lens \
-         would translate its own translation",
+        "the acquirer read the card's own text through UI Automation, so Lens would translate its own translation",
     );
     assert_eq!(
         text, baseline,
-        "the point read different text once a card was over it, so the card \
-         changes what the accessibility layer sees even though it is never \
-         itself read",
+        "the point read different text once a card was over it, so the card changes what the accessibility layer sees even though it is never itself read",
     );
 
     Ok(format!(
-        "{} chars at ({}, {}), read identically with a card drawn over that \
-         exact point, and none of it the card's",
+        "{} chars at ({}, {}), read identically with a card drawn over that exact point, and none of it the card's",
         baseline.chars().count(),
         point.x,
         point.y,
@@ -1516,8 +1500,7 @@ fn the_running_process_name_is_the_one_the_policy_denies() {
     assert_eq!(
         policy.tier_for(Some(&own)),
         AppTier::Deny,
-        "deny_self did not deny the name this process actually runs under, so \
-         the backstop would not fire",
+        "deny_self did not deny the name this process actually runs under, so the backstop would not fire",
     );
 
     assert!(overlay.hide());
@@ -1587,8 +1570,7 @@ fn a_click_on_the_tray_icon_becomes_a_request() {
     assert_eq!(
         seen,
         vec![TrayEvent::TogglePause],
-        "a left click on the icon did not become a pause request, so the icon \
-         is decoration",
+        "a left click on the icon did not become a pause request, so the icon is decoration",
     );
 
     // And the state can change, which is what makes the icon honest about
@@ -1633,9 +1615,7 @@ fn the_card_is_painted_with_per_pixel_alpha_and_not_a_flat_rectangle() {
 
     assert!(
         crate::glass::Glass::new().is_some(),
-        "Direct2D could not start on this machine, so the card is the GDI \
-         fallback and this test has nothing to measure. That is a supported \
-         state for the product and not for this assertion.",
+        "Direct2D could not start on this machine, so the card is the GDI fallback and this test has nothing to measure. That is a supported state for the product and not for this assertion.",
     );
 
     // **Deliberately not the default theme.** The claim under test is that the
@@ -1721,13 +1701,11 @@ fn the_card_is_painted_with_per_pixel_alpha_and_not_a_flat_rectangle() {
     let fallback_width = (crate::overlay::max_card_width() as f32 * scale).round() as i32;
     assert!(
         width < fallback_width,
-        "the window is {width}px wide, which is the whole {fallback_width}px the \
-         GDI fallback would take, so the frame on screen was not the Direct2D one",
+        "the window is {width}px wide, which is the whole {fallback_width}px the GDI fallback would take, so the frame on screen was not the Direct2D one",
     );
     assert!(
         (width - laid.width).abs() <= 8,
-        "the window is {width}px and the card laid out at {}px, so what is on \
-         screen is not the frame this measured",
+        "the window is {width}px and the card laid out at {}px, so what is on screen is not the frame this measured",
         laid.width,
     );
     assert!(overlay.hide());
@@ -1750,7 +1728,7 @@ fn the_card_is_painted_with_per_pixel_alpha_and_not_a_flat_rectangle() {
     // Outside the rounded outline and outside the shadow's reach.
     assert_eq!(
         corner, 0,
-        "the window's corner is not transparent, so the card is a rectangle          with a visible box around it",
+        "the window's corner is not transparent, so the card is a rectangle with a visible box around it",
     );
 
     // The surface is translucent, at the theme's own figure. Exactly, which
@@ -1769,11 +1747,11 @@ fn the_card_is_painted_with_per_pixel_alpha_and_not_a_flat_rectangle() {
     // is zero, because one opacity applies to every pixel in the window.
     assert!(
         opaque > 200,
-        "only {opaque} fully opaque pixels, so the text is being faded along          with the surface and nothing was gained",
+        "only {opaque} fully opaque pixels, so the text is being faded along with the surface and nothing was gained",
     );
     assert!(
         u32::from(theme.surface_alpha) < 255,
-        "this theme is opaque, so the test above proves nothing; pick a          translucent one",
+        "this theme is opaque, so the test above proves nothing; pick a translucent one",
     );
     assert!(overlay.hide());
 }
@@ -1818,9 +1796,7 @@ fn a_longer_card_is_taller_and_the_renderer_is_the_one_that_says_so() {
     let long = glass
         .lay_out(
             &make(
-                "훨씬 더 긴 문장입니다. 이 문장은 카드 너비를 넘어가서 여러 줄로 \
-                 나뉘어야 하고, 그만큼 카드도 높아져야 합니다. 그렇지 않으면 \
-                 마지막 줄이 잘립니다.",
+                "훨씬 더 긴 문장입니다. 이 문장은 카드 너비를 넘어가서 여러 줄로 나뉘어야 하고, 그만큼 카드도 높아져야 합니다. 그렇지 않으면 마지막 줄이 잘립니다.",
             ),
             &theme,
             360,
@@ -1867,8 +1843,7 @@ fn autostart_writes_reads_and_removes_its_own_value() {
     assert!(written, "the value could not be written");
     assert!(
         read_back,
-        "the value came back different from what was written, which for a \
-         command line means Windows would run something else at login",
+        "the value came back different from what was written, which for a command line means Windows would run something else at login",
     );
     assert!(deleted, "the value could not be removed");
     assert!(
@@ -2003,15 +1978,13 @@ fn the_same_card_is_the_same_physical_size_on_a_scaled_display() {
     let expected = plain.width as f32 * 1.5;
     assert!(
         (scaled.width as f32 - expected).abs() <= 4.0,
-        "at 150% the card is {}px where {expected:.0}px would be the same \
-         physical width",
+        "at 150% the card is {}px where {expected:.0}px would be the same physical width",
         scaled.width,
     );
     // And therefore not dramatically taller: the same words fit the same way.
     assert!(
         (scaled.height as f32) < plain.height as f32 * 1.8,
-        "at 150% the card is {}px tall against {}px, so the text is wrapping \
-         differently and the box is not scaling with it",
+        "at 150% the card is {}px tall against {}px, so the text is wrapping differently and the box is not scaling with it",
         scaled.height,
         plain.height,
     );
@@ -2047,8 +2020,7 @@ fn the_process_under_the_pointer_is_cached_without_going_stale() {
     assert_eq!(
         first.as_deref(),
         Some(own.as_str()),
-        "the window under the point belongs to this test, so this is the name \
-         the policy would be given",
+        "the window under the point belongs to this test, so this is the name the policy would be given",
     );
 
     // Alternating rounds, and the winner counted rather than a ratio compared
@@ -2105,16 +2077,13 @@ fn the_process_under_the_pointer_is_cached_without_going_stale() {
     let cached = best(cached_each);
     let uncached = best(uncached_each);
     println!(
-        "{ROUNDS} rounds of {SAMPLES} · best cached {cached:.1}us · best uncached \
-         {uncached:.1}us · cached won {cached_wins} of {ROUNDS} · {wrong} wrong",
+        "{ROUNDS} rounds of {SAMPLES} · best cached {cached:.1}us · best uncached {uncached:.1}us · cached won {cached_wins} of {ROUNDS} · {wrong} wrong",
     );
 
     assert_eq!(wrong, 0, "the name changed under repeated lookups");
     assert!(
         cached_wins >= ROUNDS - 1,
-        "the cached lookup was faster in only {cached_wins} of {ROUNDS} rounds, \
-         so it is not saving the process handle the loop opens forty times a \
-         second: best cached {cached:.1}us against best uncached {uncached:.1}us",
+        "the cached lookup was faster in only {cached_wins} of {ROUNDS} rounds, so it is not saving the process handle the loop opens forty times a second: best cached {cached:.1}us against best uncached {uncached:.1}us",
     );
 }
 
@@ -2182,8 +2151,7 @@ fn a_theme_set_at_runtime_changes_the_next_card() {
     println!("normal {normal}px tall · larger {larger}px tall");
     assert!(
         larger > normal,
-        "the same card is {larger}px at the larger text scale and {normal}px at \
-         the normal one, so the painter never saw the new theme",
+        "the same card is {larger}px at the larger text scale and {normal}px at the normal one, so the painter never saw the new theme",
     );
 
     assert!(overlay.hide());
@@ -2205,22 +2173,11 @@ fn measure_what_a_long_paragraph_does_to_the_card() {
         SystemPreferences::default(),
     );
 
-    let long = "The accessibility layer is the first path Mori Lens tries, because it \
-                returns the characters an application already knows it is drawing rather \
-                than a guess recovered from pixels, and that difference is the whole \
-                reason the OCR fallback is a fallback rather than the design. A second \
-                sentence exists so that expansion to an enclosing unit has somewhere to \
-                stop, and a third so the paragraph is genuinely longer than any card \
-                could hold at a readable size.";
+    let long = "The accessibility layer is the first path Mori Lens tries, because it returns the characters an application already knows it is drawing rather than a guess recovered from pixels, and that difference is the whole reason the OCR fallback is a fallback rather than the design. A second sentence exists so that expansion to an enclosing unit has somewhere to stop, and a third so the paragraph is genuinely longer than any card could hold at a readable size.";
     let card = Card::translated(
         long,
         &QuickTranslation {
-            text: "접근성 계층은 Mori Lens가 가장 먼저 시도하는 경로입니다. 픽셀에서 \
-                   복원한 추측이 아니라 애플리케이션이 이미 그리고 있다고 알고 있는 문자를 \
-                   돌려주기 때문이고, 그 차이가 OCR 대체 경로를 설계가 아니라 대체 경로로 \
-                   만드는 이유입니다. 두 번째 문장은 둘러싸는 단위로의 확장이 멈출 곳을 \
-                   갖도록 존재하고, 세 번째 문장은 문단이 어떤 카드보다도 길어지도록 \
-                   존재합니다."
+            text: "접근성 계층은 Mori Lens가 가장 먼저 시도하는 경로입니다. 픽셀에서 복원한 추측이 아니라 애플리케이션이 이미 그리고 있다고 알고 있는 문자를 돌려주기 때문이고, 그 차이가 OCR 대체 경로를 설계가 아니라 대체 경로로 만드는 이유입니다. 두 번째 문장은 둘러싸는 단위로의 확장이 멈출 곳을 갖도록 존재하고, 세 번째 문장은 문단이 어떤 카드보다도 길어지도록 존재합니다."
                 .to_owned(),
             engine: EngineId::LocalOllama,
             model: "qwen2.5:3b".to_owned(),
@@ -2314,8 +2271,7 @@ fn a_captured_rectangle_comes_back_as_words_in_the_right_places() {
         .collect();
     assert!(
         flat.contains(&wanted),
-        "the harness's own sentence did not come back out of the recogniser: \
-         {found:?}",
+        "the harness's own sentence did not come back out of the recogniser: {found:?}",
     );
 
     // The half that matters more than the text: a word knows where it is.
@@ -2415,8 +2371,7 @@ fn measure_what_a_capture_sees_through_the_card() {
     // is not exempt from `docs/privacy-model.md` §3 for being a check, and
     // this is the single most likely place in the repository to break it.
     println!(
-        "through the card: {} lines, {} words, {} characters · the card's own \
-         text recovered: {}",
+        "through the card: {} lines, {} words, {} characters · the card's own text recovered: {}",
         read.lines.len(),
         read.lines
             .iter()
@@ -2535,19 +2490,15 @@ fn measure_how_much_of_the_page_a_card_covers() {
         )
     };
     let card = make(
-        "So deploying is what makes yesterday's work real, and that's the safe, obvious \
-         first step.",
+        "So deploying is what makes yesterday's work real, and that's the safe, obvious first step.",
         "어제의 일은 배포로 현실화되며, 이것이 안전하고 명백한 첫 단계입니다.",
     );
 
     // Four lines each side, from a screenshot whose footer sat on the card's
     // bottom edge with no padding under it.
     let tall = make(
-        "The bigger structural question is understanding how the base and datasheet \
-         starters relate to each other, whether one depends on the other or if they're \
-         independent.",
-        "기본 구조적 질문은 기본과 데이터시트 시작자가 서로 어떻게 관련되어 있는지 이해하는 \
-         것입니다. 하나가 다른 것에 의존하는지 아니면 독립적인지.",
+        "The bigger structural question is understanding how the base and datasheet starters relate to each other, whether one depends on the other or if they're independent.",
+        "기본 구조적 질문은 기본과 데이터시트 시작자가 서로 어떻게 관련되어 있는지 이해하는 것입니다. 하나가 다른 것에 의존하는지 아니면 독립적인지.",
     );
     for scale in [1.0f32, 1.5] {
         let widest = (crate::overlay::max_card_width() as f32 * scale).round() as i32;
@@ -2571,8 +2522,8 @@ fn measure_how_much_of_the_page_a_card_covers() {
     // paragraph: the segmenter hands the card a sentence, so this is what the
     // tallest realistic card is made of.
     let long = make(
-        "The migration ran against the production database on the second attempt, after the          first was rolled back because a unique index on the accounts table rejected two rows          that the staging data had never contained, which nobody noticed until the deploy had          already been announced in the channel and three people were watching it.",
-        "마이그레이션은 두 번째 시도에서 운영 데이터베이스에 적용됐습니다. 첫 번째는 계정          테이블의 고유 인덱스가 스테이징 데이터에 한 번도 없던 두 행을 거부해서 롤백됐고,          배포가 이미 채널에 공지되어 세 사람이 지켜보고 있을 때까지 아무도 눈치채지          못했습니다.",
+        "The migration ran against the production database on the second attempt, after the first was rolled back because a unique index on the accounts table rejected two rows that the staging data had never contained, which nobody noticed until the deploy had already been announced in the channel and three people were watching it.",
+        "마이그레이션은 두 번째 시도에서 운영 데이터베이스에 적용됐습니다. 첫 번째는 계정 테이블의 고유 인덱스가 스테이징 데이터에 한 번도 없던 두 행을 거부해서 롤백됐고, 배포가 이미 채널에 공지되어 세 사람이 지켜보고 있을 때까지 아무도 눈치채지 못했습니다.",
     );
     // And a blob with no sentence boundary in it, which is what the segmenter
     // hands back when there is nothing to segment on. KakaoTalk exposes its
@@ -2806,8 +2757,7 @@ fn a_plain_edit_in_another_process_answers_the_same_way_every_time() {
     }
     if !refusals_described.is_empty() {
         println!(
-            "  of the refusals, {off_element} came from an element whose rectangle does \
-             not contain the point",
+            "  of the refusals, {off_element} came from an element whose rectangle does not contain the point",
         );
     }
 
@@ -2830,7 +2780,7 @@ fn a_plain_edit_in_another_process_answers_the_same_way_every_time() {
     );
     assert!(
         plain_element.contains_point,
-        "the element under the plain field does not contain the point that found          it, which is the two coordinate spaces disagreeing again",
+        "the element under the plain field does not contain the point that found it, which is the two coordinate spaces disagreeing again",
     );
 
     let mut password_answers: std::collections::BTreeMap<String, usize> =
@@ -3189,8 +3139,7 @@ fn measure_what_an_automatic_fall_through_costs() {
         // bound rather than a typical one.
         let with_hide = median + 60;
         println!(
-            "  with the 60ms compositor wait: {with_hide}ms, which at two settled\n  \
-             hovers a second is {:.0}% of one core",
+            "  with the 60ms compositor wait: {with_hide}ms, which at two settled\n  hovers a second is {:.0}% of one core",
             (with_hide as f64 * 2.0) / 10.0,
         );
 
@@ -3386,8 +3335,7 @@ fn measure_what_automatic_ocr_costs_a_battery() {
         spent.as_secs_f64() * 100.0 / over.as_secs_f64(),
     );
     println!(
-        "\n  against 0.16% of a core idle, measured 2026-08-05 on a Lens that\n  \
-         captured nothing."
+        "\n  against 0.16% of a core idle, measured 2026-08-05 on a Lens that\n  captured nothing."
     );
 }
 
@@ -3636,9 +3584,7 @@ fn measure_whether_a_covered_window_can_render_itself() {
     }
 
     println!(
-        "\nink is the share of pixels differing from the corner one. A window that\n\
-         rendered but came back at 0.0% answered the call and drew nothing, which\n\
-         is the failure this was run to find."
+        "\nink is the share of pixels differing from the corner one. A window that\nrendered but came back at 0.0% answered the call and drew nothing, which\nis the failure this was run to find."
     );
 }
 
@@ -4043,11 +3989,7 @@ fn measure_whether_a_container_gives_up_its_lines() {
     }
 
     println!(
-        "\n  A container answering with many rectangles of a line's height is\n  \
-         the whole idea: `line_under` already turns those into an answer, and\n  \
-         it is the rule the OCR path uses. One rectangle the height of the\n  \
-         element means the provider will not take it apart, and the pointer\n  \
-         has nothing finer to aim at than the document."
+        "\n  A container answering with many rectangles of a line's height is\n  the whole idea: `line_under` already turns those into an answer, and\n  it is the rule the OCR path uses. One rectangle the height of the\n  element means the provider will not take it apart, and the pointer\n  has nothing finer to aim at than the document."
     );
 }
 

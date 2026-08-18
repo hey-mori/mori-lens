@@ -384,8 +384,7 @@ mod tests {
         assert!(calls.load(Ordering::SeqCst) >= 1, "nothing was acquired");
         assert!(
             worst < Duration::from_millis(100),
-            "sending a sample blocked for {worst:?}, and the read costs {cost:?}. \
-             That is the loop stalling on acquisition, which is the whole defect.",
+            "sending a sample blocked for {worst:?}, and the read costs {cost:?}. That is the loop stalling on acquisition, which is the whole defect.",
         );
     }
 

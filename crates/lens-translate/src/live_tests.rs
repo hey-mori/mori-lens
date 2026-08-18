@@ -530,8 +530,7 @@ fn measure_whether_naming_the_focused_word_helps() {
 
     let cases = [
         (
-            "Loosening the assertion was the other option and the wrong one: the claim it \
-             makes would fail on every attempt if it were false.",
+            "Loosening the assertion was the other option and the wrong one: the claim it makes would fail on every attempt if it were false.",
             "assertion",
         ),
         (
@@ -539,8 +538,7 @@ fn measure_whether_naming_the_focused_word_helps() {
             "bank",
         ),
         (
-            "I need to verify that the insertion point is actually nested within each class \
-             definition, not after it.",
+            "I need to verify that the insertion point is actually nested within each class definition, not after it.",
             "nested",
         ),
     ];
@@ -590,14 +588,11 @@ fn measure_whether_the_prompt_can_stop_clauses_being_dropped() {
     // label, a plain sentence, one with a path in it, and a long one. A prompt
     // line that fixes the first and spoils the rest is not an improvement.
     let sources = [
-        "Loosening the assertion was the other option and the wrong one: the claim it makes \
-         would fail on every attempt if it were false.",
+        "Loosening the assertion was the other option and the wrong one: the claim it makes would fail on every attempt if it were false.",
         "Sign in",
         "The output files came back empty, so the full test suite produced nothing.",
-        "This application has no explicit mapping for /error, so you are seeing this as a \
-         fallback.",
-        "I need to verify that the insertion point is actually nested within each class \
-         definition, not after it, so I'll write a script to check this.",
+        "This application has no explicit mapping for /error, so you are seeing this as a fallback.",
+        "I need to verify that the insertion point is actually nested within each class definition, not after it, so I'll write a script to check this.",
     ];
 
     let extra = [
@@ -739,8 +734,7 @@ fn residency_is_reported_correctly_before_and_after_a_load() {
 
     assert!(
         !cold,
-        "a model just released still reports as resident, so Lens can never \
-         tell a reader that it is loading one",
+        "a model just released still reports as resident, so Lens can never tell a reader that it is loading one",
     );
     assert!(warm, "a model just loaded does not report as resident");
 
@@ -763,31 +757,22 @@ fn measure_the_sentence_that_came_back_in_english() {
     };
 
     let sentences = [
-        "For the mechanics: I'd dump the two schemas and history table from the current \
-         database, create a fresh `insbase` database owned by `insbase_app`, restore those \
-         objects into it, repoint the engine, verify everything works, then drop the old \
-         schemas after a grace period.",
+        "For the mechanics: I'd dump the two schemas and history table from the current database, create a fresh `insbase` database owned by `insbase_app`, restore those objects into it, repoint the engine, verify everything works, then drop the old schemas after a grace period.",
         "The build failed because `cargo fmt --check` found a difference in src/main.rs.",
         "Rest the pointer on a word and the card explains it without any clicking.",
     ];
 
-    let shipped = "Translate every clause. Do not summarise, shorten, or leave anything \
-                   out.\nKeep code identifiers, file paths, and URLs unchanged.";
+    let shipped = "Translate every clause. Do not summarise, shorten, or leave anything out.\nKeep code identifiers, file paths, and URLs unchanged.";
 
     let candidates: [(&str, &str); 3] = [
         ("shipped", shipped),
         (
             "target-first",
-            "Your entire output must be in Korean. Never repeat the fenced text back: an \
-             output in the same language as the input is a failure.\nTranslate every \
-             clause. Do not summarise, shorten, or leave anything out.\nCode identifiers, \
-             file paths and URLs stay verbatim; every word around them is translated.",
+            "Your entire output must be in Korean. Never repeat the fenced text back: an output in the same language as the input is a failure.\nTranslate every clause. Do not summarise, shorten, or leave anything out.\nCode identifiers, file paths and URLs stay verbatim; every word around them is translated.",
         ),
         (
             "no-identifier-line",
-            "Your entire output must be in Korean. Never repeat the fenced text back: an \
-             output in the same language as the input is a failure.\nTranslate every \
-             clause. Do not summarise, shorten, or leave anything out.",
+            "Your entire output must be in Korean. Never repeat the fenced text back: an output in the same language as the input is a failure.\nTranslate every clause. Do not summarise, shorten, or leave anything out.",
         ),
     ];
 
@@ -848,10 +833,7 @@ fn the_sentence_that_echoed_now_comes_back_in_korean() {
         return;
     };
 
-    let source = "For the mechanics: I'd dump the two schemas and history table from the \
-                  current database, create a fresh `insbase` database owned by `insbase_app`, \
-                  restore those objects into it, repoint the engine, verify everything works, \
-                  then drop the old schemas after a grace period.";
+    let source = "For the mechanics: I'd dump the two schemas and history table from the current database, create a fresh `insbase` database owned by `insbase_app`, restore those objects into it, repoint the engine, verify everything works, then drop the old schemas after a grace period.";
 
     for round in 1..=3 {
         match translator.quick(&QuickRequest::new(source, "Korean")) {
@@ -914,8 +896,7 @@ fn compare_what_each_installed_model_makes_of_the_same_sentences() {
         "The test correctly refuses to pass vacuously.",
         "Acquisition is solved and targeting is not.",
         "A card placed on the wrong sentence is worse than no card.",
-        "The pointer must rest before anything is read, and neither path runs on \
-         a mouse move.",
+        "The pointer must rest before anything is read, and neither path runs on a mouse move.",
         "I would rather it failed loudly than passed for a reason nobody checked.",
     ];
 
@@ -1084,18 +1065,15 @@ fn measure_whether_named_identifiers_survive() {
 
     let cases: [(&str, &[&str]); 3] = [
         (
-            "insway의 EngineDataSheetService 에 export_csv 를 넣고, POST \
-             /projects/{id}/insbase/tables/{table}/export 라우트를 붙였습니다.",
+            "insway의 EngineDataSheetService 에 export_csv 를 넣고, POST /projects/{id}/insbase/tables/{table}/export 라우트를 붙였습니다.",
             &["EngineDataSheetService", "export_csv", "/projects/"],
         ),
         (
-            "The build failed because cargo fmt --check found a difference in \
-             src/main.rs before the tests ran.",
+            "The build failed because cargo fmt --check found a difference in src/main.rs before the tests ran.",
             &["src/main.rs"],
         ),
         (
-            "Call getUserProfile with the user_id and the request will return a \
-             row from the accounts table.",
+            "Call getUserProfile with the user_id and the request will return a row from the accounts table.",
             &["getUserProfile", "user_id"],
         ),
     ];
