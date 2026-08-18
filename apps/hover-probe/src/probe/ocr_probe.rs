@@ -151,6 +151,17 @@ pub struct OcrRow {
     pub lines: usize,
     pub words: usize,
     pub characters: usize,
+    /// Words `lens_platform_windows::ocr::is_misread` fires on.
+    ///
+    /// **Half of what issue #86 says is missing**, and the half a machine can
+    /// fill in. That issue asks for a session with a person judging each
+    /// reading, and says of the rule that *a rule that never fires is
+    /// decoration, and one that fires on correct readings teaches people to
+    /// ignore it*. Whether it fires at all needs nobody.
+    ///
+    /// The other half, whether the readings it did not fire on were right, is
+    /// still a person's to say.
+    pub misread: usize,
     /// Grid points that landed inside a recognised word.
     pub sampled: usize,
     pub ocr_hits: usize,
@@ -191,6 +202,7 @@ impl OcrRow {
             lines: 0,
             words: 0,
             characters: 0,
+            misread: 0,
             sampled: 0,
             ocr_hits: 0,
             visible: 0,
@@ -540,6 +552,13 @@ pub fn run(acquirer: &UiaTextAcquirer, options: &OcrOptions) -> Result<OcrRow, S
         .map(|line| line.text.chars().count())
         .sum();
 
+    // Counted here rather than reported per word, because the words themselves
+    // are a reader's screen and this file never prints them.
+    let misread = words
+        .iter()
+        .filter(|word| ocr::is_misread(&word.text))
+        .count();
+
     let mut widths: Vec<i32> = words.iter().map(|word| word.bounds.width).collect();
     let mut heights: Vec<i32> = words.iter().map(|word| word.bounds.height).collect();
     widths.sort_unstable();
@@ -556,6 +575,7 @@ pub fn run(acquirer: &UiaTextAcquirer, options: &OcrOptions) -> Result<OcrRow, S
         lines: read.lines.len(),
         words: words.len(),
         characters,
+        misread,
         median_word,
         // A substring test on text this process recognised, whose result is a
         // boolean. The operator supplied the needle, so answering does not
@@ -639,6 +659,20 @@ pub fn print(row: &OcrRow) {
         row.characters,
         format_us(Some(row.recognise_us)),
     );
+    if row.words > 0 {
+        let share = row.misread as f64 * 100.0 / row.words as f64;
+        println!(
+            "  misread      {} of {} words ({share:.1}%) have a shape that cannot be right",
+            row.misread, row.words,
+        );
+        for line in [
+            "               This is how often 읽기 불확실 fires, and it is half of what",
+            "               issue #86 asks for. The other half is whether the words it",
+            "               stayed quiet about were read correctly, which needs a person.",
+        ] {
+            println!("{line}");
+        }
+    }
     if let Some((width, height)) = row.median_word {
         println!("  median word  {width}x{height}px");
     }
