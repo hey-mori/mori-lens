@@ -487,6 +487,12 @@ impl Card {
         self.say(Self::FROM_PIXELS)
     }
 
+    /// Every caveat this line can carry, so one can be told from a fact.
+    ///
+    /// The footer is a `·` separated list ordered by usefulness, and the rule
+    /// below has to know which entries are caveats. Nothing else does.
+    const CAVEATS: [&str; 3] = [Self::FROM_PIXELS, Self::DOUBTFUL, Self::PART_REMOVED];
+
     /// Put a caveat on the quiet line, in the model's place.
     ///
     /// **The footer is a list ordered by usefulness and it has a width.** It
@@ -508,14 +514,50 @@ impl Card {
             self.footer = what.to_owned();
             return self;
         }
-        let mut parts: Vec<&str> = self.footer.split(" · ").collect();
-        if parts.len() >= 3 {
-            parts.pop();
+        // **Caveats never displace each other**, and the first version of this
+        // let them. A card read from pixels whose answer had a foreign tail
+        // removed said `화면 읽기` and silently dropped `일부만 번역됨`: the
+        // reader was told where the characters came from and not that half the
+        // answer was missing, which is the more important of the two.
+        //
+        // So the list is split. Facts yield from the end, model first and then
+        // the time, until the line fits; caveats are kept and appended in the
+        // order they were applied.
+        let is_caveat = |part: &str| Self::CAVEATS.contains(&part);
+        let mut facts: Vec<String> = Vec::new();
+        let mut caveats: Vec<String> = Vec::new();
+        for part in self.footer.split(" · ") {
+            if is_caveat(part) {
+                caveats.push(part.to_owned());
+            } else {
+                facts.push(part.to_owned());
+            }
         }
-        parts.push(what);
-        self.footer = parts.join(" · ");
+        if !caveats.iter().any(|held| held == what) {
+            caveats.push(what.to_owned());
+        }
+        let joined = |facts: &[String], caveats: &[String]| {
+            facts
+                .iter()
+                .chain(caveats.iter())
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" · ")
+        };
+        // The first fact is the one thing on this line a reader must not miss,
+        // so it is never dropped however many caveats arrive.
+        while facts.len() > 1 && joined(&facts, &caveats).chars().count() > Self::FOOTER_LIMIT {
+            facts.pop();
+        }
+        self.footer = joined(&facts, &caveats);
         self
     }
+
+    /// How long the quiet line may be, in characters.
+    ///
+    /// It sets the card's minimum width, so this is a size rather than a
+    /// preference. `the_footer_stays_short` measures every shape against it.
+    pub const FOOTER_LIMIT: usize = 32;
 
     /// The same card with its answer cut to roughly `keep` characters.
     ///
@@ -1226,6 +1268,56 @@ mod footer_tests {
         assert!(!card.footer.contains(Card::PART_REMOVED), "{}", card.footer);
     }
 
+    /// **Two caveats both survive, and the model yields to make room.**
+    ///
+    /// The first version of this rule let a later caveat replace an earlier
+    /// one. A card read from pixels whose answer had a foreign tail removed
+    /// said `화면 읽기` and silently dropped `일부만 번역됨`, so the reader was
+    /// told where the characters came from and not that half the answer was
+    /// gone.
+    #[test]
+    fn a_second_caveat_does_not_replace_the_first() {
+        let card = Card::translated(
+            "original",
+            &QuickTranslation {
+                text: "번역".to_owned(),
+                engine: EngineId::LocalOllama,
+                model: "qwen2.5:7b".to_owned(),
+                latency_ms: 3900,
+                cached: false,
+                part_was_removed: true,
+            },
+        )
+        .read_from_the_screen();
+
+        assert!(card.footer.contains(Card::PART_REMOVED), "{}", card.footer);
+        assert!(card.footer.contains(Card::FROM_PIXELS), "{}", card.footer);
+        assert!(card.footer.starts_with("로컬"), "{}", card.footer);
+        // The model is what yields, because it is the entry a reader has no
+        // use for and the caveats are the entries they must not miss.
+        assert!(!card.footer.contains("qwen"), "{}", card.footer);
+        assert!(
+            card.footer.chars().count() <= Card::FOOTER_LIMIT,
+            "{} is {} chars",
+            card.footer,
+            card.footer.chars().count()
+        );
+    }
+
+    /// And the same caveat twice is still one caveat.
+    #[test]
+    fn saying_the_same_thing_twice_says_it_once() {
+        let card = card_at(2779, false)
+            .read_from_the_screen()
+            .read_from_the_screen();
+        assert_eq!(
+            card.footer.matches(Card::FROM_PIXELS).count(),
+            1,
+            "{}",
+            card.footer
+        );
+    }
+
     /// A caveat takes the model's place rather than queueing behind it.
     #[test]
     fn a_caveat_displaces_the_model_and_not_the_privacy_signal() {
@@ -1270,9 +1362,15 @@ mod footer_tests {
                 .read_from_the_screen()
                 .built_on_a_doubtful_reading()
                 .footer,
+            // Every caveat at once, which is the widest this line ever gets.
+            card_at(2779, false)
+                .say(Card::PART_REMOVED)
+                .read_from_the_screen()
+                .built_on_a_doubtful_reading()
+                .footer,
         ] {
             assert!(
-                footer.chars().count() <= 32,
+                footer.chars().count() <= Card::FOOTER_LIMIT,
                 "{footer:?} is {} chars",
                 footer.chars().count()
             );
