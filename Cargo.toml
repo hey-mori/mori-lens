@@ -8,6 +8,9 @@ members = [
   "apps/hover-probe",
   "apps/lens",
 ]
+# **Deliberately not a member.** See apps/shell-spike/Cargo.toml: the gate runs
+# across the workspace, and this crate would take it from 22 crates to 383.
+exclude = ["apps/shell-spike"]
 
 [workspace.package]
 version = "0.1.0"
