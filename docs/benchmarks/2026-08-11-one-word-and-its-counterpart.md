@@ -168,6 +168,9 @@ re-measured rather than remembered.
   hover. The deep path already costs seconds and already knows the focused word,
   but its card does not show the translation. That is a product decision and
   this measurement does not make it.
-- **A word with no counterpart.** Every case here has one. A particle, an
-  article, or a word the translation drops entirely is the case that will
-  produce a confident wrong answer, and none was tried.
+- ~~**A word with no counterpart.**~~ Measured on 2026-08-13:
+  [`2026-08-13-a-word-with-no-counterpart.md`](2026-08-13-a-word-with-no-counterpart.md).
+  Five of five refused on the cases the product can construct, by two different
+  mechanisms. The prediction that it would produce a confident wrong answer was
+  right about the one case the product cannot construct and wrong about the
+  five it can.
