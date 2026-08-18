@@ -1801,3 +1801,125 @@ fn what_happens_to_a_word_with_no_counterpart() {
     println!("\n  {wrongly_kept} of 6 produced a counterpart where there is none to produce");
     println!("  every one of these should be nothing, and a kept span here is a wrong highlight");
 }
+
+/// What a word-scoped request loses when it drops the sentence.
+///
+/// [#180](https://github.com/swarea/mori-lens/issues/180) proposes choosing the
+/// scope on the hover: one modifier answers about the word, another about the
+/// sentence. The scope itself is free, because `SegmentedText` already resolves
+/// both on every accepted hover.
+///
+/// What is not free is what gets **sent**. `QuickRequest::source_text` carries a
+/// comment saying the sentence is always sent because a bare word makes a model
+/// guess and it guesses confidently. That has been an assertion with an example
+/// attached, not a measurement, since the field was written.
+///
+/// This measures it. Each case is a word whose Korean reading is decided by the
+/// sentence around it, sent twice: once inside its sentence, once alone. A word
+/// sent alone is what a naive word scope would do.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn measure_what_a_word_scoped_request_loses() {
+    let Some(translator) = live() else {
+        return;
+    };
+
+    // (sentence, focused word, the reading the sentence forces). The forced
+    // reading is one reader's judgement, which is worth saying plainly.
+    let cases: [(&str, &str, &str); 6] = [
+        (
+            "The bank of the river had eroded after a week of rain.",
+            "bank",
+            "둑",
+        ),
+        (
+            "The probe left the tray icon behind when it exited.",
+            "left",
+            "남",
+        ),
+        (
+            "Every capture is a lead the OCR path can follow.",
+            "lead",
+            "단서",
+        ),
+        (
+            "A spring in the animation made the card overshoot its resting place.",
+            "spring",
+            "스프링",
+        ),
+        (
+            "The current implementation reads the accessibility tree first.",
+            "current",
+            "현재",
+        ),
+        (
+            "The scale of the text is decided per monitor rather than once.",
+            "scale",
+            "크기",
+        ),
+    ];
+
+    println!();
+    println!("  word       forced reading  sent alone        took it");
+    let (mut took, mut answered) = (0, 0);
+    let (mut with_ms, mut alone_ms) = (0, 0);
+    let mut sentences: Vec<(&str, String)> = Vec::new();
+
+    for (sentence, word, forced) in cases {
+        let in_context = translator.quick(&QuickRequest::new(sentence, "Korean").with_focus(word));
+        let alone = translator.quick(&QuickRequest::new(word, "Korean"));
+
+        let (ctx_text, ctx_ms) = match &in_context {
+            Ok(a) => (a.text.clone(), a.latency_ms),
+            Err(e) => (format!("FAILED [{}]", e.reason()), 0),
+        };
+        let (alone_text, a_ms) = match &alone {
+            Ok(a) => (a.text.clone(), a.latency_ms),
+            Err(e) => (format!("FAILED [{}]", e.reason()), 0),
+        };
+        with_ms += ctx_ms;
+        alone_ms += a_ms;
+
+        // Only one thing is counted: did the word sent alone come back with the
+        // reading its sentence forces. A check against the expected wrong sense
+        // was tried first and is not reported, because it undercounts: this
+        // model answered "left" with a synonym of the wrong sense and "lead"
+        // with a third sense that was on neither list. Naming the failure is
+        // the reader's job; counting whether the right one appeared is not.
+        let took_forced = alone_text.contains(forced);
+        if alone.is_ok() {
+            answered += 1;
+        }
+        if took_forced {
+            took += 1;
+        }
+
+        println!(
+            "  {:<10} {:<15} {:<17} {}",
+            word,
+            forced,
+            trim_to(&alone_text, 16),
+            if took_forced { "yes" } else { "NO" },
+        );
+        sentences.push((word, ctx_text));
+    }
+
+    // The whole sentence answers, so a reader can see what the context carried.
+    // These are this repository's own fixtures, so printing them is allowed.
+    println!();
+    for (word, text) in &sentences {
+        println!("  {word:<10} {text}");
+    }
+
+    println!();
+    println!("  lone word gave the reading its sentence forces   {took} of {answered}");
+    println!("  latency over all cases   in a sentence {with_ms}ms · alone {alone_ms}ms");
+}
+
+/// Shorten for a column without cutting a character in half.
+fn trim_to(text: &str, chars: usize) -> String {
+    if text.chars().count() <= chars {
+        return text.to_owned();
+    }
+    text.chars().take(chars).collect()
+}
