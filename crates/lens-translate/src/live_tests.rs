@@ -1653,3 +1653,84 @@ fn a_long_sentence_comes_back_whole() {
     }
     println!("\n  budget clamps at 256, so every source over 77 characters gets the same room");
 }
+
+/// How often does a model switch language partway through an answer?
+///
+/// [#177](https://github.com/swarea/mori-lens/pull/177) found one: a 296
+/// character sentence came back with its tail in Chinese, the third-language
+/// rule removed the tail, and the reader was shown the surviving Korean as
+/// though it were the whole answer. The card now says `일부만 번역됨`.
+///
+/// **A caveat is the right response to a rare fault and the wrong response to a
+/// common one.** If a model does this to one sentence in three, the answer is
+/// not a footer, it is a different model. Nobody has counted.
+///
+/// `translategemma` has been installed on this machine since 2026-08-06 and has
+/// never been asked a question. `docs/benchmarks/2026-08-11-aligning-the-translation.md`
+/// lists it under what has not been measured.
+///
+/// Reports rather than asserts, for the same reason the injection probe does:
+/// which model behaves how is a measurement, and pinning it would make this a
+/// snapshot test of something that changes with a model release.
+///
+/// ```
+/// cargo test -p lens-translate -- --ignored --nocapture --test-threads=1 \
+///   measure_how_often_a_model_changes_language_partway
+/// ```
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn measure_how_often_a_model_changes_language_partway() {
+    let Some(probe) = live() else { return };
+    let installed = probe.installed_models().unwrap_or_default();
+
+    // Sentences this repository wrote, short to long, because the one that
+    // failed was the longest and length is the obvious suspect.
+    let sentences = [
+        "The pointer is the only trigger.",
+        "A capture is never written to disk.",
+        "The provider returns one rectangle per rendered line.",
+        "The acquirer gives up the moment the element at the point has no text pattern, and answers Unsupported.",
+        "A card on the wrong sentence is worse than no card, which is the sentence this repository uses to test its own translations against.",
+        "The accessibility path is tried first and the pixels are a fallback, because reading what an application already knows costs nothing and photographing the screen costs a great deal.",
+        "I am second-guessing the test ordering because the annotation does not guarantee execution order between the two tests, but looking closer, the second test's assertions hold regardless of whether the first ran, since it checks seed data and stale-write rejection independently of migration state.",
+    ];
+
+    for model in &installed {
+        let translator =
+            OllamaTranslator::new(DEFAULT_ENDPOINT, model).with_timeout(Duration::from_secs(120));
+        let mut cut = 0;
+        let mut failed = 0;
+        let mut millis = Vec::new();
+        println!("\n  {model}");
+        println!("    src   out   cut    secs");
+        for sentence in sentences {
+            match translator.quick(&QuickRequest::new(sentence, "Korean")) {
+                Ok(answer) => {
+                    cut += usize::from(answer.part_was_removed);
+                    millis.push(answer.latency_ms);
+                    println!(
+                        "    {:<5} {:<5} {:<6} {:.1}",
+                        sentence.chars().count(),
+                        answer.text.chars().count(),
+                        if answer.part_was_removed { "YES" } else { "-" },
+                        answer.latency_ms as f64 / 1000.0,
+                    );
+                }
+                Err(error) => {
+                    failed += 1;
+                    println!("    {:<5} {error}", sentence.chars().count());
+                }
+            }
+        }
+        millis.sort_unstable();
+        let median = millis.get(millis.len() / 2).copied().unwrap_or(0);
+        println!(
+            "    {cut} of {} had a tail removed, {failed} failed, median {:.1}s",
+            sentences.len(),
+            median as f64 / 1000.0,
+        );
+    }
+    println!(
+        "\n  a caveat is the right answer to a rare fault and the wrong one to a common fault"
+    );
+}
