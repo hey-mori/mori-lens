@@ -185,11 +185,20 @@ said so. Each entry is dated where it has been overtaken. An entry with a
 condition in it is spent when the condition is met, and the one below
 about a service split names its own: *until there is a UI to protect*.
 
-- **No IPC, no service split.** One process. Splitting the engine from
-  the UI adds lifecycle, versioning, install, and log-correlation
-  problems that buy nothing until there is a UI to protect. The seam that
-  makes a later split possible is the trait boundary, and that already
-  exists.
+- **No IPC, no service split.** *Condition tested 2026-08-13; the split
+  is still not here, and now for a measured reason rather than an absent
+  UI.* One process. Splitting the engine from the UI adds lifecycle,
+  versioning, install, and log-correlation problems that buy nothing
+  until there is a UI to protect. A UI is now decided
+  ([ADR-0012](decisions/ADR-0012-three-product-surfaces.md)), and it does
+  **not** force the split: a Tauri webview started beside the message
+  loop, the tray, the overlay's own thread and the UI Automation
+  apartment, and nothing refused
+  ([`does a webview fit`](benchmarks/2026-08-13-does-a-webview-fit.md)).
+  What would force a split is crash isolation, and nobody has measured
+  whether a webview failure takes the hover path down with it. The seam
+  that makes a later split possible is the trait boundary, and that
+  already exists.
 - **No async runtime.** Acquisition is synchronous on a worker thread.
   No async runtime entered with the HTTP client: it is a hand-written
   loopback client on blocking sockets, and translation runs on a worker
