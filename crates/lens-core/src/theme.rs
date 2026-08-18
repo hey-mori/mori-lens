@@ -778,8 +778,7 @@ mod problem_colour {
                 let problem = theme.problem;
                 assert!(
                     problem.r > problem.b && problem.g > problem.b,
-                    "{preset:?} dark={dark} draws a problem in {problem:?}, which is \
-                     bluer than it is warm",
+                    "{preset:?} dark={dark} draws a problem in {problem:?}, which is bluer than it is warm",
                 );
             }
         }

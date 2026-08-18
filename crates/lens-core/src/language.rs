@@ -617,8 +617,7 @@ mod readable_tests {
     /// identifiers, and a model that was right to hand it back.
     #[test]
     fn korean_prose_full_of_identifiers_is_already_readable() {
-        let line = "Compose + k8s 듀얼 트랙, Nexus, k3d culturit-system 토폴로지, \
-                    sap-vpn-proxy 경로, release dir + systemd drop-in 배포";
+        let line = "Compose + k8s 듀얼 트랙, Nexus, k3d culturit-system 토폴로지, sap-vpn-proxy 경로, release dir + systemd drop-in 배포";
         assert!(partly_readable(line, "Korean"));
     }
 
@@ -631,8 +630,7 @@ mod readable_tests {
     /// One Korean word in a paragraph of English is not "a good part of it".
     #[test]
     fn a_single_korean_word_is_not_enough() {
-        let line = "The migration ran against the 데이터베이스 and finished without an error \
-                    on the second attempt, which is what the runbook predicted.";
+        let line = "The migration ran against the 데이터베이스 and finished without an error on the second attempt, which is what the runbook predicted.";
         assert!(!partly_readable(line, "Korean"));
     }
 

@@ -525,8 +525,7 @@ pub fn run(acquirer: &UiaTextAcquirer, options: &OcrOptions) -> Result<OcrRow, S
     let Some((lines, tile_count, capture_us, recognise_us, ink)) = captured else {
         return Err(if printed_instead {
             format!(
-                "{} would not render itself. It is behind another window, and \
-                 PrintWindow declined.",
+                "{} would not render itself. It is behind another window, and PrintWindow declined.",
                 process_name.as_deref().unwrap_or("the window"),
             )
         } else {
@@ -747,9 +746,7 @@ pub fn print(row: &OcrRow) {
             share(disagreed)
         );
         println!(
-            "  The words are compared and never printed. Two methods agreeing is not a\n  \
-             person confirming, and does not close that gate row: both could be wrong the\n  \
-             same way. It says where to look."
+            "  The words are compared and never printed. Two methods agreeing is not a\n  person confirming, and does not close that gate row: both could be wrong the\n  same way. It says where to look."
         );
     }
 

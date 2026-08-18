@@ -161,8 +161,7 @@ const CACHE_ENTRIES: usize = 256;
 /// each entry is five lines rather than one.
 const ANALYSIS_ENTRIES: usize = 32;
 
-const USAGE: &str = "\
-lens · Mori Lens
+const USAGE: &str = "lens · Mori Lens
 
 USAGE
     lens [OPTIONS]
