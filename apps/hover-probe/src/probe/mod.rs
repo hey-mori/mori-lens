@@ -45,8 +45,7 @@ impl Default for Options {
     }
 }
 
-const USAGE: &str = "\
-hover-probe · Mori Lens Milestone 1 measurement instrument
+const USAGE: &str = "hover-probe · Mori Lens Milestone 1 measurement instrument
 
 USAGE
     hover-probe [OPTIONS]           follow the pointer

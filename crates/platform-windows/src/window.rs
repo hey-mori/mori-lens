@@ -354,23 +354,18 @@ pub enum ForegroundProblem {
 impl ForegroundProblem {
     pub fn explain(&self) -> String {
         match self {
-            Self::NoForegroundWindow => "Windows reports no foreground window. That happens \
-                 while activation is moving, and while a lock screen is up. Click the window \
-                 and run this again."
+            Self::NoForegroundWindow => "Windows reports no foreground window. That happens while activation is moving, and while a lock screen is up. Click the window and run this again."
                 .to_owned(),
             Self::NoClientArea => {
-                "the window in front has no client area, which a full-screen exclusive \
-                 surface does not"
+                "the window in front has no client area, which a full-screen exclusive surface does not"
                     .to_owned()
             }
             Self::TooSmall(rect) => format!(
-                "the window in front is {}x{}, under the 120x80 floor for a window worth \
-                 measuring",
+                "the window in front is {}x{}, under the 120x80 floor for a window worth measuring",
                 rect.width, rect.height,
             ),
             Self::NotEnumerated { process } => format!(
-                "the window in front ({}) has a usable client area but is not in the \
-                 enumeration, so the shell considers it hidden or minimised",
+                "the window in front ({}) has a usable client area but is not in the enumeration, so the shell considers it hidden or minimised",
                 process.as_deref().unwrap_or("unknown"),
             ),
         }
