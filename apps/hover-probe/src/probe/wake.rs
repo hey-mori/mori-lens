@@ -292,8 +292,7 @@ pub fn print(rows: &[WakeRow], options: &WakeOptions) {
     );
     if settles.is_empty() {
         println!(
-            "  Nothing to wake is a result, not a failed run: every window here had a tree\n  \
-             already, so the wake is not being paid per hover on this desktop."
+            "  Nothing to wake is a result, not a failed run: every window here had a tree\n  already, so the wake is not being paid per hover on this desktop."
         );
     } else {
         let slowest = settles.iter().max().copied().unwrap_or(0);
@@ -320,8 +319,7 @@ pub fn print(rows: &[WakeRow], options: &WakeOptions) {
         .count();
     if uncheckable > 0 {
         println!(
-            "  {uncheckable} could not be re-checked: nothing in them was still this window's\n  \
-             to ask about, which is a covered or closed window and not a cold tree.",
+            "  {uncheckable} could not be re-checked: nothing in them was still this window's\n  to ask about, which is a covered or closed window and not a cold tree.",
         );
     }
 }

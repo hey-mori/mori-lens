@@ -631,8 +631,7 @@ mod gate {
         assert_eq!(
             shown,
             vec![last],
-            "every answer but the newest must be dropped; drawing the rest is \
-             a translation shown over a sentence the reader has left",
+            "every answer but the newest must be dropped; drawing the rest is a translation shown over a sentence the reader has left",
         );
     }
 }
