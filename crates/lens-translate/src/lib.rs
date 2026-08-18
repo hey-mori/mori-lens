@@ -555,6 +555,7 @@ impl OllamaTranslator {
             model: self.model.clone(),
             latency_ms: started.elapsed().as_millis(),
             cached: false,
+            part_was_removed: false,
         })
     }
 
@@ -620,6 +621,7 @@ impl OllamaTranslator {
             model: self.model.clone(),
             latency_ms: started.elapsed().as_millis(),
             cached: false,
+            part_was_removed: false,
         })
     }
 
@@ -683,6 +685,7 @@ impl Translator for OllamaTranslator {
         // about a budget produces a paragraph of Chinese, so a retry here
         // would spend a second and a half arriving at the same text.
         let mut text = text;
+        let mut part_was_removed = false;
         if lens_core::language::wrote_in_a_third_language(
             &request.source_text,
             &text,
@@ -693,7 +696,10 @@ impl Translator for OllamaTranslator {
                 &text,
                 &request.target_language,
             ) {
-                Some(kept) => text = kept,
+                Some(kept) => {
+                    part_was_removed = true;
+                    text = kept;
+                }
                 // Nothing left that is a sentence. Better than half of one
                 // presented as a translation.
                 None => return Err(TranslateError::Malformed),
@@ -717,6 +723,7 @@ impl Translator for OllamaTranslator {
             model: self.model.clone(),
             latency_ms,
             cached: false,
+            part_was_removed,
         })
     }
 
@@ -805,6 +812,7 @@ impl Translator for OllamaTranslator {
         // about a budget produces a paragraph of Chinese, so a retry here
         // would spend a second and a half arriving at the same text.
         let mut text = text;
+        let mut part_was_removed = false;
         if lens_core::language::wrote_in_a_third_language(
             &request.source_text,
             &text,
@@ -815,7 +823,10 @@ impl Translator for OllamaTranslator {
                 &text,
                 &request.target_language,
             ) {
-                Some(kept) => text = kept,
+                Some(kept) => {
+                    part_was_removed = true;
+                    text = kept;
+                }
                 // Nothing left that is a sentence. Better than half of one
                 // presented as a translation.
                 None => return Err(TranslateError::Malformed),
@@ -839,6 +850,7 @@ impl Translator for OllamaTranslator {
             model: self.model.clone(),
             latency_ms: started.elapsed().as_millis(),
             cached: false,
+            part_was_removed,
         })
     }
 }
