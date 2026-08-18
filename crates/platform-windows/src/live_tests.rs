@@ -174,6 +174,7 @@ fn showing_a_card_does_not_move_the_foreground_window() {
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 1090,
             cached: false,
+            part_was_removed: false,
         },
     );
     assert!(overlay.show(card, ScreenRect::new(400, 300, 520, 22)));
@@ -219,6 +220,7 @@ fn the_overlay_refuses_a_translation_with_no_original() {
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 10,
             cached: false,
+            part_was_removed: false,
         },
     );
 
@@ -260,6 +262,7 @@ fn a_shown_card_has_text_painted_on_it() {
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 1090,
             cached: false,
+            part_was_removed: false,
         },
     );
     assert!(overlay.show(card, ScreenRect::new(500, 400, 400, 22)));
@@ -682,6 +685,7 @@ fn a_card_anchored_on_a_second_monitor_stays_on_it() {
                 model: "qwen2.5:3b".to_owned(),
                 latency_ms: 900,
                 cached: false,
+                part_was_removed: false,
             },
         );
         assert!(overlay.show(card, anchor));
@@ -769,6 +773,7 @@ fn a_click_on_the_card_passes_through_to_what_is_underneath() {
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 900,
             cached: false,
+            part_was_removed: false,
         },
     );
     assert!(overlay.show(card, ScreenRect::new(500, 400, 300, 22)));
@@ -1312,6 +1317,7 @@ fn one_attempt_at_reading_through_a_card() -> Result<String, String> {
                 model: "qwen2.5:3b".to_owned(),
                 latency_ms: 900,
                 cached: false,
+                part_was_removed: false,
             },
         )
     };
@@ -1653,6 +1659,7 @@ fn the_card_is_painted_with_per_pixel_alpha_and_not_a_flat_rectangle() {
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 1090,
             cached: false,
+            part_was_removed: false,
         },
     );
     let second = Card::translated(
@@ -1663,6 +1670,7 @@ fn the_card_is_painted_with_per_pixel_alpha_and_not_a_flat_rectangle() {
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 1090,
             cached: false,
+            part_was_removed: false,
         },
     );
     assert!(overlay.show(card, anchor));
@@ -1799,6 +1807,7 @@ fn a_longer_card_is_taller_and_the_renderer_is_the_one_that_says_so() {
                 model: "qwen2.5:3b".to_owned(),
                 latency_ms: 900,
                 cached: false,
+                part_was_removed: false,
             },
         )
     };
@@ -1901,6 +1910,7 @@ fn a_short_answer_gets_a_narrow_card_and_a_long_one_gets_a_wide_card() {
                 model: "qwen2.5:3b".to_owned(),
                 latency_ms: 900,
                 cached: false,
+                part_was_removed: false,
             },
         )
     };
@@ -1972,6 +1982,7 @@ fn the_same_card_is_the_same_physical_size_on_a_scaled_display() {
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 900,
             cached: false,
+            part_was_removed: false,
         },
     );
 
@@ -2144,6 +2155,7 @@ fn a_theme_set_at_runtime_changes_the_next_card() {
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 900,
             cached: false,
+            part_was_removed: false,
         },
     );
     let anchor = ScreenRect::new(500, 300, 300, 22);
@@ -2214,6 +2226,7 @@ fn measure_what_a_long_paragraph_does_to_the_card() {
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 900,
             cached: false,
+            part_was_removed: false,
         },
     );
 
@@ -2372,6 +2385,7 @@ fn measure_what_a_capture_sees_through_the_card() {
                 model: "qwen2.5:3b".to_owned(),
                 latency_ms: 900,
                 cached: false,
+                part_was_removed: false,
             },
         ),
         ScreenRect::new(400, 300, 300, 22),
@@ -2450,6 +2464,7 @@ fn dump_the_frame_around_a_card() {
             model: "qwen2.5-coder:7b".to_owned(),
             latency_ms: 3400,
             cached: false,
+            part_was_removed: false,
         },
     );
     let laid = glass
@@ -2515,6 +2530,7 @@ fn measure_how_much_of_the_page_a_card_covers() {
                 model: "qwen2.5-coder:7b".to_owned(),
                 latency_ms: 1500,
                 cached: false,
+                part_was_removed: false,
             },
         )
     };
@@ -2876,6 +2892,7 @@ fn measure_what_enlarging_a_capture_does_for_small_text() {
             model: "fixture".to_owned(),
             latency_ms: 0,
             cached: false,
+            part_was_removed: false,
         },
     );
 
@@ -3028,6 +3045,7 @@ fn measure_how_much_contrast_the_recogniser_needs() {
             model: "fixture".to_owned(),
             latency_ms: 0,
             cached: false,
+            part_was_removed: false,
         },
     );
 
@@ -3225,6 +3243,7 @@ fn cropping_before_enlarging_still_finds_the_word() {
             model: "fixture".to_owned(),
             latency_ms: 0,
             cached: false,
+            part_was_removed: false,
         },
     );
     let theme = Theme::resolve(
@@ -3404,6 +3423,7 @@ fn a_card_too_tall_for_the_screen_is_cut_rather_than_clipped() {
             model: "fixture".to_owned(),
             latency_ms: 900,
             cached: false,
+            part_was_removed: false,
         },
     );
 
