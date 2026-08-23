@@ -105,6 +105,13 @@ pub struct CacheKey {
     /// The word the reader pointed at. Always `None` on the quick path; see
     /// the note above.
     focus: Option<String>,
+    /// Who was reading. Always `None` on the quick path, which has no profile.
+    ///
+    /// Here because a profile changes the prompt, so an explanation made for a
+    /// developer is not the answer an examination reader asked for. Without
+    /// this, changing the setting and hovering the same sentence would return
+    /// the old card in seven microseconds and look like it had worked.
+    profile: Option<&'static str>,
 }
 
 impl CacheKey {
@@ -112,6 +119,7 @@ impl CacheKey {
         Self {
             asked: Asked::ToTranslate,
             focus: None,
+            profile: None,
             // Normalised, so the same sentence with different surrounding
             // whitespace is one entry. Nothing else is folded: case and
             // punctuation change meaning, and a cache that ignores them
@@ -141,6 +149,7 @@ impl CacheKey {
             model: model.to_owned(),
             prompt_version,
             focus: request.word.as_deref().map(normalise),
+            profile: Some(request.profile.as_str()),
         }
     }
 }
@@ -547,5 +556,42 @@ mod two_path_tests {
             CacheKey::for_analysis(&request, "m", 1),
             CacheKey::for_analysis(&request, "m", 2),
         );
+    }
+}
+
+#[cfg(test)]
+mod profile_key_tests {
+    use super::*;
+    use crate::analyse::Profile;
+
+    /// Two profiles are two questions, so they are two entries.
+    ///
+    /// Without this the deep cache would answer a developer's hover with the
+    /// examination reader's card, in seven microseconds, indistinguishably from
+    /// having worked.
+    #[test]
+    fn a_profile_change_is_a_different_key() {
+        let of = |profile: Profile| {
+            CacheKey::for_analysis(
+                &DeepRequest::new("The lease is renewed.", "임대는 갱신됩니다.", "Korean")
+                    .for_reader(profile),
+                "qwen2.5:7b",
+                1,
+            )
+        };
+        assert_ne!(of(Profile::Reader), of(Profile::Developer));
+        assert_ne!(of(Profile::Developer), of(Profile::Exam));
+        assert_eq!(of(Profile::Exam), of(Profile::Exam));
+    }
+
+    /// And the quick path is untouched, because it has no profile to carry.
+    #[test]
+    fn a_translation_key_carries_no_profile() {
+        let key = CacheKey::of(
+            &crate::translate::QuickRequest::new("The lease is renewed.", "Korean"),
+            "qwen2.5:7b",
+            1,
+        );
+        assert_eq!(key.profile, None);
     }
 }

@@ -33,7 +33,7 @@ use crate::policy::{AppPolicy, AppTier};
 /// Used only to give a better message when one turns up below it, so a missing
 /// entry costs a worse sentence rather than a wrong parse. Kept beside the
 /// match that handles them, which is the only way it stays right.
-const GLOBAL_KEYS: [&str; 8] = [
+const GLOBAL_KEYS: [&str; 9] = [
     "language",
     "model",
     "dwell_ms",
@@ -42,6 +42,7 @@ const GLOBAL_KEYS: [&str; 8] = [
     "endpoint",
     "ocr",
     "text",
+    "profile",
 ];
 
 /// A line the parser did not understand, and where it was.
@@ -85,6 +86,11 @@ pub struct Settings {
     /// the default because a tool that photographs the screen on its own has to
     /// be turned on by somebody (`docs/privacy-model.md` §4).
     pub ocr: String,
+    /// Who is reading, which decides what a deep explanation spends its lines
+    /// on. Stored as the written name, parsed by
+    /// [`crate::analyse::Profile::named`], so an unknown value is a reported
+    /// settings problem rather than a silent fallback.
+    pub profile: String,
     pub text: String,
     /// The tier for an application with no rule of its own.
     pub default_tier: AppTier,
@@ -102,6 +108,7 @@ impl Default for Settings {
             translucency: crate::theme::Translucency::DEFAULT.as_str().to_owned(),
             endpoint: "127.0.0.1:11434".to_owned(),
             ocr: crate::session::OcrMode::Manual.as_str().to_owned(),
+            profile: crate::analyse::Profile::default().as_str().to_owned(),
             text: "normal".to_owned(),
             // Not `allow`. A tool that reads every window from first launch has
             // to earn that, and the file is where a user grants it
@@ -251,6 +258,10 @@ impl Settings {
                 Some(mode) => self.ocr = mode.as_str().to_owned(),
                 None => reject("off, manual, or automatic"),
             },
+            "profile" => match crate::analyse::Profile::named(value) {
+                Some(profile) => self.profile = profile.as_str().to_owned(),
+                None => reject("reader, developer, or exam"),
+            },
             "endpoint" => {
                 if crate::translate::engine_for(value) == crate::translate::EngineId::LocalOllama {
                     self.endpoint = value.to_owned();
@@ -326,6 +337,13 @@ pub const TEMPLATE: &str = "# Mori Lens settings.
                                # against 0.16% idle. Nothing is written to
                                # disk either way.
 # text         = normal        # small, normal, large, larger
+# profile      = reader        # reader, developer, or exam. This changes what
+                               # Ctrl+Alt+D spends its five lines on, and
+                               # nothing about a hover. Developer asks for the
+                               # unusual sense of an ordinary word and the
+                               # jargon, and skips the parts of speech. Exam
+                               # asks for the clause pattern and what governs
+                               # what.
 
 # What Lens may do in an application it has no rule for.
 #   allow      read whenever the pointer rests
@@ -571,7 +589,7 @@ mod template_tests {
     #[test]
     fn the_template_describes_the_defaults_it_claims_to() {
         let defaults = Settings::default();
-        let claimed: [(&str, String); 7] = [
+        let claimed: [(&str, String); 8] = [
             ("language", defaults.language.clone()),
             ("dwell_ms", defaults.dwell_ms.to_string()),
             ("theme", defaults.theme.clone()),
@@ -579,6 +597,7 @@ mod template_tests {
             ("endpoint", defaults.endpoint.clone()),
             ("ocr", defaults.ocr.clone()),
             ("text", defaults.text.clone()),
+            ("profile", defaults.profile.clone()),
         ];
         for (key, value) in claimed {
             let line = TEMPLATE

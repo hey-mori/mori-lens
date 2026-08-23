@@ -2466,3 +2466,93 @@ fn ask(
     let text = crate::json::string_value_of_key(&response, "response")?;
     Some(text.trim().to_owned())
 }
+
+/// Does a profile change the card, and does it change the right rows.
+///
+/// The roadmap's M5 names developer and exam profiles. The implementation is a
+/// line in the system prompt, and a line in a prompt that sounds better is not
+/// better until it is run: this crate already carries `body_for_with_extra` for
+/// exactly that reason, and 2026-08-18 measured one well-meant prompt line that
+/// made an injection twice as likely.
+///
+/// The claim under test is narrow. Developer should leave `품사` and `구조`
+/// empty and spend `참고` on the jargon. Exam should fill `구조`.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn measure_whether_a_profile_changes_the_card() {
+    use lens_core::analyse::{Analyser, DeepRequest, Profile};
+
+    let Some(translator) = live() else {
+        return;
+    };
+
+    let cases = [
+        (
+            "The lease is renewed for the duration of the call.",
+            "임대는 호출이 지속되는 동안 갱신됩니다.",
+            "lease",
+        ),
+        (
+            "A stale element is one the tree still names but the application has dropped.",
+            "오래된 요소는 트리가 아직 이름을 가지고 있지만 애플리케이션이 버린 것입니다.",
+            "stale",
+        ),
+    ];
+
+    const RUNS: usize = 3;
+    for (sentence, translation, word) in cases {
+        println!();
+        println!("  {sentence}");
+        for profile in [Profile::Reader, Profile::Developer, Profile::Exam] {
+            // Counted per run, not unioned across them. A union hides exactly
+            // the thing under test: a profile that drops a row most of the time
+            // and not always is a different claim from one that drops it.
+            let (mut no_pos, mut has_structure, mut has_note) = (0, 0, 0);
+            let mut last = String::new();
+            let mut ms = 0u128;
+            for _ in 0..RUNS {
+                let request = DeepRequest::new(sentence, translation, "Korean")
+                    .about_the_word(word)
+                    .for_reader(profile);
+                let started = std::time::Instant::now();
+                match translator.deep(&request) {
+                    Ok(analysis) => {
+                        ms += started.elapsed().as_millis();
+                        let rows = analysis.lines();
+                        let value_of = |wanted: &str| {
+                            rows.iter()
+                                .find(|(label, _)| *label == wanted)
+                                .map(|(_, value)| value.as_str())
+                                .unwrap_or_default()
+                        };
+                        if value_of("품사").is_empty() {
+                            no_pos += 1;
+                        }
+                        if !value_of("구조").is_empty() {
+                            has_structure += 1;
+                        }
+                        if !value_of("참고").is_empty() {
+                            has_note += 1;
+                        }
+                        last = rows
+                            .iter()
+                            .filter(|(_, value)| !value.is_empty())
+                            .map(|(label, value)| format!("{label}={value}"))
+                            .collect::<Vec<_>>()
+                            .join("  ");
+                    }
+                    Err(error) => last = format!("[{}]", error.reason()),
+                }
+            }
+            let mean = ms / RUNS as u128;
+            let name = profile.as_str();
+            println!(
+                "    {name:<10} no 품사 {no_pos}/{RUNS}  구조 {has_structure}/{RUNS}  참고 {has_note}/{RUNS}  {mean}ms"
+            );
+            println!("      {last}");
+        }
+    }
+
+    println!();
+    println!("  developer should be missing 품사 and 구조. exam should have 구조.");
+}

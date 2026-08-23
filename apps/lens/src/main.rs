@@ -30,7 +30,7 @@
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use lens_core::analyse::{Analyser, DeepRequest};
+use lens_core::analyse::{Analyser, DeepRequest, Profile};
 use lens_core::cache::{AnalysisCache, CacheKey, TranslationCache};
 use lens_core::card::Card;
 use lens_core::geometry::{ScreenPoint, ScreenRect};
@@ -218,6 +218,8 @@ struct Options {
     endpoint: String,
     /// When the OCR fallback may run.
     ocr_mode: OcrMode,
+    /// Who is reading, which decides what Ctrl+Alt+D spends its lines on.
+    profile: Profile,
     dwell: Duration,
     policy: AppPolicy,
     /// Where the settings came from, and anything wrong with them. Printed at
@@ -439,6 +441,10 @@ fn parse() -> Result<Options, String> {
             .and_then(OcrMode::named)
             .or_else(|| OcrMode::named(&settings.ocr))
             .unwrap_or(OcrMode::Manual),
+        // The settings string is already validated by the parser, which reports
+        // an unknown value rather than storing it. `unwrap_or_default` is the
+        // second line of that and not the first.
+        profile: Profile::named(&settings.profile).unwrap_or_default(),
         dwell: Duration::from_millis(flags.dwell_ms.unwrap_or(settings.dwell_ms)),
         policy,
         source,
@@ -565,6 +571,17 @@ fn main() -> std::process::ExitCode {
             )
         },
     );
+    // Printed even when it is the default, because a setting the product read
+    // and did not mention is a setting a reader cannot tell it read.
+    println!(
+        "  profile   {} · {}",
+        options.profile.as_str(),
+        match options.profile {
+            Profile::Reader => "every line that can be answered",
+            Profile::Developer => "the unusual sense and the jargon, no parts of speech",
+            Profile::Exam => "the clause pattern and what governs what",
+        },
+    );
     println!(
         "  explain   {}",
         if pause.explain_is_registered() {
@@ -657,7 +674,7 @@ fn main() -> std::process::ExitCode {
                 error.reason()
             ),
         }
-        let code = selftest(&overlay, &translator, &options.language);
+        let code = selftest(&overlay, &translator, &options.language, options.profile);
         translator.release();
         return code;
     }
@@ -695,6 +712,8 @@ fn main() -> std::process::ExitCode {
         warmed.store(true, std::sync::atomic::Ordering::Relaxed);
     });
 
+    // Copied out before the move, the same way `worker_ocr` is further down.
+    let worker_profile = options.profile;
     std::thread::spawn(move || {
         // The translator lives on the worker, not shared: it holds no state
         // worth sharing and this keeps the loop free of a lock.
@@ -733,7 +752,8 @@ fn main() -> std::process::ExitCode {
                             DeepRequest::new(&job.original, translation, &job.language)
                         }
                         None => DeepRequest::about_what_they_can_read(&job.original, &job.language),
-                    };
+                    }
+                    .for_reader(worker_profile);
                     if let Some(word) = &job.focused_word {
                         request = request.about_the_word(word);
                     }
@@ -2072,6 +2092,7 @@ fn selftest(
     overlay: &Overlay,
     translator: &OllamaTranslator,
     language: &str,
+    profile: Profile,
 ) -> std::process::ExitCode {
     use lens_core::acquire::{AcquireContext, TextAcquirer};
     use lens_core::geometry::ScreenPoint;
@@ -2328,7 +2349,7 @@ total {}ms from acquisition to card",
     // seconds to answer.
     if let Some(translation) = translated {
         overlay.show(Card::explaining(&sentence), anchor);
-        let mut deep = DeepRequest::new(&sentence, &translation, language);
+        let mut deep = DeepRequest::new(&sentence, &translation, language).for_reader(profile);
         if let Some(word) = &word {
             deep = deep.about_the_word(word);
         }
