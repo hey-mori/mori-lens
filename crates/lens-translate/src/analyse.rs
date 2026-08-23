@@ -25,7 +25,7 @@
 
 use std::time::Instant;
 
-use lens_core::analyse::{Analyser, DeepAnalysis, DeepRequest, DEEP_TIMEOUT};
+use lens_core::analyse::{Analyser, DeepAnalysis, DeepRequest, Profile, DEEP_TIMEOUT};
 use lens_core::translate::TranslateError;
 
 use crate::{http, json, OllamaTranslator};
@@ -114,7 +114,29 @@ fn system_prompt(request: &DeepRequest, fence: &str) -> String {
     }
 
     prompt.push_str("\nIn \"note\", give one idiom, register or false-friend worth knowing, or an empty string. Most sentences need no note and an empty string is the expected answer.");
+
+    // Last, and in the system prompt rather than after the material. The
+    // position matters: a defensive line placed after the fenced text took an
+    // injection from 9 of 18 to 18 of 18 on 2026-08-18
+    // (docs/benchmarks/2026-08-18-does-hardening-the-fence-help.md). This is a
+    // preference rather than a defence, and it still goes where instructions
+    // go.
+    prompt.push_str(profile_line(request.profile));
     prompt
+}
+
+/// The line a profile adds, or nothing for the reader the product already had.
+///
+/// Here rather than in `lens-core` because it is model-facing English and the
+/// prompt is this crate's business. `lens-core` owns the type, the name it is
+/// written as in the settings file, and the rule that a profile changes nothing
+/// about what can be answered.
+fn profile_line(profile: Profile) -> &'static str {
+    match profile {
+        Profile::Reader => "",
+        Profile::Developer => "\nThe reader writes software. Spend \"note\" on the jargon: an acronym, an API term, or an ordinary word being used in a technical sense. Leave \"part_of_speech\" and \"structure\" as empty strings, which this reader is not short of.",
+        Profile::Exam => "\nThe reader is studying this language for an examination. Fill \"structure\" with the clause pattern and what governs what, and make \"part_of_speech\" the word's role in this sentence rather than its class alone.",
+    }
 }
 
 impl OllamaTranslator {
