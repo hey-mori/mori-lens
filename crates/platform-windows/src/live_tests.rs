@@ -4341,3 +4341,152 @@ fn a_marked_pair_puts_more_ink_on_the_card() {
         "a counterpart that is not in the translation was marked anyway",
     );
 }
+
+/// The last open condition in M2: a card over a full-screen application.
+///
+/// The gate has read **open** since the milestone was written, because checking
+/// it meant a person putting something into full screen and looking. A window
+/// that covers the primary monitor is buildable, so this builds two: one
+/// ordinary and one topmost, which is the difference between a maximised
+/// application and a video player.
+///
+/// **Z-order, not pixels.** `WindowFromPoint` cannot answer this: the overlay
+/// is `WS_EX_TRANSPARENT` and that call skips transparent windows by design, so
+/// it would name the window underneath even when the card is drawn perfectly.
+/// Walking the z-order asks the question directly.
+///
+/// **Borderless, not exclusive.** A DirectX flip-model swap chain takes the
+/// display out from under the compositor and nothing another process draws is
+/// guaranteed over it. That case still needs a game and a person, and this test
+/// says so rather than implying it covered them.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn a_card_draws_over_a_full_screen_window() {
+    use lens_core::card::Card;
+    use lens_core::geometry::ScreenRect;
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    for topmost in [false, true] {
+        let kind = if topmost { "topmost" } else { "ordinary" };
+        let Some(harness) = crate::fullscreen_harness::FullScreenHarness::start(topmost) else {
+            panic!("could not create the {kind} full-screen window");
+        };
+        let Some(overlay) = crate::Overlay::start() else {
+            panic!("could not create the overlay window");
+        };
+
+        // SAFETY: read-only.
+        let before = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+
+        let covers = harness.covers();
+        let card = Card::translated(
+            "The output files came back empty.",
+            &QuickTranslation {
+                text: "출력 파일은 비어있었습니다.".to_owned(),
+                engine: EngineId::LocalOllama,
+                model: "qwen2.5:7b".to_owned(),
+                latency_ms: 1090,
+                cached: false,
+                part_was_removed: false,
+            },
+        );
+        let anchor = ScreenRect::new(
+            covers.x + covers.width / 3,
+            covers.y + covers.height / 2,
+            420,
+            22,
+        );
+        assert!(overlay.show(card, anchor));
+        std::thread::sleep(std::time::Duration::from_millis(700));
+
+        let above = z_order_of(overlay.window_id());
+        let below = z_order_of(harness.window_id());
+        let rect = card_rect(&overlay);
+        println!(
+            "  {kind:<9} monitor {}x{}  harness at z {below:?}  overlay at z {above:?}  card {}x{} at ({}, {})",
+            covers.width,
+            covers.height,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+            rect.left,
+            rect.top,
+        );
+
+        // SAFETY: read-only.
+        let after = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+        assert_eq!(
+            before.0 as isize, after.0 as isize,
+            "{kind}: the overlay stole focus from the full-screen window",
+        );
+
+        // The harness has to actually cover the monitor, or this test passes on
+        // a window that was never full screen.
+        let harness_rect = rect_of(harness.window_id());
+        assert_eq!(
+            (
+                harness_rect.right - harness_rect.left,
+                harness_rect.bottom - harness_rect.top
+            ),
+            (covers.width, covers.height),
+            "{kind}: the harness did not cover the monitor it was given",
+        );
+
+        // The card has to be inside the monitor, or "above" means above
+        // something it is not overlapping.
+        assert!(
+            rect.left >= covers.x && rect.right <= covers.x + covers.width,
+            "{kind}: the card is off the monitor the full-screen window covers",
+        );
+
+        let (Some(above), Some(below)) = (above, below) else {
+            panic!("{kind}: one of the two windows is not in the z-order at all");
+        };
+        assert!(
+            above < below,
+            "{kind}: the card is behind the full-screen window, at z {above} against {below}",
+        );
+
+        assert!(overlay.hide());
+        drop(harness);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+}
+
+/// Where a window sits in the desktop z-order, counting from the front.
+///
+/// `None` means it is not in the list, which is a different fact from being
+/// last and is worth not collapsing.
+fn z_order_of(window_id: i64) -> Option<usize> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{GetTopWindow, GetWindow, GW_HWNDNEXT};
+
+    let wanted = window_id as isize;
+    // SAFETY: two read-only z-order queries. The walk is bounded so a desktop
+    // that changes underneath it cannot spin.
+    unsafe {
+        let mut current = GetTopWindow(None).ok()?;
+        for index in 0..4096 {
+            if current.0 as isize == wanted {
+                return Some(index);
+            }
+            match GetWindow(current, GW_HWNDNEXT) {
+                Ok(next) if next != HWND::default() => current = next,
+                _ => return None,
+            }
+        }
+    }
+    None
+}
+
+/// A window's rectangle in physical screen pixels.
+fn rect_of(window_id: i64) -> windows::Win32::Foundation::RECT {
+    let mut rect = windows::Win32::Foundation::RECT::default();
+    // SAFETY: a read-only query for a window this process created.
+    unsafe {
+        let _ = windows::Win32::UI::WindowsAndMessaging::GetWindowRect(
+            windows::Win32::Foundation::HWND(window_id as *mut _),
+            &mut rect,
+        );
+    }
+    rect
+}
