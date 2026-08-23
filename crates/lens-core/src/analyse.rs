@@ -100,6 +100,59 @@ pub struct DeepRequest {
     /// The language the explanation is written in. The reader's, not the
     /// source's.
     pub target_language: String,
+    /// Who is reading, which decides what the explanation spends its lines on.
+    pub profile: Profile,
+}
+
+/// Who the reader is, which decides what an explanation spends its lines on.
+///
+/// Named in the roadmap's M5 as *developer and exam profiles* and not started
+/// until now. The card holds five rows inside 300 logical pixels and a reader
+/// is not short of all five: somebody reading an error message wants the
+/// unusual sense of an ordinary word, and somebody studying for an examination
+/// wants the clause pattern. Giving both to both is how a card runs out of
+/// room.
+///
+/// **This changes what is asked for, not what is filtered afterwards**, which
+/// is the rule [`Answerable`] already follows and for the same reason: a model
+/// told to describe the structure will describe one, and dropping it afterwards
+/// means the reader waited for it.
+///
+/// **It does not change the schema.** All five fields stay required, because
+/// `FIELDS` in `lens-translate` is one list used to build the schema and read
+/// the answer back, and the failure when those disagree is silent. The prompt
+/// asks for an empty string instead, which the card already drops.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Profile {
+    /// Somebody reading a language they are learning. Every row that can be
+    /// answered is worth a line.
+    #[default]
+    Reader,
+    /// Somebody reading code, an error, or documentation.
+    Developer,
+    /// Somebody studying the language for an examination.
+    Exam,
+}
+
+impl Profile {
+    /// Parse the settings value, or `None` so the caller can say what is valid.
+    pub fn named(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "reader" => Some(Self::Reader),
+            "developer" => Some(Self::Developer),
+            "exam" => Some(Self::Exam),
+            _ => None,
+        }
+    }
+
+    /// The name this is written as in `settings.conf`.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Reader => "reader",
+            Self::Developer => "developer",
+            Self::Exam => "exam",
+        }
+    }
 }
 
 /// Which parts of an analysis this request can actually be answered with.
@@ -134,7 +187,14 @@ impl DeepRequest {
             word: None,
             translation: Some(translation.into()).filter(|text: &String| !text.trim().is_empty()),
             target_language: target_language.into(),
+            profile: Profile::default(),
         }
+    }
+
+    /// Say who is reading. Absent, this is [`Profile::Reader`].
+    pub fn for_reader(mut self, profile: Profile) -> Self {
+        self.profile = profile;
+        self
     }
 
     /// A request about text the reader can already read.
@@ -151,6 +211,7 @@ impl DeepRequest {
             word: None,
             translation: None,
             target_language: target_language.into(),
+            profile: Profile::default(),
         }
     }
 
@@ -925,5 +986,57 @@ mod counterpart_tests {
             ..DeepAnalysis::default()
         };
         assert_eq!(without.lines().len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use crate::analyse::{DeepRequest, Profile};
+
+    /// The settings value round-trips, and an unknown one is refused here
+    /// rather than silently becoming the default somewhere downstream.
+    #[test]
+    fn a_profile_is_named_the_way_it_is_written() {
+        for profile in [Profile::Reader, Profile::Developer, Profile::Exam] {
+            assert_eq!(Profile::named(profile.as_str()), Some(profile));
+        }
+        assert_eq!(Profile::named("  Developer  "), Some(Profile::Developer));
+        assert_eq!(Profile::named("student"), None);
+        assert_eq!(Profile::named(""), None);
+    }
+
+    /// Absent, a request is for the reader the product already had.
+    ///
+    /// Worth a test rather than a glance: this is what keeps a settings file
+    /// written before profiles existed behaving exactly as it did.
+    #[test]
+    fn a_request_without_a_profile_is_the_one_that_shipped() {
+        assert_eq!(
+            DeepRequest::new("a sentence", "a translation", "Korean").profile,
+            Profile::Reader,
+        );
+        assert_eq!(
+            DeepRequest::about_what_they_can_read("a sentence", "Korean").profile,
+            Profile::Reader,
+        );
+    }
+
+    /// A profile does not decide what can be answered, only what is asked for.
+    ///
+    /// The two were nearly folded together, and folding them would have taken
+    /// the deep path away from a developer hovering a sentence with no word
+    /// under the pointer: `anything()` would have been false and the follow-up
+    /// would never have been offered.
+    #[test]
+    fn a_profile_does_not_change_what_is_answerable() {
+        let sentence = "The lease is renewed for the duration of the call.";
+        let plain = DeepRequest::new(sentence, "번역", "Korean").answerable();
+        for profile in [Profile::Reader, Profile::Developer, Profile::Exam] {
+            let with = DeepRequest::new(sentence, "번역", "Korean")
+                .for_reader(profile)
+                .answerable();
+            assert_eq!(with, plain, "{profile:?} changed what can be answered");
+            assert!(with.anything(), "{profile:?} lost the follow-up entirely");
+        }
     }
 }
