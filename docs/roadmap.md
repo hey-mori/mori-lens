@@ -208,7 +208,25 @@ appends the card to `saved.md` beside the settings file, in plain
 Markdown, carrying the AI-explanation label when what is saved is an
 explanation.
 
-Not started: the developer and exam profiles.
+The developer and exam profiles are built, 2026-08-18. A profile is one
+line in the deep system prompt and a name in `settings.conf`. It changes
+what is asked for rather than what is filtered afterwards, which is the
+rule `Answerable` already followed, and it does **not** change the schema:
+all five fields stay required, because one list builds the schema and
+reads the answer back and the failure when those disagree is silent.
+
+Measured over twelve runs a profile
+([`what a profile changes`](benchmarks/2026-08-18-what-a-profile-changes.md)):
+
+| Claim | Result |
+|---|---|
+| developer drops the part of speech | 12 of 12 |
+| developer drops the clause structure | 11 of 12 |
+| exam fills the clause structure | 11 of 12, against 7 for the shipped profile |
+| developer spends the note on jargon | **1 of 24, and left alone.** The shipped instruction says most sentences need no note, and it is right; a profile line strong enough to beat it would put a note on every card |
+| fewer rows are faster | no. The rows a profile drops are short and the sense line dominates |
+
+Not started: nothing else in M5 except the two open conditions above.
 
 ## M6 · macOS acquisition
 
