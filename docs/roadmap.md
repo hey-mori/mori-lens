@@ -63,7 +63,7 @@ Standing, 2026-08-05:
 | no card spray on fast movement | measured: a pointer crossing a monitor draws zero cards, and six queued answers draw one |
 | Lens never reads its own overlay | measured: 193 characters read identically with a card drawn over that exact point |
 | more than one monitor | measured: a card anchored on the second monitor stays on it |
-| a full-screen application | **open** |
+| a full-screen application | measured 2026-08-18: a card is in front of a borderless full-screen window at z 13 against 38, and of a topmost one at 13 against 18, with the foreground window unchanged. **Exclusive full screen is not covered** and still needs a game and a person ([`a card over a full-screen window`](benchmarks/2026-08-18-a-card-over-a-full-screen-window.md)) |
 | tray icon | built and measured: the shell accepts it, a click becomes a pause, and it leaves on exit |
 | per-application tiers | built: set in the settings file, with the password-manager floor unreachable by omission |
 

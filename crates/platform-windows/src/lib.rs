@@ -33,6 +33,8 @@ pub mod welcome;
 mod window;
 
 #[cfg(test)]
+mod fullscreen_harness;
+#[cfg(test)]
 mod live_tests;
 #[cfg(test)]
 mod protected_harness;
