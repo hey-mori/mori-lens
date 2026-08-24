@@ -766,10 +766,16 @@ impl Glass {
             // It carries the whole boundary, so it was drawn firmly rather than
             // apologetically: 0.30 while a shadow drew a second edge outside
             // it, then 0.65 once the shadow went. 0.65 became the box on its
-            // own. The figure lives in `Theme::BORDER_ALPHA` now, with the
-            // measurement that bounds it from both sides.
-            if let Ok(brush) =
-                target.CreateSolidColorBrush(&colour(theme.border, theme.border_alpha), None)
+            // own.
+            //
+            // **Opaque, and softened in the colour instead.** Drawn at partial
+            // alpha it took part of its colour from the page, so one line read
+            // differently along its own length, which over a page of text is
+            // blotchy rather than thin and is the recorded reason this product
+            // stopped shipping a translucent card. `Theme::edge_colour` mixes
+            // the softness in ahead of time, so the line is one colour at every
+            // point and translucency costs it nothing.
+            if let Ok(brush) = target.CreateSolidColorBrush(&colour(theme.edge_colour(), 1.0), None)
             {
                 target.DrawRoundedRectangle(
                     &D2D1_ROUNDED_RECT {

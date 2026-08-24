@@ -78,12 +78,31 @@ impl Translucency {
     /// so changing the product's default left every diagnostic drawing the old
     /// card and reporting it as the current one.
     ///
-    /// **Opaque.** A translucent panel takes part of its edge colour from
-    /// whatever is behind it, so one hairline reads differently along its own
-    /// length, and over a page of text that looks blotchy rather than thin. The
-    /// other levels stay available and a user can ask for them; they are just
-    /// not what a reading tool starts with.
-    pub const DEFAULT: Self = Self::Solid;
+    /// **Translucent again, 2026-08-18.** It was opaque, and the reason given
+    /// was that a translucent panel takes part of its edge colour from whatever
+    /// is behind it, so one hairline reads differently along its own length and
+    /// over a page of text looks blotchy rather than thin.
+    ///
+    /// That was true of an edge drawn at partial alpha, and measuring it found
+    /// the fix was in the edge rather than in the surface. The same hairline,
+    /// seen over a white page and a black one, as a contrast between the two:
+    ///
+    /// ```text
+    ///                 drawn at alpha   drawn as a colour
+    ///   solid         1.00             1.00
+    ///   balanced      1.06 to 1.16     1.00
+    ///   clear         1.14 to 1.37     1.00
+    /// ```
+    ///
+    /// [`Theme::edge_colour`] mixes the softness in ahead of time and the line
+    /// is drawn opaque, so it is one colour at every point. The blotchiness is
+    /// structurally zero rather than small, which is what makes this reversible
+    /// and what `the_hairline_does_not_take_its_colour_from_the_page` asserts.
+    ///
+    /// `Clear` rather than `Balanced` because a reader asked for the glass
+    /// back, and at 236 of 255 there is not much to see. Both other levels stay
+    /// available in `settings.conf`.
+    pub const DEFAULT: Self = Self::Clear;
 
     /// The name this level is written under in the settings file.
     ///
@@ -307,8 +326,9 @@ impl Theme {
     /// ```text
     ///                     edge against the surface   edge against the page
     ///   0.65 (was)        1.42                       1.46
-    ///   0.42 (is)         1.24                       1.27
-    ///   0.30              1.16                       1.20
+    ///   0.42 (is)         1.24                       1.29
+    ///   0.30              1.16                       1.21
+    ///   0.25              1.13                       1.17, under the floor
     /// ```
     ///
     /// The first column is the box the reader kept seeing and the second is the
@@ -322,25 +342,51 @@ impl Theme {
     /// to 0.65 to escape.
     pub const FAINTEST_USABLE_EDGE: f64 = 1.2;
 
-    /// The hairline as it appears over `behind`, contrasted with that page.
+    /// The hairline's colour, which does not depend on what is behind it.
     ///
-    /// The edge is drawn on top of the surface, which is itself translucent
-    /// over the page, so both compositing steps are here rather than assumed.
+    /// **Softened by colour rather than by alpha, and that is the whole point.**
+    /// A hairline drawn at partial alpha takes part of its colour from the page,
+    /// so it reads differently along its own length over a page of text. That
+    /// blotchiness is the recorded reason the product stopped shipping a
+    /// translucent card at all.
+    ///
+    /// Measured 2026-08-18, the same edge seen over a white page and a black
+    /// one, as a contrast between the two:
+    ///
+    /// ```text
+    ///                       drawn at alpha   drawn as a colour
+    ///   solid               1.00             1.00
+    ///   balanced            1.06 to 1.16     1.00
+    ///   clear               1.14 to 1.37     1.00
+    /// ```
+    ///
+    /// And it gets **worse** as the line is softened, which was the surprise: a
+    /// fainter line is more surface and less border, and the surface is the part
+    /// that varies. Softening the edge and making it translucent are the same
+    /// mistake twice.
+    ///
+    /// Mixed here instead, and drawn opaque, so the line is one colour at every
+    /// point regardless of the page and regardless of the translucency setting.
+    pub fn edge_colour(&self) -> Rgb {
+        self.surface.mix(self.border, f64::from(self.border_alpha))
+    }
+
+    /// The hairline contrasted with the page behind the card.
+    ///
+    /// This is the card having an edge at all.
     pub fn edge_against(&self, behind: Rgb) -> f64 {
-        self.edge_over(behind).contrast_with(behind)
+        self.edge_colour().contrast_with(behind)
     }
 
-    /// The same hairline, contrasted with the card it sits on.
+    /// The hairline contrasted with the card it sits on.
     ///
-    /// This is the number that reads as a box when it is large.
-    pub fn edge_within(&self, behind: Rgb) -> f64 {
-        let surface = self.effective_surface(behind);
-        self.edge_over(behind).contrast_with(surface)
-    }
-
-    fn edge_over(&self, behind: Rgb) -> Rgb {
-        self.effective_surface(behind)
-            .mix(self.border, f64::from(self.border_alpha))
+    /// This is the number that reads as a box when it is large. Measured
+    /// against the surface's own colour rather than the composited one: the
+    /// edge is a fixed colour and this is the design intent, where what a
+    /// translucent card does to that relationship is a consequence and is
+    /// bounded by [`Theme::edge_against`] instead.
+    pub fn edge_within(&self) -> f64 {
+        self.edge_colour().contrast_with(self.surface)
     }
 
     /// Resolve a preset and the user's two choices against what the system
@@ -616,17 +662,17 @@ mod tests {
                     ..SystemPreferences::default()
                 };
                 let theme = Theme::resolve(preset, Translucency::Clear, TextScale::Normal, system);
+                let within = theme.edge_within();
+                assert!(
+                    within <= READS_AS_A_BOX,
+                    "{} draws a box, not an outline: {within:.2}",
+                    preset.as_str(),
+                );
                 for page in [Rgb::new(255, 255, 255), Rgb::new(0, 0, 0)] {
                     let against = theme.edge_against(page);
-                    let within = theme.edge_within(page);
                     assert!(
                         against >= Theme::FAINTEST_USABLE_EDGE,
                         "{} on {page:?} has no findable edge: {against:.2}",
-                        preset.as_str(),
-                    );
-                    assert!(
-                        within <= READS_AS_A_BOX,
-                        "{} on {page:?} draws a box, not an outline: {within:.2}",
                         preset.as_str(),
                     );
                 }
@@ -634,11 +680,76 @@ mod tests {
         }
     }
 
-    /// The floor is where it says it is, and 0.30 does not clear it.
+    /// The hairline is one colour, whatever is behind the card.
+    ///
+    /// This is what makes a translucent card possible at all. The edge used to
+    /// be drawn at partial alpha, so it took part of its colour from the page
+    /// and read differently along its own length; over a page of text that is
+    /// blotchy rather than thin, and it is the recorded reason the product
+    /// stopped shipping translucency.
+    ///
+    /// Measured at every level, because the failure only appears at some of
+    /// them and a test at the default would have seen nothing.
+    #[test]
+    fn the_hairline_does_not_take_its_colour_from_the_page() {
+        for translucency in [
+            Translucency::Solid,
+            Translucency::Balanced,
+            Translucency::Clear,
+        ] {
+            for preset in Preset::ALL {
+                let theme = Theme::resolve(
+                    preset,
+                    translucency,
+                    TextScale::Normal,
+                    SystemPreferences::default(),
+                );
+                // One colour, computed without reference to any page.
+                let edge = theme.edge_colour();
+                assert_eq!(
+                    theme.edge_against(Rgb::new(255, 255, 255)),
+                    edge.contrast_with(Rgb::new(255, 255, 255)),
+                );
+                assert_eq!(
+                    theme.edge_against(Rgb::new(0, 0, 0)),
+                    edge.contrast_with(Rgb::new(0, 0, 0)),
+                );
+            }
+        }
+    }
+
+    /// Translucency changes the card and not its edge.
+    ///
+    /// The property the previous test states structurally, stated again as the
+    /// thing a reader would notice: the same preset at three levels draws the
+    /// same hairline.
+    #[test]
+    fn every_translucency_draws_the_same_hairline() {
+        for preset in Preset::ALL {
+            let of = |translucency| {
+                Theme::resolve(
+                    preset,
+                    translucency,
+                    TextScale::Normal,
+                    SystemPreferences::default(),
+                )
+                .edge_colour()
+            };
+            assert_eq!(of(Translucency::Solid), of(Translucency::Balanced));
+            assert_eq!(of(Translucency::Solid), of(Translucency::Clear));
+        }
+    }
+
+    /// The floor is where it says it is, and 0.25 does not clear it.
     ///
     /// Without this the constant could drift down one commit at a time and the
     /// test above would keep passing, because it only ever measures the value
     /// that is set.
+    ///
+    /// The failing figure was 0.30 while the edge was drawn at partial alpha.
+    /// A fixed colour holds up better against a page, so 0.30 now clears the
+    /// floor and 0.25 is the nearest value that does not. That is the bound
+    /// moving because the drawing changed, not because the floor did.
     #[test]
     fn a_fainter_hairline_would_lose_the_edge() {
         let system = SystemPreferences::default();
@@ -651,10 +762,10 @@ mod tests {
         let page = Rgb::new(255, 255, 255);
         assert!(theme.edge_against(page) >= Theme::FAINTEST_USABLE_EDGE);
 
-        theme.border_alpha = 0.30;
+        theme.border_alpha = 0.25;
         assert!(
             theme.edge_against(page) < Theme::FAINTEST_USABLE_EDGE,
-            "0.30 clears the floor, so the floor is not measuring anything",
+            "0.25 clears the floor, so the floor is not measuring anything",
         );
     }
 
