@@ -893,15 +893,9 @@ unsafe fn paint(window: HWND) {
 
         let theme = current_theme();
         let background: HBRUSH = CreateSolidBrush(colorref(theme.surface));
-        // Blended towards the surface rather than drawn at full strength, so
-        // the two renderers agree on how firm the card's edge is. GDI has no
-        // alpha here: mixing the colour is the same arithmetic Direct2D does
-        // with `border_alpha`, done ahead of time.
-        let border: HBRUSH = CreateSolidBrush(colorref(
-            theme
-                .surface
-                .mix(theme.border, f64::from(theme.border_alpha)),
-        ));
+        // The same fixed colour the Direct2D path strokes, so the two renderers
+        // draw one design. `Theme::edge_colour` is where the softness lives.
+        let border: HBRUSH = CreateSolidBrush(colorref(theme.edge_colour()));
         FillRect(target, &rect, background);
         FrameRect(target, &rect, border);
         let _ = DeleteObject(background.into());
