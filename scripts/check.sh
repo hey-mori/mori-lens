@@ -37,6 +37,21 @@ if git ls-files '*.rs' | xargs grep -nP '"[^"]*\\\s*$'; then
   exit 1
 fi
 
+# The strongest promise in this project, kept by refusing the construct.
+#
+# `capture.rs` reads pixels the user did not choose to give it, and CLAUDE.md
+# says twice that nothing it reads may reach disk, ever, including for
+# debugging. A live check watches for the result
+# (`an_ocr_acquisition_writes_nothing_to_disk`), and a check that looks for a
+# file appearing can only fail after one has. This fails on the way to write
+# one, which is the half that can be enforced rather than observed.
+step "no file API in the capture path"
+if git ls-files 'crates/platform-windows/src/capture.rs' 'crates/platform-windows/src/ocr_acquire.rs' | xargs grep -nE 'fs::|File::|CreateFile|WriteFile|BitmapEncoder|SaveToStream'; then
+  printf '\nthe capture path must not touch a file. See docs/privacy-model.md\n'
+  printf 'and the module comment at the top of capture.rs.\n'
+  exit 1
+fi
+
 step "cargo fmt --check"
 cargo fmt --all -- --check
 
