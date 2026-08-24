@@ -122,6 +122,16 @@ both work; Lens never recognises its own overlay; no captured image
 reaches disk; and VS Code and KakaoTalk, the two applications that
 prompted the swap, are measured again with it.
 
+Standing, 2026-08-18:
+
+| Condition | State |
+|---|---|
+| OCR never runs unasked | measured, and it was already measured before this row was written. `lens_core::contract_tests` covers all four cases against an acquirer that counts its calls: a successful accessibility read never reaches OCR, `automatic` falls through, `manual` runs only when asked, and a protected field is refused in every mode. `ocr_that_is_off_does_not_run_even_when_asked_for` closes the fourth mode, added 2026-08-18 after the other three turned out to be covered and `off` did not |
+| a scanned PDF and an image-text case | **open**. Needs the files and a person |
+| Lens never recognises its own overlay | **open** for the OCR path. The accessibility half is measured under M2 |
+| no captured image reaches disk | measured 2026-08-18, both halves: `scripts/check.sh` refuses a file API in `capture.rs` and `ocr_acquire.rs`, and `an_ocr_acquisition_writes_nothing_to_disk` takes real screenshots against a redirected temporary directory and watches where they could land ([`nothing reaches disk`](benchmarks/2026-08-18-nothing-reaches-disk.md)). **Two earlier versions of that test were green and worthless**, and the benchmark keeps both |
+| VS Code and KakaoTalk measured again | **open**. Needs those applications running |
+
 **"Unasked" means as installed, and that is the whole of it.** As of
 2026-08-06 `ocr = automatic` exists, and under it a hover the
 accessibility path could not serve falls through to pixels with no
