@@ -164,6 +164,44 @@ fn manual_ocr_does_not_run_unless_the_user_asked() {
     assert_eq!(ocr_calls.get(), 1);
 }
 
+/// `off` means off, including when the chord is pressed.
+///
+/// The other three modes were covered and this one was not. It is the mode a
+/// reader picks when they want the capture path dead rather than polite, so
+/// "asked for it" must not be a way back in: `Ctrl+Alt+O` is a request and this
+/// setting is a refusal, and the refusal is the one that stands.
+#[test]
+fn ocr_that_is_off_does_not_run_even_when_asked_for() {
+    let (accessibility, _) =
+        FakeAcquirer::failing(AcquisitionSource::Accessibility, AcquireError::Unsupported);
+    let (ocr, ocr_calls) = FakeAcquirer::reading(AcquisitionSource::Ocr, "Read from pixels.");
+
+    let mut session = session(accessibility).with_ocr(Box::new(ocr), OcrMode::Off);
+    let generation = settle(&mut session, POINT);
+
+    let unasked = session.resolve(generation, POINT, ms(400), InputState::default());
+    assert!(matches!(
+        unasked,
+        Resolution::Failed(AcquireError::Unsupported)
+    ));
+    assert_eq!(ocr_calls.get(), 0, "OCR ran while it was off");
+
+    let asked = session.resolve(
+        generation,
+        POINT,
+        ms(500),
+        InputState {
+            ocr_requested: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        matches!(asked, Resolution::Failed(AcquireError::Unsupported)),
+        "asking turned an off setting back on: {asked:?}",
+    );
+    assert_eq!(ocr_calls.get(), 0, "asking turned an off setting back on");
+}
+
 #[test]
 fn a_protected_field_never_reaches_ocr() {
     // The rule with teeth: OCR would read a password field's rendered
