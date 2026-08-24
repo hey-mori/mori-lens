@@ -204,6 +204,27 @@ pub struct SystemColours {
 pub struct Theme {
     pub surface: Rgb,
     pub border: Rgb,
+    /// How firmly the card's single hairline is drawn, 0 to 1.
+    ///
+    /// **The whole boundary rests on this.** There is no shadow: it was built
+    /// three times, called a weird box every time by the reader it was for, and
+    /// removed rather than tuned a fourth time. The hairline was raised to 0.65
+    /// then, to carry alone what two elements had been carrying.
+    ///
+    /// 0.65 turned out to be the box. Lowered 2026-08-18 to the figure below,
+    /// on numbers rather than on a second opinion, and the numbers say
+    /// something worth knowing: **on a light card over a light page the edge's
+    /// boxiness and its usefulness are the same measurement.** The card's own
+    /// surface composites to nearly the page's colour, so the hairline is both
+    /// the only thing separating them and the only thing standing out inside
+    /// them. Softening one softens the other and there is no setting that does
+    /// not.
+    ///
+    /// What that leaves is a floor rather than a preference:
+    /// [`Theme::edge_against`] must stay above [`Theme::FAINTEST_USABLE_EDGE`]
+    /// for every preset over both a white and a black page, which 0.30 does not
+    /// clear and this does.
+    pub border_alpha: f32,
     /// The translation. The brightest thing on the card.
     pub body: Rgb,
     /// The original, deliberately quieter but never unreadable.
@@ -279,6 +300,49 @@ pub const MIN_ORIGINAL_CONTRAST: f64 = 3.0;
 pub const MIN_FOOTER_CONTRAST: f64 = 3.0;
 
 impl Theme {
+    /// How firmly the hairline is drawn. See [`Theme::border_alpha`].
+    ///
+    /// Measured over a white page, where a light card has no other boundary:
+    ///
+    /// ```text
+    ///                     edge against the surface   edge against the page
+    ///   0.65 (was)        1.42                       1.46
+    ///   0.42 (is)         1.24                       1.27
+    ///   0.30              1.16                       1.20
+    /// ```
+    ///
+    /// The first column is the box the reader kept seeing and the second is the
+    /// card having an edge at all. They move together, which is the finding.
+    pub const BORDER_ALPHA: f32 = 0.42;
+
+    /// The least an edge may contrast with the page behind it.
+    ///
+    /// Not a taste figure. Below this, a light card on a white page has no
+    /// boundary a reader can find, which is the state the hairline was raised
+    /// to 0.65 to escape.
+    pub const FAINTEST_USABLE_EDGE: f64 = 1.2;
+
+    /// The hairline as it appears over `behind`, contrasted with that page.
+    ///
+    /// The edge is drawn on top of the surface, which is itself translucent
+    /// over the page, so both compositing steps are here rather than assumed.
+    pub fn edge_against(&self, behind: Rgb) -> f64 {
+        self.edge_over(behind).contrast_with(behind)
+    }
+
+    /// The same hairline, contrasted with the card it sits on.
+    ///
+    /// This is the number that reads as a box when it is large.
+    pub fn edge_within(&self, behind: Rgb) -> f64 {
+        let surface = self.effective_surface(behind);
+        self.edge_over(behind).contrast_with(surface)
+    }
+
+    fn edge_over(&self, behind: Rgb) -> Rgb {
+        self.effective_surface(behind)
+            .mix(self.border, f64::from(self.border_alpha))
+    }
+
     /// Resolve a preset and the user's two choices against what the system
     /// asks for.
     pub fn resolve(
@@ -367,6 +431,7 @@ impl Theme {
         Self {
             surface,
             border,
+            border_alpha: Self::BORDER_ALPHA,
             body,
             original,
             footer,
@@ -524,6 +589,72 @@ mod tests {
         assert!(
             flattering > honest,
             "the old model reported {flattering:.2} where the real one gives {honest:.2}",
+        );
+    }
+
+    /// Every card keeps an edge a reader can find, on any page.
+    ///
+    /// The hairline is the card's whole boundary: there is no shadow, and on a
+    /// light preset over a white page the surface composites to almost the
+    /// page's own colour, so this line is the only thing saying where the card
+    /// stops. That is why it has a floor and why the floor is not a taste.
+    ///
+    /// The upper bound is the taste, and it is the thing the reader complained
+    /// about twice: an edge that stands out inside its own card reads as a box
+    /// drawn around the text rather than as the card's outline.
+    #[test]
+    fn the_hairline_is_findable_on_any_page_and_a_box_on_none() {
+        /// Above this, the edge reads as a box rather than as an outline. Set
+        /// from the figure 0.65 produced, 1.42, which is the one a reader
+        /// objected to, with room underneath rather than at it.
+        const READS_AS_A_BOX: f64 = 1.30;
+
+        for preset in Preset::ALL {
+            for dark in [false, true] {
+                let system = SystemPreferences {
+                    dark,
+                    ..SystemPreferences::default()
+                };
+                let theme = Theme::resolve(preset, Translucency::Clear, TextScale::Normal, system);
+                for page in [Rgb::new(255, 255, 255), Rgb::new(0, 0, 0)] {
+                    let against = theme.edge_against(page);
+                    let within = theme.edge_within(page);
+                    assert!(
+                        against >= Theme::FAINTEST_USABLE_EDGE,
+                        "{} on {page:?} has no findable edge: {against:.2}",
+                        preset.as_str(),
+                    );
+                    assert!(
+                        within <= READS_AS_A_BOX,
+                        "{} on {page:?} draws a box, not an outline: {within:.2}",
+                        preset.as_str(),
+                    );
+                }
+            }
+        }
+    }
+
+    /// The floor is where it says it is, and 0.30 does not clear it.
+    ///
+    /// Without this the constant could drift down one commit at a time and the
+    /// test above would keep passing, because it only ever measures the value
+    /// that is set.
+    #[test]
+    fn a_fainter_hairline_would_lose_the_edge() {
+        let system = SystemPreferences::default();
+        let mut theme = Theme::resolve(
+            Preset::Paper,
+            Translucency::Clear,
+            TextScale::Normal,
+            system,
+        );
+        let page = Rgb::new(255, 255, 255);
+        assert!(theme.edge_against(page) >= Theme::FAINTEST_USABLE_EDGE);
+
+        theme.border_alpha = 0.30;
+        assert!(
+            theme.edge_against(page) < Theme::FAINTEST_USABLE_EDGE,
+            "0.30 clears the floor, so the floor is not measuring anything",
         );
     }
 
