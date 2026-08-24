@@ -327,7 +327,12 @@ pub const TEMPLATE: &str = "# Mori Lens settings.
 # model        = auto          # or a name, e.g. qwen2.5:3b
 # dwell_ms     = 320           # how long the pointer must rest, 80 to 3000
 # theme        = system        # system, forest, night-lake, paper
-# translucency = solid         # clear, balanced, solid
+# translucency = clear         # clear, balanced, solid. How much of the page
+                               # shows through the card. It was solid until
+                               # 2026-08-18, because the card's edge used to
+                               # take part of its colour from the page and look
+                               # blotchy. The edge is a fixed colour now, so it
+                               # does not.
 # endpoint     = 127.0.0.1:11434  # where Ollama listens. This machine only.
 # ocr          = manual        # off, manual, or automatic. Automatic reads
                                # the pixels around the pointer whenever an
