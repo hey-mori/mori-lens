@@ -763,11 +763,14 @@ impl Glass {
             // on the outline instead of straddling it and coming out two pixels
             // of grey.
             //
-            // It carries the whole boundary now, so it is drawn properly rather
-            // than apologetically. It was faded to 0.30 while a shadow was also
-            // drawing an edge two pixels outside it, and two edges around one
-            // card is the box everybody kept seeing.
-            if let Ok(brush) = target.CreateSolidColorBrush(&colour(theme.border, 0.65), None) {
+            // It carries the whole boundary, so it was drawn firmly rather than
+            // apologetically: 0.30 while a shadow drew a second edge outside
+            // it, then 0.65 once the shadow went. 0.65 became the box on its
+            // own. The figure lives in `Theme::BORDER_ALPHA` now, with the
+            // measurement that bounds it from both sides.
+            if let Ok(brush) =
+                target.CreateSolidColorBrush(&colour(theme.border, theme.border_alpha), None)
+            {
                 target.DrawRoundedRectangle(
                     &D2D1_ROUNDED_RECT {
                         rect: D2D_RECT_F {
