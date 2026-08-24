@@ -4490,3 +4490,168 @@ fn rect_of(window_id: i64) -> windows::Win32::Foundation::RECT {
     }
     rect
 }
+
+/// The strongest promise in this project, run.
+///
+/// `capture.rs` opens by saying **nothing reaches disk, ever, including for
+/// debugging**, and `CLAUDE.md` says it twice. Until this existed, the sentence
+/// appeared in this repository as a comment, in a roadmap gate, and as a
+/// **translation fixture** in another crate's live tests. Nowhere as a check.
+///
+/// `protected_harness` was built on the same reasoning: a privacy guarantee
+/// nobody has run is a comment.
+///
+/// # What this can and cannot see
+///
+/// It watches the directories Lens owns, where a stray write would be
+/// attributable, and it **redirects the temporary directory** to an empty one
+/// for the duration, so anything written there is written by this process.
+///
+/// The first version watched the system temporary directory instead and saw 38
+/// files appear during one run, every one of them a GUID with a `.tmp`
+/// suffix and none of them attributable. It also checked their extensions,
+/// which a capture spooled as `.tmp` would have passed. Redirection is what
+/// turns that from noise into an assertion.
+///
+/// **A component that resolved the temporary path before this ran, or that
+/// hardcodes one, would escape it.** So would a write anywhere else on the
+/// filesystem. The guard in `scripts/check.sh` is the other half: it refuses
+/// the construct rather than looking for the result.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn an_ocr_acquisition_writes_nothing_to_disk() {
+    use lens_core::acquire::{AcquireContext, TextAcquirer};
+    use lens_core::geometry::ScreenPoint;
+    use lens_core::hover::Generation;
+
+    // Before anything else, so every later call that asks Windows where to put
+    // a temporary file is answered with a directory nobody else uses.
+    let redirected = std::env::temp_dir()
+        .join("mori-lens-disk-watch")
+        .join(format!("{}", std::process::id()));
+    std::fs::create_dir_all(&redirected).expect("a private temporary directory");
+    // SAFETY: set before the acquirer exists and before any thread this test
+    // starts, which is the window `set_var` is unsound outside of.
+    unsafe {
+        std::env::set_var("TMP", &redirected);
+        std::env::set_var("TEMP", &redirected);
+    }
+
+    let owned = lens_owned_directories();
+    assert!(
+        !owned.is_empty(),
+        "nothing to watch, so this test would pass by knowing nothing",
+    );
+    let before: Vec<_> = owned.iter().map(|dir| listing(dir)).collect();
+
+    let cost = std::sync::Arc::new(crate::CaptureCost::default());
+    let acquirer = crate::OcrTextAcquirer::new(Box::new(|_band| {}), std::sync::Arc::clone(&cost));
+    let context = AcquireContext::new(Generation(1));
+
+    // Real captures, not one: a corner of the desktop and the middle of
+    // whatever is in front, so the path runs on an empty region and on a busy
+    // one. A test that captured nothing would pass without exercising anything.
+    let mut points = vec![ScreenPoint::new(4, 4)];
+    if let Ok(window) = crate::foreground_window() {
+        points.push(window.client_bounds.center());
+    }
+    for point in &points {
+        match acquirer.acquire(*point, &context) {
+            Ok(target) => {
+                // Length and shape, never the text. `CLAUDE.md`, and the live
+                // check that once printed the desktop behind a translucent card.
+                println!(
+                    "  read {} chars at ({}, {})",
+                    target.segmented.context().chars().count(),
+                    point.x,
+                    point.y,
+                );
+            }
+            Err(error) => println!("  no reading at ({}, {}): {error:?}", point.x, point.y),
+        }
+    }
+    // Screenshots actually taken, from the counter the product keeps, rather
+    // than readings that happened to find text. The first version of this
+    // asserted `captured > 0 || !points.is_empty()`, whose right half is always
+    // true, and it passed a run where both points came back `Empty` and nothing
+    // was proven at all.
+    let captured = cost.captured.load(std::sync::atomic::Ordering::Relaxed);
+    println!("  captures taken: {captured}");
+    assert!(
+        captured > 0,
+        "no screenshot was taken, so this run proves nothing about where they go",
+    );
+
+    for (dir, before) in owned.iter().zip(before) {
+        let after = listing(dir);
+        let appeared: Vec<_> = after
+            .iter()
+            .filter(|entry| !before.contains(entry))
+            .collect();
+        println!(
+            "  {} · {} files, {} new",
+            dir.display(),
+            after.len(),
+            appeared.len()
+        );
+        assert!(
+            appeared.is_empty(),
+            "{} gained {appeared:?} during an OCR acquisition",
+            dir.display(),
+        );
+    }
+
+    let spooled = listing(&redirected);
+    println!(
+        "  redirected temp · {} · {} files",
+        redirected.display(),
+        spooled.len(),
+    );
+    for entry in &spooled {
+        println!("      {entry}");
+    }
+    assert!(
+        spooled.is_empty(),
+        "the capture path spooled {spooled:?} into its own temporary directory",
+    );
+    let _ = std::fs::remove_dir_all(&redirected);
+}
+
+/// The directories this product writes to, when they exist.
+///
+/// Its own folder beside the settings file, and wherever it was started from.
+/// A capture escaping would most plausibly land in one of those, and unlike the
+/// temporary directory nothing else is writing to them.
+fn lens_owned_directories() -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let own = std::path::Path::new(&appdata).join("Mori Lens");
+        if own.is_dir() {
+            dirs.push(own);
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        dirs.push(cwd);
+    }
+    dirs
+}
+
+/// File names and sizes in one directory, not recursive.
+///
+/// The size is in the entry so a file that was overwritten rather than created
+/// is a difference too.
+fn listing(dir: &std::path::Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.path().is_file())
+        .map(|entry| {
+            let size = entry.metadata().map(|meta| meta.len()).unwrap_or_default();
+            format!("{} ({size} bytes)", entry.file_name().to_string_lossy())
+        })
+        .collect();
+    names.sort();
+    names
+}
