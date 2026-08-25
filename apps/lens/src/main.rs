@@ -598,6 +598,14 @@ fn main() -> std::process::ExitCode {
         },
     );
     println!(
+        "  pin       {}",
+        if pause.pin_is_registered() {
+            "Ctrl+Alt+P keeps the card in a window that stays until Esc"
+        } else {
+            "UNAVAILABLE: Ctrl+Alt+P is taken by another application"
+        },
+    );
+    println!(
         "  explain   {}",
         if pause.explain_is_registered() {
             "Ctrl+Alt+D explains the sentence on the card: form, part of speech, structure"
@@ -1087,6 +1095,9 @@ fn main() -> std::process::ExitCode {
     // here rather than read out of the overlay, which owns a `Card` for
     // drawing and is not a place to look things up.
     let mut on_screen: Option<(Card, ScreenRect)> = None;
+    // **One at a time**, which ADR-0012 says and this enforces by holding one.
+    // Opening a second closes the first, so the screen cannot fill with panels.
+    let mut pinned: Option<lens_platform_windows::DetailPanel> = None;
     // The word and the region of the outstanding translation, so the pair
     // above can be completed when the answer comes back.
     let mut pending_word: Option<String> = None;
@@ -1146,6 +1157,7 @@ fn main() -> std::process::ExitCode {
         let mut explain = false;
         let mut copy = false;
         let mut keep = false;
+        let mut pin = false;
         for press in pause.poll() {
             match press {
                 pause::Pressed::PauseChanged => pause_changed = true,
@@ -1153,6 +1165,7 @@ fn main() -> std::process::ExitCode {
                 pause::Pressed::Explain => explain = true,
                 pause::Pressed::Copy => copy = true,
                 pause::Pressed::Keep => keep = true,
+                pause::Pressed::Pin => pin = true,
             }
         }
 
@@ -1204,6 +1217,48 @@ fn main() -> std::process::ExitCode {
                     );
                 }
             }
+        }
+
+        if pin && !pause.is_paused() {
+            // Opened by a key and by nothing else. There is no path from a
+            // settled hover to this: `Detail::from_card` takes a card the reader
+            // has already been shown, which is what keeps a dwell from becoming
+            // a window.
+            match on_screen
+                .as_ref()
+                .and_then(|(card, _)| lens_core::detail::Detail::from_card(card))
+            {
+                Some(detail) => {
+                    let explained = detail.is_explained();
+                    // Taken and dropped first, so the old window is closed and
+                    // its thread joined before the new one takes focus, rather
+                    // than the two fighting for the front. Written this way
+                    // because an assignment reads as dead and this is not.
+                    drop(pinned.take());
+                    pinned = lens_platform_windows::DetailPanel::open(
+                        detail,
+                        theme,
+                        lens_core::detail::Detail::nothing_explained_yet("Ctrl+Alt+D"),
+                    );
+                    println!(
+                        "pin   {} · {}",
+                        if pinned.is_some() { "opened" } else { "FAILED" },
+                        if explained {
+                            "with the explanation"
+                        } else {
+                            "translation only, Ctrl+Alt+D adds the rest"
+                        },
+                    );
+                }
+                None => println!("pin   nothing on the card worth pinning"),
+            }
+        }
+
+        // A reader closed it with Esc, on its own thread, without telling this
+        // loop. Asked rather than tracked, so the handle is dropped and its
+        // thread joined rather than left running until the next pin.
+        if pinned.as_ref().is_some_and(|panel| !panel.is_open()) {
+            pinned = None;
         }
 
         if copy && !pause.is_paused() {
@@ -1828,6 +1883,17 @@ fn main() -> std::process::ExitCode {
         while let Ok(answer) = answers_rx.try_recv() {
             if answer.final_answer {
                 log_card(&answer.card, answer.app.as_deref());
+                // The reason the panel exists. An explanation arrives and the
+                // translation the reader was already reading stays where it is,
+                // instead of them re-hovering to get one and then the other.
+                //
+                // Only when it is about the sentence on the panel: a hover that
+                // moved on while the panel stayed open must not rewrite it.
+                if let Some(panel) = pinned.as_ref() {
+                    if let Some(fresh) = lens_core::detail::Detail::from_card(&answer.card) {
+                        panel.update(fresh);
+                    }
+                }
                 // A finished translation is a sentence the reader can now ask
                 // about. Only a translation: an analysis must not become the
                 // thing the next analysis explains, and a problem card has no
