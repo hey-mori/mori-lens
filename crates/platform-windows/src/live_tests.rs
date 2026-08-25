@@ -4717,9 +4717,8 @@ fn the_pinned_detail_is_on_screen_with_text_on_it() {
         },
     );
     let detail = Detail::from_card(&card).expect("a detail");
-    let Some(panel) =
-        crate::DetailPanel::open(detail, theme, Detail::nothing_explained_yet("Ctrl+Alt+D"))
-    else {
+    let hint = Detail::nothing_explained_yet("Ctrl+Alt+D");
+    let Some(panel) = crate::PanelWindow::open(detail.as_panel(&hint), theme) else {
         panic!("the panel did not open");
     };
     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -4742,7 +4741,7 @@ fn the_pinned_detail_is_on_screen_with_text_on_it() {
         structure: "주어 + 동사 + 목적어".to_owned(),
         ..DeepAnalysis::default()
     });
-    panel.update(explained);
+    panel.update(explained.as_panel(&hint));
     std::thread::sleep(std::time::Duration::from_millis(400));
 
     let (share_after, after, tall_after) = ink_of(panel.window_id(), theme);
