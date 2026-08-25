@@ -4676,3 +4676,133 @@ fn listing(dir: &std::path::Path) -> Vec<String> {
     names.sort();
     names
 }
+
+/// The panel is on screen, and there is text on it.
+///
+/// **The welcome window's lesson, applied before it can be repeated.** That
+/// window shipped blank for a day: correctly sized, correctly placed, perfectly
+/// reachable, and white, because its content was published after `ShowWindow`
+/// painted. Every assertion about it was green.
+///
+/// So this samples the screen where the panel is, and bands the result rather
+/// than asking for more than none: a solid fill of any colour is all or
+/// nothing, and text is neither.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn the_pinned_detail_is_on_screen_with_text_on_it() {
+    use lens_core::analyse::DeepAnalysis;
+    use lens_core::card::Card;
+    use lens_core::detail::Detail;
+    use lens_core::theme::{Preset, SystemPreferences, TextScale, Theme, Translucency};
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    let theme = Theme::resolve(
+        Preset::Paper,
+        Translucency::Solid,
+        TextScale::Normal,
+        SystemPreferences::default(),
+    );
+    let card = Card::translated(
+        "The provider returns one rectangle per rendered line, and the acquirer keeps them.",
+        &QuickTranslation {
+            text:
+                "제공자는 각 렌더링된 줄당 하나의 직사각형을 반환하고, 취득자는 그것을 보관합니다."
+                    .to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "qwen2.5:7b".to_owned(),
+            latency_ms: 1500,
+            cached: false,
+            part_was_removed: false,
+            name_changed: false,
+        },
+    );
+    let detail = Detail::from_card(&card).expect("a detail");
+    let Some(panel) =
+        crate::DetailPanel::open(detail, theme, Detail::nothing_explained_yet("Ctrl+Alt+D"))
+    else {
+        panic!("the panel did not open");
+    };
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert!(panel.is_open(), "the panel closed itself");
+
+    let (share, before, tall_before) = ink_of(panel.window_id(), theme);
+    println!("  translation only    share {share:.3}, {before} ink, {tall_before}px tall");
+    assert!(
+        (0.02..0.60).contains(&share),
+        "{share:.3} is a solid fill rather than text on a surface",
+    );
+
+    // The reason this surface exists: the explanation arrives and the
+    // translation the reader was already reading stays where it is.
+    let mut explained = Detail::from_card(&card).expect("a detail");
+    explained.explained_by(&DeepAnalysis {
+        lemma: "rectangle".to_owned(),
+        part_of_speech: "명사".to_owned(),
+        sense: "화면에 그려지는 사각형 영역".to_owned(),
+        structure: "주어 + 동사 + 목적어".to_owned(),
+        ..DeepAnalysis::default()
+    });
+    panel.update(explained);
+    std::thread::sleep(std::time::Duration::from_millis(400));
+
+    let (share_after, after, tall_after) = ink_of(panel.window_id(), theme);
+    println!("  with an explanation share {share_after:.3}, {after} ink, {tall_after}px tall");
+    // Banded on both states, not only the first. A repaint that left the grown
+    // area unpainted, or filled it, would add ink and pass a rule about totals.
+    assert!(
+        (0.02..0.60).contains(&share_after),
+        "{share_after:.3} after the update is a fill rather than text",
+    );
+    // **Total, not density.** The first version of this compared shares and
+    // failed on a working panel: the window grows to fit the rows, the rows are
+    // short, and the share of pixels that are not the surface falls even as
+    // more of them are ink. The instrument was wrong and the panel was not.
+    assert!(
+        tall_after > tall_before,
+        "the panel did not grow for four more rows: {tall_before}px then {tall_after}px",
+    );
+    assert!(
+        after > before,
+        "the rows added no ink: {before} then {after}",
+    );
+
+    drop(panel);
+    std::thread::sleep(std::time::Duration::from_millis(300));
+}
+
+/// The share of the window's pixels that are not its surface, the count of
+/// them, and how tall it is.
+///
+/// Sampled from the screen rather than from what the window believes it drew,
+/// because that difference is the whole point. A count is reported and nothing
+/// is captured, written or printed (`docs/privacy-model.md`).
+fn ink_of(window_id: i64, theme: lens_core::theme::Theme) -> (f64, u32, i32) {
+    use windows::Win32::Graphics::Gdi::{GetDC, GetPixel, ReleaseDC};
+    let rect = rect_of(window_id);
+    let surface = crate::overlay::colorref(theme.surface);
+    let (mut ink, mut sampled) = (0u32, 0u32);
+    // SAFETY: a screen device context, released below. `GetPixel` is read-only.
+    unsafe {
+        let dc = GetDC(None);
+        assert!(!dc.is_invalid(), "no screen device context");
+        let mut y = rect.top + 8;
+        while y < rect.bottom - 8 {
+            let mut x = rect.left + 8;
+            while x < rect.right - 8 {
+                sampled += 1;
+                if GetPixel(dc, x, y) != surface {
+                    ink += 1;
+                }
+                x += 3;
+            }
+            y += 3;
+        }
+        ReleaseDC(None, dc);
+    }
+    assert!(sampled > 0, "the panel has no area to sample");
+    (
+        f64::from(ink) / f64::from(sampled),
+        ink,
+        rect.bottom - rect.top,
+    )
+}
