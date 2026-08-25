@@ -288,6 +288,7 @@ mod tests {
             latency_ms,
             cached: false,
             part_was_removed: false,
+            name_changed: false,
         }
     }
 

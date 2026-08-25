@@ -2620,3 +2620,132 @@ fn measure_what_comes_back_from_a_short_source() {
     println!("  keeping an identifier is correct. keeping an ordinary word is not,");
     println!("  and nothing in the product can currently tell those apart.");
 }
+
+/// Does an identifier survive when it is not the whole sentence.
+///
+/// [`#207`](https://github.com/swarea/mori-lens/issues/207) is a defect if the
+/// product meets it and a curiosity about degenerate inputs if it does not. The
+/// issue says so and names this as the thing that would overturn it, so it is
+/// the first thing to run.
+///
+/// Each token is sent twice: alone, which is how it was found, and inside an
+/// ordinary sentence, which is what a hover actually produces.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn measure_whether_an_identifier_survives_a_sentence() {
+    let Some(translator) = live() else {
+        return;
+    };
+
+    // (the token, a sentence with it in). The sentences are this repository's
+    // own subject matter, which is what a reader of this project would hover.
+    let cases: [(&str, &str); 4] = [
+        (
+            "LedgerDataSheetService",
+            "The LedgerDataSheetService returns one row per sheet.",
+        ),
+        (
+            "windows-rs 0.62",
+            "The adapter is built on windows-rs 0.62 and nothing else.",
+        ),
+        ("export_csv", "Call export_csv once the rows are ready."),
+        (
+            "qwen2.5:7b",
+            "The card names qwen2.5:7b as the model that answered.",
+        ),
+    ];
+
+    const RUNS: usize = 3;
+    println!();
+    println!("  token                    alone      in a sentence");
+    let (mut alone_kept, mut sentence_kept, mut runs) = (0, 0, 0);
+    for (token, sentence) in cases {
+        let mut alone_says = String::new();
+        let mut sentence_says = String::new();
+        for _ in 0..RUNS {
+            runs += 1;
+            if let Ok(answer) = translator.quick(&QuickRequest::new(token, "Korean")) {
+                if answer.text.contains(token) {
+                    alone_kept += 1;
+                }
+                alone_says = answer.text;
+            }
+            if let Ok(answer) = translator.quick(&QuickRequest::new(sentence, "Korean")) {
+                if answer.text.contains(token) {
+                    sentence_kept += 1;
+                }
+                sentence_says = answer.text;
+            }
+        }
+        println!("  {token:<24} {alone_says}");
+        println!("  {:<24} {sentence_says}", "");
+    }
+
+    println!();
+    println!("  kept when alone         {alone_kept} of {runs}");
+    println!("  kept inside a sentence  {sentence_kept} of {runs}");
+    println!("  the prompt names an identifier so the model copies it. `identifiers_in`");
+    println!("  finds nothing at all in `windows-rs 0.62` or `qwen2.5:7b`, which a unit");
+    println!("  test now records, so those two are never named on either arm.");
+}
+
+/// Can the prompt make an identifier survive.
+///
+/// Measured first, because the alternative fixes are a caveat on the card and a
+/// retry, and both cost a reader something. [`#207`](https://github.com/swarea/mori-lens/issues/207).
+///
+/// `LedgerDataSheetService` is found by `identifiers_in`, so it is already
+/// named in the shipped prompt, and it is transliterated anyway, 3 runs of 3,
+/// alone and inside a sentence. This asks whether naming it harder is enough.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn measure_whether_the_prompt_can_keep_an_identifier() {
+    let Some(translator) = live() else {
+        return;
+    };
+
+    const HARDER: &str = "\\nThe identifiers named above are strings, not words. Copy each one character for character into your answer. Writing one in the reader's alphabet is a failure, even where it would read naturally.";
+    const AFTER: &str = " Copy every identifier character for character.";
+
+    let variants: [(&str, &str, &str); 4] = [
+        ("as shipped", "", ""),
+        ("system harder", HARDER, ""),
+        ("tail", "", AFTER),
+        ("both", HARDER, AFTER),
+    ];
+
+    let cases = [
+        (
+            "LedgerDataSheetService",
+            "The LedgerDataSheetService returns one row per sheet.",
+        ),
+        (
+            "orbbase_app",
+            "Grant orbbase_app the rights it needs and nothing more.",
+        ),
+    ];
+
+    const RUNS: usize = 3;
+    println!();
+    println!("  variant         kept   last answer");
+    for (name, system_extra, tail_extra) in variants {
+        let (mut kept, mut asked) = (0, 0);
+        let mut last = String::new();
+        for (token, sentence) in cases {
+            for _ in 0..RUNS {
+                asked += 1;
+                let request = QuickRequest::new(sentence, "Korean");
+                if let Some(text) = ask(&translator, &request, system_extra, tail_extra) {
+                    if text.contains(token) {
+                        kept += 1;
+                    }
+                    last = text;
+                }
+            }
+        }
+        println!("  {name:<15} {kept}/{asked}    {last}");
+    }
+
+    println!();
+    println!("  kept means the identifier is in the answer character for character.");
+}

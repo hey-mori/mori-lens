@@ -502,6 +502,18 @@ pub struct QuickTranslation {
     /// the rule that does the cutting already said so: *better than half of one
     /// presented as a translation*, of the case where nothing is left.
     pub part_was_removed: bool,
+    /// Whether an identifier the prompt named did not come back.
+    ///
+    /// Measured 2026-08-18: `LedgerDataSheetService` is found by
+    /// [`identifiers_in`], listed in the request so the model copies it, and
+    /// transliterated to 레저데이터시트서비스 anyway, alone and inside an
+    /// ordinary sentence. A wording added to the prompt to insist scored
+    /// exactly the same, three samples running.
+    ///
+    /// So the card says so instead. The translation around the name is usually
+    /// right and throwing it away would cost the reader a good sentence; what
+    /// they cannot afford is copying a name that does not exist.
+    pub name_changed: bool,
 }
 
 /// Which engine produced an answer.
@@ -1149,6 +1161,32 @@ mod half_translated_tests {
     }
 }
 
+/// Identifiers that went into a request and did not come out of the answer.
+///
+/// The prompt lists the identifiers it found so the model copies them rather
+/// than applying a rule to them. Measured 2026-08-18, that is not enough:
+/// `LedgerDataSheetService` is found, named, and transliterated anyway, three
+/// runs of three, **alone and inside an ordinary sentence**. Naming it harder
+/// changed nothing at all: a wording added to the system prompt scored exactly
+/// the same 9 of 18 as the shipped one, three samples running.
+///
+/// So this checks the answer instead of asking the model again.
+///
+/// **Containment, not equality.** Korean attaches particles, so a surviving
+/// `export_csv` arrives as `export_csv를` and a rule about whole words would
+/// call that a loss. What is being looked for is the token's absence.
+///
+/// Only identifiers `identifiers_in` names are checked, because those are the
+/// ones the model was told about. `windows-rs` is not among them, and adding a
+/// hyphen to that rule would tell a model to keep `well-known` verbatim, which
+/// is the same shape and an ordinary word.
+pub fn identifiers_lost(source: &str, answer: &str) -> Vec<String> {
+    identifiers_in(source)
+        .into_iter()
+        .filter(|token| !answer.contains(token.as_str()))
+        .collect()
+}
+
 /// Tokens in `text` that are code rather than words.
 ///
 /// A model translating a Korean sentence full of English identifiers turned
@@ -1258,7 +1296,73 @@ fn looks_like_code(token: &str) -> bool {
 
 #[cfg(test)]
 mod identifier_tests {
-    use super::identifiers_in;
+
+    /// The token the prompt named and the model rewrote anyway.
+    #[test]
+    fn a_transliterated_identifier_is_reported_lost() {
+        let source = "The LedgerDataSheetService returns one row per sheet.";
+        let answer = "레저데이터시트서비스는 한 장당 한 행씩 반환합니다.";
+        assert_eq!(
+            identifiers_lost(source, answer),
+            vec!["LedgerDataSheetService".to_owned()],
+        );
+    }
+
+    /// A particle attached to a surviving identifier is not a loss.
+    ///
+    /// Korean writes `export_csv를`, and a rule about whole words would call
+    /// the answer broken every time it was right.
+    #[test]
+    fn an_identifier_wearing_a_particle_survived() {
+        let source = "Call export_csv once the rows are ready.";
+        let answer = "행이 준비되면 한번만 export_csv를 호출하세요.";
+        assert!(identifiers_lost(source, answer).is_empty());
+    }
+
+    /// Nothing named, nothing to lose.
+    ///
+    /// `windows-rs` is not an identifier by `identifiers_in`, so it is not
+    /// checked here either. Teaching that rule about the hyphen would also
+    /// teach it that `well-known` must be kept verbatim, which is the same
+    /// shape and an ordinary word, so the two cases cannot be separated by
+    /// punctuation and this does not try.
+    #[test]
+    fn a_hyphenated_name_is_not_watched() {
+        let source = "The adapter is built on windows-rs 0.62.";
+        let answer = "어댑터는 windows-r스 0.62에 기반합니다.";
+        assert!(identifiers_lost(source, answer).is_empty());
+    }
+
+    #[test]
+    fn an_ordinary_sentence_loses_nothing() {
+        let source = "The output files came back empty.";
+        let answer = "출력 파일은 비어있었습니다.";
+        assert!(identifiers_lost(source, answer).is_empty());
+    }
+
+    /// Which of these does the prompt actually get told to keep.
+    ///
+    /// A lead from #207: `windows-rs 0.62` came back as `windows-r스 0.62`, one
+    /// character inside the name transliterated. `looks_like_code` recognises
+    /// an underscore, a slash, a scheme and a camel hump, and a hyphen is on
+    /// none of those lists, so the token may never have been named at all.
+    #[test]
+    fn what_the_prompt_is_told_to_keep() {
+        for (text, expected) in [
+            ("LedgerDataSheetService", true),
+            ("export_csv", true),
+            ("/projects/{id}/export", true),
+            ("https://example.com/a", true),
+            ("windows-rs 0.62", false),
+            ("qwen2.5:7b", false),
+            ("Mori Lens", false),
+            ("stale", false),
+        ] {
+            let found = identifiers_in(text);
+            assert_eq!(!found.is_empty(), expected, "{text:?} produced {found:?}",);
+        }
+    }
+    use super::{identifiers_in, identifiers_lost};
 
     /// The line from the card, and the token it damaged.
     #[test]
