@@ -96,6 +96,14 @@ struct Translate {
     /// a provider's own string looked identical, and the first is a guess at
     /// what the screen says.
     from_pixels: bool,
+    /// Which application the text came out of.
+    ///
+    /// Carried only so the console line can name it. A reader's own session log
+    /// showed 20 cards and 65 refusals across six applications, and the
+    /// refusals named the application while the cards did not, so the log could
+    /// say where Lens failed and not where it worked. That is the half the
+    /// compatibility matrix is made of.
+    app: Option<String>,
 }
 
 /// What the card on screen is showing, so the explain key has something to
@@ -111,6 +119,8 @@ struct Explainable {
     anchor: ScreenRect,
     /// See [`Explain::translation`].
     translation: Option<String>,
+    /// See [`Translate::app`].
+    app: Option<String>,
 }
 
 /// What the worker is asked to explain.
@@ -122,6 +132,8 @@ struct Explainable {
 struct Explain {
     generation: Generation,
     original: String,
+    /// See [`Translate::app`].
+    app: Option<String>,
     /// `None` when the reader can already read the source, which is not a
     /// missing value: there is no translation and there should not be one.
     translation: Option<String>,
@@ -137,6 +149,9 @@ struct Answer {
     anchor: ScreenRect,
     /// Whether this is the finished answer or a piece of one still arriving.
     final_answer: bool,
+    /// The application the text came out of, for the console line. See
+    /// [`Translate::app`].
+    app: Option<String>,
 }
 
 /// Bumped whenever the quick prompt changes, so a cache filled by the old
@@ -767,6 +782,7 @@ fn main() -> std::process::ExitCode {
                             card: Card::analysed(&job.original, &hit),
                             anchor: job.anchor,
                             final_answer: true,
+                            app: job.app.clone(),
                         });
                         continue;
                     }
@@ -793,6 +809,7 @@ fn main() -> std::process::ExitCode {
                             card,
                             anchor: job.anchor,
                             final_answer: true,
+                            app: job.app.clone(),
                         })
                         .is_err()
                     {
@@ -818,6 +835,7 @@ fn main() -> std::process::ExitCode {
                     card: Card::loading_model(&job.original),
                     anchor: job.anchor,
                     final_answer: false,
+                    app: job.app.clone(),
                 });
             }
 
@@ -834,6 +852,7 @@ fn main() -> std::process::ExitCode {
                     card,
                     anchor: job.anchor,
                     final_answer: true,
+                    app: job.app.clone(),
                 });
                 continue;
             }
@@ -845,6 +864,9 @@ fn main() -> std::process::ExitCode {
             let generation = job.generation;
             let anchor = job.anchor;
             let original = job.original.clone();
+            // Cloned out before the move, so the job stays whole for the
+            // finished answer below.
+            let partial_app = job.app.clone();
             let mut on_partial = move |text: &str| {
                 let card = Card::partial(&original, text);
                 let _ = partial_tx.send(Answer {
@@ -852,6 +874,7 @@ fn main() -> std::process::ExitCode {
                     card,
                     anchor,
                     final_answer: false,
+                    app: partial_app.clone(),
                 });
             };
 
@@ -878,6 +901,7 @@ fn main() -> std::process::ExitCode {
                     card,
                     anchor: job.anchor,
                     final_answer: true,
+                    app: job.app.clone(),
                 })
                 .is_err()
             {
@@ -1259,6 +1283,7 @@ fn main() -> std::process::ExitCode {
                                     focused_word: showing.focused_word.clone(),
                                     anchor: showing.anchor,
                                     language: language.clone(),
+                                    app: showing.app.clone(),
                                 }))
                                 .is_ok();
                         }
@@ -1446,6 +1471,7 @@ fn main() -> std::process::ExitCode {
                             focused_word: Some(reading.word.clone()),
                             anchor: reading.anchor,
                             translation: None,
+                            app: pointer::process_name_at(at),
                         });
                         show_card(
                             &overlay,
@@ -1471,6 +1497,7 @@ fn main() -> std::process::ExitCode {
                                 anchor: reading.anchor,
                                 language: language.clone(),
                                 doubtful: reading.misread > 0,
+                                app: pointer::process_name_at(at),
                                 // Ctrl+Alt+O reads pixels and nothing else.
                                 from_pixels: true,
                             }))
@@ -1644,6 +1671,7 @@ fn main() -> std::process::ExitCode {
                             focused_word: target.segmented.word_text().map(str::to_owned),
                             anchor,
                             translation: None,
+                            app: target.app.process_name.clone(),
                         });
                         if let Some(line) = narrator.line_for_skip(
                             &format!("already in {language}, Ctrl+Alt+D explains it"),
@@ -1706,6 +1734,7 @@ fn main() -> std::process::ExitCode {
                                 focused_word: target.segmented.word_text().map(str::to_owned),
                                 anchor,
                                 language: language.clone(),
+                                app: target.app.process_name.clone(),
                                 // No shape heuristic has run on this reading.
                                 // The automatic fall-through does not count
                                 // misread words the way `Ctrl+Alt+O` does, so
@@ -1744,6 +1773,14 @@ fn main() -> std::process::ExitCode {
                     // press. `reach` decides; this only draws.
                     if let Resolution::Failed(error) = &other {
                         if reach.unreadable(process_name.as_deref(), error) {
+                            // Said, because a mechanism nobody can see in a log
+                            // cannot be told apart from one that never fired. A
+                            // reader's session showed 42 of these refusals and
+                            // no way to know whether the offer had been made.
+                            println!(
+                                "offer  {} exposes no text; naming the OCR key, once for it",
+                                process_name.as_deref().unwrap_or("that application"),
+                            );
                             let card = Card::cannot_read_this_app(ocr_hotkey.as_deref());
                             // **The settled point, not the pointer now.** They
                             // were the same value while acquisition ran inline
@@ -1790,7 +1827,7 @@ fn main() -> std::process::ExitCode {
 
         while let Ok(answer) = answers_rx.try_recv() {
             if answer.final_answer {
-                log_card(&answer.card);
+                log_card(&answer.card, answer.app.as_deref());
                 // A finished translation is a sentence the reader can now ask
                 // about. Only a translation: an analysis must not become the
                 // thing the next analysis explains, and a problem card has no
@@ -1801,6 +1838,7 @@ fn main() -> std::process::ExitCode {
                         focused_word: pending_word.clone(),
                         anchor: pending_anchor,
                         translation: Some(text.clone()),
+                        app: answer.app.clone(),
                     });
                 }
             }
@@ -2045,9 +2083,17 @@ fn show_card(
 /// Length and language, never content. A release build that logged what the
 /// user was reading would undo the whole privacy model
 /// (`docs/privacy-model.md` §3).
-fn log_card(card: &Card) {
+fn log_card(card: &Card, app: Option<&str>) {
     println!(
-        "card  original={} chars  {}  [{}]",
+        "card  {}original={} chars  {}  [{}]",
+        // Named, because the refusal lines already are and the cards were not.
+        // A reader's own session showed 20 cards and 65 refusals over six
+        // applications, and the log could say where Lens failed and not where
+        // it worked, which is the half a compatibility matrix is made of.
+        match app {
+            Some(name) => format!("[{name}] "),
+            None => String::new(),
+        },
         card.original.chars().count(),
         match &card.body {
             lens_core::card::CardBody::Translation(text) =>
