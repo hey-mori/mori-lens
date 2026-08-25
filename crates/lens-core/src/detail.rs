@@ -46,6 +46,7 @@
 
 use crate::analyse::DeepAnalysis;
 use crate::card::{Card, CardBody};
+use crate::panel::{Block, Panel};
 
 /// Everything a card had to choose between, in one place.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -126,6 +127,37 @@ impl Detail {
     /// Whether there is an explanation to show, or only a translation.
     pub fn is_explained(&self) -> bool {
         self.rows.iter().any(|(_, value)| !value.trim().is_empty())
+    }
+
+    /// The blocks a window draws for this, in reading order.
+    ///
+    /// The original is quiet and the translation is not: the reader already
+    /// looked at the source, and what they opened the window for is the answer.
+    ///
+    /// `hint` fills the explanation block when there is no explanation, so the
+    /// panel names the key rather than leaving a gap where a row would be.
+    pub fn as_panel(&self, hint: &str) -> Panel {
+        let explanation = if self.is_explained() {
+            self.rows
+                .iter()
+                .filter(|(_, value)| !value.trim().is_empty())
+                .map(|(label, value)| format!("{label}   {value}"))
+                .collect::<Vec<_>>()
+                .join(
+                    "
+",
+                )
+        } else {
+            hint.to_owned()
+        };
+        Panel::new(
+            [
+                Block::quiet("원문", self.original.clone()),
+                Block::loud("번역", self.translation.clone().unwrap_or_default()),
+                Block::loud("설명", explanation),
+            ],
+            self.footer.clone(),
+        )
     }
 
     /// What the panel says where the explanation would be, before there is one.
