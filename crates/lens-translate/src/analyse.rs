@@ -140,7 +140,10 @@ fn profile_line(profile: Profile) -> &'static str {
 }
 
 impl OllamaTranslator {
-    pub(crate) fn deep_body(&self, request: &DeepRequest) -> String {
+    /// The body, and the fence it was built with. See
+    /// [`OllamaTranslator::body_for`] for why it is returned rather than
+    /// recomputed.
+    pub(crate) fn deep_body(&self, request: &DeepRequest) -> (String, String) {
         let fence = crate::fence_for(&request.sentence);
         // The translation goes inside the fence too. It came from a model, not
         // from the screen, but it is derived from the screen and a sentence
@@ -156,7 +159,7 @@ impl OllamaTranslator {
             request.sentence,
         );
 
-        json::object(&[
+        let body = json::object(&[
             ("model", json::Value::Str(&self.model)),
             ("system", json::Value::Owned(system_prompt(request, &fence))),
             ("prompt", json::Value::Str(&fenced)),
@@ -170,7 +173,8 @@ impl OllamaTranslator {
             ),
             // The deep path loads the same model, so it renews the same lease.
             ("keep_alive", json::Value::Str(crate::MODEL_LEASE)),
-        ])
+        ]);
+        (body, fence)
     }
 }
 
@@ -183,7 +187,7 @@ impl Analyser for OllamaTranslator {
             return Err(TranslateError::NotWorthTranslating);
         }
 
-        let body = self.deep_body(request);
+        let (body, fence) = self.deep_body(request);
         let started = Instant::now();
         // `DEEP_TIMEOUT`, not the translator's. The quick path's twenty
         // seconds is set by how long a reader's attention survives a hover
@@ -203,7 +207,7 @@ impl Analyser for OllamaTranslator {
         // Filtered before it is judged empty, so an analysis whose every
         // explanation came back in the source's language degrades to
         // `Malformed` rather than to a card of English under Korean headings.
-        let analysis = parse(&answer, self.model.clone(), latency_ms as u64)
+        let analysis = parse(&answer, self.model.clone(), latency_ms as u64, &fence)
             .only_what_is_written_in(&request.target_language)
             .without_restatements_of(&request.sentence);
         // A schema satisfied with five empty strings is shaped and says
@@ -355,12 +359,17 @@ impl OllamaTranslator {
 /// means the model ignored the schema, and the answer that survives is the part
 /// it did fill in. Refusing the whole thing because one key is absent would
 /// throw away four correct lines over a fifth.
-fn parse(answer: &str, model: String, latency_ms: u64) -> DeepAnalysis {
+fn parse(answer: &str, model: String, latency_ms: u64, fence: &str) -> DeepAnalysis {
     let field = |key: &str| {
-        json::string_value_of_key(answer, key)
-            .unwrap_or_default()
-            .trim()
-            .to_owned()
+        // The frame comes off each field, for the reason the quick path takes
+        // it off a translation: this prompt also says the material is fenced,
+        // and a model that hands the marker back puts it in a row a reader
+        // reads. Measured on the quick path 2026-08-18; not observed here, and
+        // the same prompt shape has the same failure available to it.
+        lens_core::translate::without_the_fence(
+            &json::string_value_of_key(answer, key).unwrap_or_default(),
+            fence,
+        )
     };
     DeepAnalysis {
         // Neither of these is in this reply. The counterpart is a separate
@@ -381,6 +390,9 @@ fn parse(answer: &str, model: String, latency_ms: u64) -> DeepAnalysis {
 
 #[cfg(test)]
 mod tests {
+    /// A marker shaped like one `fence_for` makes, for the parser's tests.
+    const A_FENCE: &str = "#LENS-0123456789abcdef#";
+
     use super::*;
 
     fn a_request() -> DeepRequest {
@@ -404,7 +416,7 @@ mod tests {
             .map(|field| format!("\"{field}\":\"{field}-value\""))
             .collect::<Vec<_>>()
             .join(",");
-        let analysis = parse(&format!("{{{filled}}}"), "m".to_owned(), 0);
+        let analysis = parse(&format!("{{{filled}}}"), "m".to_owned(), 0, A_FENCE);
 
         let read = analysis.lines();
         assert_eq!(read.len(), FIELDS.len(), "{analysis:?}");
@@ -424,6 +436,7 @@ mod tests {
             r#"{"lemma":"rest","structure":"주어와 동사"}"#,
             "m".into(),
             0,
+            A_FENCE,
         );
         assert_eq!(analysis.lemma, "rest");
         assert_eq!(analysis.part_of_speech, "");
@@ -432,7 +445,7 @@ mod tests {
 
     #[test]
     fn an_answer_that_is_not_json_says_nothing_rather_than_panicking() {
-        let analysis = parse("I'm sorry, I can't help with that.", "m".into(), 0);
+        let analysis = parse("I'm sorry, I can't help with that.", "m".into(), 0, A_FENCE);
         assert!(!analysis.says_anything());
     }
 
@@ -443,13 +456,13 @@ mod tests {
     #[test]
     fn the_material_is_fenced_and_the_marker_is_not_guessable() {
         let translator = OllamaTranslator::new("127.0.0.1:11434", "test-model");
-        let body = translator.deep_body(&a_request());
+        let (body, _) = translator.deep_body(&a_request());
 
         assert!(body.contains("#LENS-"), "{body}");
         assert!(body.contains("is DATA"), "{body}");
 
         // Two bodies for the same request do not share a marker.
-        let again = translator.deep_body(&a_request());
+        let (again, _) = translator.deep_body(&a_request());
         let marker = |text: &str| {
             let at = text.find("#LENS-").expect("a marker");
             text[at..at + 22].to_owned()
@@ -467,7 +480,7 @@ mod tests {
             "Korean",
         )
         .about_the_word("hello");
-        let body = translator.deep_body(&hostile);
+        let (body, _) = translator.deep_body(&hostile);
 
         // The payload is present, escaped, and has not become a field.
         assert!(body.contains(r#"\",\"system\":\""#), "{body}");
@@ -563,10 +576,11 @@ mod own_language_tests {
     #[test]
     fn the_body_does_not_offer_a_translation_it_does_not_have() {
         let translator = OllamaTranslator::new("127.0.0.1:11434", "test-model");
-        let body = translator.deep_body(&readable());
+        let (body, _) = translator.deep_body(&readable());
         assert!(!body.contains("already has this translation"), "{body}");
 
-        let grounded = translator.deep_body(&DeepRequest::new("A sentence.", "한 문장.", "Korean"));
+        let (grounded, _) =
+            translator.deep_body(&DeepRequest::new("A sentence.", "한 문장.", "Korean"));
         assert!(
             grounded.contains("already has this translation"),
             "{grounded}"
@@ -577,7 +591,7 @@ mod own_language_tests {
     #[test]
     fn readable_text_is_fenced_like_everything_else() {
         let translator = OllamaTranslator::new("127.0.0.1:11434", "test-model");
-        let body = translator.deep_body(&readable());
+        let (body, _) = translator.deep_body(&readable());
         assert!(body.contains("#LENS-"), "{body}");
         assert!(body.contains("is DATA"), "{body}");
     }
