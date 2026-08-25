@@ -1,9 +1,13 @@
-//! The pinned detail, as a window that stays until it is closed.
+//! A window that stays until it is closed, for anything that is not the card.
 //!
 //! [ADR-0004](../../../docs/decisions/ADR-0004-native-overlay.md) named this
 //! surface on 2026-08-04 and nothing built it, so four capabilities became
-//! keyboard chords instead. `lens_core::detail` holds what it shows and why;
-//! this puts it on screen.
+//! keyboard chords instead. It was written for that surface and generalised
+//! when the second one arrived: it takes a `lens_core::panel::Panel`, which is
+//! a list of headings and bodies, and neither surface owns a window.
+//!
+//! `lens_core::detail` and `lens_core::diagnostics` each say what their panel
+//! holds and why. This puts one on screen.
 //!
 //! # Why a window and not a bigger card
 //!
@@ -29,7 +33,7 @@
 
 use std::sync::{mpsc, Mutex};
 
-use lens_core::detail::Detail;
+use lens_core::panel::Panel;
 use lens_core::theme::{Rgb, Theme};
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -52,10 +56,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 static SHOWING: Mutex<Option<Showing>> = Mutex::new(None);
 
 struct Showing {
-    detail: Detail,
+    panel: Panel,
     theme: Theme,
-    /// What the panel says where an explanation would be, before there is one.
-    hint: String,
 }
 
 /// Logical width of the panel, before the display's scaling.
@@ -70,29 +72,25 @@ const GAP: i32 = 10;
 /// Most of the screen this may take, so a long sentence does not fill it.
 const MOST_OF_THE_SCREEN: f32 = 0.8;
 
-/// A detail panel on its own thread.
+/// A panel on its own thread.
 #[derive(Debug)]
-pub struct DetailPanel {
+pub struct PanelWindow {
     window_id: i64,
     thread_id: u32,
     join: Option<std::thread::JoinHandle<()>>,
 }
 
-impl DetailPanel {
-    /// Put a detail on screen and wait until it is there.
+impl PanelWindow {
+    /// Put a panel on screen and wait until it is there.
     ///
     /// `None` when the window cannot be made, which is not worth failing a
     /// hover for: the card is still the product.
-    pub fn open(detail: Detail, theme: Theme, hint: String) -> Option<Self> {
+    pub fn open(panel: Panel, theme: Theme) -> Option<Self> {
         crate::window::declare_dpi_awareness();
         // Published first. See the module comment: `ShowWindow` paints, and a
         // slot filled after it leaves a window that is correct and empty.
         if let Ok(mut slot) = SHOWING.lock() {
-            *slot = Some(Showing {
-                detail,
-                theme,
-                hint,
-            });
+            *slot = Some(Showing { panel, theme });
         }
 
         let (ready, ready_rx) = mpsc::channel::<Option<(i64, u32)>>();
@@ -129,10 +127,10 @@ impl DetailPanel {
     ///
     /// The reason this surface exists: an explanation arrives and the
     /// translation the reader was already reading stays where it is.
-    pub fn update(&self, detail: Detail) {
+    pub fn update(&self, panel: Panel) {
         if let Ok(mut slot) = SHOWING.lock() {
             if let Some(showing) = slot.as_mut() {
-                showing.detail = detail;
+                showing.panel = panel;
             }
         }
         // **Resized, not just repainted.** The window is sized to its content
@@ -181,7 +179,7 @@ impl DetailPanel {
     }
 }
 
-impl Drop for DetailPanel {
+impl Drop for PanelWindow {
     fn drop(&mut self) {
         // SAFETY: the documented quit message to a thread this type started. A
         // thread that has already gone makes this a no-op.
@@ -249,33 +247,6 @@ fn create() -> Option<HWND> {
     Some(window)
 }
 
-/// The blocks the panel draws, in order, as `(heading, body, quiet)`.
-///
-/// Built once and used by both the measuring pass and the drawing one, because
-/// two lists would be two chances to disagree and the disagreement shows as a
-/// panel whose last line is cut off.
-fn blocks(showing: &Showing) -> Vec<(&'static str, String, bool)> {
-    let detail = &showing.detail;
-    let mut out: Vec<(&'static str, String, bool)> = Vec::new();
-    out.push(("원문", detail.original.clone(), true));
-    if let Some(translation) = &detail.translation {
-        out.push(("번역", translation.clone(), false));
-    }
-    if detail.is_explained() {
-        let rows = detail
-            .rows
-            .iter()
-            .filter(|(_, value)| !value.trim().is_empty())
-            .map(|(label, value)| format!("{label}   {value}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        out.push(("설명", rows, false));
-    } else {
-        out.push(("설명", showing.hint.clone(), true));
-    }
-    out
-}
-
 /// How big the panel has to be for what it is showing.
 fn measure() -> Option<(i32, i32)> {
     let slot = SHOWING.lock().ok()?;
@@ -292,12 +263,12 @@ fn measure() -> Option<(i32, i32)> {
         let inner = width - px(PADDING) * 2;
 
         let mut height = px(PADDING);
-        for (heading, body, _) in blocks(showing) {
-            height += height_of(dc, heading, inner, showing.theme.small_pt);
-            height += height_of(dc, &body, inner, showing.theme.body_pt);
+        for block in &showing.panel.blocks {
+            height += height_of(dc, &block.heading, inner, showing.theme.small_pt);
+            height += height_of(dc, &block.body, inner, showing.theme.body_pt);
             height += px(GAP);
         }
-        height += height_of(dc, &showing.detail.footer, inner, showing.theme.small_pt);
+        height += height_of(dc, &showing.panel.footer, inner, showing.theme.small_pt);
         height += px(PADDING);
         ReleaseDC(None, dc);
 
@@ -409,12 +380,24 @@ unsafe fn draw(dc: HDC, window: HWND, showing: &Showing) {
     let inner = client.right - px(PADDING) * 2;
     let mut y = px(PADDING);
 
-    for (heading, body, quiet) in blocks(showing) {
+    for block in &showing.panel.blocks {
         // SAFETY: measuring and drawing with the same device context.
         unsafe {
-            y += write(dc, heading, left, y, inner, theme.small_pt, theme.footer);
-            let ink = if quiet { theme.original } else { theme.body };
-            y += write(dc, &body, left, y, inner, theme.body_pt, ink);
+            y += write(
+                dc,
+                &block.heading,
+                left,
+                y,
+                inner,
+                theme.small_pt,
+                theme.footer,
+            );
+            let ink = if block.quiet {
+                theme.original
+            } else {
+                theme.body
+            };
+            y += write(dc, &block.body, left, y, inner, theme.body_pt, ink);
         }
         y += px(GAP);
     }
@@ -422,7 +405,7 @@ unsafe fn draw(dc: HDC, window: HWND, showing: &Showing) {
     unsafe {
         write(
             dc,
-            &showing.detail.footer,
+            &showing.panel.footer,
             left,
             y,
             inner,
