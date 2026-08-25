@@ -188,8 +188,13 @@ impl Card {
         // Said on the card the reader ends up looking at, for the same reason
         // the other two caveats are: a warning that is not on the answer is a
         // warning nobody reads.
-        if translation.part_was_removed {
+        let card = if translation.part_was_removed {
             card.say(Self::PART_REMOVED)
+        } else {
+            card
+        };
+        if translation.name_changed {
+            card.say(Self::NAME_CHANGED)
         } else {
             card
         }
@@ -460,6 +465,13 @@ impl Card {
     /// missing, so the card read as a complete answer that simply stopped
     /// making sense.
     pub const PART_REMOVED: &str = "일부만 번역됨";
+    /// What a card says when an identifier did not survive the translation.
+    ///
+    /// Short, because it is the fourth of these and they accumulate. The thing
+    /// a reader has to know is that a name on this card may not be the name:
+    /// `windows-rs` came back as `windows-r스`, which looks almost right and
+    /// matches nothing.
+    pub const NAME_CHANGED: &str = "이름 바뀜";
 
     /// The same card, marked as built on characters read off the screen.
     ///
@@ -491,7 +503,12 @@ impl Card {
     ///
     /// The footer is a `·` separated list ordered by usefulness, and the rule
     /// below has to know which entries are caveats. Nothing else does.
-    const CAVEATS: [&str; 3] = [Self::FROM_PIXELS, Self::DOUBTFUL, Self::PART_REMOVED];
+    const CAVEATS: [&str; 4] = [
+        Self::FROM_PIXELS,
+        Self::DOUBTFUL,
+        Self::PART_REMOVED,
+        Self::NAME_CHANGED,
+    ];
 
     /// Put a caveat on the quiet line, in the model's place.
     ///
@@ -877,6 +894,7 @@ mod tests {
             latency_ms: 900,
             cached: false,
             part_was_removed: false,
+            name_changed: false,
         }
     }
 
@@ -1112,6 +1130,7 @@ mod streaming_tests {
                 latency_ms: 900,
                 cached: false,
                 part_was_removed: false,
+                name_changed: false,
             },
         );
         assert_eq!(body_of(&finished), "나는 다른 파일에서 삽입 스크립트를");
@@ -1149,6 +1168,7 @@ mod footer_tests {
             "original",
             &QuickTranslation {
                 part_was_removed: false,
+                name_changed: false,
                 text: "번역".to_owned(),
                 engine: EngineId::LocalOllama,
                 model: "qwen2.5-coder:7b".to_owned(),
@@ -1255,6 +1275,7 @@ mod footer_tests {
                 latency_ms: 3900,
                 cached: false,
                 part_was_removed: true,
+                name_changed: false,
             },
         );
         assert!(card.footer.contains(Card::PART_REMOVED), "{}", card.footer);
@@ -1286,6 +1307,7 @@ mod footer_tests {
                 latency_ms: 3900,
                 cached: false,
                 part_was_removed: true,
+                name_changed: false,
             },
         )
         .read_from_the_screen();
@@ -1642,6 +1664,7 @@ mod cutting_tests {
                 latency_ms: 900,
                 cached: false,
                 part_was_removed: false,
+                name_changed: false,
             },
         )
     }
@@ -1707,6 +1730,7 @@ mod clipboard_tests {
             latency_ms: 2644,
             cached: false,
             part_was_removed: false,
+            name_changed: false,
         }
     }
 
@@ -1899,5 +1923,63 @@ mod mark_tests {
         // show: it says which word the pointer was on, which the card could
         // not say at all before.
         assert!(word_at.is_some());
+    }
+}
+
+/// The caveat a card carries when a name did not survive.
+#[cfg(test)]
+mod name_changed_tests {
+    use super::Card;
+    use crate::translate::{EngineId, QuickTranslation};
+
+    /// A name that did not survive is said on the card the reader looks at.
+    ///
+    /// The translation around it is usually right, so the card keeps it and
+    /// carries the caveat. What a reader cannot afford is copying a name that
+    /// does not exist: measured 2026-08-18, `windows-rs` came back as
+    /// `windows-r스`, which looks almost right and matches nothing.
+    #[test]
+    fn a_changed_name_is_said_on_the_card() {
+        let card = Card::translated(
+            "The EngineDataSheetService returns one row per sheet.",
+            &QuickTranslation {
+                text: "엔진데이터시트서비스는 한 장당 한 행씩 반환합니다.".to_owned(),
+                engine: EngineId::LocalOllama,
+                model: "qwen2.5:7b".to_owned(),
+                latency_ms: 1500,
+                cached: false,
+                part_was_removed: false,
+                name_changed: true,
+            },
+        );
+        assert!(
+            card.footer.contains(Card::NAME_CHANGED),
+            "the footer does not say the name changed: {}",
+            card.footer,
+        );
+        assert!(
+            card.footer.chars().count() <= Card::FOOTER_LIMIT,
+            "the fourth caveat pushed the footer over its limit: {}",
+            card.footer,
+        );
+    }
+
+    /// Two caveats at once, since they accumulate and are never dropped.
+    #[test]
+    fn a_changed_name_and_a_cut_answer_are_both_said() {
+        let card = Card::translated(
+            "The EngineDataSheetService returns one row per sheet.",
+            &QuickTranslation {
+                text: "엔진데이터시트서비스는 한 장당".to_owned(),
+                engine: EngineId::LocalOllama,
+                model: "qwen2.5:7b".to_owned(),
+                latency_ms: 1500,
+                cached: false,
+                part_was_removed: true,
+                name_changed: true,
+            },
+        );
+        assert!(card.footer.contains(Card::PART_REMOVED), "{}", card.footer);
+        assert!(card.footer.contains(Card::NAME_CHANGED), "{}", card.footer);
     }
 }
