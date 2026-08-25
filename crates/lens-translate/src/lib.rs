@@ -432,7 +432,12 @@ impl OllamaTranslator {
     /// Shared so the streaming and buffered answers are the same answer. Two
     /// separately maintained prompts would drift, and the one that drifted
     /// would be the one carrying the injection defence.
-    pub(crate) fn body_for(&self, request: &QuickRequest, streaming: bool) -> String {
+    /// The body, and the fence it was built with.
+    ///
+    /// The fence is returned rather than recomputed because `fence_for` mixes
+    /// in a nanosecond, so asking twice gives two different markers and the
+    /// second one would match nothing in the answer.
+    pub(crate) fn body_for(&self, request: &QuickRequest, streaming: bool) -> (String, String) {
         self.body_with_budget(
             request,
             streaming,
@@ -446,7 +451,7 @@ impl OllamaTranslator {
     /// sounds better can be shown to be better.
     pub(crate) fn body_for_with_extra(&self, request: &QuickRequest, extra: &str) -> String {
         let budget = lens_core::translate::token_budget(request.source_text.chars().count());
-        let body = self.body_with_budget(request, false, budget);
+        let (body, _) = self.body_with_budget(request, false, budget);
         // The system prompt is the first string field; appending to it here
         // keeps the fence and the request otherwise identical.
         debug_assert!(
@@ -464,7 +469,12 @@ impl OllamaTranslator {
     /// needle is not an error, it is a no-op that looks like success.
     const ANCHOR: &str = "them is translated.";
 
-    fn body_with_budget(&self, request: &QuickRequest, streaming: bool, budget: u32) -> String {
+    fn body_with_budget(
+        &self,
+        request: &QuickRequest,
+        streaming: bool,
+        budget: u32,
+    ) -> (String, String) {
         let fence = fence_for(&request.source_text);
         // The fence is concatenated with the text on purpose, which is the one
         // place instructions and screen text meet. It is safe only because the
@@ -474,7 +484,7 @@ impl OllamaTranslator {
             request.source_text, request.target_language,
         );
 
-        json::object(&[
+        let body = json::object(&[
             ("model", json::Value::Str(&self.model)),
             (
                 "system",
@@ -501,7 +511,8 @@ impl OllamaTranslator {
             ),
             // Every request, not only the warm-up. See `MODEL_LEASE`.
             ("keep_alive", json::Value::Str(MODEL_LEASE)),
-        ])
+        ]);
+        (body, fence)
     }
 
     /// One more attempt after an empty answer, unstreamed and with room.
@@ -517,7 +528,7 @@ impl OllamaTranslator {
     /// earned, the reply came back `done_reason: length` with nothing in it,
     /// every time, and Lens told the reader the result could not be understood.
     fn retry_once(&self, request: &QuickRequest) -> Result<QuickTranslation, TranslateError> {
-        let body = self.body_with_budget(request, false, GENEROUS_BUDGET);
+        let (body, _) = self.body_with_budget(request, false, GENEROUS_BUDGET);
         let started = Instant::now();
         let Ok(response) = http::post(&self.endpoint, "/api/generate", &body, self.timeout) else {
             return Err(TranslateError::Malformed);
@@ -656,7 +667,7 @@ impl Translator for OllamaTranslator {
             return Err(TranslateError::NotWorthTranslating);
         }
 
-        let body = self.body_for(request, false);
+        let (body, fence) = self.body_for(request, false);
         let started = Instant::now();
         let response = http::post(&self.endpoint, "/api/generate", &body, self.timeout)?;
         let latency_ms = started.elapsed().as_millis();
@@ -670,6 +681,11 @@ impl Translator for OllamaTranslator {
             .trim()
             .to_owned();
 
+        // The frame, taken back off. The prompt says "no markers" and until
+        // 2026-08-18 nothing checked: the source `empty` came back as its own
+        // fence, the correct answer, and a fence cut short by the budget, and
+        // all three reached the card. See `lens_core::translate::without_the_fence`.
+        let text = lens_core::translate::without_the_fence(&text, &fence);
         if text.is_empty() {
             // Same reason as the streamed path: the likeliest cause is a
             // budget too small for a model that reasons before it answers.
@@ -758,7 +774,7 @@ impl Translator for OllamaTranslator {
             return Err(TranslateError::NotWorthTranslating);
         }
 
-        let body = self.body_for(request, true);
+        let (body, fence) = self.body_for(request, true);
         let started = Instant::now();
         let mut accumulated = String::new();
         let mut last_report = Instant::now();
@@ -794,6 +810,12 @@ impl Translator for OllamaTranslator {
         }
 
         let text = accumulated.trim().to_owned();
+        // The frame, taken back off. The prompt says "no markers" and until
+        // 2026-08-18 nothing checked: the source `empty` came back as its own
+        // fence, the correct answer, and a fence cut short by the budget, and
+        // all three reached the card. See `lens_core::translate::without_the_fence`.
+        let text = lens_core::translate::without_the_fence(&text, &fence);
+
         if text.is_empty() {
             // A model that answers nothing usually answers the next time, and
             // the alternative on screen is `번역 결과를 이해할 수 없습니다`, which
@@ -1170,11 +1192,13 @@ mod lease_tests {
         let quick = QuickRequest::new("A sentence to translate.", "Korean");
 
         let bodies = [
-            ("buffered", translator.body_for(&quick, false)),
-            ("streamed", translator.body_for(&quick, true)),
+            ("buffered", translator.body_for(&quick, false).0),
+            ("streamed", translator.body_for(&quick, true).0),
             (
                 "deep",
-                translator.deep_body(&DeepRequest::new("A sentence.", "한 문장.", "Korean")),
+                translator
+                    .deep_body(&DeepRequest::new("A sentence.", "한 문장.", "Korean"))
+                    .0,
             ),
         ];
         for (what, body) in bodies {
