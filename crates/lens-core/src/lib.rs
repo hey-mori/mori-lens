@@ -37,6 +37,7 @@ pub mod policy;
 pub mod reach;
 pub mod session;
 pub mod settings;
+pub mod tally;
 pub mod text;
 pub mod theme;
 pub mod translate;
