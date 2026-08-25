@@ -66,6 +66,7 @@ const ID_TOGGLE: usize = 1;
 const ID_QUIT: usize = 2;
 const ID_SETTINGS: usize = 3;
 const ID_AUTOSTART: usize = 4;
+const ID_DIAGNOSTICS: usize = 5;
 
 /// The icon's own id within this process. One icon, so one id.
 const ICON_ID: u32 = 1;
@@ -86,6 +87,14 @@ pub enum TrayEvent {
     OpenSettings,
     /// Start with Windows, or stop doing so.
     ToggleAutostart,
+    /// Show what this session has done, and the settings behind it.
+    ///
+    /// **A menu item rather than a sixth chord.**
+    /// [ADR-0012](../../../docs/decisions/ADR-0012-three-product-surfaces.md)
+    /// says the chord list stops growing once there is somewhere else for a
+    /// control to live, and four capabilities are already chords only because
+    /// there was nowhere. This is the first one that is not.
+    ShowDiagnostics,
 }
 
 /// What the loop asks the tray to do.
@@ -516,6 +525,7 @@ unsafe fn show_menu(window: HWND) -> Option<TrayEvent> {
             },
         );
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+        let _ = AppendMenuW(menu, MF_STRING, ID_DIAGNOSTICS, w!("상태 보기"));
         let _ = AppendMenuW(menu, MF_STRING, ID_SETTINGS, w!("설정 파일 열기"));
         // Checked, because this one *is* a state rather than an action, and
         // its state is read from the registry each time the menu opens rather
@@ -561,6 +571,7 @@ unsafe fn show_menu(window: HWND) -> Option<TrayEvent> {
             ID_TOGGLE => Some(TrayEvent::TogglePause),
             ID_SETTINGS => Some(TrayEvent::OpenSettings),
             ID_AUTOSTART => Some(TrayEvent::ToggleAutostart),
+            ID_DIAGNOSTICS => Some(TrayEvent::ShowDiagnostics),
             ID_QUIT => Some(TrayEvent::Quit),
             _ => None,
         }

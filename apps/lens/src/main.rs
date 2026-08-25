@@ -537,15 +537,13 @@ fn main() -> std::process::ExitCode {
     }
     // First, because everything under it is a measurement of *this* build and
     // a reader pasting the lines has no other way to say which one.
-    println!("  build     {}", build_stamp());
-    println!("  target    {}", options.language);
-    println!("  engine    {engine_line}");
-    // Where, as well as what. A user who has pointed this somewhere else has
-    // no other way to confirm the product agreed, and one who has not gets a
-    // line that says the text is not going anywhere.
-    println!("  address   {} · on this machine", options.endpoint);
-    println!("  dwell     {}ms", options.dwell.as_millis());
-    println!("  mode      {}", options.policy.describe());
+    // Built once and printed here, because the same facts go into the tray's
+    // 상태 보기 window and a release binary has no console to read this in
+    // (#165). Two copies would be two things to keep right.
+    let facts = configuration_facts(&options, &engine_line);
+    for (label, value) in &facts {
+        println!("  {label:<9} {value}");
+    }
     println!(
         "  dpi       {}",
         if dpi {
@@ -703,6 +701,8 @@ fn main() -> std::process::ExitCode {
             &options.language,
             options.profile,
             theme,
+            &facts,
+            options.ocr_mode,
         );
         translator.release();
         return code;
@@ -1103,7 +1103,7 @@ fn main() -> std::process::ExitCode {
     let mut on_screen: Option<(Card, ScreenRect)> = None;
     // **One at a time**, which ADR-0012 says and this enforces by holding one.
     // Opening a second closes the first, so the screen cannot fill with panels.
-    let mut pinned: Option<lens_platform_windows::DetailPanel> = None;
+    let mut pinned: Option<lens_platform_windows::PanelWindow> = None;
     // The word and the region of the outstanding translation, so the pair
     // above can be completed when the answer comes back.
     let mut pending_word: Option<String> = None;
@@ -1150,6 +1150,26 @@ fn main() -> std::process::ExitCode {
                         // The path is in the banner, which a user who
                         // double-clicked the binary never saw.
                         open_in_editor(&options.source.path);
+                    }
+                    TrayEvent::ShowDiagnostics => {
+                        // The one surface that answers *is this working for
+                        // me*. A menu item rather than a sixth chord, per
+                        // ADR-0012, and read-only: #165's writing half is a
+                        // decision problem this does not touch.
+                        drop(pinned.take());
+                        let panel = lens_core::diagnostics::diagnostics_panel(
+                            &configuration_facts(&options, &engine_line),
+                            &tally,
+                            worker_ocr,
+                            build_stamp(),
+                        );
+                        pinned = lens_platform_windows::PanelWindow::open(panel, theme);
+                        println!(
+                            "status {} · {} cards of {} settled hovers",
+                            if pinned.is_some() { "shown" } else { "FAILED" },
+                            tally.cards(),
+                            tally.settled(),
+                        );
                     }
                     TrayEvent::ToggleAutostart => {
                         let now = if lens_platform_windows::autostart::is_enabled() {
@@ -1256,10 +1276,11 @@ fn main() -> std::process::ExitCode {
                     // than the two fighting for the front. Written this way
                     // because an assignment reads as dead and this is not.
                     drop(pinned.take());
-                    pinned = lens_platform_windows::DetailPanel::open(
-                        detail,
+                    pinned = lens_platform_windows::PanelWindow::open(
+                        detail.as_panel(&lens_core::detail::Detail::nothing_explained_yet(
+                            "Ctrl+Alt+D",
+                        )),
                         theme,
-                        lens_core::detail::Detail::nothing_explained_yet("Ctrl+Alt+D"),
                     );
                     println!(
                         "pin   {} · {}",
@@ -1916,7 +1937,9 @@ fn main() -> std::process::ExitCode {
                 // moved on while the panel stayed open must not rewrite it.
                 if let Some(panel) = pinned.as_ref() {
                     if let Some(fresh) = lens_core::detail::Detail::from_card(&answer.card) {
-                        panel.update(fresh);
+                        panel.update(fresh.as_panel(
+                            &lens_core::detail::Detail::nothing_explained_yet("Ctrl+Alt+D"),
+                        ));
                     }
                 }
                 // A finished translation is a sentence the reader can now ask
@@ -2214,6 +2237,41 @@ fn log_card(card: &Card, app: Option<&str>) {
     );
 }
 
+/// The facts the banner prints and the diagnostics window shows.
+///
+/// One list, because a release binary is a Windows-subsystem application and
+/// everything the banner prints goes nowhere, so the window is the only place a
+/// reader ever sees them ([#165](https://github.com/swarea/mori-lens/issues/165)).
+///
+/// Only the short key-and-value ones. The banner's longer lines explain a
+/// setting rather than state it, and a window that repeated them would be a
+/// manual rather than a diagnostic.
+fn configuration_facts(options: &Options, engine_line: &str) -> Vec<(String, String)> {
+    vec![
+        // First, because everything under it is a measurement of *this* build
+        // and a reader pasting the lines has no other way to say which one.
+        ("build".to_owned(), build_stamp().to_owned()),
+        ("target".to_owned(), options.language.clone()),
+        ("engine".to_owned(), engine_line.to_owned()),
+        // Where, as well as what. A reader who has pointed this somewhere else
+        // has no other way to confirm the product agreed, and one who has not
+        // gets a line saying the text is not going anywhere.
+        (
+            "address".to_owned(),
+            format!("{} · on this machine", options.endpoint),
+        ),
+        (
+            "dwell".to_owned(),
+            format!("{}ms", options.dwell.as_millis()),
+        ),
+        ("mode".to_owned(), options.policy.describe()),
+        // Not `ocr` and not `profile`. The banner has a longer line for each,
+        // naming the key and the recognisers, and a second short one above it
+        // said the same word twice. The window gets the mode from the argument
+        // it already takes.
+    ]
+}
+
 /// Run the whole chain once against text that is already on screen.
 ///
 /// **The pointer is not moved.** `ElementFromPoint` takes a coordinate as an
@@ -2231,6 +2289,8 @@ fn selftest(
     language: &str,
     profile: Profile,
     theme: Theme,
+    facts: &[(String, String)],
+    ocr: OcrMode,
 ) -> std::process::ExitCode {
     use lens_core::acquire::{AcquireContext, TextAcquirer};
     use lens_core::geometry::ScreenPoint;
@@ -2589,10 +2649,10 @@ total {}ms from acquisition to card",
                 match lens_core::detail::Detail::from_card(&card) {
                     Some(detail) => {
                         let explained = detail.is_explained();
-                        match lens_platform_windows::DetailPanel::open(
-                            detail,
+                        let hint = lens_core::detail::Detail::nothing_explained_yet("Ctrl+Alt+D");
+                        match lens_platform_windows::PanelWindow::open(
+                            detail.as_panel(&hint),
                             theme,
-                            lens_core::detail::Detail::nothing_explained_yet("Ctrl+Alt+D"),
                         ) {
                             Some(panel) => {
                                 std::thread::sleep(Duration::from_millis(600));
@@ -2624,6 +2684,42 @@ total {}ms from acquisition to card",
                 error.user_message(),
                 error.reason(),
             ),
+        }
+    }
+
+    // Step 7, the diagnostics window, which the tray opens and a machine cannot
+    // click. Everything but the click, the same way step 6 covers everything but
+    // the keypress.
+    //
+    // A `Tally` with nothing in it on purpose: a reader opening this in the
+    // first minute is the case that must not show an empty window, and it is
+    // the one a test can produce.
+    let panel = lens_core::diagnostics::diagnostics_panel(
+        facts,
+        &lens_core::tally::Tally::default(),
+        ocr,
+        build_stamp(),
+    );
+    if !panel.says_anything() {
+        println!("7. REFUSED    the diagnostics panel says nothing at all");
+        return std::process::ExitCode::from(1);
+    }
+    match lens_platform_windows::PanelWindow::open(panel, theme) {
+        Some(status) => {
+            std::thread::sleep(Duration::from_millis(600));
+            println!(
+                "7. status     open={} · 3 seconds, Esc closes it",
+                status.is_open()
+            );
+            if !status.is_open() {
+                println!("   REFUSED    the status window closed itself");
+                return std::process::ExitCode::from(1);
+            }
+            std::thread::sleep(Duration::from_secs(3));
+        }
+        None => {
+            println!("7. REFUSED    the status window did not open");
+            return std::process::ExitCode::from(1);
         }
     }
 
