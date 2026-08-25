@@ -31,6 +31,7 @@ const OCR_ID: i32 = 0x4C32;
 const EXPLAIN_ID: i32 = 0x4C33;
 const COPY_ID: i32 = 0x4C34;
 const KEEP_ID: i32 = 0x4C35;
+const PIN_ID: i32 = 0x4C36;
 
 /// `L`, for Lens.
 const VK_L: u32 = 0x4C;
@@ -44,6 +45,8 @@ const VK_D: u32 = 0x44;
 const VK_C: u32 = 0x43;
 /// `S`, for save, and the letter every other program uses for it.
 const VK_S: u32 = 0x53;
+/// `P`, for pin.
+const VK_P: u32 = 0x50;
 
 /// What a press asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +76,14 @@ pub enum Pressed {
     /// until the next thing replaces it, and a reader who looked something up
     /// twice has learnt nothing the second time.
     Keep,
+    /// Pin what the card is showing into a window that stays.
+    ///
+    /// A card goes when the pointer does
+    /// ([ADR-0009](../../../docs/decisions/ADR-0009-pointer-distance-gate.md)),
+    /// which is right for a tooltip and is why a reader who looks away and comes
+    /// back has to ask for the explanation again. A session log on 2026-08-18
+    /// shows one sentence producing eight cards for that reason.
+    Pin,
 }
 
 /// Registers both global keys and reports presses.
@@ -89,6 +100,7 @@ pub struct PauseKey {
     explain_registered: bool,
     copy_registered: bool,
     keep_registered: bool,
+    pin_registered: bool,
     paused: bool,
 }
 
@@ -101,7 +113,14 @@ impl PauseKey {
         // to this thread's message queue rather than to a window.
         // SAFETY: registers documented thread-local hotkeys; `None` binds them
         // to this thread's message queue rather than to a window.
-        let (registered, ocr_registered, explain_registered, copy_registered, keep_registered) = unsafe {
+        let (
+            registered,
+            ocr_registered,
+            explain_registered,
+            copy_registered,
+            keep_registered,
+            pin_registered,
+        ) = unsafe {
             // NOREPEAT so holding a chord does not fire repeatedly.
             let modifiers = HOT_KEY_MODIFIERS(MOD_CONTROL.0 | MOD_ALT.0 | MOD_NOREPEAT.0);
             (
@@ -110,6 +129,7 @@ impl PauseKey {
                 RegisterHotKey(None, EXPLAIN_ID, modifiers, VK_D).is_ok(),
                 RegisterHotKey(None, COPY_ID, modifiers, VK_C).is_ok(),
                 RegisterHotKey(None, KEEP_ID, modifiers, VK_S).is_ok(),
+                RegisterHotKey(None, PIN_ID, modifiers, VK_P).is_ok(),
             )
         };
 
@@ -119,6 +139,7 @@ impl PauseKey {
             explain_registered,
             copy_registered,
             keep_registered,
+            pin_registered,
             paused: false,
         }
     }
@@ -141,6 +162,11 @@ impl PauseKey {
     /// Whether Ctrl+Alt+S was taken by something else.
     pub fn keep_is_registered(&self) -> bool {
         self.keep_registered
+    }
+
+    /// Whether Ctrl+Alt+P was taken by something else.
+    pub fn pin_is_registered(&self) -> bool {
+        self.pin_registered
     }
 
     pub fn is_registered(&self) -> bool {
@@ -189,6 +215,7 @@ impl PauseKey {
                 EXPLAIN_ID => pressed.push(Pressed::Explain),
                 COPY_ID => pressed.push(Pressed::Copy),
                 KEEP_ID => pressed.push(Pressed::Keep),
+                PIN_ID => pressed.push(Pressed::Pin),
                 _ => {}
             }
         }

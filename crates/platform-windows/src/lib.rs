@@ -21,6 +21,7 @@ pub mod autostart;
 pub mod capture;
 pub mod clipboard;
 mod com;
+mod detail_window;
 mod glass;
 mod inventory;
 pub mod ocr;
@@ -41,6 +42,7 @@ mod protected_harness;
 
 pub use appearance::system_preferences;
 pub use capture::Capture;
+pub use detail_window::DetailPanel;
 pub use inventory::{text_inventory, text_rectangles_of, text_words_of, WindowTextInventory};
 pub use ocr_acquire::{CaptureCost, OcrTextAcquirer};
 pub use overlay::Overlay;
