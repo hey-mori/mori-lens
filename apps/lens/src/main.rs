@@ -697,7 +697,13 @@ fn main() -> std::process::ExitCode {
                 error.reason()
             ),
         }
-        let code = selftest(&overlay, &translator, &options.language, options.profile);
+        let code = selftest(
+            &overlay,
+            &translator,
+            &options.language,
+            options.profile,
+            theme,
+        );
         translator.release();
         return code;
     }
@@ -2224,6 +2230,7 @@ fn selftest(
     translator: &OllamaTranslator,
     language: &str,
     profile: Profile,
+    theme: Theme,
 ) -> std::process::ExitCode {
     use lens_core::acquire::{AcquireContext, TextAcquirer};
     use lens_core::geometry::ScreenPoint;
@@ -2563,12 +2570,54 @@ total {}ms from acquisition to card",
                     }
                 }
 
-                if !overlay.show(card, anchor) {
+                if !overlay.show(card.clone(), anchor) {
                     println!("   REFUSED    the analysis card was not showable");
                     return std::process::ExitCode::from(1);
                 }
                 println!("   shown      on screen for 4 seconds");
                 std::thread::sleep(Duration::from_secs(4));
+
+                // Step 6, the pinned detail, on the card that was just drawn.
+                //
+                // **The product's own path, not the platform type's.** The live
+                // check in `platform-windows` calls `DetailPanel::open` with a
+                // card it made itself; nothing had ever run
+                // `Detail::from_card` on a card this binary built, with this
+                // binary's theme. The one part still out of reach is the
+                // keypress: `RegisterHotKey` succeeding is not `WM_HOTKEY`
+                // arriving, and a machine cannot press a key.
+                match lens_core::detail::Detail::from_card(&card) {
+                    Some(detail) => {
+                        let explained = detail.is_explained();
+                        match lens_platform_windows::DetailPanel::open(
+                            detail,
+                            theme,
+                            lens_core::detail::Detail::nothing_explained_yet("Ctrl+Alt+D"),
+                        ) {
+                            Some(panel) => {
+                                std::thread::sleep(Duration::from_millis(600));
+                                println!(
+                                    "6. pinned     open={} explained={} · 3 seconds, Esc closes it",
+                                    panel.is_open(),
+                                    explained,
+                                );
+                                if !panel.is_open() {
+                                    println!("   REFUSED    the panel closed itself");
+                                    return std::process::ExitCode::from(1);
+                                }
+                                std::thread::sleep(Duration::from_secs(3));
+                            }
+                            None => {
+                                println!("6. REFUSED    the panel did not open");
+                                return std::process::ExitCode::from(1);
+                            }
+                        }
+                    }
+                    None => {
+                        println!("6. REFUSED    the analysis card made no detail");
+                        return std::process::ExitCode::from(1);
+                    }
+                }
             }
             Err(error) => println!(
                 "4. not explained: {} ({})",
