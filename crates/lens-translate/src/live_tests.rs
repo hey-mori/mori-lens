@@ -494,7 +494,7 @@ fn show_the_request_and_reply_for_a_model_that_fails() {
     let translator = OllamaTranslator::new(crate::DEFAULT_ENDPOINT, "gemma4:e4b");
     let request = QuickRequest::new("The output files came back empty.", "Korean");
 
-    let body = translator.body_for(&request, false);
+    let (body, _) = translator.body_for(&request, false);
     println!("--- request ({} bytes)\n{body}\n", body.len());
 
     match crate::http::post(
@@ -792,9 +792,8 @@ fn measure_the_sentence_that_came_back_in_english() {
                 // this returned byte-identical figures for all three
                 // candidates, which is what gave it away.
                 let wanted = shipped.replace('\n', "\\n");
-                let body = translator
-                    .body_for(&request, false)
-                    .replace(&wanted, &replacement.replace('\n', "\\n"));
+                let (built, _) = translator.body_for(&request, false);
+                let body = built.replace(&wanted, &replacement.replace('\n', "\\n"));
                 assert!(
                     label == "shipped" || !body.contains(&wanted),
                     "candidate {label} replaced nothing",
@@ -1268,7 +1267,7 @@ fn show_what_the_third_language_cut_keeps() {
         // The raw reply, before anything in this crate judges it. Built by
         // hand rather than through `quick`, which is the thing under test.
         let request = QuickRequest::new(source, "Korean");
-        let body = translator.body_for(&request, false);
+        let (body, _) = translator.body_for(&request, false);
         let Ok(response) = crate::http::post(
             translator.endpoint(),
             "/api/generate",
@@ -2446,7 +2445,7 @@ fn ask(
     const SYSTEM_ANCHOR: &str = "them is translated.";
     const TAIL_ANCHOR: &str = "Output only the translation.";
 
-    let mut body = translator.body_for(request, false);
+    let (mut body, _) = translator.body_for(request, false);
     if !system_extra.is_empty() {
         assert!(body.contains(SYSTEM_ANCHOR), "the system anchor moved");
         body = body.replacen(SYSTEM_ANCHOR, &format!("{SYSTEM_ANCHOR}{system_extra}"), 1);
@@ -2555,4 +2554,69 @@ fn measure_whether_a_profile_changes_the_card() {
 
     println!();
     println!("  developer should be missing 품사 and 구조. exam should have 구조.");
+}
+
+/// What comes back when the source is one or two words.
+///
+/// A reader's session log showed `original=6 chars  translated=6 chars`, and
+/// the guards say nothing could have checked it: `reads_as_the_source` declines
+/// a source under eight words and `never_reached_the_target` declines one under
+/// three. **A one-word source passes through with no check at all.**
+///
+/// That is an argument, not a finding. This measures what actually comes back,
+/// because the fix depends on which of three things is happening: the model
+/// answers correctly and the length is a coincidence, it echoes the word, or it
+/// answers something unusable.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn measure_what_comes_back_from_a_short_source() {
+    let Some(translator) = live() else {
+        return;
+    };
+
+    // (source, what it is). Ordinary words, an identifier which is correct to
+    // keep verbatim, and the awkward middle.
+    let cases: [(&str, &str); 9] = [
+        ("stale", "one ordinary word"),
+        ("empty", "one ordinary word"),
+        ("commit", "one ordinary word"),
+        ("the lease", "two ordinary words"),
+        ("a stale element", "three ordinary words"),
+        (
+            "EngineDataSheetService",
+            "an identifier, keeping it is correct",
+        ),
+        ("export_csv", "an identifier, keeping it is correct"),
+        ("windows-rs 0.62", "a name and a version"),
+        ("OK", "too short for anything to judge"),
+    ];
+
+    println!();
+    println!("  source                   in  out  same?  what came back");
+    let (mut echoed, mut answered) = (0, 0);
+    for (source, what) in cases {
+        match translator.quick(&QuickRequest::new(source, "Korean")) {
+            Ok(answer) => {
+                answered += 1;
+                let same = answer.text.trim() == source.trim();
+                if same {
+                    echoed += 1;
+                }
+                println!(
+                    "  {:<24} {:>2}  {:>3}  {:<6} {}   ({what})",
+                    source,
+                    source.chars().count(),
+                    answer.text.chars().count(),
+                    if same { "YES" } else { "no" },
+                    answer.text,
+                );
+            }
+            Err(error) => println!("  {source:<24} ----  [{}]   ({what})", error.reason()),
+        }
+    }
+
+    println!();
+    println!("  came back exactly as sent   {echoed} of {answered}");
+    println!("  keeping an identifier is correct. keeping an ordinary word is not,");
+    println!("  and nothing in the product can currently tell those apart.");
 }
