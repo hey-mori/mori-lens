@@ -545,6 +545,10 @@ impl OllamaTranslator {
             // hover is not the place to keep asking.
             return Err(TranslateError::Malformed);
         }
+        // Checked after every other rule has finished with the text, so a
+        // name lost to a third-language cut is not reported twice.
+        let name_changed =
+            !lens_core::translate::identifiers_lost(&request.source_text, &text).is_empty();
         Ok(QuickTranslation {
             text,
             engine: self.engine(),
@@ -552,6 +556,7 @@ impl OllamaTranslator {
             latency_ms: started.elapsed().as_millis(),
             cached: false,
             part_was_removed: false,
+            name_changed,
         })
     }
 
@@ -627,6 +632,10 @@ impl OllamaTranslator {
         {
             return Err(self.why_it_came_back_unchanged(request));
         }
+        // Checked after every other rule has finished with the text, so a
+        // name lost to a third-language cut is not reported twice.
+        let name_changed =
+            !lens_core::translate::identifiers_lost(&request.source_text, &text).is_empty();
         Ok(QuickTranslation {
             text,
             engine: self.engine(),
@@ -634,6 +643,7 @@ impl OllamaTranslator {
             latency_ms: started.elapsed().as_millis(),
             cached: false,
             part_was_removed: false,
+            name_changed,
         })
     }
 
@@ -745,6 +755,10 @@ impl Translator for OllamaTranslator {
             return self.retry_untranslated(request, started, Self::ECHOED);
         }
 
+        // Checked after every other rule has finished with the text, so a
+        // name lost to a third-language cut is not reported twice.
+        let name_changed =
+            !lens_core::translate::identifiers_lost(&request.source_text, &text).is_empty();
         Ok(QuickTranslation {
             text,
             engine: self.engine(),
@@ -752,6 +766,7 @@ impl Translator for OllamaTranslator {
             latency_ms,
             cached: false,
             part_was_removed,
+            name_changed,
         })
     }
 
@@ -889,6 +904,10 @@ impl Translator for OllamaTranslator {
             return self.retry_untranslated(request, started, Self::ECHOED);
         }
 
+        // Checked after every other rule has finished with the text, so a
+        // name lost to a third-language cut is not reported twice.
+        let name_changed =
+            !lens_core::translate::identifiers_lost(&request.source_text, &text).is_empty();
         Ok(QuickTranslation {
             text,
             engine: self.engine(),
@@ -896,6 +915,7 @@ impl Translator for OllamaTranslator {
             latency_ms: started.elapsed().as_millis(),
             cached: false,
             part_was_removed,
+            name_changed,
         })
     }
 }
