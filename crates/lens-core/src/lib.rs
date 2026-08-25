@@ -27,6 +27,7 @@ pub mod analyse;
 pub mod barren;
 pub mod cache;
 pub mod card;
+pub mod detail;
 pub mod geometry;
 pub mod hover;
 pub mod icon;
