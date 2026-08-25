@@ -105,6 +105,67 @@ pub fn token_budget(source_chars: usize) -> u32 {
         .clamp(FLOOR, CEILING)
 }
 
+/// How a fence marker opens, which is the only part of it that is fixed.
+pub const FENCE_OPENING: &str = "#LENS-";
+
+/// The least of a marker that has to be present before it is treated as one.
+///
+/// The opening plus eight hexadecimal digits. Shorter than that and a `#LENS-`
+/// arriving off somebody's screen, out of this repository's own source, would
+/// be cut out of their translation. Longer is unnecessary: eight digits of a
+/// hash generated this second are not going to be typed by accident.
+const LEAST_TO_BE_THE_FENCE: usize = FENCE_OPENING.len() + 8;
+
+/// Take the frame back off a picture a model handed over with it still on.
+///
+/// The quick prompt says *no markers* and nothing checked. Measured 2026-08-18,
+/// the source `empty` came back as
+///
+/// ```text
+/// #LENS-5a23bfc686af5a74#
+/// 공백
+/// #LENS-5a23bfc686af5a7
+/// ```
+///
+/// where `공백` is the correct answer and the rest is the frame, with the
+/// closing marker cut short because the token budget ran out inside it. So the
+/// answer was right and what reached the card was not, and refusing it would
+/// throw away a good translation to punish a formatting mistake.
+///
+/// **A partial marker is still a marker.** The truncated line above shares
+/// fifteen characters with the fence and no closing `#`, so anything matching
+/// only the whole marker leaves it on the card.
+///
+/// This cuts prefixes of **this request's own fence** rather than anything
+/// beginning `#LENS-`, so a reader hovering over this repository's own source
+/// keeps their text.
+pub fn without_the_fence(text: &str, fence: &str) -> String {
+    if fence.len() < LEAST_TO_BE_THE_FENCE {
+        return text.trim().to_owned();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(FENCE_OPENING) {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        // The longest prefix of the fence that is actually here. The fence is
+        // ASCII by construction, so slicing it by byte is slicing it by char.
+        let matched = (LEAST_TO_BE_THE_FENCE..=fence.len())
+            .filter(|&n| tail.starts_with(&fence[..n]))
+            .max();
+        match matched {
+            Some(n) => rest = &tail[n..],
+            // A `#LENS-` that is not this fence. Somebody else's text, kept.
+            None => {
+                out.push_str(FENCE_OPENING);
+                rest = &tail[FENCE_OPENING.len()..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out.trim().to_owned()
+}
+
 /// Whether an answer is just the question again.
 ///
 /// A user hovered a long sentence and the card showed the English original
@@ -1314,5 +1375,68 @@ mod focus_tests {
     fn an_empty_focus_is_no_focus() {
         let request = QuickRequest::new("a sentence here", "Korean").with_focus("   ");
         assert_eq!(request.focused_word, None);
+    }
+}
+
+#[cfg(test)]
+mod fence_tests {
+    use super::{without_the_fence, FENCE_OPENING};
+
+    const FENCE: &str = "#LENS-5a23bfc686af5a74#";
+
+    /// The answer a reader actually got, on 2026-08-18.
+    ///
+    /// The closing marker is cut short because the token budget ran out inside
+    /// it, which is why a rule about whole markers is not enough.
+    #[test]
+    fn the_frame_comes_off_and_the_answer_stays() {
+        let answered = "#LENS-5a23bfc686af5a74#
+공백
+#LENS-5a23bfc686af5a7";
+        assert_eq!(without_the_fence(answered, FENCE), "공백");
+    }
+
+    #[test]
+    fn an_answer_with_no_marker_is_untouched() {
+        for text in ["공백", "출력 파일은 비어있었습니다.", "windows-rs 0.62"] {
+            assert_eq!(without_the_fence(text, FENCE), text);
+        }
+    }
+
+    /// Somebody hovering this repository's own source keeps their text.
+    ///
+    /// `#LENS-` is a string that exists in this tree, so a rule about the
+    /// opening alone would cut a reader's own screen out of their card. Only
+    /// this request's fence is cut.
+    #[test]
+    fn another_fence_is_somebody_elses_text() {
+        let text = "the marker is #LENS-0000000000000000# in that run";
+        assert_eq!(without_the_fence(text, FENCE), text);
+        let bare = format!("a constant called {FENCE_OPENING} lives here");
+        assert_eq!(without_the_fence(&bare, FENCE), bare);
+    }
+
+    /// Nothing but the frame is nothing, and the caller turns that into an
+    /// error rather than a card with an empty body.
+    #[test]
+    fn a_reply_that_is_only_the_frame_is_empty() {
+        let only = format!(
+            "{FENCE}
+{FENCE}"
+        );
+        assert_eq!(without_the_fence(&only, FENCE), "");
+    }
+
+    /// A fence too short to be one is not used as a needle.
+    ///
+    /// Defensive rather than reachable: `fence_for` always produces sixteen
+    /// hexadecimal digits. It is here because the alternative is a function
+    /// that would cut on a two-character needle if one were ever passed.
+    #[test]
+    fn a_short_fence_cuts_nothing() {
+        assert_eq!(
+            without_the_fence("#LENS-1# 공백", "#LENS-1#"),
+            "#LENS-1# 공백"
+        );
     }
 }
