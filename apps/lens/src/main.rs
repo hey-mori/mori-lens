@@ -1107,6 +1107,11 @@ fn main() -> std::process::ExitCode {
     // product that had crashed.
     let mut narrator = silence::Narrator::default();
     let mut reach = lens_core::reach::Reach::new();
+    // Counted rather than logged. The narrator suppresses a repeated line, so
+    // the console is a lower bound on what happened and cannot answer *is this
+    // working for me*. See `lens_core::tally`.
+    let mut tally = lens_core::tally::Tally::default();
+    let mut advised = false;
     // Whether the acquisition thread's death has already been reported, so it
     // is said once rather than on every tick of a loop that keeps running.
     let mut said_it_died = false;
@@ -1216,6 +1221,16 @@ fn main() -> std::process::ExitCode {
                         ScreenRect::new(at.x, at.y, 1, 1),
                     );
                 }
+            }
+        }
+
+        // Once, the first time this session's own numbers say something. A
+        // sentence repeated is a sentence nobody reads, which is the rule
+        // `reach` follows for the offer it makes per application.
+        if !advised {
+            if let Some(said) = tally.advice(worker_ocr) {
+                advised = true;
+                println!("advice {said}");
             }
         }
 
@@ -1682,6 +1697,7 @@ fn main() -> std::process::ExitCode {
                     // This application can be read, so it is never offered the
                     // fallback again however the pointer wanders afterwards.
                     reach.readable(process_name.as_deref());
+                    tally.card();
                     // **Say when the staged hover is the one that landed.**
                     //
                     // `AcquisitionSource::Lesson` was added so that no log
@@ -1817,6 +1833,9 @@ fn main() -> std::process::ExitCode {
                 // Never the text: the length, the reason, and the application
                 // (`docs/privacy-model.md` §3).
                 other => {
+                    if let lens_core::session::Resolution::Failed(error) = &other {
+                        tally.refusal(error.reason());
+                    }
                     if let Some(line) = narrator.line_for(&other, process_name.as_deref()) {
                         println!("{line}");
                     }
