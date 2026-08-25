@@ -30,9 +30,14 @@ difference to that count.
 
 **`scripts/check.sh` runs `cargo clippy --workspace --all-targets` and
 `cargo test --workspace`.** A crate in this workspace is a crate the gate
-builds, so the gate inherits whatever the shell brings. The gate is run before
-every commit in this repository and its speed is a working condition rather
-than a detail.
+builds, so the gate inherits whatever the shell brings.
+
+~~The gate is run before every commit in this repository and its speed is a
+working condition rather than a detail.~~ **Measured 2026-08-18 and wrong**:
+the working gate runs in 12 to 16 seconds with the shell as a member, against
+18 without it. Cargo does not rebuild what has not changed. What it costs is one
+cold build of 264 seconds and several gigabytes of disk. See
+[`what the shell costs the gate`](2026-08-18-what-the-shell-costs-the-gate.md).
 
 Two ways out exist and both are decisions rather than tricks: `exclude` the
 shell from the workspace, or put it in a second workspace. Either splits the
