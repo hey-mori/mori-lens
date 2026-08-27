@@ -107,11 +107,11 @@ docs/compatibility/        per-application results, filled in by running
 docs/benchmarks/           latency, idle cost, and which model to use
 ```
 
-## Use it
+## Installation
 
-### 1. A local model
+### Prerequisites
 
-Lens does not bundle one. Install [Ollama](https://ollama.com), then
+Lens does not bundle a model. Install [Ollama](https://ollama.com), then
 pull a small model:
 
 ```bash
@@ -122,25 +122,41 @@ A 3B model is fast and visibly wrong; 7B costs 200ms more and is right
 every time. Lens picks the best of what is installed, so pulling a
 better one is the whole configuration step.
 
-### 2. Build it
+### From the repository
+
+Requires [Rust 1.85+](https://rustup.rs).
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build-and-install.ps1
+```
+
+This builds a release binary and installs it to
+`%LOCALAPPDATA%\Programs\Mori Lens`, adds a Start Menu entry, and
+registers it in Settings > Apps. Per-user, no elevation.
+
+Or build and install separately:
 
 ```bash
 cargo build --release -p lens
 ```
 
-`target/release/lens.exe` is the whole product: one file, no service, no
-elevation. It opens no window and appears in the notification area.
-
-To hand it to somebody else:
-
-```bash
-scripts/package.sh
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install.ps1
 ```
 
-That runs the gate, builds, and writes a zip named for the version and
-the commit, with a SHA-256 and a short file saying what to do with it.
+### From a release zip
 
-### What happens then
+Unpack the zip, then right-click `install.ps1` and choose Run with
+PowerShell, or:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+`uninstall.ps1` reverses all of it. Add `-Purge` to also delete the
+settings file.
+
+## Use it
 
 - **Hold Alt and rest the pointer** on a sentence. A card appears beside
   it with the translation, and the original above it.
