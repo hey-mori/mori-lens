@@ -73,8 +73,8 @@ runs only when the user opens it.
 app. Mori Lens is a separate product with a separate binary, and it
 runs with Mori not installed.
 
-- **Mori Lens** understands language on the screen, and keeps and
-  reviews what a reader chose to keep of it.
+- **Mori Lens** understands language on the screen, and keeps
+  what a reader chose to keep of it.
 - **Mori** is the broader work memory: projects, tasks, conversations,
   and knowledge across sources.
 
@@ -90,16 +90,19 @@ dependency in either direction.
   ScreenCaptureKit, Vision
 - Local inference: Ollama over `127.0.0.1`, never bundled, spoken to
   over hand-written HTTP with no client dependency
-- Storage (later): SQLite for the library
+- Storage: `settings.toml` (versioned, round-trip TOML via `lens-settings`);
+  SQLite library planned ([ADR-0013](docs/decisions/ADR-0013-the-local-library.md))
 
 ## Layout
 
 ```
 crates/lens-core/          domain types, hover machine, segmentation, theme,
                            card layout, settings, model choice. No OS types.
+crates/lens-settings/      versioned TOML settings, round-trip preservation
 crates/lens-translate/     the Ollama client, HTTP and JSON by hand
 crates/platform-windows/   UI Automation, the Direct2D card, tray, autostart
 apps/lens/                 the product
+apps/lens-window/          the Tauri v2 main window (settings, diagnostics)
 apps/hover-probe/          the measurement instrument
 docs/decisions/            the decisions that constrain everything else
 docs/research/             what was verified, and where the evidence is
