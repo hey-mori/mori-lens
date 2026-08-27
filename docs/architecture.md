@@ -213,17 +213,20 @@ about a service split names its own: *until there is a UI to protect*.
   loopback client on blocking sockets, and translation runs on a worker
   thread rather than a runtime.
 - **No structured storage layer.** *Written before `keep.rs`; corrected
-  2026-08-13.* Two files are persisted today: `settings.conf`, which the
-  user typed, and `saved.md`, which they appended to one keypress at a
-  time. Neither is a store this code reads back. The translation cache is
-  still memory and still dies with the process, because a durable one
-  would be a record of what the user read; that stays a separate opt-in
-  with its own decision rather than arriving as a performance detail.
-  Whether a structured store replaces the flat file is
-  [#162](https://github.com/swarea/mori-lens/issues/162).
+  2026-08-13; updated 2026-08-27.* Two files are persisted today:
+  `settings.conf`, which the user typed, and `saved.md`, which they
+  appended to one keypress at a time. Neither is a store this code
+  reads back. The translation cache is still memory and still dies
+  with the process. [ADR-0013](decisions/ADR-0013-the-local-library.md)
+  (Accepted) decides that `library.db` (SQLite) becomes the structured
+  source of truth, with `saved.md` surviving as the human-readable
+  export. **Nothing described in ADR-0013 is built yet.**
 - **No settings UI.** *Written when the probe was the only binary;
-  corrected 2026-08-13.* The product reads
+  corrected 2026-08-13; updated 2026-08-27.* The product reads
   `%APPDATA%\Mori Lens\settings.conf` and writes a commented template
-  on first run. The probe's command-line flags are the probe's. There is
-  no interface for either, which is
-  [#165](https://github.com/swarea/mori-lens/issues/165).
+  on first run. A versioned TOML replacement (`settings.toml`) and
+  a Tauri v2 settings window are in progress
+  ([#165](https://github.com/swarea/mori-lens/issues/165)):
+  `crates/lens-settings/` owns the file format, and
+  `apps/lens-window/` is the Tauri webview. **Neither is wired into
+  the running product yet.**
