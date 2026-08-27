@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/logo.svg" alt="Mori Lens logo" width="80">
+<img src="docs/assets/mark.png" alt="" width="96" height="96">
 
 # Mori Lens
 
