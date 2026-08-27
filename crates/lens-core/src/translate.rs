@@ -74,7 +74,9 @@ impl QuickRequest {
     /// pointer resting on `{ }` or `42` should cost nothing.
     pub fn is_worth_translating(&self) -> bool {
         let trimmed = self.source_text.trim();
-        !trimmed.is_empty() && trimmed.chars().any(char::is_alphabetic)
+        !trimmed.is_empty()
+            && trimmed.chars().any(char::is_alphabetic)
+            && !mostly_identifiers(trimmed)
     }
 }
 
@@ -1294,6 +1296,69 @@ fn looks_like_code(token: &str) -> bool {
         .any(|(first, second)| first.is_lowercase() && second.is_uppercase())
 }
 
+/// Whether a text is mostly code tokens rather than prose.
+///
+/// A source that is nothing but identifiers has nothing to translate:
+/// a model will transliterate them into the target script, producing a
+/// card that looks like a translation but matches nothing.
+/// `LedgerDataSheetService` alone became 레저데이터시트서비스; `windows-rs
+/// 0.62` became windows-r스 0.62. Both are worse than no card.
+///
+/// The check is broader than [`identifiers_in`] on purpose: it also
+/// counts version numbers (`0.62`) and hyphenated tokens (`windows-rs`)
+/// that `looks_like_code` cannot distinguish from ordinary words like
+/// `well-known`. A sentence containing one identifier among prose passes;
+/// a token list that is eighty percent code does not.
+fn mostly_identifiers(text: &str) -> bool {
+    let non_ws: usize = text.chars().filter(|c| !c.is_whitespace()).count();
+    if non_ws == 0 {
+        return false;
+    }
+
+    let code_chars: usize = text
+        .split_whitespace()
+        .filter(|token| looks_like_identifier_or_version(token))
+        .map(|token| token.chars().filter(|c| !c.is_whitespace()).count())
+        .sum();
+
+    code_chars * 100 >= non_ws * 80
+}
+
+/// Whether a whitespace-delimited token is an identifier or version string.
+///
+/// Narrower than `identifiers_in` (which filters out `windows-rs` because
+/// `looks_like_code` does not know hyphens) and broader at the same time
+/// (it also catches version numbers like `0.62`). The two together cover
+/// the shapes that reach this check: a lone CamelCase name, a hyphenated
+/// crate name, a version, or any combination of those.
+fn looks_like_identifier_or_version(token: &str) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    // A version number: starts with a digit, contains only digits and dots.
+    if token.chars().next().is_some_and(|c| c.is_ascii_digit())
+        && token.chars().all(|c| c.is_ascii_digit() || c == '.')
+    {
+        return true;
+    }
+    // Anything `identifiers_in` would name.
+    if looks_like_code(token) {
+        return true;
+    }
+    // A hyphenated name the camel/underscore/slash checks miss: at least
+    // one letter, at least one hyphen with letters on both sides, and no
+    // spaces. This catches `windows-rs` without catching `well-known`,
+    // because `well-known` is all lower-case and has no other code signal;
+    // but in the `mostly_identifiers` context it only matters when the
+    // rest of the source is also code-like, which is the outer check.
+    let has_letter = token.chars().any(char::is_alphabetic);
+    let has_hyphen = token.contains('-');
+    let all_code_chars = token
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '.' || c == '_');
+    has_letter && has_hyphen && all_code_chars
+}
+
 #[cfg(test)]
 mod identifier_tests {
 
@@ -1428,6 +1493,63 @@ mod identifier_tests {
             assert!(!token.contains('"'), "{token:?}");
             assert!(!token.contains('\n'), "{token:?}");
         }
+    }
+
+    use super::{mostly_identifiers, QuickRequest};
+
+    /// The two inputs from #207 that were transliterated. Both must be
+    /// refused by `is_worth_translating`, which is what the translation
+    /// path checks before calling the model.
+    #[test]
+    fn a_source_that_is_entirely_an_identifier_is_not_worth_translating() {
+        let request = QuickRequest::new("LedgerDataSheetService", "Korean");
+        assert!(
+            !request.is_worth_translating(),
+            "a bare identifier must not reach the model"
+        );
+    }
+
+    #[test]
+    fn a_source_that_is_a_hyphenated_name_and_version_is_not_worth_translating() {
+        let request = QuickRequest::new("windows-rs 0.62", "Korean");
+        assert!(
+            !request.is_worth_translating(),
+            "a crate name and version must not reach the model"
+        );
+    }
+
+    /// A sentence containing one identifier among prose is still worth
+    /// translating. The refusal must only fire when identifiers dominate.
+    #[test]
+    fn an_ordinary_sentence_with_one_identifier_is_still_worth_translating() {
+        let request = QuickRequest::new("The adapter is built on windows-rs 0.62.", "Korean");
+        assert!(
+            request.is_worth_translating(),
+            "a sentence containing an identifier is still prose"
+        );
+    }
+
+    #[test]
+    fn a_sentence_with_a_camel_identifier_is_still_worth_translating() {
+        let request = QuickRequest::new(
+            "The LedgerDataSheetService returns one row per sheet.",
+            "Korean",
+        );
+        assert!(request.is_worth_translating());
+    }
+
+    /// The `mostly_identifiers` function itself, tested at the boundary.
+    #[test]
+    fn mostly_identifiers_threshold() {
+        assert!(mostly_identifiers("LedgerDataSheetService"));
+        assert!(mostly_identifiers("windows-rs 0.62"));
+        assert!(mostly_identifiers("export_csv"));
+        assert!(!mostly_identifiers(
+            "Call export_csv once the rows are ready."
+        ));
+        assert!(!mostly_identifiers("The output files came back empty."));
+        assert!(!mostly_identifiers(""));
+        assert!(!mostly_identifiers("English"));
     }
 }
 
