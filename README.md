@@ -1,6 +1,12 @@
+<div align="center">
+
+<img src="docs/assets/logo.svg" alt="Mori Lens logo" width="80">
+
 # Mori Lens
 
 Mori Lens explains what you are reading, without interrupting it.
+
+</div>
 
 A local-first language layer for everything on your screen. Rest the
 pointer on a word or a sentence in any application and Lens reads the
