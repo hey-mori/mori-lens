@@ -65,6 +65,11 @@ crates/lens-translate/     the Ollama client, no HTTP or JSON dependency
   http.rs                  just enough HTTP/1.1 for a loopback socket
   json.rs                  just enough JSON, with the escaping that matters
 
+crates/lens-settings/      versioned TOML settings, round-trip preservation
+  schema.rs                the V1 schema: general, quick, deep, applications
+  write.rs                 atomic write with rollback on invalid output
+  migrate.rs               settings.conf to settings.toml migration
+
 crates/platform-windows/   the Windows implementation of TextAcquirer
   com.rs                   apartment handling for a call
   window.rs                foreground window, process name, DPI, monitors
