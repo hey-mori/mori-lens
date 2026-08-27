@@ -1,6 +1,6 @@
 # ADR-0014 · Three tiers of history
 
-**Status** · Proposed, 2026-08-13
+**Status** · Accepted, 2026-08-27 (proposed 2026-08-13)
 
 ## Context
 

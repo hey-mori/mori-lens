@@ -1,6 +1,6 @@
 # ADR-0012 · Three product surfaces
 
-**Status** · Proposed, 2026-08-13
+**Status** · Accepted, 2026-08-27 (proposed 2026-08-13)
 **Amends** · [ADR-0004](ADR-0004-native-overlay.md)
 
 ## Context
