@@ -1,6 +1,6 @@
 # ADR-0013 · The local library is SQLite, and the file survives it
 
-**Status** · Proposed, 2026-08-13
+**Status** · Accepted, 2026-08-27 (proposed 2026-08-13)
 
 ## Context
 
