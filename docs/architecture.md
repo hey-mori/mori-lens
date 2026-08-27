@@ -100,6 +100,10 @@ apps/lens/                 the product
   refresh.rs               noticing an edited settings file and dark mode
   silence.rs               why no card appeared
   console.rs               where the banner goes when there is no console
+
+apps/lens-window/          the Tauri v2 main window (settings, diagnostics)
+  src/main.rs              reads diagnostics.json, serves it to the webview
+  web/index.html           the diagnostics view (session stats, config, build)
 ```
 
 The dependency arrow only ever points from an adapter to the core. A
