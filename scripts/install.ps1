@@ -61,12 +61,27 @@ function Step($message) { Write-Host "`n· $message" }
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $source = Join-Path $here 'lens.exe'
 if (-not (Test-Path $source)) {
-    # The script travels in the zip beside the binary. Run from anywhere else
-    # and there is nothing to install, which is worth saying plainly rather
-    # than failing on a copy three lines down.
-    Write-Host "`nlens.exe is not next to this script."
-    Write-Host "Run install.ps1 from the folder it was unpacked into.`n"
-    exit 1
+    # When run from the repository (not the zip), the binary is not next to
+    # this script. Look for a release build in the workspace target directory,
+    # and build one if it does not exist.
+    $repoRoot = Split-Path -Parent $here
+    $source = Join-Path $repoRoot 'target\release\lens.exe'
+    if (-not (Test-Path $source)) {
+        Step 'building lens.exe'
+        if (-not $DryRun) {
+            Push-Location $repoRoot
+            try {
+                cargo build --release -p lens
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "`nBuild failed. Fix the errors and try again.`n"
+                    exit 1
+                }
+            } finally {
+                Pop-Location
+            }
+        }
+        Say $source
+    }
 }
 
 # A running Lens holds its own image open, so the copy would fail partway and
