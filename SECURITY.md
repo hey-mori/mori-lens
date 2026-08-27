@@ -2,8 +2,21 @@
 
 ## Reporting a vulnerability
 
-Email [security@swarea.dev](mailto:security@swarea.dev). Do not open a
-public issue.
+**Do not open a public issue for something exploitable.** A public issue
+is a disclosure, and it lands before there is a fix.
+
+Where this repository offers a **private security advisory** — its
+*Security* tab, *Report a vulnerability* — use that. It is private end to
+end and needs no address.
+
+Where that form is not there, open an issue saying you have found
+something and asking how to send it privately, and keep the technical
+details out of it. That reaches the maintainer without disclosing
+anything.
+
+An earlier version of this section gave an email address at a domain that
+does not resolve. Anyone following it exactly reached nothing, while the
+one alternative it named was the one it forbade.
 
 Expect a response within a few days, even if only to acknowledge
 receipt. If the report involves a specific file or line, include the
@@ -90,4 +103,5 @@ Only the current milestone is supported. There is no backport process.
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+See the README. A security policy repeating a licence is a second place for
+it to be wrong, which is how this file came to claim one the manifest denies.

@@ -197,4 +197,11 @@ The full model, with what each promise depends on and how to verify it:
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+**Not licensed for use.** The author holds the copyright and has granted no
+permission to use, copy, modify or distribute this code.
+
+That is a state rather than a decision. Nothing has shipped, the repository is
+private, and opening it later stays possible: every commit is one author's, so
+relicensing needs nobody's consent, and every dependency is permissive, so a
+permissive licence remains reachable. Opening a repository is a commit. Closing
+one is not — what has shipped stays shipped.
