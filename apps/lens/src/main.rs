@@ -1156,6 +1156,13 @@ fn main() -> std::process::ExitCode {
                         // me*. A menu item rather than a sixth chord, per
                         // ADR-0012, and read-only: #165's writing half is a
                         // decision problem this does not touch.
+                        write_diagnostics_json(
+                            &configuration_facts(&options, &engine_line),
+                            &tally,
+                            worker_ocr.as_str(),
+                            build_stamp(),
+                        );
+                        launch_lens_window();
                         drop(pinned.take());
                         let panel = lens_core::diagnostics::diagnostics_panel(
                             &configuration_facts(&options, &engine_line),
@@ -2005,6 +2012,107 @@ fn open_in_editor(path: &std::path::Path) {
     wide.push(0);
     // SAFETY: a documented shell call with a null-terminated path this
     // function owns, on an action the user just chose from a menu.
+    unsafe {
+        let _ = windows::Win32::UI::Shell::ShellExecuteW(
+            None,
+            windows::core::w!("open"),
+            windows::core::PCWSTR(wide.as_ptr()),
+            windows::core::PCWSTR::null(),
+            windows::core::PCWSTR::null(),
+            windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+        );
+    }
+}
+
+/// Write the session diagnostics as JSON for the Tauri window to read.
+///
+/// The file goes in `%APPDATA%\Mori Lens\diagnostics.json`, beside the
+/// settings file. The window reads it at startup. Written by hand rather
+/// than through serde, because lens.exe has no JSON dependency and adding
+/// one for a single write is the wrong trade.
+fn write_diagnostics_json(
+    configuration: &[(String, String)],
+    tally: &lens_core::tally::Tally,
+    ocr_mode: &str,
+    build: &str,
+) {
+    let path = {
+        let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_owned());
+        std::path::PathBuf::from(appdata)
+            .join("Mori Lens")
+            .join("diagnostics.json")
+    };
+
+    let mut json = String::from("{\n");
+    json.push_str(&format!("  \"build\": {},\n", json_escape(build)));
+    json.push_str("  \"configuration\": [\n");
+    for (i, (label, value)) in configuration.iter().enumerate() {
+        let comma = if i + 1 < configuration.len() { "," } else { "" };
+        json.push_str(&format!(
+            "    [{}, {}]{comma}\n",
+            json_escape(label),
+            json_escape(value)
+        ));
+    }
+    json.push_str("  ],\n");
+    json.push_str(&format!("  \"cards\": {},\n", tally.cards()));
+    json.push_str(&format!("  \"settled_hovers\": {},\n", tally.settled()));
+    json.push_str("  \"refusals\": [\n");
+    let refusals = tally.refusals();
+    for (i, (reason, count)) in refusals.iter().enumerate() {
+        let comma = if i + 1 < refusals.len() { "," } else { "" };
+        json.push_str(&format!(
+            "    [{}, {}]{comma}\n",
+            json_escape(reason),
+            count
+        ));
+    }
+    json.push_str("  ],\n");
+    json.push_str(&format!("  \"ocr_mode\": {}\n", json_escape(ocr_mode)));
+    json.push_str("}\n");
+
+    let _ = std::fs::write(&path, json);
+}
+
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            c if c < '\x20' => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Launch the Tauri settings window from beside the running binary.
+fn launch_lens_window() {
+    use std::os::windows::ffi::OsStrExt;
+
+    let exe = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("lens-window.exe")));
+
+    let Some(exe) = exe else {
+        println!("window  cannot locate lens-window.exe");
+        return;
+    };
+
+    if !exe.exists() {
+        println!("window  {} not found", exe.display());
+        return;
+    }
+
+    let mut wide: Vec<u16> = exe.as_os_str().encode_wide().collect();
+    wide.push(0);
+    // SAFETY: a documented shell call with a null-terminated path this
+    // function owns, launching a companion binary the product ships.
     unsafe {
         let _ = windows::Win32::UI::Shell::ShellExecuteW(
             None,
