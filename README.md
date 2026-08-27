@@ -2,125 +2,51 @@
 
 Mori Lens explains what you are reading, without interrupting it.
 
-Mori Lens is a local-first language layer for everything on your
-screen. Rest the pointer on a word or a sentence in any application and
-Lens reads the text the operating system already knows about, detects
-its language, and shows the meaning in your target language next to it.
-No selecting, no copying, no hotkey, no screenshot.
+A local-first language layer for everything on your screen. Rest the
+pointer on a word or a sentence in any application and Lens reads the
+text the operating system already knows about, detects its language, and
+shows the meaning in your target language next to it. No selecting, no
+copying, no hotkey, no screenshot.
 
-Mori Lens is not a screen translator. A screen translator captures
-pixels and runs OCR over them. Lens asks the accessibility tree for the
+Lens is not a screen translator. It asks the accessibility tree for the
 real characters under the pointer first, and only falls back to a small
 local OCR crop when an application exposes nothing to ask. That single
 decision is what makes it cheap enough to leave running, accurate about
 word boundaries, and able to stay off the screen-recording permission
 until the user actually needs it.
 
-## Relationship to Mori
-
-[Mori](https://github.com/swarea/mori) is a local-first AI work memory
-app. Mori Lens is a separate product with a separate binary, and it
-runs with Mori not installed. The split is deliberate and recorded in
-[ADR-0001](docs/decisions/ADR-0001-independent-repository.md).
-
-- **Mori Lens** understands language on the screen, and keeps and
-  reviews what a reader chose to keep of it.
-- **Mori** is the broader work memory: projects, tasks, conversations,
-  and knowledge across sources.
-
-**That first line said "discovers and explains" until 2026-08-13**, with
-accumulating and reviewing given to Mori. It made Lens partial by
-definition, which was never the intention and is not what
-[ADR-0012](docs/decisions/ADR-0012-three-product-surfaces.md) and
-[ADR-0013](docs/decisions/ADR-0013-the-local-library.md) describe. A
-language library is Lens's own; sending an item to Mori stays an
-explicit act across a process boundary.
-
-There is no shared package, no shared database, and no runtime
-dependency in either direction. If the two are ever connected it will
-be through a small documented process boundary, not by merging the code
-([ADR-0006](docs/decisions/ADR-0006-no-shared-package-yet.md)).
-
 ## Current state
 
 **Milestone 4 · Windows manual OCR.** The whole chain runs on Windows:
 hover, read, translate, card, and a hotkey that reads the pixels where
 the accessibility path gives nothing. `cargo build --release -p lens`
-produces something you can use today, and the section below says how.
+produces something you can use today.
 
-What ships, each of it measured rather than asserted:
+What ships:
 
-- **Hover to translation to card**, end to end. Acquisition p50 3-7ms, a
+- Hover to translation to card, end to end. Acquisition p50 3-7ms, a
   warm translation about 1.5s, a repeat of the same sentence from memory.
-- **All eight target applications measured**, in
-  [`docs/compatibility/windows-app-matrix.md`](docs/compatibility/windows-app-matrix.md),
-  including the two that fail: VS Code's editor exposes nothing without
-  a setting change, and KakaoTalk exposes 40 characters in total.
-- **A card drawn with per-pixel alpha**: the text is opaque whatever the
-  surface is, corners are round and antialiased, and it is sized to its
-  contents, on the monitor the text is on, never taking focus, passing
-  every click through. Not shadowed: that was rebuilt three times and
-  read as a box every time, so it went rather than being tuned a fourth.
-- **A tray icon**, a settings file that reloads while running, and
+- All eight target applications measured, in
+  [`docs/compatibility/windows-app-matrix.md`](docs/compatibility/windows-app-matrix.md).
+- A card drawn with per-pixel alpha: text is opaque whatever the surface,
+  corners are round and antialiased, sized to its contents, on the right
+  monitor, never taking focus, passing every click through.
+- A tray icon, a settings file that reloads while running, and
   start-with-Windows.
-- **Secure fields refused before they are read**, checked against a real
-  password control, in its own process and from another one.
-- **OCR where accessibility gives nothing.** `Ctrl+Alt+O` reads the band
-  around the pointer. Measured against VS Code, the application that
-  prompted it: 336 words recovered where accessibility resolves 9 grid
-  points in 260.
-- **It says why nothing happened.** An application that exposes no text
-  is told once, with the hotkey that would work; a reader who has not
-  held the modifier is told once, on a card, because a release binary
-  has no console to print it in.
+- Secure fields refused before they are read, checked against a real
+  password control.
+- OCR where accessibility gives nothing. `Ctrl+Alt+O` reads the band
+  around the pointer.
+- `Ctrl+Alt+D` for grammar, structure, and vocabulary explanation.
+- `Ctrl+Alt+C` and `Ctrl+Alt+S` to copy or save the card.
 
-- **It explains, when you ask it to.** `Ctrl+Alt+D` takes the sentence
-  on the card and says what it is doing: the dictionary form of the word
-  you were on, its part of speech, what it means in this sentence, the
-  clause structure. Only on a keypress, never on a hover, and labelled
-  as a model's account rather than as fact.
-- **It answers for your own language too.** Lens never translates text
-  you can already read, and used to stop there. `Ctrl+Alt+D` on a Korean
-  sentence full of jargon explains the jargon: a term, an acronym, an
-  unusual sense of an ordinary word.
-- **It lets you keep it.** `Ctrl+Alt+C` puts the sentence and its answer
-  on the clipboard; `Ctrl+Alt+S` appends it to `saved.md` beside your
-  settings file. Plain Markdown, so the export is the file and deleting
-  a block deletes it. Lens only ever appends and never reads it back. The card cannot be selected, because it passes
-  clicks through, so without this there is no way to keep anything.
-
-What does not exist yet: macOS, saved vocabulary, and a settings
+What does not exist yet: macOS, saved vocabulary review, and a settings
 window. Sequenced in [docs/roadmap.md](docs/roadmap.md).
 
-What is known to be weak, because measuring it is the point of this
-repository: **translation quality**. It is not the prompt and not the
-sampling, both ruled out by measurement.
+The authoritative list, capability by capability, is in
+[`docs/mori-lens-project-goal.md`](docs/mori-lens-project-goal.md).
 
-The model was changed on 2026-08-06 after the comparison the earlier
-benchmark said had never been run: `qwen2.5:7b` against
-`qwen2.5-coder:7b`, the same family at the same size. The plain model
-won, and the reversal that benchmark called *the finding* is gone with
-it. See [the one-size comparison](docs/benchmarks/2026-08-06-model-at-one-size.md)
-and [the quality benchmark](docs/benchmarks/2026-08-06-translation-quality.md)
-before it.
-
-Still weak: on one of five sentences both models render `rest` as *be
-positioned*, losing the idea the sentence exists for. And the new model
-sometimes switches language mid-answer, writing a paragraph of Chinese
-into a Korean one; Lens now detects that, cuts it out, and refuses when
-what is left is too short to be a translation.
-
-The authoritative list, capability by capability, is §4 of
-[`docs/mori-lens-project-goal.md`](docs/mori-lens-project-goal.md). This
-section is a summary of it and nothing more: when the two disagree, that
-file is right and this one is stale.
-
-**This section was stale for weeks.** It said "nothing translates yet,
-and no overlay is drawn yet" while both shipped, in a file that also
-carried instructions for installing and running the product. If you are
-reading this repository to work on it, start with the goal document.
-
-## How it will work
+## How it works
 
 ```
 pointer rests
@@ -132,11 +58,22 @@ pointer rests
 ```
 
 OCR runs only when the accessibility path returns nothing, or when the
-user explicitly asks for it. A deeper grammar and vocabulary
-explanation runs only when the user opens it. Both rules exist so the
-common case stays fast: see
-[ADR-0002](docs/decisions/ADR-0002-accessibility-first-acquisition.md) and
-[ADR-0005](docs/decisions/ADR-0005-two-speed-ai.md).
+user explicitly asks for it. A deeper grammar and vocabulary explanation
+runs only when the user opens it.
+
+## Relationship to Mori
+
+[Mori](https://github.com/swarea/mori) is a local-first AI work memory
+app. Mori Lens is a separate product with a separate binary, and it
+runs with Mori not installed.
+
+- **Mori Lens** understands language on the screen, and keeps and
+  reviews what a reader chose to keep of it.
+- **Mori** is the broader work memory: projects, tasks, conversations,
+  and knowledge across sources.
+
+There is no shared package, no shared database, and no runtime
+dependency in either direction.
 
 ## Tech stack
 
@@ -145,15 +82,9 @@ common case stays fast: see
   for the card
 - macOS (later): a small Swift bridge over Accessibility, AppKit,
   ScreenCaptureKit, Vision
-- Local inference: Ollama over `127.0.0.1`, never bundled
-  ([ADR-0007](docs/decisions/ADR-0007-local-first-inference.md)), spoken
-  to over hand-written HTTP with no client dependency
+- Local inference: Ollama over `127.0.0.1`, never bundled, spoken to
+  over hand-written HTTP with no client dependency
 - Storage (later): SQLite for the library
-  ([ADR-0013](docs/decisions/ADR-0013-the-local-library.md)), with
-  history in three tiers of which one is on by default
-  ([ADR-0014](docs/decisions/ADR-0014-three-tiers-of-history.md)).
-  **Neither is built.** Today one Markdown file is appended to on a
-  keypress and nothing reads it back
 
 ## Layout
 
@@ -172,39 +103,27 @@ docs/benchmarks/           latency, idle cost, and which model to use
 
 ## Use it
 
-Two things, and one of them is not Lens.
+### 1. A local model
 
-**1. A local model.** Lens does not bundle one
-([ADR-0007](docs/decisions/ADR-0007-local-first-inference.md)). Install
-[Ollama](https://ollama.com), then pull a small model:
+Lens does not bundle one. Install [Ollama](https://ollama.com), then
+pull a small model:
 
 ```bash
 ollama pull qwen2.5:7b
 ```
 
-A 3B model is fast and visibly wrong: measured on 2026-08-05 it rendered
-"pointer" as 점퍼, a jumper. 7B cost 200ms more and was right every time.
-See [the comparison](docs/benchmarks/2026-08-05-model-comparison.md).
-Lens picks the best of what is installed, so pulling a better one is the
-whole configuration step.
+A 3B model is fast and visibly wrong; 7B costs 200ms more and is right
+every time. Lens picks the best of what is installed, so pulling a
+better one is the whole configuration step.
 
-If you skip this, Lens still starts and tells you exactly this, on the
-card and in the tray tooltip. It does not fail silently.
-
-**2. Build it.**
+### 2. Build it
 
 ```bash
 cargo build --release -p lens
 ```
 
 `target/release/lens.exe` is the whole product: one file, no service, no
-elevation. Put it wherever you keep such things and run it. It opens no
-window and appears in the notification area.
-
-Running it twice does nothing: the second copy says so on a card and
-exits. It opens no window on launch, so double-clicking again is the
-natural thing to do when nothing seems to happen, and it used to give
-you two of everything.
+elevation. It opens no window and appears in the notification area.
 
 To hand it to somebody else:
 
@@ -213,75 +132,28 @@ scripts/package.sh
 ```
 
 That runs the gate, builds, and writes a zip named for the version and
-the commit, with a SHA-256 and a short file saying what to do with it. It
-refuses a working tree with changes in it, because a package named for a
-commit it was not built from is a lie that looks exactly like the truth;
-`--dirty` marks the artifact instead.
-
-`install.ps1` travels in the zip for anyone who would rather it behaved
-like an installed program: it copies the binary to
-`%LOCALAPPDATA%\Programs\Mori Lens`, adds a Start Menu entry, and
-registers it in Settings > Apps so it can be removed from there. This
-user only, no elevation, no service. It does **not** switch on
-start-with-Windows, because that is a tick in the tray menu and an
-installer that made the choice for somebody would be deciding something
-about a tool that reads their screen. `uninstall.ps1` reverses all of it
-and keeps the settings file, which is the only thing here a person wrote
-themselves.
-
-Neither is required. One file in a folder is still a complete install.
-
-**It is not signed**, so Windows will warn on first run and it is right
-to: signing needs a certificate nobody has bought. The checksum is there
-so the warning can be answered with something better than a shrug.
+the commit, with a SHA-256 and a short file saying what to do with it.
 
 ### What happens then
 
 - **Hold Alt and rest the pointer** on a sentence. A card appears beside
-  it with the translation, and the original above it so you can always
-  check what was read.
-- **Click the tray icon** to pause. Paused means no accessibility call is
-  made at all, not that the card is hidden. `Ctrl+Alt+L` does the same.
-- **Press Ctrl+Alt+O** where the accessibility path gives nothing, and Lens
-  reads the band around the pointer with OCR instead. It never does this
-  on its own, and no image is ever written anywhere.
-- **Right-click it** for the settings file, start-with-Windows, and quit.
-  That is the way out: Lens opens no console, so a shell does not wait for
-  it and `Ctrl+C` at the prompt goes to the shell rather than to Lens.
-
-If you rest the pointer somewhere Lens would read and never hold Alt,
-it says so on a card, once, and tells you the modifier is a setting.
+  it with the translation, and the original above it.
+- **Click the tray icon** to pause. Paused means no accessibility call
+  is made at all, not that the card is hidden. `Ctrl+Alt+L` does the same.
+- **Press Ctrl+Alt+O** where the accessibility path gives nothing, and
+  Lens reads the band around the pointer with OCR instead.
+- **Right-click the tray icon** for the settings file, start-with-Windows,
+  and quit.
 
 The first run writes `%APPDATA%\Mori Lens\settings.conf` with every
 option in it, commented. That is where the target language, the theme,
-the Ollama address, and the per-application rules live:
-
-```
-default = modifier          # allow, modifier, or deny
-
-[applications]
-chrome = allow              # no Alt needed here
-code = deny                 # never, not even with Alt
-```
+the Ollama address, and the per-application rules live.
 
 Password managers are denied before that file is read, and writing
 `default = allow` does not switch that off.
 
-`endpoint` is there for an Ollama that does not listen on
-`127.0.0.1:11434`. It has to be an address on this machine. A remote one
-is refused rather than warned about: the HTTP client here has no TLS, so
-pointing it at another host would send what you hover in clear text, and
-the per-provider grant that would make that a choice does not exist.
-
-Command line flags win over the file, for a one-off run:
-
-```bash
-lens.exe --auto --theme forest --text large
-```
-
 `lens.exe --selftest` runs the whole chain once against text already on
-screen, without touching the pointer, and reports each stage. It is the
-fastest way to tell a broken install from an empty screen.
+screen, without touching the pointer, and reports each stage.
 
 ## Develop
 
@@ -299,18 +171,24 @@ reason when there is one. It never prints the text it read. See
 [apps/hover-probe/README.md](apps/hover-probe/README.md) for the flags
 and for how to record a session into the compatibility matrix.
 
+Before committing:
+
+```bash
+scripts/check.sh
+```
+
 ## Privacy
 
-Local-first is a constraint, not a marketing line, and it is written
-down before the code that has to keep it:
+Local-first is a constraint, not a marketing line. The short version:
+
+- Password and protected fields are refused before their contents are read.
+- Nothing captured is written to disk.
+- No screen image is taken at all in the default configuration.
+- No network call is made; translation runs against a local Ollama.
+
+The full model, with what each promise depends on and how to verify it:
 [docs/privacy-model.md](docs/privacy-model.md).
 
-The short version, true of the probe today: password and protected
-fields are refused before their contents are read, nothing captured is
-written to disk, no screen image is taken at all, and no network call
-is made.
+## License
 
-## Contributing
-
-Read [CLAUDE.md](CLAUDE.md) first. It points at the commit format, the
-Git workflow, and the rules that changes are held to.
+Apache-2.0. See [LICENSE](LICENSE).
