@@ -629,6 +629,7 @@ impl OllamaTranslator {
                 &text,
                 &request.target_language,
             )
+            || lens_core::translate::answer_is_suspiciously_short(&request.source_text, &text)
         {
             return Err(self.why_it_came_back_unchanged(request));
         }
@@ -741,6 +742,12 @@ impl Translator for OllamaTranslator {
             &text,
             &request.target_language,
         ) {
+            return self.retry_untranslated(request, started, Self::OBEYED);
+        }
+
+        // A payload in the reader's own script: the answer is in the right
+        // language but is a tiny fraction of an instruction-shaped source.
+        if lens_core::translate::answer_is_suspiciously_short(&request.source_text, &text) {
             return self.retry_untranslated(request, started, Self::OBEYED);
         }
 
@@ -890,6 +897,12 @@ impl Translator for OllamaTranslator {
             &text,
             &request.target_language,
         ) {
+            return self.retry_untranslated(request, started, Self::OBEYED);
+        }
+
+        // A payload in the reader's own script: the answer is in the right
+        // language but is a tiny fraction of an instruction-shaped source.
+        if lens_core::translate::answer_is_suspiciously_short(&request.source_text, &text) {
             return self.retry_untranslated(request, started, Self::OBEYED);
         }
 
