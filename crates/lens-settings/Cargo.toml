@@ -1,0 +1,16 @@
+[package]
+name = "lens-settings"
+description = "Versioned TOML settings for Mori Lens: round-trip preservation, atomic write, migration from settings.conf."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+lens-core = { path = "../lens-core" }
+toml_edit.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

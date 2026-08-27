@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "crates/build-stamp",
   "crates/lens-core",
+  "crates/lens-settings",
   "crates/lens-translate",
   "crates/platform-windows",
   "apps/hover-probe",
@@ -28,6 +29,8 @@ lens-core = { path = "crates/lens-core" }
 lens-platform-windows = { path = "crates/platform-windows" }
 lens-translate = { path = "crates/lens-translate" }
 unicode-segmentation = "1.13"
+toml_edit = "0.22"
+sha2 = "0.10"
 
 [workspace.lints.rust]
 # An unsafe block without a stated invariant does not merge (CLAUDE.md).
