@@ -55,7 +55,7 @@ answer, and the answer is not yet code.**
 library becomes SQLite with this file preserved as its export, and
 [ADR-0014](decisions/ADR-0014-three-tiers-of-history.md) records three
 tiers of history of which only a memory-only one is on by default. Both
-are **Proposed**, and **nothing described in either exists**. Everything
+are **Accepted** (2026-08-27), and **nothing described in either exists**. Everything
 on this page still describes what the code does today, which is one
 appended file and a cache that dies with the process. When either is
 built, this section changes and says so with a date, in the same way §2
