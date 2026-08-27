@@ -16,7 +16,11 @@ exclude = ["apps/shell-spike"]
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
+# Not an SPDX identifier -- it is an npm convention -- and kept because it is the
+# statement that was actually made. `publish = false` is what prevents a release;
+# the string above only describes one.
 license = "UNLICENSED"
+publish = false
 repository = "https://github.com/swarea/mori-lens"
 
 [workspace.dependencies]
