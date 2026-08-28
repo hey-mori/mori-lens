@@ -293,6 +293,7 @@ fn extract_general(doc: &toml_edit::DocumentMut) -> schema::General {
             .unwrap_or(defaults.default_tier),
         ocr: get_str("ocr").unwrap_or(defaults.ocr),
         profile: get_str("profile").unwrap_or(defaults.profile),
+        hover_scope: get_str("hover_scope").unwrap_or(defaults.hover_scope),
     }
 }
 
@@ -372,6 +373,7 @@ fn apply_schema_to_document(schema: &Schema, doc: &mut toml_edit::DocumentMut) {
         );
         set_str(table, "ocr", &schema.general.ocr);
         set_str(table, "profile", &schema.general.profile);
+        set_str(table, "hover_scope", &schema.general.hover_scope);
     }
 
     // [quick]
@@ -451,6 +453,7 @@ fn build_document_from_schema(schema: &Schema) -> toml_edit::DocumentMut {
     );
     general.insert("ocr", toml_edit::value(&schema.general.ocr));
     general.insert("profile", toml_edit::value(&schema.general.profile));
+    general.insert("hover_scope", toml_edit::value(&schema.general.hover_scope));
     doc["general"] = toml_edit::Item::Table(general);
 
     let quick = engine_to_table(&schema.quick);
