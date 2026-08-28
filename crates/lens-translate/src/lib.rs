@@ -43,6 +43,38 @@ mod live_tests;
 /// Where Ollama listens when nobody has changed anything.
 pub const DEFAULT_ENDPOINT: &str = "127.0.0.1:11434";
 
+/// Information about a model installed on an Ollama endpoint.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelInfo {
+    pub name: String,
+    pub size: u64,
+}
+
+/// List models installed on an Ollama endpoint, with their sizes.
+///
+/// A standalone function rather than a method on [`OllamaTranslator`], because
+/// the settings UI needs to list models on an arbitrary endpoint before any
+/// translator is built.
+pub fn list_models(endpoint: &str) -> Result<Vec<ModelInfo>, TranslateError> {
+    let body = http::get(endpoint, "/api/tags", Duration::from_secs(3))
+        .map_err(|_| TranslateError::Unavailable)?;
+    let names = json::string_values_of_key(&body, "name");
+    let sizes = json::number_values_of_key(&body, "size");
+    Ok(names
+        .into_iter()
+        .zip(sizes)
+        .map(|(name, size)| ModelInfo { name, size })
+        .collect())
+}
+
+/// Whether an Ollama endpoint answers at all.
+///
+/// A quick reachability check for the settings UI. True means the endpoint
+/// answered `/api/tags`; false means it did not, whatever the reason.
+pub fn check_reachable(endpoint: &str) -> bool {
+    http::get(endpoint, "/api/tags", Duration::from_secs(2)).is_ok()
+}
+
 /// The model used when the caller does not choose.
 ///
 /// The model named when **nothing at all** is installed.
@@ -155,9 +187,10 @@ impl OllamaTranslator {
     /// Separate from translating so a caller can tell "Ollama is not running"
     /// from "the model is missing" **before** a hover pays for the difference.
     pub fn installed_models(&self) -> Result<Vec<String>, TranslateError> {
-        let body = http::get(&self.endpoint, "/api/tags", Duration::from_secs(3))
-            .map_err(|_| TranslateError::Unavailable)?;
-        Ok(json::string_values_of_key(&body, "name"))
+        Ok(list_models(&self.endpoint)?
+            .into_iter()
+            .map(|m| m.name)
+            .collect())
     }
 
     /// Is the chosen model in memory right now?

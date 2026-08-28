@@ -1147,15 +1147,19 @@ fn main() -> std::process::ExitCode {
     let shared_settings = std::sync::Arc::new(std::sync::Mutex::new(
         settings_service::load_or_migrate(&data_dir),
     ));
-    println!("  settings  {:?}", shared_settings.lock().unwrap().current());
+    println!(
+        "  settings  {:?}",
+        shared_settings.lock().unwrap().current()
+    );
 
-    let (tauri_handle, shared_diagnostics, tauri_app) = match tauri_app::build(shared_settings.clone()) {
-        Ok(triple) => triple,
-        Err(error) => {
-            eprintln!("Tauri initialization failed: {error}");
-            return std::process::ExitCode::from(1);
-        }
-    };
+    let (tauri_handle, shared_diagnostics, tauri_app) =
+        match tauri_app::build(shared_settings.clone()) {
+            Ok(triple) => triple,
+            Err(error) => {
+                eprintln!("Tauri initialization failed: {error}");
+                return std::process::ExitCode::from(1);
+            }
+        };
     println!("  tauri     running");
 
     // Pause has three entrances now: the hotkey, the tray icon, and the tray
@@ -1167,344 +1171,319 @@ fn main() -> std::process::ExitCode {
     let loop_diagnostics = shared_diagnostics.clone();
     let loop_settings = shared_settings.clone();
     std::thread::spawn(move || {
-    let mut quitting = false;
-    while !pointer::stopping() && !quitting {
-        let mut pause_changed = false;
-        if let Some(tray) = &tray {
-            for event in tray.poll() {
-                match event {
-                    TrayEvent::TogglePause => {
-                        pause.toggle();
-                        pause_changed = true;
-                    }
-                    TrayEvent::Quit => quitting = true,
-                    TrayEvent::OpenSettings => {
-                        // The path is in the banner, which a user who
-                        // double-clicked the binary never saw.
-                        open_in_editor(&options.source.path);
-                    }
-                    TrayEvent::ShowDiagnostics => {
-                        // The one surface that answers *is this working for
-                        // me*. A menu item rather than a sixth chord, per
-                        // ADR-0012, and read-only: #165's writing half is a
-                        // decision problem this does not touch.
-                        update_diagnostics(
-                            &loop_diagnostics,
-                            &configuration_facts(&options, &engine_line),
-                            &tally,
-                            worker_ocr.as_str(),
-                            build_stamp(),
-                        );
-                        loop_tauri.show_window();
-                        drop(pinned.take());
-                        let panel = lens_core::diagnostics::diagnostics_panel(
-                            &configuration_facts(&options, &engine_line),
-                            &tally,
-                            worker_ocr,
-                            build_stamp(),
-                        );
-                        pinned = lens_platform_windows::PanelWindow::open(panel, theme);
-                        println!(
-                            "status {} · {} cards of {} settled hovers",
-                            if pinned.is_some() { "shown" } else { "FAILED" },
-                            tally.cards(),
-                            tally.settled(),
-                        );
-                    }
-                    TrayEvent::ToggleAutostart => {
-                        let now = if lens_platform_windows::autostart::is_enabled() {
-                            lens_platform_windows::autostart::disable();
-                            false
-                        } else {
-                            lens_platform_windows::autostart::enable();
-                            lens_platform_windows::autostart::is_enabled()
-                        };
-                        println!("start with Windows: {}", if now { "on" } else { "off" });
+        let mut quitting = false;
+        while !pointer::stopping() && !quitting {
+            let mut pause_changed = false;
+            if let Some(tray) = &tray {
+                for event in tray.poll() {
+                    match event {
+                        TrayEvent::TogglePause => {
+                            pause.toggle();
+                            pause_changed = true;
+                        }
+                        TrayEvent::Quit => quitting = true,
+                        TrayEvent::OpenSettings => {
+                            // The path is in the banner, which a user who
+                            // double-clicked the binary never saw.
+                            open_in_editor(&options.source.path);
+                        }
+                        TrayEvent::ShowDiagnostics => {
+                            // The one surface that answers *is this working for
+                            // me*. A menu item rather than a sixth chord, per
+                            // ADR-0012, and read-only: #165's writing half is a
+                            // decision problem this does not touch.
+                            update_diagnostics(
+                                &loop_diagnostics,
+                                &configuration_facts(&options, &engine_line),
+                                &tally,
+                                worker_ocr.as_str(),
+                                build_stamp(),
+                            );
+                            loop_tauri.show_window();
+                            drop(pinned.take());
+                            let panel = lens_core::diagnostics::diagnostics_panel(
+                                &configuration_facts(&options, &engine_line),
+                                &tally,
+                                worker_ocr,
+                                build_stamp(),
+                            );
+                            pinned = lens_platform_windows::PanelWindow::open(panel, theme);
+                            println!(
+                                "status {} · {} cards of {} settled hovers",
+                                if pinned.is_some() { "shown" } else { "FAILED" },
+                                tally.cards(),
+                                tally.settled(),
+                            );
+                        }
+                        TrayEvent::ToggleAutostart => {
+                            let now = if lens_platform_windows::autostart::is_enabled() {
+                                lens_platform_windows::autostart::disable();
+                                false
+                            } else {
+                                lens_platform_windows::autostart::enable();
+                                lens_platform_windows::autostart::is_enabled()
+                            };
+                            println!("start with Windows: {}", if now { "on" } else { "off" });
+                        }
                     }
                 }
             }
-        }
-        let mut read_with_ocr = false;
-        let mut explain = false;
-        let mut copy = false;
-        let mut keep = false;
-        let mut pin = false;
-        for press in pause.poll() {
-            match press {
-                pause::Pressed::PauseChanged => pause_changed = true,
-                pause::Pressed::ReadWithOcr => read_with_ocr = true,
-                pause::Pressed::Explain => explain = true,
-                pause::Pressed::Copy => copy = true,
-                pause::Pressed::Keep => keep = true,
-                pause::Pressed::Pin => pin = true,
+            let mut read_with_ocr = false;
+            let mut explain = false;
+            let mut copy = false;
+            let mut keep = false;
+            let mut pin = false;
+            for press in pause.poll() {
+                match press {
+                    pause::Pressed::PauseChanged => pause_changed = true,
+                    pause::Pressed::ReadWithOcr => read_with_ocr = true,
+                    pause::Pressed::Explain => explain = true,
+                    pause::Pressed::Copy => copy = true,
+                    pause::Pressed::Keep => keep = true,
+                    pause::Pressed::Pin => pin = true,
+                }
             }
-        }
 
-        if keep && !pause.is_paused() {
-            // The durable half of the copy key, and the first thing this
-            // product writes to disk that came off a screen. What makes that
-            // allowed is that a person pressed a key looking at the card, so
-            // the rule is the same as the clipboard's: nothing here is
-            // reachable from a hover (`docs/privacy-model.md` §1).
-            let under = pointer::position().and_then(pointer::process_name_at);
-            match on_screen.as_ref().and_then(|(card, anchor)| {
-                card.kept_as(under.as_deref()).map(|entry| (entry, *anchor))
-            }) {
-                Some((entry, anchor)) => {
-                    match keeping::append(&saved_to, &entry, std::time::SystemTime::now()) {
-                        Ok(()) => {
-                            // Lengths and lines, never the text
-                            // (`docs/privacy-model.md` §3). The path is not
-                            // secret and is the useful half.
-                            println!(
-                                "keep  {} + {} chars -> {}",
-                                entry.original.chars().count(),
-                                entry.answer.chars().count(),
-                                saved_to.display(),
-                            );
-                            if let Some((card, anchor)) = on_screen.take() {
-                                show_card(&overlay, &mut on_screen, card.kept(), anchor);
+            if keep && !pause.is_paused() {
+                // The durable half of the copy key, and the first thing this
+                // product writes to disk that came off a screen. What makes that
+                // allowed is that a person pressed a key looking at the card, so
+                // the rule is the same as the clipboard's: nothing here is
+                // reachable from a hover (`docs/privacy-model.md` §1).
+                let under = pointer::position().and_then(pointer::process_name_at);
+                match on_screen.as_ref().and_then(|(card, anchor)| {
+                    card.kept_as(under.as_deref()).map(|entry| (entry, *anchor))
+                }) {
+                    Some((entry, anchor)) => {
+                        match keeping::append(&saved_to, &entry, std::time::SystemTime::now()) {
+                            Ok(()) => {
+                                // Lengths and lines, never the text
+                                // (`docs/privacy-model.md` §3). The path is not
+                                // secret and is the useful half.
+                                println!(
+                                    "keep  {} + {} chars -> {}",
+                                    entry.original.chars().count(),
+                                    entry.answer.chars().count(),
+                                    saved_to.display(),
+                                );
+                                if let Some((card, anchor)) = on_screen.take() {
+                                    show_card(&overlay, &mut on_screen, card.kept(), anchor);
+                                }
+                            }
+                            Err(refusal) => {
+                                println!("keep  {}", refusal.reason());
+                                show_card(
+                                    &overlay,
+                                    &mut on_screen,
+                                    Card::not_readable(refusal.user_message()),
+                                    anchor,
+                                );
                             }
                         }
-                        Err(refusal) => {
-                            println!("keep  {}", refusal.reason());
+                    }
+                    None => {
+                        let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
+                        println!("keep  {}", keeping::NotKept::NothingToKeep.reason());
+                        show_card(
+                            &overlay,
+                            &mut on_screen,
+                            Card::not_readable(keeping::NotKept::NothingToKeep.user_message()),
+                            ScreenRect::new(at.x, at.y, 1, 1),
+                        );
+                    }
+                }
+            }
+
+            // Once, the first time this session's own numbers say something. A
+            // sentence repeated is a sentence nobody reads, which is the rule
+            // `reach` follows for the offer it makes per application.
+            if !advised {
+                if let Some(said) = tally.advice(worker_ocr) {
+                    advised = true;
+                    println!("advice {said}");
+                }
+            }
+
+            if pin && !pause.is_paused() {
+                // Opened by a key and by nothing else. There is no path from a
+                // settled hover to this: `Detail::from_card` takes a card the reader
+                // has already been shown, which is what keeps a dwell from becoming
+                // a window.
+                match on_screen
+                    .as_ref()
+                    .and_then(|(card, _)| lens_core::detail::Detail::from_card(card))
+                {
+                    Some(detail) => {
+                        let explained = detail.is_explained();
+                        // Taken and dropped first, so the old window is closed and
+                        // its thread joined before the new one takes focus, rather
+                        // than the two fighting for the front. Written this way
+                        // because an assignment reads as dead and this is not.
+                        drop(pinned.take());
+                        pinned = lens_platform_windows::PanelWindow::open(
+                            detail.as_panel(&lens_core::detail::Detail::nothing_explained_yet(
+                                "Ctrl+Alt+D",
+                            )),
+                            theme,
+                        );
+                        println!(
+                            "pin   {} · {}",
+                            if pinned.is_some() { "opened" } else { "FAILED" },
+                            if explained {
+                                "with the explanation"
+                            } else {
+                                "translation only, Ctrl+Alt+D adds the rest"
+                            },
+                        );
+                    }
+                    None => println!("pin   nothing on the card worth pinning"),
+                }
+            }
+
+            // A reader closed it with Esc, on its own thread, without telling this
+            // loop. Asked rather than tracked, so the handle is dropped and its
+            // thread joined rather than left running until the next pin.
+            if pinned.as_ref().is_some_and(|panel| !panel.is_open()) {
+                pinned = None;
+            }
+
+            if copy && !pause.is_paused() {
+                // Whatever is on the card, not whatever was last translated: a
+                // reader pressing this means the thing in front of them, which may
+                // be an explanation rather than a translation.
+                match on_screen
+                    .as_ref()
+                    .and_then(|(card, anchor)| card.for_the_clipboard().map(|text| (text, *anchor)))
+                {
+                    Some((text, anchor)) => {
+                        // Length and lines, never the text (`docs/privacy-model.md`
+                        // §3). This is the one place in the product that writes
+                        // what was read anywhere at all, and it does it because
+                        // somebody pressed a key for it.
+                        if lens_platform_windows::clipboard::put_text(&text) {
+                            println!(
+                                "copy  {} chars, {} lines",
+                                text.chars().count(),
+                                text.lines().count(),
+                            );
+                            if let Some((card, anchor)) = on_screen.take() {
+                                show_card(&overlay, &mut on_screen, card.copied(), anchor);
+                            }
+                        } else {
+                            // Another application is holding the clipboard, which
+                            // is ordinary and passes. Said on the card because the
+                            // reader pressed a key and would otherwise conclude
+                            // the key does nothing.
+                            println!("copy  the clipboard would not open");
                             show_card(
                                 &overlay,
                                 &mut on_screen,
-                                Card::not_readable(refusal.user_message()),
+                                Card::not_readable("클립보드를 열지 못했습니다"),
                                 anchor,
                             );
                         }
                     }
-                }
-                None => {
-                    let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
-                    println!("keep  {}", keeping::NotKept::NothingToKeep.reason());
-                    show_card(
-                        &overlay,
-                        &mut on_screen,
-                        Card::not_readable(keeping::NotKept::NothingToKeep.user_message()),
-                        ScreenRect::new(at.x, at.y, 1, 1),
-                    );
-                }
-            }
-        }
-
-        // Once, the first time this session's own numbers say something. A
-        // sentence repeated is a sentence nobody reads, which is the rule
-        // `reach` follows for the offer it makes per application.
-        if !advised {
-            if let Some(said) = tally.advice(worker_ocr) {
-                advised = true;
-                println!("advice {said}");
-            }
-        }
-
-        if pin && !pause.is_paused() {
-            // Opened by a key and by nothing else. There is no path from a
-            // settled hover to this: `Detail::from_card` takes a card the reader
-            // has already been shown, which is what keeps a dwell from becoming
-            // a window.
-            match on_screen
-                .as_ref()
-                .and_then(|(card, _)| lens_core::detail::Detail::from_card(card))
-            {
-                Some(detail) => {
-                    let explained = detail.is_explained();
-                    // Taken and dropped first, so the old window is closed and
-                    // its thread joined before the new one takes focus, rather
-                    // than the two fighting for the front. Written this way
-                    // because an assignment reads as dead and this is not.
-                    drop(pinned.take());
-                    pinned = lens_platform_windows::PanelWindow::open(
-                        detail.as_panel(&lens_core::detail::Detail::nothing_explained_yet(
-                            "Ctrl+Alt+D",
-                        )),
-                        theme,
-                    );
-                    println!(
-                        "pin   {} · {}",
-                        if pinned.is_some() { "opened" } else { "FAILED" },
-                        if explained {
-                            "with the explanation"
-                        } else {
-                            "translation only, Ctrl+Alt+D adds the rest"
-                        },
-                    );
-                }
-                None => println!("pin   nothing on the card worth pinning"),
-            }
-        }
-
-        // A reader closed it with Esc, on its own thread, without telling this
-        // loop. Asked rather than tracked, so the handle is dropped and its
-        // thread joined rather than left running until the next pin.
-        if pinned.as_ref().is_some_and(|panel| !panel.is_open()) {
-            pinned = None;
-        }
-
-        if copy && !pause.is_paused() {
-            // Whatever is on the card, not whatever was last translated: a
-            // reader pressing this means the thing in front of them, which may
-            // be an explanation rather than a translation.
-            match on_screen
-                .as_ref()
-                .and_then(|(card, anchor)| card.for_the_clipboard().map(|text| (text, *anchor)))
-            {
-                Some((text, anchor)) => {
-                    // Length and lines, never the text (`docs/privacy-model.md`
-                    // §3). This is the one place in the product that writes
-                    // what was read anywhere at all, and it does it because
-                    // somebody pressed a key for it.
-                    if lens_platform_windows::clipboard::put_text(&text) {
-                        println!(
-                            "copy  {} chars, {} lines",
-                            text.chars().count(),
-                            text.lines().count(),
-                        );
-                        if let Some((card, anchor)) = on_screen.take() {
-                            show_card(&overlay, &mut on_screen, card.copied(), anchor);
-                        }
-                    } else {
-                        // Another application is holding the clipboard, which
-                        // is ordinary and passes. Said on the card because the
-                        // reader pressed a key and would otherwise conclude
-                        // the key does nothing.
-                        println!("copy  the clipboard would not open");
+                    None => {
+                        let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
+                        println!("copy  nothing on screen to copy");
                         show_card(
                             &overlay,
                             &mut on_screen,
-                            Card::not_readable("클립보드를 열지 못했습니다"),
-                            anchor,
+                            Card::not_readable("복사할 내용이 아직 없습니다"),
+                            ScreenRect::new(at.x, at.y, 1, 1),
                         );
                     }
                 }
-                None => {
-                    let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
-                    println!("copy  nothing on screen to copy");
-                    show_card(
-                        &overlay,
-                        &mut on_screen,
-                        Card::not_readable("복사할 내용이 아직 없습니다"),
-                        ScreenRect::new(at.x, at.y, 1, 1),
-                    );
-                }
             }
-        }
 
-        if explain && !pause.is_paused() {
-            match &explainable {
-                Some(showing) => {
-                    // A generation of its own, from the hover machine, exactly
-                    // as manual OCR takes one: the answer has to be
-                    // cancellable and an answer with no generation cannot be.
-                    match hover.take_generation() {
-                        Some(generation) => {
-                            life.hover_settled(generation);
-                            life.job_dispatched(generation, showing.anchor, started.elapsed());
-                            // Said before the model is asked. An analysis
-                            // measured 2.6 to 4.9 seconds warm, and a card
-                            // that sits unchanged for four seconds after a
-                            // keypress reads as a key that did nothing.
-                            show_card(
-                                &overlay,
-                                &mut on_screen,
-                                Card::explaining(&showing.original),
-                                showing.anchor,
-                            );
-                            translating &= jobs_tx
-                                .send(Job::Explain(Explain {
-                                    generation,
-                                    original: showing.original.clone(),
-                                    translation: showing.translation.clone(),
-                                    focused_word: showing.focused_word.clone(),
-                                    anchor: showing.anchor,
-                                    language: language.clone(),
-                                    app: showing.app.clone(),
-                                }))
-                                .is_ok();
+            if explain && !pause.is_paused() {
+                match &explainable {
+                    Some(showing) => {
+                        // A generation of its own, from the hover machine, exactly
+                        // as manual OCR takes one: the answer has to be
+                        // cancellable and an answer with no generation cannot be.
+                        match hover.take_generation() {
+                            Some(generation) => {
+                                life.hover_settled(generation);
+                                life.job_dispatched(generation, showing.anchor, started.elapsed());
+                                // Said before the model is asked. An analysis
+                                // measured 2.6 to 4.9 seconds warm, and a card
+                                // that sits unchanged for four seconds after a
+                                // keypress reads as a key that did nothing.
+                                show_card(
+                                    &overlay,
+                                    &mut on_screen,
+                                    Card::explaining(&showing.original),
+                                    showing.anchor,
+                                );
+                                translating &= jobs_tx
+                                    .send(Job::Explain(Explain {
+                                        generation,
+                                        original: showing.original.clone(),
+                                        translation: showing.translation.clone(),
+                                        focused_word: showing.focused_word.clone(),
+                                        anchor: showing.anchor,
+                                        language: language.clone(),
+                                        app: showing.app.clone(),
+                                    }))
+                                    .is_ok();
+                            }
+                            None => println!("deep  the acquisition thread did not answer"),
                         }
-                        None => println!("deep  the acquisition thread did not answer"),
+                    }
+                    // The key is not silent when there is nothing to explain. A
+                    // reader who presses it over an empty desktop is owed the
+                    // reason, and the console is not where they are looking.
+                    None => {
+                        let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
+                        println!("deep  nothing on screen to explain");
+                        show_card(
+                            &overlay,
+                            &mut on_screen,
+                            Card::not_readable("설명할 문장이 아직 없습니다"),
+                            ScreenRect::new(at.x, at.y, 1, 1),
+                        );
                     }
                 }
-                // The key is not silent when there is nothing to explain. A
-                // reader who presses it over an empty desktop is owed the
-                // reason, and the console is not where they are looking.
-                None => {
-                    let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
-                    println!("deep  nothing on screen to explain");
-                    show_card(
-                        &overlay,
-                        &mut on_screen,
-                        Card::not_readable("설명할 문장이 아직 없습니다"),
-                        ScreenRect::new(at.x, at.y, 1, 1),
+            }
+            if pause_changed {
+                if pause.is_paused() {
+                    if life.dismiss_now() == lifecycle::Action::Hide {
+                        overlay.hide();
+                    }
+                    println!("paused · the pointer is not being sampled");
+                } else {
+                    println!("resumed");
+                }
+                if let Some(tray) = &tray {
+                    // The icon is dimmed rather than swapped, and the tooltip says
+                    // it in words, because a dimmed ring alone is a guess.
+                    tray.set_state(
+                        if pause.is_paused() {
+                            Glyph::Paused
+                        } else {
+                            Glyph::Listening
+                        },
+                        &tooltip(&language, &engine_line, pause.is_paused(), &policy, &pause),
+                        theme.body,
                     );
                 }
             }
-        }
-        if pause_changed {
-            if pause.is_paused() {
-                if life.dismiss_now() == lifecycle::Action::Hide {
-                    overlay.hide();
-                }
-                println!("paused · the pointer is not being sampled");
-            } else {
-                println!("resumed");
-            }
-            if let Some(tray) = &tray {
-                // The icon is dimmed rather than swapped, and the tooltip says
-                // it in words, because a dimmed ring alone is a guess.
-                tray.set_state(
-                    if pause.is_paused() {
-                        Glyph::Paused
-                    } else {
-                        Glyph::Listening
-                    },
-                    &tooltip(&language, &engine_line, pause.is_paused(), &policy, &pause),
-                    theme.body,
-                );
-            }
-        }
-        // **Put `deny_self` back the moment the lesson is gone.**
-        //
-        // The reader closes the welcome with Esc, on its own thread, without
-        // telling anybody, so this is asked rather than waited for. Until it
-        // happens Lens's own process is readable, which is safe only while the
-        // welcome is the one Lens window a pointer can land on.
-        if welcome.as_ref().is_some_and(|welcome| !welcome.is_open()) {
-            welcome = None;
-            hover.reconfigure(hover_config, policy.clone());
-        }
-
-        // Check for settings saved from the webview. These take precedence
-        // over external edits, because the service just wrote them.
-        let pending_settings = loop_settings.lock().unwrap().take_pending();
-        if let Some(settings) = pending_settings {
-            language = settings.language.clone();
-            let mut reloaded = settings.policy();
-            reloaded.deny_self("lens");
-            hover_config = HoverConfig {
-                dwell: Duration::from_millis(settings.dwell_ms),
-                ..HoverConfig::default()
-            };
-            policy = reloaded;
-            hover.reconfigure(hover_config, policy.clone());
-            println!("settings  applied from window");
-        }
-
-        // Anything edited or switched since the last look. Once a second,
-        // and neither of these reads the screen.
-        let changes = watcher.poll(started.elapsed(), system_preferences);
-        if changes.any() {
-            let (settings, problems) = match changes.settings {
-                Some((settings, problems)) => (Some(settings), problems),
-                None => (None, Vec::new()),
-            };
-            for problem in &problems {
-                println!("settings line {}: {}", problem.line, problem.message);
+            // **Put `deny_self` back the moment the lesson is gone.**
+            //
+            // The reader closes the welcome with Esc, on its own thread, without
+            // telling anybody, so this is asked rather than waited for. Until it
+            // happens Lens's own process is readable, which is safe only while the
+            // welcome is the one Lens window a pointer can land on.
+            if welcome.as_ref().is_some_and(|welcome| !welcome.is_open()) {
+                welcome = None;
+                hover.reconfigure(hover_config, policy.clone());
             }
 
-            if let Some(settings) = &settings {
+            // Check for settings saved from the webview. These take precedence
+            // over external edits, because the service just wrote them.
+            let pending_settings = loop_settings.lock().unwrap().take_pending();
+            if let Some(settings) = pending_settings {
                 language = settings.language.clone();
                 let mut reloaded = settings.policy();
                 reloaded.deny_self("lens");
@@ -1514,527 +1493,555 @@ fn main() -> std::process::ExitCode {
                 };
                 policy = reloaded;
                 hover.reconfigure(hover_config, policy.clone());
-
-                // **Everything that is read once, gathered.** The model and
-                // the address belong to the translation worker, which owns
-                // them for its life: swapping one mid-flight would leave a
-                // queued job answered by the model it did not ask for. The OCR
-                // mode decides whether the acquisition thread is built with a
-                // capture path at all.
-                //
-                // Only the model was named here, and `ocr` and `endpoint` were
-                // ignored in silence. A reader who edits a file, saves it, and
-                // sees nothing concludes the file does not work.
-                let mut stale: Vec<&str> = Vec::new();
-                if settings.model != options.model {
-                    stale.push("model");
-                }
-                if settings.endpoint != options.endpoint {
-                    stale.push("endpoint");
-                }
-                if OcrMode::named(&settings.ocr) != Some(options.ocr_mode) {
-                    stale.push("ocr");
-                }
-                if !stale.is_empty() {
-                    let keys = stale.join(", ");
-                    println!("settings: {keys} changed; restart to use it");
-                    // And on a card, because a Windows subsystem binary
-                    // started from Explorer has nowhere to print that line,
-                    // and the reader is looking at the screen: they just saved
-                    // a file and are waiting to see what it did.
-                    let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
-                    show_card(
-                        &overlay,
-                        &mut on_screen,
-                        Card::needs_a_restart(&keys),
-                        ScreenRect::new(at.x, at.y, 1, 1),
-                    );
-                }
+                println!("settings  applied from window");
             }
 
-            // The theme depends on both: a preset from the file, and dark
-            // mode from the system.
-            let appearance = changes.appearance.unwrap_or(system);
-            system = appearance;
-            let chosen = settings.as_ref().map_or(
-                (options.preset, options.translucency, options.text),
-                |settings| {
-                    (
-                        preset_named(&settings.theme).unwrap_or(options.preset),
-                        translucency_named(&settings.translucency).unwrap_or(options.translucency),
-                        text_named(&settings.text).unwrap_or(options.text),
-                    )
-                },
-            );
-            theme = Theme::resolve(chosen.0, chosen.1, chosen.2, appearance);
-            overlay.set_theme(theme);
-            if let Some(tray) = &tray {
-                tray.set_state(
-                    if pause.is_paused() {
-                        Glyph::Paused
-                    } else {
-                        Glyph::Listening
-                    },
-                    &tooltip(&language, &engine_line, pause.is_paused(), &policy, &pause),
-                    theme.body,
-                );
-            }
-            println!(
-                "reloaded · {} · dark={} · {}",
-                language,
-                appearance.dark,
-                policy.describe(),
-            );
-        }
+            // Anything edited or switched since the last look. Once a second,
+            // and neither of these reads the screen.
+            let changes = watcher.poll(started.elapsed(), system_preferences);
+            if changes.any() {
+                let (settings, problems) = match changes.settings {
+                    Some((settings, problems)) => (Some(settings), problems),
+                    None => (None, Vec::new()),
+                };
+                for problem in &problems {
+                    println!("settings line {}: {}", problem.line, problem.message);
+                }
 
-        if read_with_ocr && !pause.is_paused() {
-            // A deliberate act, so it runs on this thread and the reader waits
-            // for it. Roughly a tenth of a second, against the second and a
-            // half the translation after it will take.
-            let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
-            // SAFETY-free: a read-only monitor query.
-            let scale = monitor_scale_at(at);
-            // A round trip to the worker, because there is one generation
-            // counter and it lives with the hover machine. If the worker is
-            // mid-read this waits for it, which is the one place a keypress
-            // can still be delayed by acquisition, and it is bounded.
-            let Some(generation) = hover.take_generation() else {
-                println!("ocr   the acquisition thread did not answer");
-                continue;
-            };
-            life.hover_settled(generation);
-            match manual_ocr::read_around(&overlay, at, scale) {
-                Ok(reading) => {
-                    println!(
-                        "ocr   {} chars on the line, focus {} chars{}",
-                        reading.sentence.chars().count(),
-                        reading.word.chars().count(),
-                        match reading.misread {
-                            0 => String::new(),
-                            n => format!(", {n} misread"),
-                        },
-                    );
-                    if decide(&reading.sentence, &language) == Decision::AlreadyInTarget {
-                        // Said differently now, because it is no longer the
-                        // end of what Lens can do with this sentence. The card
-                        // that reported a dead end now names the key that is
-                        // not one.
-                        explainable = Some(Explainable {
-                            original: reading.sentence.clone(),
-                            focused_word: Some(reading.word.clone()),
-                            anchor: reading.anchor,
-                            translation: None,
-                            app: pointer::process_name_at(at),
-                        });
+                if let Some(settings) = &settings {
+                    language = settings.language.clone();
+                    let mut reloaded = settings.policy();
+                    reloaded.deny_self("lens");
+                    hover_config = HoverConfig {
+                        dwell: Duration::from_millis(settings.dwell_ms),
+                        ..HoverConfig::default()
+                    };
+                    policy = reloaded;
+                    hover.reconfigure(hover_config, policy.clone());
+
+                    // **Everything that is read once, gathered.** The model and
+                    // the address belong to the translation worker, which owns
+                    // them for its life: swapping one mid-flight would leave a
+                    // queued job answered by the model it did not ask for. The OCR
+                    // mode decides whether the acquisition thread is built with a
+                    // capture path at all.
+                    //
+                    // Only the model was named here, and `ocr` and `endpoint` were
+                    // ignored in silence. A reader who edits a file, saves it, and
+                    // sees nothing concludes the file does not work.
+                    let mut stale: Vec<&str> = Vec::new();
+                    if settings.model != options.model {
+                        stale.push("model");
+                    }
+                    if settings.endpoint != options.endpoint {
+                        stale.push("endpoint");
+                    }
+                    if OcrMode::named(&settings.ocr) != Some(options.ocr_mode) {
+                        stale.push("ocr");
+                    }
+                    if !stale.is_empty() {
+                        let keys = stale.join(", ");
+                        println!("settings: {keys} changed; restart to use it");
+                        // And on a card, because a Windows subsystem binary
+                        // started from Explorer has nowhere to print that line,
+                        // and the reader is looking at the screen: they just saved
+                        // a file and are waiting to see what it did.
+                        let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
                         show_card(
                             &overlay,
                             &mut on_screen,
-                            Card::already_readable("Ctrl+Alt+D"),
-                            reading.anchor,
+                            Card::needs_a_restart(&keys),
+                            ScreenRect::new(at.x, at.y, 1, 1),
                         );
-                    } else {
-                        life.job_dispatched(generation, reading.anchor, started.elapsed());
-                        pending_original = reading.sentence.clone();
-                        pending_word = Some(reading.word.clone());
-                        pending_anchor = reading.anchor;
-                        // A failed send means the translation worker has
-                        // gone. Recorded rather than discarded, for the same
-                        // reason the acquisition thread's death is: a product
-                        // that keeps running while nothing answers is worse
-                        // than one that says so.
-                        translating &= jobs_tx
-                            .send(Job::Translate(Translate {
-                                generation,
-                                original: reading.sentence,
-                                focused_word: Some(reading.word),
-                                anchor: reading.anchor,
-                                language: language.clone(),
-                                doubtful: reading.misread > 0,
-                                app: pointer::process_name_at(at),
-                                // Ctrl+Alt+O reads pixels and nothing else.
-                                from_pixels: true,
-                            }))
-                            .is_ok();
                     }
                 }
-                Err(refusal) => {
-                    // On the card, not only in a terminal nobody is looking
-                    // at: the user pressed a key and is owed an answer.
-                    println!("ocr   no reading [{}]", refusal.reason());
-                    show_card(
-                        &overlay,
-                        &mut on_screen,
-                        Card::not_readable(refusal.user_message()),
-                        ScreenRect::new(at.x, at.y, 1, 1),
+
+                // The theme depends on both: a preset from the file, and dark
+                // mode from the system.
+                let appearance = changes.appearance.unwrap_or(system);
+                system = appearance;
+                let chosen = settings.as_ref().map_or(
+                    (options.preset, options.translucency, options.text),
+                    |settings| {
+                        (
+                            preset_named(&settings.theme).unwrap_or(options.preset),
+                            translucency_named(&settings.translucency)
+                                .unwrap_or(options.translucency),
+                            text_named(&settings.text).unwrap_or(options.text),
+                        )
+                    },
+                );
+                theme = Theme::resolve(chosen.0, chosen.1, chosen.2, appearance);
+                overlay.set_theme(theme);
+                if let Some(tray) = &tray {
+                    tray.set_state(
+                        if pause.is_paused() {
+                            Glyph::Paused
+                        } else {
+                            Glyph::Listening
+                        },
+                        &tooltip(&language, &engine_line, pause.is_paused(), &policy, &pause),
+                        theme.body,
                     );
                 }
-            }
-        }
-
-        // Said once, and said everywhere a person might be looking. A worker
-        // that has gone leaves the product running and reading nothing, and
-        // until this the tray went on saying it was listening.
-        if (hover.has_died() || !translating) && !said_it_died {
-            said_it_died = true;
-            eprintln!(
-                "{} has stopped; restart Lens",
-                if hover.has_died() {
-                    "the acquisition thread"
-                } else {
-                    "the translation thread"
-                },
-            );
-            if let Some(tray) = &tray {
-                tray.set_state(
-                    Glyph::Paused,
-                    "Mori Lens · 읽기가 멈췄습니다. 다시 실행해 주세요",
-                    theme.problem,
+                println!(
+                    "reloaded · {} · dark={} · {}",
+                    language,
+                    appearance.dark,
+                    policy.describe(),
                 );
             }
-            let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
-            show_card(
-                &overlay,
-                &mut on_screen,
-                Card::not_readable("읽기가 멈췄습니다 · 다시 실행해 주세요"),
-                ScreenRect::new(at.x, at.y, 1, 1),
-            );
-        }
 
-        if pause.is_paused() {
-            // Nothing is read while paused. Not a suppressed result, not a
-            // hidden card: no accessibility call is made at all, which is what
-            // docs/privacy-model.md §5 promises and what a process monitor can
-            // confirm.
-            std::thread::sleep(Duration::from_millis(50));
-            continue;
-        }
-        let Some(position) = pointer::position() else {
-            std::thread::sleep(Duration::from_millis(25));
-            continue;
-        };
-        let input = InputState {
-            button_down: pointer::any_button_down(),
-            scrolling: false,
-            typing: false,
-            modifier_held: pointer::modifier_held(),
-            ocr_requested: false,
-        };
-        let process_name = pointer::process_name_at(position);
-        let now = started.elapsed();
-        // Handed over, not performed. This is the line the whole file was
-        // rearranged for: the sample goes to the acquisition thread and this
-        // loop carries on to the pause key and the card timers below.
-        hover.sample(position, now, input, process_name.clone());
-
-        // The commonest way this product fails a new person: they are not
-        // holding the modifier, so nothing happens, and nothing on screen says
-        // why. Judged here rather than in the worker because a suppressed
-        // sample never settles, so the hover machine never reports one and
-        // there is nothing on that side to notice.
-        //
-        // The condition is narrow on purpose: the modifier must be the *only*
-        // thing in the way, so this never appears over a denied application,
-        // over Lens's own card, or on an empty desktop.
-        let blocked_by_the_modifier = !input.modifier_held
-            && !policy.allows(process_name.as_deref(), false)
-            && policy.allows(process_name.as_deref(), true);
-        if reach.pointer(position, now, blocked_by_the_modifier) {
-            println!("hint  not reading here without the modifier");
-            // Through the lifecycle like any other card, so it retires when the
-            // pointer leaves rather than sitting there. A round trip for the
-            // generation, which happens once a session at most and only while
-            // nothing is in flight: the modifier is not held, so there is no
-            // hover for it to make stale.
-            if let Some(generation) = hover.take_generation() {
-                let anchor = ScreenRect::new(position.x, position.y, 1, 1);
-                life.job_dispatched(generation, anchor, now);
-                life.answer_arrived(generation, anchor);
-                narrator.card_shown();
-                show_card(
-                    &overlay,
-                    &mut on_screen,
-                    Card::hold_the_modifier(pointer::MODIFIER_NAME),
-                    anchor,
-                );
-            }
-        }
-
-        while let Some(answer) = hover.try_recv() {
-            let hover_worker::FromHover::Settled {
-                generation,
-                point,
-                now,
-                process_name,
-                resolution,
-            } = answer
-            else {
-                // A generation nobody is waiting for. It can only arrive if a
-                // manual OCR request timed out and its reply came late, and
-                // using it would attach a card to a keypress the reader has
-                // already given up on.
-                continue;
-            };
-            life.hover_settled(generation);
-            match resolution {
-                Resolution::Presented(target) => {
-                    // This application can be read, so it is never offered the
-                    // fallback again however the pointer wanders afterwards.
-                    reach.readable(process_name.as_deref());
-                    tally.card();
-                    // **Say when the staged hover is the one that landed.**
-                    //
-                    // `AcquisitionSource::Lesson` was added so that no log
-                    // could mistake a lesson for an acquisition, and then no
-                    // log said anything at all. The first live run left the
-                    // console unable to answer the only question the welcome
-                    // exists to settle: a card carrying the lesson's own
-                    // sentence appeared, and nothing distinguished a hover
-                    // that reached it from a `Ctrl+Alt+O` that read it off the
-                    // screen.
-                    //
-                    // Once, because it is the answer to a question rather than
-                    // a running commentary.
-                    if target.source == lens_core::acquire::AcquisitionSource::Lesson
-                        && !lesson_landed
-                    {
-                        lesson_landed = true;
-                        println!("lesson     a hover reached the welcome's own sentence");
-                    }
-                    let sentence = target.segmented.sentence_text().trim().to_owned();
-                    // Text already in the reader's language costs nothing and
-                    // shows nothing. Without this a Korean reader hovering
-                    // over Korean waits a second and a half for a card that
-                    // re-words their own sentence, which on a mostly-Korean
-                    // screen is most hovers.
-                    if decide(&sentence, &language) == Decision::AlreadyInTarget {
-                        // No card, for the reason below: a Korean reader
-                        // hovering Korean does not want it re-worded.
-                        //
-                        // **But it is remembered**, so `Ctrl+Alt+D` can
-                        // explain it. A word somebody can read and does not
-                        // know is the commonest thing on a technical screen,
-                        // and until now this branch dropped the sentence on
-                        // the floor and left the whole of the reader's own
-                        // language outside the product.
-                        let anchor = target
-                            .card_anchor(point)
-                            .or_else(|| target.anchor())
-                            .unwrap_or(ScreenRect::new(point.x, point.y, 1, 1));
-                        explainable = Some(Explainable {
-                            original: sentence,
-                            focused_word: target.segmented.word_text().map(str::to_owned),
-                            anchor,
-                            translation: None,
-                            app: target.app.process_name.clone(),
-                        });
-                        if let Some(line) = narrator.line_for_skip(
-                            &format!("already in {language}, Ctrl+Alt+D explains it"),
-                            process_name.as_deref(),
-                        ) {
-                            println!("{line}");
-                        }
-                        // Said once a session, on a card, because a release
-                        // binary has no console and a capability nobody can
-                        // discover is the silent product `reach` exists to
-                        // prevent. Only when the key is registered: naming a
-                        // chord another application is holding would be worse
-                        // than saying nothing.
-                        if pause.explain_is_registered() && reach.readable_without_translation() {
-                            let anchor = explainable
-                                .as_ref()
-                                .map(|showing| showing.anchor)
-                                .unwrap_or(ScreenRect::new(point.x, point.y, 1, 1));
-                            reach.card_shown();
+            if read_with_ocr && !pause.is_paused() {
+                // A deliberate act, so it runs on this thread and the reader waits
+                // for it. Roughly a tenth of a second, against the second and a
+                // half the translation after it will take.
+                let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
+                // SAFETY-free: a read-only monitor query.
+                let scale = monitor_scale_at(at);
+                // A round trip to the worker, because there is one generation
+                // counter and it lives with the hover machine. If the worker is
+                // mid-read this waits for it, which is the one place a keypress
+                // can still be delayed by acquisition, and it is bounded.
+                let Some(generation) = hover.take_generation() else {
+                    println!("ocr   the acquisition thread did not answer");
+                    continue;
+                };
+                life.hover_settled(generation);
+                match manual_ocr::read_around(&overlay, at, scale) {
+                    Ok(reading) => {
+                        println!(
+                            "ocr   {} chars on the line, focus {} chars{}",
+                            reading.sentence.chars().count(),
+                            reading.word.chars().count(),
+                            match reading.misread {
+                                0 => String::new(),
+                                n => format!(", {n} misread"),
+                            },
+                        );
+                        if decide(&reading.sentence, &language) == Decision::AlreadyInTarget {
+                            // Said differently now, because it is no longer the
+                            // end of what Lens can do with this sentence. The card
+                            // that reported a dead end now names the key that is
+                            // not one.
+                            explainable = Some(Explainable {
+                                original: reading.sentence.clone(),
+                                focused_word: Some(reading.word.clone()),
+                                anchor: reading.anchor,
+                                translation: None,
+                                app: pointer::process_name_at(at),
+                            });
                             show_card(
                                 &overlay,
                                 &mut on_screen,
                                 Card::already_readable("Ctrl+Alt+D"),
-                                anchor,
+                                reading.anchor,
                             );
+                        } else {
+                            life.job_dispatched(generation, reading.anchor, started.elapsed());
+                            pending_original = reading.sentence.clone();
+                            pending_word = Some(reading.word.clone());
+                            pending_anchor = reading.anchor;
+                            // A failed send means the translation worker has
+                            // gone. Recorded rather than discarded, for the same
+                            // reason the acquisition thread's death is: a product
+                            // that keeps running while nothing answers is worse
+                            // than one that says so.
+                            translating &= jobs_tx
+                                .send(Job::Translate(Translate {
+                                    generation,
+                                    original: reading.sentence,
+                                    focused_word: Some(reading.word),
+                                    anchor: reading.anchor,
+                                    language: language.clone(),
+                                    doubtful: reading.misread > 0,
+                                    app: pointer::process_name_at(at),
+                                    // Ctrl+Alt+O reads pixels and nothing else.
+                                    from_pixels: true,
+                                }))
+                                .is_ok();
                         }
-                        continue;
                     }
-                    // A card is about to appear, so the first-run hint has
-                    // nothing left to explain. **Moved below the branch
-                    // above**, which returns without showing one: a reader
-                    // whose screen is their own language had the modifier hint
-                    // cancelled by hovers that drew nothing.
-                    reach.card_shown();
-                    // The region the card must not cover, which is the
-                    // paragraph when that is near enough and the pointer's own
-                    // line when it is not. Anchoring on the word put the
-                    // answer on top of the rest of what was being read.
-                    let anchor = target
-                        .card_anchor(point)
-                        .or_else(|| target.anchor())
-                        .unwrap_or(ScreenRect::new(point.x, point.y, 1, 1));
+                    Err(refusal) => {
+                        // On the card, not only in a terminal nobody is looking
+                        // at: the user pressed a key and is owed an answer.
+                        println!("ocr   no reading [{}]", refusal.reason());
+                        show_card(
+                            &overlay,
+                            &mut on_screen,
+                            Card::not_readable(refusal.user_message()),
+                            ScreenRect::new(at.x, at.y, 1, 1),
+                        );
+                    }
+                }
+            }
+
+            // Said once, and said everywhere a person might be looking. A worker
+            // that has gone leaves the product running and reading nothing, and
+            // until this the tray went on saying it was listening.
+            if (hover.has_died() || !translating) && !said_it_died {
+                said_it_died = true;
+                eprintln!(
+                    "{} has stopped; restart Lens",
+                    if hover.has_died() {
+                        "the acquisition thread"
+                    } else {
+                        "the translation thread"
+                    },
+                );
+                if let Some(tray) = &tray {
+                    tray.set_state(
+                        Glyph::Paused,
+                        "Mori Lens · 읽기가 멈췄습니다. 다시 실행해 주세요",
+                        theme.problem,
+                    );
+                }
+                let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
+                show_card(
+                    &overlay,
+                    &mut on_screen,
+                    Card::not_readable("읽기가 멈췄습니다 · 다시 실행해 주세요"),
+                    ScreenRect::new(at.x, at.y, 1, 1),
+                );
+            }
+
+            if pause.is_paused() {
+                // Nothing is read while paused. Not a suppressed result, not a
+                // hidden card: no accessibility call is made at all, which is what
+                // docs/privacy-model.md §5 promises and what a process monitor can
+                // confirm.
+                std::thread::sleep(Duration::from_millis(50));
+                continue;
+            }
+            let Some(position) = pointer::position() else {
+                std::thread::sleep(Duration::from_millis(25));
+                continue;
+            };
+            let input = InputState {
+                button_down: pointer::any_button_down(),
+                scrolling: false,
+                typing: false,
+                modifier_held: pointer::modifier_held(),
+                ocr_requested: false,
+            };
+            let process_name = pointer::process_name_at(position);
+            let now = started.elapsed();
+            // Handed over, not performed. This is the line the whole file was
+            // rearranged for: the sample goes to the acquisition thread and this
+            // loop carries on to the pause key and the card timers below.
+            hover.sample(position, now, input, process_name.clone());
+
+            // The commonest way this product fails a new person: they are not
+            // holding the modifier, so nothing happens, and nothing on screen says
+            // why. Judged here rather than in the worker because a suppressed
+            // sample never settles, so the hover machine never reports one and
+            // there is nothing on that side to notice.
+            //
+            // The condition is narrow on purpose: the modifier must be the *only*
+            // thing in the way, so this never appears over a denied application,
+            // over Lens's own card, or on an empty desktop.
+            let blocked_by_the_modifier = !input.modifier_held
+                && !policy.allows(process_name.as_deref(), false)
+                && policy.allows(process_name.as_deref(), true);
+            if reach.pointer(position, now, blocked_by_the_modifier) {
+                println!("hint  not reading here without the modifier");
+                // Through the lifecycle like any other card, so it retires when the
+                // pointer leaves rather than sitting there. A round trip for the
+                // generation, which happens once a session at most and only while
+                // nothing is in flight: the modifier is not held, so there is no
+                // hover for it to make stale.
+                if let Some(generation) = hover.take_generation() {
+                    let anchor = ScreenRect::new(position.x, position.y, 1, 1);
+                    life.job_dispatched(generation, anchor, now);
+                    life.answer_arrived(generation, anchor);
                     narrator.card_shown();
-                    if !sentence.is_empty() {
-                        // Remembered before the job is sent, so the loop can
-                        // tell the reader it was heard if the answer is slow.
-                        life.job_dispatched(generation, anchor, now);
-                        pending_original = sentence.clone();
-                        pending_word = target.segmented.word_text().map(str::to_owned);
-                        pending_anchor = anchor;
-                        // A failed send means the translation worker has
-                        // gone. Recorded rather than discarded, for the same
-                        // reason the acquisition thread's death is: a product
-                        // that keeps running while nothing answers is worse
-                        // than one that says so.
-                        translating &= jobs_tx
-                            .send(Job::Translate(Translate {
-                                generation,
+                    show_card(
+                        &overlay,
+                        &mut on_screen,
+                        Card::hold_the_modifier(pointer::MODIFIER_NAME),
+                        anchor,
+                    );
+                }
+            }
+
+            while let Some(answer) = hover.try_recv() {
+                let hover_worker::FromHover::Settled {
+                    generation,
+                    point,
+                    now,
+                    process_name,
+                    resolution,
+                } = answer
+                else {
+                    // A generation nobody is waiting for. It can only arrive if a
+                    // manual OCR request timed out and its reply came late, and
+                    // using it would attach a card to a keypress the reader has
+                    // already given up on.
+                    continue;
+                };
+                life.hover_settled(generation);
+                match resolution {
+                    Resolution::Presented(target) => {
+                        // This application can be read, so it is never offered the
+                        // fallback again however the pointer wanders afterwards.
+                        reach.readable(process_name.as_deref());
+                        tally.card();
+                        // **Say when the staged hover is the one that landed.**
+                        //
+                        // `AcquisitionSource::Lesson` was added so that no log
+                        // could mistake a lesson for an acquisition, and then no
+                        // log said anything at all. The first live run left the
+                        // console unable to answer the only question the welcome
+                        // exists to settle: a card carrying the lesson's own
+                        // sentence appeared, and nothing distinguished a hover
+                        // that reached it from a `Ctrl+Alt+O` that read it off the
+                        // screen.
+                        //
+                        // Once, because it is the answer to a question rather than
+                        // a running commentary.
+                        if target.source == lens_core::acquire::AcquisitionSource::Lesson
+                            && !lesson_landed
+                        {
+                            lesson_landed = true;
+                            println!("lesson     a hover reached the welcome's own sentence");
+                        }
+                        let sentence = target.segmented.sentence_text().trim().to_owned();
+                        // Text already in the reader's language costs nothing and
+                        // shows nothing. Without this a Korean reader hovering
+                        // over Korean waits a second and a half for a card that
+                        // re-words their own sentence, which on a mostly-Korean
+                        // screen is most hovers.
+                        if decide(&sentence, &language) == Decision::AlreadyInTarget {
+                            // No card, for the reason below: a Korean reader
+                            // hovering Korean does not want it re-worded.
+                            //
+                            // **But it is remembered**, so `Ctrl+Alt+D` can
+                            // explain it. A word somebody can read and does not
+                            // know is the commonest thing on a technical screen,
+                            // and until now this branch dropped the sentence on
+                            // the floor and left the whole of the reader's own
+                            // language outside the product.
+                            let anchor = target
+                                .card_anchor(point)
+                                .or_else(|| target.anchor())
+                                .unwrap_or(ScreenRect::new(point.x, point.y, 1, 1));
+                            explainable = Some(Explainable {
                                 original: sentence,
                                 focused_word: target.segmented.word_text().map(str::to_owned),
                                 anchor,
-                                language: language.clone(),
+                                translation: None,
                                 app: target.app.process_name.clone(),
-                                // No shape heuristic has run on this reading.
-                                // The automatic fall-through does not count
-                                // misread words the way `Ctrl+Alt+O` does, so
-                                // the honest answer is that nobody looked.
-                                doubtful: false,
-                                // **Not always false.** This said "the
-                                // accessibility path reads text, not pixels",
-                                // and it stopped being true when `ocr =
-                                // automatic` gave the session a capture path:
-                                // a hover accessibility could not serve falls
-                                // through to pixels and arrives here with a
-                                // target the reader has no way to tell apart.
-                                from_pixels: target.source
-                                    == lens_core::acquire::AcquisitionSource::Ocr,
-                            }))
-                            .is_ok();
-                    }
-                }
-                // None of these draws a card, and until now none of them said
-                // anything either. A user holding Alt over a window that
-                // exposes no text saw an application doing nothing, which is
-                // indistinguishable from a broken one. It is the first thing
-                // the first person to run a release build asked about.
-                //
-                // Never the text: the length, the reason, and the application
-                // (`docs/privacy-model.md` §3).
-                other => {
-                    if let lens_core::session::Resolution::Failed(error) = &other {
-                        tally.refusal(error.reason());
-                    }
-                    if let Some(line) = narrator.line_for(&other, process_name.as_deref()) {
-                        println!("{line}");
-                    }
-                    // A console line is not an answer for somebody who started
-                    // this from Explorer: a Windows subsystem binary has no
-                    // console to print it in. Once per application, when the
-                    // application rather than the pointer is what failed, the
-                    // reader is told on the card instead, and told what to
-                    // press. `reach` decides; this only draws.
-                    if let Resolution::Failed(error) = &other {
-                        if reach.unreadable(process_name.as_deref(), error) {
-                            // Said, because a mechanism nobody can see in a log
-                            // cannot be told apart from one that never fired. A
-                            // reader's session showed 42 of these refusals and
-                            // no way to know whether the offer had been made.
-                            println!(
-                                "offer  {} exposes no text; naming the OCR key, once for it",
-                                process_name.as_deref().unwrap_or("that application"),
-                            );
-                            let card = Card::cannot_read_this_app(ocr_hotkey.as_deref());
-                            // **The settled point, not the pointer now.** They
-                            // were the same value while acquisition ran inline
-                            // on this loop. They are not any more: this card is
-                            // shown after a read that failed, and the read is
-                            // allowed 800ms, so anchoring on the live pointer
-                            // puts the card wherever the hand drifted to in the
-                            // meantime rather than on the text it is about.
-                            let anchor = ScreenRect::new(point.x, point.y, 1, 1);
-                            narrator.card_shown();
+                            });
+                            if let Some(line) = narrator.line_for_skip(
+                                &format!("already in {language}, Ctrl+Alt+D explains it"),
+                                process_name.as_deref(),
+                            ) {
+                                println!("{line}");
+                            }
+                            // Said once a session, on a card, because a release
+                            // binary has no console and a capability nobody can
+                            // discover is the silent product `reach` exists to
+                            // prevent. Only when the key is registered: naming a
+                            // chord another application is holding would be worse
+                            // than saying nothing.
+                            if pause.explain_is_registered() && reach.readable_without_translation()
+                            {
+                                let anchor = explainable
+                                    .as_ref()
+                                    .map(|showing| showing.anchor)
+                                    .unwrap_or(ScreenRect::new(point.x, point.y, 1, 1));
+                                reach.card_shown();
+                                show_card(
+                                    &overlay,
+                                    &mut on_screen,
+                                    Card::already_readable("Ctrl+Alt+D"),
+                                    anchor,
+                                );
+                            }
+                            continue;
+                        }
+                        // A card is about to appear, so the first-run hint has
+                        // nothing left to explain. **Moved below the branch
+                        // above**, which returns without showing one: a reader
+                        // whose screen is their own language had the modifier hint
+                        // cancelled by hovers that drew nothing.
+                        reach.card_shown();
+                        // The region the card must not cover, which is the
+                        // paragraph when that is near enough and the pointer's own
+                        // line when it is not. Anchoring on the word put the
+                        // answer on top of the rest of what was being read.
+                        let anchor = target
+                            .card_anchor(point)
+                            .or_else(|| target.anchor())
+                            .unwrap_or(ScreenRect::new(point.x, point.y, 1, 1));
+                        narrator.card_shown();
+                        if !sentence.is_empty() {
+                            // Remembered before the job is sent, so the loop can
+                            // tell the reader it was heard if the answer is slow.
                             life.job_dispatched(generation, anchor, now);
-                            life.answer_arrived(generation, anchor);
-                            show_card(&overlay, &mut on_screen, card, anchor);
+                            pending_original = sentence.clone();
+                            pending_word = target.segmented.word_text().map(str::to_owned);
+                            pending_anchor = anchor;
+                            // A failed send means the translation worker has
+                            // gone. Recorded rather than discarded, for the same
+                            // reason the acquisition thread's death is: a product
+                            // that keeps running while nothing answers is worse
+                            // than one that says so.
+                            translating &= jobs_tx
+                                .send(Job::Translate(Translate {
+                                    generation,
+                                    original: sentence,
+                                    focused_word: target.segmented.word_text().map(str::to_owned),
+                                    anchor,
+                                    language: language.clone(),
+                                    app: target.app.process_name.clone(),
+                                    // No shape heuristic has run on this reading.
+                                    // The automatic fall-through does not count
+                                    // misread words the way `Ctrl+Alt+O` does, so
+                                    // the honest answer is that nobody looked.
+                                    doubtful: false,
+                                    // **Not always false.** This said "the
+                                    // accessibility path reads text, not pixels",
+                                    // and it stopped being true when `ocr =
+                                    // automatic` gave the session a capture path:
+                                    // a hover accessibility could not serve falls
+                                    // through to pixels and arrives here with a
+                                    // target the reader has no way to tell apart.
+                                    from_pixels: target.source
+                                        == lens_core::acquire::AcquisitionSource::Ocr,
+                                }))
+                                .is_ok();
+                        }
+                    }
+                    // None of these draws a card, and until now none of them said
+                    // anything either. A user holding Alt over a window that
+                    // exposes no text saw an application doing nothing, which is
+                    // indistinguishable from a broken one. It is the first thing
+                    // the first person to run a release build asked about.
+                    //
+                    // Never the text: the length, the reason, and the application
+                    // (`docs/privacy-model.md` §3).
+                    other => {
+                        if let lens_core::session::Resolution::Failed(error) = &other {
+                            tally.refusal(error.reason());
+                        }
+                        if let Some(line) = narrator.line_for(&other, process_name.as_deref()) {
+                            println!("{line}");
+                        }
+                        // A console line is not an answer for somebody who started
+                        // this from Explorer: a Windows subsystem binary has no
+                        // console to print it in. Once per application, when the
+                        // application rather than the pointer is what failed, the
+                        // reader is told on the card instead, and told what to
+                        // press. `reach` decides; this only draws.
+                        if let Resolution::Failed(error) = &other {
+                            if reach.unreadable(process_name.as_deref(), error) {
+                                // Said, because a mechanism nobody can see in a log
+                                // cannot be told apart from one that never fired. A
+                                // reader's session showed 42 of these refusals and
+                                // no way to know whether the offer had been made.
+                                println!(
+                                    "offer  {} exposes no text; naming the OCR key, once for it",
+                                    process_name.as_deref().unwrap_or("that application"),
+                                );
+                                let card = Card::cannot_read_this_app(ocr_hotkey.as_deref());
+                                // **The settled point, not the pointer now.** They
+                                // were the same value while acquisition ran inline
+                                // on this loop. They are not any more: this card is
+                                // shown after a read that failed, and the read is
+                                // allowed 800ms, so anchoring on the live pointer
+                                // puts the card wherever the hand drifted to in the
+                                // meantime rather than on the text it is about.
+                                let anchor = ScreenRect::new(point.x, point.y, 1, 1);
+                                narrator.card_shown();
+                                life.job_dispatched(generation, anchor, now);
+                                life.answer_arrived(generation, anchor);
+                                show_card(&overlay, &mut on_screen, card, anchor);
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Say the sentence was heard, if the answer is taking long enough
-        // that the screen would otherwise be empty. Once per translation, and
-        // never for one the cache already answered.
-        if let Some(anchor) = life.waited_long_enough(now) {
-            // Which wait it is. `Card::loading_model` and the sentence it
-            // carries were written when the deep path landed and then never
-            // called, so the one wait a reader cannot explain to themselves
-            // was the one the card described wrongly.
-            let card = if engine_warm.load(std::sync::atomic::Ordering::Relaxed) {
-                Card::waiting(&pending_original)
-            } else {
-                Card::loading_model(&pending_original)
-            };
-            show_card(&overlay, &mut on_screen, card, anchor);
-        }
+            // Say the sentence was heard, if the answer is taking long enough
+            // that the screen would otherwise be empty. Once per translation, and
+            // never for one the cache already answered.
+            if let Some(anchor) = life.waited_long_enough(now) {
+                // Which wait it is. `Card::loading_model` and the sentence it
+                // carries were written when the deep path landed and then never
+                // called, so the one wait a reader cannot explain to themselves
+                // was the one the card described wrongly.
+                let card = if engine_warm.load(std::sync::atomic::Ordering::Relaxed) {
+                    Card::waiting(&pending_original)
+                } else {
+                    Card::loading_model(&pending_original)
+                };
+                show_card(&overlay, &mut on_screen, card, anchor);
+            }
 
-        // With where the card is, so reading it does not dismiss it. The
-        // distance rule measures the pointer against the text, and the card
-        // sits below the text.
-        if life.pointer_moved(position, now, lens_platform_windows::overlay::card_rect())
-            == lifecycle::Action::Hide
-        {
-            overlay.hide();
-        }
+            // With where the card is, so reading it does not dismiss it. The
+            // distance rule measures the pointer against the text, and the card
+            // sits below the text.
+            if life.pointer_moved(position, now, lens_platform_windows::overlay::card_rect())
+                == lifecycle::Action::Hide
+            {
+                overlay.hide();
+            }
 
-        while let Ok(answer) = answers_rx.try_recv() {
-            if answer.final_answer {
-                log_card(&answer.card, answer.app.as_deref());
-                // The reason the panel exists. An explanation arrives and the
-                // translation the reader was already reading stays where it is,
-                // instead of them re-hovering to get one and then the other.
-                //
-                // Only when it is about the sentence on the panel: a hover that
-                // moved on while the panel stayed open must not rewrite it.
-                if let Some(panel) = pinned.as_ref() {
-                    if let Some(fresh) = lens_core::detail::Detail::from_card(&answer.card) {
-                        panel.update(fresh.as_panel(
-                            &lens_core::detail::Detail::nothing_explained_yet("Ctrl+Alt+D"),
-                        ));
+            while let Ok(answer) = answers_rx.try_recv() {
+                if answer.final_answer {
+                    log_card(&answer.card, answer.app.as_deref());
+                    // The reason the panel exists. An explanation arrives and the
+                    // translation the reader was already reading stays where it is,
+                    // instead of them re-hovering to get one and then the other.
+                    //
+                    // Only when it is about the sentence on the panel: a hover that
+                    // moved on while the panel stayed open must not rewrite it.
+                    if let Some(panel) = pinned.as_ref() {
+                        if let Some(fresh) = lens_core::detail::Detail::from_card(&answer.card) {
+                            panel.update(fresh.as_panel(
+                                &lens_core::detail::Detail::nothing_explained_yet("Ctrl+Alt+D"),
+                            ));
+                        }
+                    }
+                    // A finished translation is a sentence the reader can now ask
+                    // about. Only a translation: an analysis must not become the
+                    // thing the next analysis explains, and a problem card has no
+                    // sentence behind it.
+                    if let lens_core::card::CardBody::Translation(text) = &answer.card.body {
+                        explainable = Some(Explainable {
+                            original: answer.card.original.clone(),
+                            focused_word: pending_word.clone(),
+                            anchor: pending_anchor,
+                            translation: Some(text.clone()),
+                            app: answer.app.clone(),
+                        });
                     }
                 }
-                // A finished translation is a sentence the reader can now ask
-                // about. Only a translation: an analysis must not become the
-                // thing the next analysis explains, and a problem card has no
-                // sentence behind it.
-                if let lens_core::card::CardBody::Translation(text) = &answer.card.body {
-                    explainable = Some(Explainable {
-                        original: answer.card.original.clone(),
-                        focused_word: pending_word.clone(),
-                        anchor: pending_anchor,
-                        translation: Some(text.clone()),
-                        app: answer.app.clone(),
-                    });
+                // The generation check lives in the lifecycle, so an answer for a
+                // hover the reader has left is dropped in one place rather than at
+                // each call site that might forget.
+                if life.answer_arrived(answer.generation, answer.anchor) == lifecycle::Action::Show
+                {
+                    show_card(&overlay, &mut on_screen, answer.card, answer.anchor);
                 }
             }
-            // The generation check lives in the lifecycle, so an answer for a
-            // hover the reader has left is dropped in one place rather than at
-            // each call site that might forget.
-            if life.answer_arrived(answer.generation, answer.anchor) == lifecycle::Action::Show {
-                show_card(&overlay, &mut on_screen, answer.card, answer.anchor);
-            }
+
+            std::thread::sleep(Duration::from_millis(25));
         }
 
-        std::thread::sleep(Duration::from_millis(25));
-    }
-
-    overlay.hide();
-    drop(tray);
-    // Hand the model back. Without this the runtime holds it for the rest of
-    // the lease, so a tool that has exited goes on occupying gigabytes of
-    // somebody's memory.
-    if let Some(line) = capture_cost.summary() {
-        println!("{line}");
-    }
-    releaser.release();
-    println!("\nstopped, and the model released");
-    // Tell Tauri to exit now that the polling loop is done.
-    loop_tauri.exit();
+        overlay.hide();
+        drop(tray);
+        // Hand the model back. Without this the runtime holds it for the rest of
+        // the lease, so a tool that has exited goes on occupying gigabytes of
+        // somebody's memory.
+        if let Some(line) = capture_cost.summary() {
+            println!("{line}");
+        }
+        releaser.release();
+        println!("\nstopped, and the model released");
+        // Tell Tauri to exit now that the polling loop is done.
+        loop_tauri.exit();
     }); // end of polling loop thread
 
     // Run Tauri on the main thread. This blocks until the event loop exits,

@@ -171,9 +171,7 @@ impl SettingsState {
         schema.applications = view
             .applications
             .into_iter()
-            .filter_map(|(name, tier_str)| {
-                parse_tier(&tier_str).map(|tier| (name, tier))
-            })
+            .filter_map(|(name, tier_str)| parse_tier(&tier_str).map(|tier| (name, tier)))
             .collect();
 
         if let Err(e) = self.file.save() {
