@@ -57,6 +57,7 @@ mod manual_ocr;
 mod pause;
 mod pointer;
 mod refresh;
+mod settings_service;
 mod silence;
 mod tauri_app;
 
@@ -1135,7 +1136,20 @@ fn main() -> std::process::ExitCode {
     // Build the Tauri application. This must happen before the polling loop
     // starts, because the polling loop will run on a worker thread and the
     // main thread needs to run Tauri's event loop.
-    let (tauri_handle, shared_diagnostics, tauri_app) = match tauri_app::build() {
+    // Initialize the settings service first. It reads settings.toml (or
+    // migrates from settings.conf if needed).
+    let data_dir = {
+        let base = std::env::var("APPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+        base.join("Mori Lens")
+    };
+    let shared_settings = std::sync::Arc::new(std::sync::Mutex::new(
+        settings_service::load_or_migrate(&data_dir),
+    ));
+    println!("  settings  {:?}", shared_settings.lock().unwrap().current());
+
+    let (tauri_handle, shared_diagnostics, tauri_app) = match tauri_app::build(shared_settings.clone()) {
         Ok(triple) => triple,
         Err(error) => {
             eprintln!("Tauri initialization failed: {error}");
@@ -1151,6 +1165,7 @@ fn main() -> std::process::ExitCode {
     // Clone the Tauri handle so the polling loop can tell Tauri to exit.
     let loop_tauri = tauri_handle.clone();
     let loop_diagnostics = shared_diagnostics.clone();
+    let loop_settings = shared_settings.clone();
     std::thread::spawn(move || {
     let mut quitting = false;
     while !pointer::stopping() && !quitting {
@@ -1459,6 +1474,22 @@ fn main() -> std::process::ExitCode {
         if welcome.as_ref().is_some_and(|welcome| !welcome.is_open()) {
             welcome = None;
             hover.reconfigure(hover_config, policy.clone());
+        }
+
+        // Check for settings saved from the webview. These take precedence
+        // over external edits, because the service just wrote them.
+        let pending_settings = loop_settings.lock().unwrap().take_pending();
+        if let Some(settings) = pending_settings {
+            language = settings.language.clone();
+            let mut reloaded = settings.policy();
+            reloaded.deny_self("lens");
+            hover_config = HoverConfig {
+                dwell: Duration::from_millis(settings.dwell_ms),
+                ..HoverConfig::default()
+            };
+            policy = reloaded;
+            hover.reconfigure(hover_config, policy.clone());
+            println!("settings  applied from window");
         }
 
         // Anything edited or switched since the last look. Once a second,
