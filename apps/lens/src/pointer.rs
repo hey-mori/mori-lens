@@ -14,7 +14,7 @@ use windows::core::BOOL;
 use windows::Win32::Foundation::POINT;
 use windows::Win32::System::Console::{SetConsoleCtrlHandler, CTRL_BREAK_EVENT, CTRL_C_EVENT};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, VK_LBUTTON, VK_MBUTTON, VK_MENU, VK_RBUTTON,
+    GetAsyncKeyState, VK_CONTROL, VK_LBUTTON, VK_MBUTTON, VK_MENU, VK_RBUTTON,
 };
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
@@ -79,6 +79,11 @@ pub const MODIFIER_NAME: &str = "Alt";
 /// The policy modifier. Alt, matching the modifier-tier design.
 pub fn modifier_held() -> bool {
     key_down(VK_MENU)
+}
+
+/// The Ctrl key, which toggles the hover scope between word and sentence.
+pub fn ctrl_held() -> bool {
+    key_down(VK_CONTROL)
 }
 
 /// The executable stem owning the window under a point.
