@@ -78,7 +78,10 @@ enum Job {
 /// What the worker is asked to translate.
 struct Translate {
     generation: Generation,
+    /// Always the sentence: what the model receives for translation quality.
     original: String,
+    /// What the card shows: the sentence or the word, per the hover scope.
+    display_text: String,
     focused_word: Option<String>,
     anchor: ScreenRect,
     /// Carried with the job rather than owned by the worker, so editing the
@@ -848,7 +851,7 @@ fn main() -> std::process::ExitCode {
             if may_have_unloaded && !translator.is_resident() {
                 let _ = answers_tx.send(Answer {
                     generation: job.generation,
-                    card: Card::loading_model(&job.original),
+                    card: Card::loading_model(&job.display_text),
                     anchor: job.anchor,
                     final_answer: false,
                     app: job.app.clone(),
@@ -857,7 +860,7 @@ fn main() -> std::process::ExitCode {
 
             let key = CacheKey::of(&request, translator.model(), PROMPT_VERSION);
             if let Some(hit) = cache.get(&key) {
-                let mut card = Card::translated(&job.original, &hit);
+                let mut card = Card::translated(&job.display_text, &hit);
                 if job.doubtful {
                     card = card.built_on_a_doubtful_reading();
                 } else if job.from_pixels {
@@ -879,7 +882,7 @@ fn main() -> std::process::ExitCode {
             let partial_tx = answers_tx.clone();
             let generation = job.generation;
             let anchor = job.anchor;
-            let original = job.original.clone();
+            let original = job.display_text.clone();
             // Cloned out before the move, so the job stays whole for the
             // finished answer below.
             let partial_app = job.app.clone();
@@ -897,9 +900,9 @@ fn main() -> std::process::ExitCode {
             let card = match translator.quick_streaming(&request, &mut on_partial) {
                 Ok(translation) => {
                     cache.insert(key, translation.clone());
-                    Card::translated(&job.original, &translation)
+                    Card::translated(&job.display_text, &translation)
                 }
-                Err(error) => Card::not_translated(&job.original, &error),
+                Err(error) => Card::not_translated(&job.display_text, &error),
             };
             // The caveat rides the answer rather than preceding it, so it is
             // on the card the reader is still looking at a second later.
@@ -1087,6 +1090,7 @@ fn main() -> std::process::ExitCode {
     let mut watcher = refresh::Watcher::new(&options.source.path, system);
     let mut theme = theme;
     let mut language = options.language.clone();
+    let mut hover_scope = "sentence".to_owned();
     // The sentence the outstanding translation belongs to, so a waiting card
     // can show it. One at a time: a second hover replaces the first.
     // Said once, the first time a hover lands on the staged lesson.
@@ -1485,6 +1489,7 @@ fn main() -> std::process::ExitCode {
             let pending_settings = loop_settings.lock().unwrap().take_pending();
             if let Some(settings) = pending_settings {
                 language = settings.language.clone();
+                hover_scope = settings.hover_scope.clone();
                 let mut reloaded = settings.policy();
                 reloaded.deny_self("lens");
                 hover_config = HoverConfig {
@@ -1510,6 +1515,7 @@ fn main() -> std::process::ExitCode {
 
                 if let Some(settings) = &settings {
                     language = settings.language.clone();
+                    hover_scope = settings.hover_scope.clone();
                     let mut reloaded = settings.policy();
                     reloaded.deny_self("lens");
                     hover_config = HoverConfig {
@@ -1650,7 +1656,8 @@ fn main() -> std::process::ExitCode {
                             translating &= jobs_tx
                                 .send(Job::Translate(Translate {
                                     generation,
-                                    original: reading.sentence,
+                                    original: reading.sentence.clone(),
+                                    display_text: reading.sentence,
                                     focused_word: Some(reading.word),
                                     anchor: reading.anchor,
                                     language: language.clone(),
@@ -1722,6 +1729,7 @@ fn main() -> std::process::ExitCode {
                 scrolling: false,
                 typing: false,
                 modifier_held: pointer::modifier_held(),
+                ctrl_held: pointer::ctrl_held(),
                 ocr_requested: false,
             };
             let process_name = pointer::process_name_at(position);
@@ -1806,6 +1814,24 @@ fn main() -> std::process::ExitCode {
                             println!("lesson     a hover reached the welcome's own sentence");
                         }
                         let sentence = target.segmented.sentence_text().trim().to_owned();
+                        // Scope: which text the card shows. The model always
+                        // receives the sentence (the benchmark of 2026-08-18
+                        // showed a bare word gives the wrong reading five times
+                        // in six). Ctrl toggles the setting's default.
+                        let word_scope = match hover_scope.as_str() {
+                            "word" => !input.ctrl_held,
+                            _ => input.ctrl_held,
+                        };
+                        let display_text = if word_scope {
+                            target
+                                .segmented
+                                .word_text()
+                                .map(str::trim)
+                                .filter(|w| !w.is_empty())
+                                .unwrap_or(&sentence)
+                        } else {
+                            &sentence
+                        };
                         // Text already in the reader's language costs nothing and
                         // shows nothing. Without this a Korean reader hovering
                         // over Korean waits a second and a half for a card that
@@ -1879,7 +1905,7 @@ fn main() -> std::process::ExitCode {
                             // Remembered before the job is sent, so the loop can
                             // tell the reader it was heard if the answer is slow.
                             life.job_dispatched(generation, anchor, now);
-                            pending_original = sentence.clone();
+                            pending_original = display_text.to_owned();
                             pending_word = target.segmented.word_text().map(str::to_owned);
                             pending_anchor = anchor;
                             // A failed send means the translation worker has
@@ -1891,6 +1917,7 @@ fn main() -> std::process::ExitCode {
                                 .send(Job::Translate(Translate {
                                     generation,
                                     original: sentence,
+                                    display_text: display_text.to_owned(),
                                     focused_word: target.segmented.word_text().map(str::to_owned),
                                     anchor,
                                     language: language.clone(),

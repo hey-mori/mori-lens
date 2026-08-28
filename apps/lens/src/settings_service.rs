@@ -49,6 +49,7 @@ pub struct SettingsView {
     pub default_tier: String,
     pub ocr: String,
     pub profile: String,
+    pub hover_scope: String,
     pub quick_engine: String,
     pub quick_model: Option<String>,
     pub quick_endpoint: String,
@@ -129,6 +130,7 @@ impl SettingsState {
             default_tier: tier_to_string(&schema.general.default_tier),
             ocr: schema.general.ocr.clone(),
             profile: schema.general.profile.clone(),
+            hover_scope: schema.general.hover_scope.clone(),
             quick_engine: schema.quick.engine.clone(),
             quick_model: schema.quick.model.clone(),
             quick_endpoint: schema.quick.endpoint.clone(),
@@ -156,6 +158,7 @@ impl SettingsState {
             .unwrap_or(lens_core::settings::Settings::default().default_tier);
         schema.general.ocr = view.ocr;
         schema.general.profile = view.profile;
+        schema.general.hover_scope = view.hover_scope;
 
         schema.quick = EngineConfig {
             engine: view.quick_engine,

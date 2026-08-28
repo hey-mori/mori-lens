@@ -39,6 +39,7 @@ pub struct General {
     pub default_tier: AppTier,
     pub ocr: String,
     pub profile: String,
+    pub hover_scope: String,
 }
 
 /// One engine's configuration: where it is, and which model to use.
@@ -87,6 +88,7 @@ impl Schema {
                 default_tier: settings.default_tier,
                 ocr: settings.ocr.clone(),
                 profile: settings.profile.clone(),
+                hover_scope: settings.hover_scope.clone(),
             },
             quick: engine.clone(),
             deep: engine,
@@ -110,6 +112,7 @@ impl Schema {
             ocr: self.general.ocr.clone(),
             profile: self.general.profile.clone(),
             text: self.general.text_size.clone(),
+            hover_scope: self.general.hover_scope.clone(),
             default_tier: self.general.default_tier,
             applications: self.applications.clone(),
         }
@@ -139,6 +142,7 @@ mod tests {
             ocr: "automatic".to_owned(),
             profile: "developer".to_owned(),
             text: "large".to_owned(),
+            hover_scope: "word".to_owned(),
             default_tier: AppTier::Allow,
             applications: vec![("chrome".to_owned(), AppTier::Allow)],
         };

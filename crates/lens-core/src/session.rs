@@ -73,6 +73,8 @@ pub struct InputState {
     pub typing: bool,
     /// The policy modifier is held.
     pub modifier_held: bool,
+    /// The Ctrl key is held, toggling the hover scope.
+    pub ctrl_held: bool,
     /// The user asked for OCR on this hover.
     pub ocr_requested: bool,
 }
