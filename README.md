@@ -102,7 +102,6 @@ crates/lens-settings/      versioned TOML settings, round-trip preservation
 crates/lens-translate/     the Ollama client, HTTP and JSON by hand
 crates/platform-windows/   UI Automation, the Direct2D card, tray, autostart
 apps/lens/                 the product
-apps/lens-window/          the Tauri v2 main window (settings, diagnostics)
 apps/hover-probe/          the measurement instrument
 docs/decisions/            the decisions that constrain everything else
 docs/research/             what was verified, and where the evidence is
