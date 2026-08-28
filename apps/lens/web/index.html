@@ -174,14 +174,22 @@
     <!-- Models -->
     <div class="section" id="section-models">
       <h1>Models</h1>
-      <h2>Quick translation</h2>
-      <div class="field">
-        <label>Engine</label>
-        <input type="text" id="f-quick-engine" readonly>
+      <div id="ollama-status" style="margin-bottom:16px">
+        <span id="ollama-dot" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#888;margin-right:8px"></span>
+        <span id="ollama-label">Checking...</span>
+        <span id="ollama-endpoint" style="color:#888;font-size:12px;margin-left:8px"></span>
       </div>
+      <h2>Installed models</h2>
+      <div id="models-list"><p class="loading">Loading...</p></div>
+      <div style="margin-top:8px">
+        <button class="btn" onclick="refreshModels()" style="padding:4px 12px;font-size:12px">Refresh</button>
+      </div>
+      <h2 style="margin-top:24px">Quick translation</h2>
       <div class="field">
-        <label>Model (empty = auto)</label>
-        <input type="text" id="f-quick-model" placeholder="auto">
+        <label>Model</label>
+        <select id="f-quick-model-select">
+          <option value="">Auto (best available)</option>
+        </select>
       </div>
       <div class="field">
         <label>Endpoint</label>
@@ -199,6 +207,12 @@
       <div class="field">
         <label>Endpoint</label>
         <input type="text" id="f-deep-endpoint">
+      </div>
+      <div style="margin-top:16px;padding:12px;background:rgba(0,0,0,0.04);border-radius:6px;max-width:500px">
+        <div style="font-size:12px;color:#666;margin-bottom:8px">Test translation</div>
+        <div style="font-size:13px;color:#444;margin-bottom:8px">"The output files came back empty."</div>
+        <button class="btn" onclick="testModel()" id="test-btn">Test</button>
+        <div id="test-result" style="margin-top:8px;font-size:13px"></div>
       </div>
       <div class="btn-row">
         <button class="btn btn-primary" onclick="saveSettings()">Save</button>
@@ -291,13 +305,12 @@
       document.getElementById('f-ocr').value = currentSettings.ocr;
       document.getElementById('f-profile').value = currentSettings.profile;
       document.getElementById('f-default-tier').value = currentSettings.default_tier;
-      document.getElementById('f-quick-engine').value = currentSettings.quick_engine;
-      document.getElementById('f-quick-model').value = currentSettings.quick_model || '';
       document.getElementById('f-quick-endpoint').value = currentSettings.quick_endpoint;
       document.getElementById('f-deep-engine').value = currentSettings.deep_engine;
       document.getElementById('f-deep-model').value = currentSettings.deep_model || '';
       document.getElementById('f-deep-endpoint').value = currentSettings.deep_endpoint;
       renderApps();
+      await refreshModels(currentSettings.quick_model);
     }
 
     function renderApps() {
@@ -352,8 +365,8 @@
         ocr: document.getElementById('f-ocr').value,
         profile: document.getElementById('f-profile').value,
         default_tier: document.getElementById('f-default-tier').value,
-        quick_engine: document.getElementById('f-quick-engine').value,
-        quick_model: document.getElementById('f-quick-model').value || null,
+        quick_engine: currentSettings.quick_engine,
+        quick_model: document.getElementById('f-quick-model-select').value || null,
         quick_endpoint: document.getElementById('f-quick-endpoint').value,
         deep_engine: document.getElementById('f-deep-engine').value,
         deep_model: document.getElementById('f-deep-model').value || null,
@@ -376,6 +389,86 @@
         statusEl.textContent = msg;
         setTimeout(() => { statusEl.textContent = ''; }, 3000);
       }
+    }
+
+    function formatSize(bytes) {
+      if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB';
+      if (bytes >= 1e6) return (bytes / 1e6).toFixed(0) + ' MB';
+      return bytes + ' B';
+    }
+
+    async function refreshModels(selectedModel) {
+      const endpoint = document.getElementById('f-quick-endpoint').value || '127.0.0.1:11434';
+      const dot = document.getElementById('ollama-dot');
+      const label = document.getElementById('ollama-label');
+      const epLabel = document.getElementById('ollama-endpoint');
+      const listEl = document.getElementById('models-list');
+      const selectEl = document.getElementById('f-quick-model-select');
+
+      epLabel.textContent = endpoint;
+
+      const reachable = await invoke('check_ollama', { endpoint });
+      if (!reachable) {
+        dot.style.background = '#c00';
+        label.textContent = 'Ollama not reachable';
+        label.style.color = '#c00';
+        listEl.innerHTML = '<p style="color:#888;font-size:13px">Start Ollama and refresh.</p>';
+        selectEl.innerHTML = '<option value="">Auto (best available)</option>';
+        return;
+      }
+
+      dot.style.background = '#2a2';
+      label.textContent = 'Ollama running';
+      label.style.color = '#2a2';
+
+      try {
+        const models = await invoke('list_models', { endpoint });
+        if (!models || models.length === 0) {
+          listEl.innerHTML = '<p style="color:#888;font-size:13px">No models installed.</p>';
+          selectEl.innerHTML = '<option value="">Auto (best available)</option>';
+          return;
+        }
+        let html = '<table>';
+        for (const m of models) {
+          const isSel = selectedModel === m.name;
+          html += '<tr><td style="width:60%">' + m.name + '</td><td>' + formatSize(m.size) + '</td>';
+          html += '<td style="width:80px;text-align:right">';
+          if (isSel) html += '<span style="color:#0066cc;font-size:12px">selected</span>';
+          html += '</td></tr>';
+        }
+        html += '</table>';
+        listEl.innerHTML = html;
+
+        let opts = '<option value="">Auto (best available)</option>';
+        for (const m of models) {
+          opts += '<option value="' + m.name + '"' + (selectedModel === m.name ? ' selected' : '') + '>' + m.name + '</option>';
+        }
+        selectEl.innerHTML = opts;
+      } catch (e) {
+        listEl.innerHTML = '<p class="error">Error: ' + e + '</p>';
+      }
+    }
+
+    async function testModel() {
+      const endpoint = document.getElementById('f-quick-endpoint').value || '127.0.0.1:11434';
+      const model = document.getElementById('f-quick-model-select').value;
+      const resultEl = document.getElementById('test-result');
+      const btn = document.getElementById('test-btn');
+      if (!model) {
+        resultEl.innerHTML = '<span class="error">Select a model first.</span>';
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = 'Testing...';
+      resultEl.innerHTML = '';
+      try {
+        const result = await invoke('test_model', { endpoint, model });
+        resultEl.innerHTML = '<strong>' + result.model + '</strong> (' + result.latency_ms + 'ms)<br>' + result.translated;
+      } catch (e) {
+        resultEl.innerHTML = '<span class="error">Error: ' + e + '</span>';
+      }
+      btn.disabled = false;
+      btn.textContent = 'Test';
     }
 
     async function loadAbout() {

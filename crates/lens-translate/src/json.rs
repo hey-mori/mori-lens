@@ -114,6 +114,41 @@ pub fn string_values_of_key(document: &str, key: &str) -> Vec<String> {
     found
 }
 
+/// Every number value for `key`, parsed as `u64`. For arrays of objects.
+///
+/// Follows the same iteration pattern as [`string_values_of_key`], but reads
+/// a run of digits rather than a quoted string. Only used for the `size` field
+/// in an Ollama model listing, where the value is always a non-negative integer.
+pub fn number_values_of_key(document: &str, key: &str) -> Vec<u64> {
+    let needle = format!("\"{key}\"");
+    let mut found = Vec::new();
+    let mut from = 0usize;
+    while let Some(at) = document[from..].find(&needle) {
+        let after_key = from + at + needle.len();
+        from = after_key;
+        let rest = &document[after_key..];
+        let Some(colon) = rest.find(':') else { break };
+        if !rest[..colon].chars().all(char::is_whitespace) {
+            continue;
+        }
+        let value = rest[colon + 1..].trim_start();
+        // A number starts with a digit or a minus sign, not a quote.
+        if value.starts_with('"') {
+            continue;
+        }
+        let end = value
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(value.len());
+        if end == 0 {
+            continue;
+        }
+        if let Ok(n) = value[..end].parse::<u64>() {
+            found.push(n);
+        }
+    }
+    found
+}
+
 /// Read a JSON string body up to its closing quote.
 fn unescape(after_open_quote: &str) -> String {
     let mut out = String::new();
@@ -202,6 +237,15 @@ mod tests {
         assert_eq!(
             string_values_of_key(document, "name"),
             vec!["qwen2.5:3b".to_owned(), "gemma4:e4b".to_owned()],
+        );
+    }
+
+    #[test]
+    fn every_model_size_is_read_from_a_tags_listing() {
+        let document = r#"{"models":[{"name":"qwen2.5:3b","size":1928538249},{"name":"gemma4:e4b","size":3536503808}]}"#;
+        assert_eq!(
+            number_values_of_key(document, "size"),
+            vec![1928538249, 3536503808],
         );
     }
 
