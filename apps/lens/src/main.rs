@@ -58,6 +58,7 @@ mod pause;
 mod pointer;
 mod refresh;
 mod silence;
+mod tauri_app;
 
 /// What the worker is asked to do.
 ///
@@ -1131,10 +1132,25 @@ fn main() -> std::process::ExitCode {
     let ocr_hotkey = (pause.ocr_is_registered() && !ocr::available_languages().is_empty())
         .then(|| "Ctrl+Alt+O".to_owned());
 
+    // Build the Tauri application. This must happen before the polling loop
+    // starts, because the polling loop will run on a worker thread and the
+    // main thread needs to run Tauri's event loop.
+    let (tauri_handle, tauri_app) = match tauri_app::build() {
+        Ok(pair) => pair,
+        Err(error) => {
+            eprintln!("Tauri initialization failed: {error}");
+            return std::process::ExitCode::from(1);
+        }
+    };
+    println!("  tauri     running");
+
     // Pause has three entrances now: the hotkey, the tray icon, and the tray
     // menu. They set the same flag rather than each doing their own thing,
     // because a product where the icon and the hotkey disagree about whether it
     // is paused is worse than one with neither.
+    // Clone the Tauri handle so the polling loop can tell Tauri to exit.
+    let loop_tauri = tauri_handle.clone();
+    std::thread::spawn(move || {
     let mut quitting = false;
     while !pointer::stopping() && !quitting {
         let mut pause_changed = false;
@@ -1984,6 +2000,14 @@ fn main() -> std::process::ExitCode {
     }
     releaser.release();
     println!("\nstopped, and the model released");
+    // Tell Tauri to exit now that the polling loop is done.
+    loop_tauri.exit();
+    }); // end of polling loop thread
+
+    // Run Tauri on the main thread. This blocks until the event loop exits,
+    // which happens when the polling loop calls tauri.exit() above.
+    tauri_app::run(tauri_app);
+
     std::process::ExitCode::SUCCESS
 }
 

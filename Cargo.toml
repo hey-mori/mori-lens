@@ -7,12 +7,12 @@ members = [
   "crates/lens-translate",
   "crates/platform-windows",
   "apps/hover-probe",
-  "apps/lens",
 ]
 # **Deliberately not members.** The gate runs across the workspace, and
 # Tauri would take it from 23 crates to 384. Both are excluded until the
 # Tauri dependency is accepted for the product binary as well.
-exclude = ["apps/shell-spike", "apps/lens-window"]
+# `apps/lens` is now a Tauri app (#165), so it builds separately too.
+exclude = ["apps/shell-spike", "apps/lens-window", "apps/lens"]
 
 [workspace.package]
 version = "0.1.0"
