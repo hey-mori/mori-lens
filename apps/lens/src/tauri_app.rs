@@ -26,6 +26,21 @@ pub struct DiagnosticsSnapshot {
 /// Shared diagnostics state, updated by the polling loop and read by Tauri commands.
 pub type SharedDiagnostics = Arc<Mutex<DiagnosticsSnapshot>>;
 
+/// A model entry for the webview.
+#[derive(Clone, Debug, Serialize)]
+pub struct ModelInfoView {
+    pub name: String,
+    pub size: u64,
+}
+
+/// The result of a test translation for the webview.
+#[derive(Clone, Debug, Serialize)]
+pub struct TestResultView {
+    pub translated: String,
+    pub latency_ms: u64,
+    pub model: String,
+}
+
 /// Handle to the running Tauri application.
 ///
 /// Cloned into the polling worker so it can show the window or exit the
@@ -69,6 +84,62 @@ fn save_settings(
     state.lock().unwrap().apply(settings)
 }
 
+/// Tauri command: list models on an Ollama endpoint.
+///
+/// Runs the blocking HTTP call on a background thread so the Tauri
+/// runtime is not stalled for the duration.
+#[tauri::command]
+async fn list_models(endpoint: String) -> Result<Vec<ModelInfoView>, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = lens_translate::list_models(&endpoint);
+        let _ = tx.send(result);
+    });
+    rx.recv()
+        .map_err(|_| "thread error".to_string())?
+        .map(|models| {
+            models
+                .into_iter()
+                .map(|m| ModelInfoView {
+                    name: m.name,
+                    size: m.size,
+                })
+                .collect()
+        })
+        .map_err(|e| format!("{e:?}"))
+}
+
+/// Tauri command: check whether an Ollama endpoint is reachable.
+#[tauri::command]
+async fn check_ollama(endpoint: String) -> bool {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(lens_translate::check_reachable(&endpoint));
+    });
+    rx.recv().unwrap_or(false)
+}
+
+/// Tauri command: translate a fixed sentence to test a model.
+#[tauri::command]
+async fn test_model(endpoint: String, model: String) -> Result<TestResultView, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        use lens_core::translate::{QuickRequest, Translator};
+        let translator = lens_translate::OllamaTranslator::new(&endpoint, &model);
+        let request = QuickRequest::new("The output files came back empty.", "ko");
+        let result = translator.quick(&request);
+        let _ = tx.send(result);
+    });
+    rx.recv()
+        .map_err(|_| "thread error".to_string())?
+        .map(|t| TestResultView {
+            translated: t.text,
+            latency_ms: t.latency_ms as u64,
+            model: t.model,
+        })
+        .map_err(|e| format!("{e:?}"))
+}
+
 /// Build the Tauri application and return its handle, shared diagnostics, and the `App` itself.
 ///
 /// The `App` must be kept alive and `.run()` must be called on it. Dropping
@@ -84,6 +155,9 @@ pub fn build(
             get_diagnostics,
             get_settings,
             save_settings,
+            list_models,
+            check_ollama,
+            test_model,
         ])
         .manage(diagnostics.clone())
         .manage(shared_settings)
