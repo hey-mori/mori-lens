@@ -674,6 +674,7 @@ pub fn is_misread(word: &str) -> bool {
     let hangul =
         |c: char| ('\u{AC00}'..='\u{D7A3}').contains(&c) || ('\u{3130}'..='\u{318F}').contains(&c);
     let latin = |c: char| c.is_ascii_alphabetic();
+    let digit = |c: char| c.is_ascii_digit();
     let filler = |c: char| c.is_ascii_alphanumeric();
 
     let characters: Vec<char> = word.chars().collect();
@@ -682,17 +683,66 @@ pub fn is_misread(word: &str) -> bool {
     if !characters.iter().any(|c| latin(*c)) {
         return false;
     }
-    characters
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| hangul(**c))
-        .any(|(at, _)| {
-            // Digits count as filler, not only letters: `do은5` has a digit
-            // after the syllable and is exactly the shape this is for.
-            let before = characters[..at].iter().any(|c| filler(*c));
-            let after = characters[at + 1..].iter().any(|c| filler(*c));
-            before && after
-        })
+
+    let has_hangul = characters.iter().any(|c| hangul(*c));
+    let has_digit = characters.iter().any(|c| digit(*c));
+
+    // The original check: a Hangul syllable with filler on both sides.
+    // `do은5` and `k국05t` are this shape.
+    let hangul_sandwiched = has_hangul
+        && characters
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| hangul(**c))
+            .any(|(at, _)| {
+                let before = characters[..at].iter().any(|c| filler(*c));
+                let after = characters[at + 1..].iter().any(|c| filler(*c));
+                before && after
+            });
+    if hangul_sandwiched {
+        return true;
+    }
+
+    // A Hangul syllable at position 0 with a filler character at position 1.
+    // `님hOle` for `whole`: OCR confused a Latin letter for a syllable, so a
+    // single Hangul leads and the rest of the word is Latin. `한글English한글`
+    // is NOT this shape: position 1 is `글`, another Hangul syllable, so a
+    // Korean word beside an English one is not flagged.
+    let hangul_at_start = characters.len() > 1 && hangul(characters[0]) && filler(characters[1]);
+    if hangul_at_start {
+        return true;
+    }
+
+    // Digits standing in for letters inside a Latin-looking word.
+    // `5h0l` for `show`, `k8s` is this shape but is a legitimate term.
+    // The discriminator: at least two digits scattered among Latin letters,
+    // and the word is short enough that a version-number suffix (`2.5`,
+    // `64`) does not explain them. `qwen2.5` has one digit cluster after a
+    // dot; `5h0l` has digits replacing letters at different positions.
+    if has_digit {
+        let digit_positions: Vec<usize> = characters
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| digit(**c))
+            .map(|(i, _)| i)
+            .collect();
+        // At least two digits, not all consecutive (a block like `2024` is
+        // a year, not a misread), and at least one digit is surrounded by
+        // Latin letters (not at the end after a dot like `2.5`).
+        if digit_positions.len() >= 2 {
+            let scattered = digit_positions.windows(2).any(|w| w[1] > w[0] + 1);
+            let digit_among_letters = digit_positions.iter().any(|&pos| {
+                let before_is_latin = pos > 0 && latin(characters[pos - 1]);
+                let after_is_latin = pos + 1 < characters.len() && latin(characters[pos + 1]);
+                before_is_latin && after_is_latin
+            });
+            if scattered && digit_among_letters {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -752,15 +802,21 @@ mod misreading_tests {
     /// it catches everything.
     #[test]
     fn the_misreadings_it_cannot_see_are_named() {
-        // Hangul first, with nothing before it. A rule that caught a leading
-        // syllable would also catch a Korean word run into an English one,
-        // and a false positive here suppresses a correct reading.
-        assert!(!is_misread("님hOle"));
-        // Digits standing in for letters, with no Hangul anywhere. Catching
-        // that needs a rule about digits inside Latin words, and `k8s`,
-        // `qwen2.5` and `sha256` are all that shape.
-        assert!(!is_misread("5h0l"));
+        // A single digit at the start of a short word: `0f` for `of`. One
+        // digit with nothing scattered and no letter on both sides of it.
+        // Catching this would also catch `8pt` and similar short forms.
         assert!(!is_misread("0f"));
+    }
+
+    /// The shapes the original rule could not see but the expanded one can.
+    ///
+    /// `님hOle` for `whole`: Hangul at the very start, Latin continuing after.
+    /// `5h0l` for `show`: two digits scattered among Latin letters, at least
+    /// one of them surrounded by letters on both sides.
+    #[test]
+    fn the_expanded_shapes_are_caught() {
+        assert!(is_misread("님hOle"), "Hangul at the start with Latin after");
+        assert!(is_misread("5h0l"), "digits scattered among Latin letters");
     }
 
     /// Korean technical writing, which does this constantly and correctly.
