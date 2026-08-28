@@ -572,6 +572,7 @@ fn follow(acquirer: UiaTextAcquirer, options: Options, dpi_declared: bool) -> Ex
             scrolling: false,
             typing: false,
             modifier_held: pointer::modifier_held(),
+            ctrl_held: false,
             ocr_requested: false,
         };
 

@@ -158,6 +158,14 @@
         </select>
       </div>
       <div class="field">
+        <label>Hover scope</label>
+        <select id="f-hover-scope">
+          <option value="sentence">Sentence</option>
+          <option value="word">Word</option>
+        </select>
+        <p class="hint">What the card answers about. Hold Ctrl to toggle.</p>
+      </div>
+      <div class="field">
         <label>Default tier</label>
         <select id="f-default-tier">
           <option value="allow">Allow</option>
@@ -304,6 +312,7 @@
       document.getElementById('f-translucency').value = currentSettings.translucency;
       document.getElementById('f-ocr').value = currentSettings.ocr;
       document.getElementById('f-profile').value = currentSettings.profile;
+      document.getElementById('f-hover-scope').value = currentSettings.hover_scope;
       document.getElementById('f-default-tier').value = currentSettings.default_tier;
       document.getElementById('f-quick-endpoint').value = currentSettings.quick_endpoint;
       document.getElementById('f-deep-engine').value = currentSettings.deep_engine;
@@ -364,6 +373,7 @@
         translucency: document.getElementById('f-translucency').value,
         ocr: document.getElementById('f-ocr').value,
         profile: document.getElementById('f-profile').value,
+        hover_scope: document.getElementById('f-hover-scope').value,
         default_tier: document.getElementById('f-default-tier').value,
         quick_engine: currentSettings.quick_engine,
         quick_model: document.getElementById('f-quick-model-select').value || null,
