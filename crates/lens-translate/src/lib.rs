@@ -633,6 +633,18 @@ impl OllamaTranslator {
         {
             return Err(self.why_it_came_back_unchanged(request));
         }
+        // An appended claim on the retry: the same check as the main path, so
+        // a second obedience-shaped answer is also refused.
+        if lens_core::translate::source_has_appended_claim_pattern(&request.source_text) {
+            if let Some(clause) = lens_core::translate::extract_benign_clause(&request.source_text)
+            {
+                if let Some(control) = self.control_translation(clause, &request.target_language) {
+                    if lens_core::translate::answer_looks_like_obedience(&text, &control) {
+                        return Err(self.why_it_came_back_unchanged(request));
+                    }
+                }
+            }
+        }
         // Checked after every other rule has finished with the text, so a
         // name lost to a third-language cut is not reported twice.
         let name_changed =
@@ -646,6 +658,30 @@ impl OllamaTranslator {
             part_was_removed: false,
             name_changed,
         })
+    }
+
+    /// A control translation of a benign clause, for appended-claim detection.
+    ///
+    /// Returns the translation of just the benign clause (the part of the
+    /// source before the instruction), so the answer can be compared against
+    /// it. Obedience is the control plus a short payload; a faithful
+    /// translation is the control plus a translation of the full instruction,
+    /// which is much longer. `None` when the control translation fails for
+    /// any reason, in which case the appended-claim check is skipped rather
+    /// than refusing a potentially correct answer.
+    fn control_translation(&self, clause: &str, target_language: &str) -> Option<String> {
+        let request = QuickRequest::new(clause, target_language);
+        let (body, fence) = self.body_for(&request, false);
+        let response = http::post(&self.endpoint, "/api/generate", &body, self.timeout).ok()?;
+        if self.error_in(&response).is_some() {
+            return None;
+        }
+        let text = json::string_value_of_key(&response, "response")?;
+        let text = lens_core::translate::without_the_fence(text.trim(), &fence);
+        if text.is_empty() {
+            return None;
+        }
+        Some(text)
     }
 
     /// Map an Ollama error body onto the taxonomy.
@@ -749,6 +785,24 @@ impl Translator for OllamaTranslator {
         // language but is a tiny fraction of an instruction-shaped source.
         if lens_core::translate::answer_is_suspiciously_short(&request.source_text, &text) {
             return self.retry_untranslated(request, started, Self::OBEYED);
+        }
+
+        // An appended claim: the answer is a correct translation of the first
+        // clause with a fabricated sentence appended. A control translation of
+        // just the benign clause separates obedience (control + short payload)
+        // from a faithful translation (control + instruction translation, which
+        // is much longer). This adds a second model call but only when the
+        // source carries an appended-claim pattern, which ordinary prose does
+        // not.
+        if lens_core::translate::source_has_appended_claim_pattern(&request.source_text) {
+            if let Some(clause) = lens_core::translate::extract_benign_clause(&request.source_text)
+            {
+                if let Some(control) = self.control_translation(clause, &request.target_language) {
+                    if lens_core::translate::answer_looks_like_obedience(&text, &control) {
+                        return self.retry_untranslated(request, started, Self::OBEYED);
+                    }
+                }
+            }
         }
 
         if lens_core::translate::reads_as_the_source(&request.source_text, &text) {
@@ -904,6 +958,24 @@ impl Translator for OllamaTranslator {
         // language but is a tiny fraction of an instruction-shaped source.
         if lens_core::translate::answer_is_suspiciously_short(&request.source_text, &text) {
             return self.retry_untranslated(request, started, Self::OBEYED);
+        }
+
+        // An appended claim: the answer is a correct translation of the first
+        // clause with a fabricated sentence appended. A control translation of
+        // just the benign clause separates obedience (control + short payload)
+        // from a faithful translation (control + instruction translation, which
+        // is much longer). This adds a second model call but only when the
+        // source carries an appended-claim pattern, which ordinary prose does
+        // not.
+        if lens_core::translate::source_has_appended_claim_pattern(&request.source_text) {
+            if let Some(clause) = lens_core::translate::extract_benign_clause(&request.source_text)
+            {
+                if let Some(control) = self.control_translation(clause, &request.target_language) {
+                    if lens_core::translate::answer_looks_like_obedience(&text, &control) {
+                        return self.retry_untranslated(request, started, Self::OBEYED);
+                    }
+                }
+            }
         }
 
         if lens_core::translate::reads_as_the_source(&request.source_text, &text) {
