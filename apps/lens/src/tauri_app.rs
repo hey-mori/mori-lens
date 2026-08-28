@@ -10,6 +10,8 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tauri::Manager;
 
+use crate::settings_service::{SettingsView, SharedSettings};
+
 /// A snapshot of the session's diagnostics, shared with the webview.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct DiagnosticsSnapshot {
@@ -52,17 +54,39 @@ fn get_diagnostics(state: tauri::State<'_, SharedDiagnostics>) -> DiagnosticsSna
     state.lock().unwrap().clone()
 }
 
+/// Tauri command: return the current settings view.
+#[tauri::command]
+fn get_settings(state: tauri::State<'_, SharedSettings>) -> SettingsView {
+    state.lock().unwrap().view()
+}
+
+/// Tauri command: save settings from the webview.
+#[tauri::command]
+fn save_settings(
+    state: tauri::State<'_, SharedSettings>,
+    settings: SettingsView,
+) -> Result<(), String> {
+    state.lock().unwrap().apply(settings)
+}
+
 /// Build the Tauri application and return its handle, shared diagnostics, and the `App` itself.
 ///
 /// The `App` must be kept alive and `.run()` must be called on it. Dropping
 /// it without running destroys the event loop; keeping only the `AppHandle`
 /// without the `App` leaves no event loop running.
-pub fn build() -> Result<(AppHandle, SharedDiagnostics, tauri::App), tauri::Error> {
+pub fn build(
+    shared_settings: SharedSettings,
+) -> Result<(AppHandle, SharedDiagnostics, tauri::App), tauri::Error> {
     let diagnostics: SharedDiagnostics = Arc::new(Mutex::new(DiagnosticsSnapshot::default()));
 
     let app = tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![get_diagnostics])
+        .invoke_handler(tauri::generate_handler![
+            get_diagnostics,
+            get_settings,
+            save_settings,
+        ])
         .manage(diagnostics.clone())
+        .manage(shared_settings)
         .setup(|app| {
             // Hide the window at startup. The reader opens it from the tray;
             // a product that opens a settings window on every launch is not
