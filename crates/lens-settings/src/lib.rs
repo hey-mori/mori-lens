@@ -494,8 +494,7 @@ mod tests {
     fn load_and_save_round_trip_preserves_comments() {
         let dir = temp_dir("roundtrip");
         let path = dir.join("settings.toml");
-        let content = "\
-# My custom settings
+        let content = "# My custom settings
 schema_version = 1
 
 [general]
@@ -585,8 +584,7 @@ chrome = \"allow\"
     fn external_modification_is_detected() {
         let dir = temp_dir("detect");
         let path = dir.join("detect.toml");
-        let content = "\
-schema_version = 1
+        let content = "schema_version = 1
 
 [general]
 language = \"Korean\"
