@@ -1,16 +1,24 @@
 [package]
 name = "lens"
 description = "Mori Lens: rest the pointer on a sentence and read it in your language."
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-repository.workspace = true
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "UNLICENSED"
+publish = false
+repository = "https://github.com/swarea/mori-lens"
+
+# **Not a workspace member.** Tauri v2 takes the workspace from 23 crates to
+# 384, and the product binary now depends on Tauri for its main window
+# (#164, #165). Excluded until a lighter alternative exists.
 
 [dependencies]
-lens-core.workspace = true
-lens-platform-windows.workspace = true
-lens-translate.workspace = true
+lens-core = { path = "../../crates/lens-core" }
+lens-platform-windows = { path = "../../crates/platform-windows" }
+lens-translate = { path = "../../crates/lens-translate" }
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
@@ -23,8 +31,13 @@ windows = { version = "0.62", features = [
   "Win32_UI_WindowsAndMessaging",
 ] }
 
-[lints]
-workspace = true
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "warn"
 
 [build-dependencies]
 lens-build-stamp = { path = "../../crates/build-stamp" }
+tauri-build = "2"
