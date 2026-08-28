@@ -680,6 +680,23 @@ fn main() -> std::process::ExitCode {
         },
     );
 
+    // Phase 2 of #165: initialize Tauri for the main window.
+    // The window is created but hidden. It will be shown when the reader
+    // clicks "Show Diagnostics" in the tray menu.
+    // Note: we don't call app.run() here because the polling loop below
+    // needs the main thread. A future phase will refactor to use Tauri's
+    // event loop as the main loop.
+    let tauri_handle = match tauri_window::init() {
+        Ok(handle) => {
+            println!("  window    Tauri initialized; window available from tray menu");
+            Some(handle)
+        }
+        Err(error) => {
+            println!("  window    Tauri initialization failed: {error}");
+            None
+        }
+    };
+
     if options.selftest {
         // Synchronous here, unlike the normal path: the point of the selftest
         // is to measure the chain, and a cold load landing in the middle of it
@@ -1163,7 +1180,7 @@ fn main() -> std::process::ExitCode {
                             worker_ocr.as_str(),
                             build_stamp(),
                         );
-                        launch_lens_window();
+                        launch_lens_window(&tauri_handle);
                         drop(pinned.take());
                         let panel = lens_core::diagnostics::diagnostics_panel(
                             &configuration_facts(&options, &engine_line),
@@ -2092,12 +2109,15 @@ fn json_escape(s: &str) -> String {
     out
 }
 
-/// Launch the Tauri settings window from beside the running binary.
-fn launch_lens_window() {
-    // Phase 1 of #165: the separate lens-window.exe binary is removed.
-    // The Tauri window is now part of lens.exe.
-    // Phase 2 will wire up the actual window show/hide via tauri_window module.
-    println!("window  Tauri integration in progress; window will open from tray menu");
+/// Launch the Tauri settings window.
+///
+/// Phase 2 of #165: shows the Tauri window that was initialized at startup.
+fn launch_lens_window(tauri_handle: &Option<tauri::AppHandle>) {
+    if let Some(handle) = tauri_handle {
+        tauri_window::show_main_window(handle);
+    } else {
+        println!("window  Tauri not initialized; cannot show window");
+    }
 }
 
 /// What the tray icon says when the pointer rests on it.
