@@ -1,9 +1,7 @@
 //! Tauri product shell.
 //!
 //! The hover engine runs on a worker thread; this module owns the Tauri
-//! application on the main thread. A separate process (`lens-window`) used
-//! to hold the settings window; the product now runs it directly so the
-//! lifecycle is single-owner (#164, #165).
+//! application on the main thread, including the settings webview (#164, #165).
 
 use std::sync::{Arc, Mutex};
 
