@@ -58,6 +58,7 @@ mod pause;
 mod pointer;
 mod refresh;
 mod silence;
+mod tauri_window;
 
 /// What the worker is asked to do.
 ///
@@ -2093,36 +2094,10 @@ fn json_escape(s: &str) -> String {
 
 /// Launch the Tauri settings window from beside the running binary.
 fn launch_lens_window() {
-    use std::os::windows::ffi::OsStrExt;
-
-    let exe = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("lens-window.exe")));
-
-    let Some(exe) = exe else {
-        println!("window  cannot locate lens-window.exe");
-        return;
-    };
-
-    if !exe.exists() {
-        println!("window  {} not found", exe.display());
-        return;
-    }
-
-    let mut wide: Vec<u16> = exe.as_os_str().encode_wide().collect();
-    wide.push(0);
-    // SAFETY: a documented shell call with a null-terminated path this
-    // function owns, launching a companion binary the product ships.
-    unsafe {
-        let _ = windows::Win32::UI::Shell::ShellExecuteW(
-            None,
-            windows::core::w!("open"),
-            windows::core::PCWSTR(wide.as_ptr()),
-            windows::core::PCWSTR::null(),
-            windows::core::PCWSTR::null(),
-            windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
-        );
-    }
+    // Phase 1 of #165: the separate lens-window.exe binary is removed.
+    // The Tauri window is now part of lens.exe.
+    // Phase 2 will wire up the actual window show/hide via tauri_window module.
+    println!("window  Tauri integration in progress; window will open from tray menu");
 }
 
 /// What the tray icon says when the pointer rests on it.

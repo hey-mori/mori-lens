@@ -9,4 +9,5 @@
 
 fn main() {
     lens_build_stamp::emit();
+    tauri_build::build();
 }
