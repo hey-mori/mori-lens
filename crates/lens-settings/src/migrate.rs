@@ -51,8 +51,7 @@ mod tests {
 
     #[test]
     fn a_full_conf_file_maps_every_field() {
-        let conf = "\
-language = Japanese
+        let conf = "language = Japanese
 model = gemma3:4b
 dwell_ms = 250
 theme = night-lake
