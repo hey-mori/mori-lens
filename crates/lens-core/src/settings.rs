@@ -33,7 +33,7 @@ use crate::policy::{AppPolicy, AppTier};
 /// Used only to give a better message when one turns up below it, so a missing
 /// entry costs a worse sentence rather than a wrong parse. Kept beside the
 /// match that handles them, which is the only way it stays right.
-const GLOBAL_KEYS: [&str; 9] = [
+const GLOBAL_KEYS: [&str; 10] = [
     "language",
     "model",
     "dwell_ms",
@@ -43,6 +43,7 @@ const GLOBAL_KEYS: [&str; 9] = [
     "ocr",
     "text",
     "profile",
+    "hover_scope",
 ];
 
 /// A line the parser did not understand, and where it was.
@@ -92,6 +93,13 @@ pub struct Settings {
     /// settings problem rather than a silent fallback.
     pub profile: String,
     pub text: String,
+    /// What the hover card answers about: `sentence` or `word`.
+    ///
+    /// The model always receives the sentence, so translation quality does
+    /// not change. The scope controls what the card displays: the full
+    /// sentence or the word under the pointer. `Ctrl` toggles the other
+    /// (`docs/benchmarks/2026-08-18-a-word-without-its-sentence.md`).
+    pub hover_scope: String,
     /// The tier for an application with no rule of its own.
     pub default_tier: AppTier,
     /// Process-name substring to tier, in the order they were written.
@@ -110,6 +118,7 @@ impl Default for Settings {
             ocr: crate::session::OcrMode::Manual.as_str().to_owned(),
             profile: crate::analyse::Profile::default().as_str().to_owned(),
             text: "normal".to_owned(),
+            hover_scope: "sentence".to_owned(),
             // Not `allow`. A tool that reads every window from first launch has
             // to earn that, and the file is where a user grants it
             // (`docs/privacy-model.md` §2).
@@ -277,6 +286,10 @@ impl Settings {
                 "small" | "normal" | "large" | "larger" => self.text = value.to_owned(),
                 _ => reject("small, normal, large, or larger"),
             },
+            "hover_scope" => match value {
+                "sentence" | "word" => self.hover_scope = value.to_owned(),
+                _ => reject("sentence or word"),
+            },
             "default" => match tier(value) {
                 Some(tier) => self.default_tier = tier,
                 None => reject("allow, modifier, or deny"),
@@ -349,6 +362,9 @@ pub const TEMPLATE: &str = "# Mori Lens settings.
                                # jargon, and skips the parts of speech. Exam
                                # asks for the clause pattern and what governs
                                # what.
+# hover_scope  = sentence      # sentence or word. What the card answers about.
+                               # Hold Ctrl to toggle the other. The model always
+                               # receives the sentence; only the card changes.
 
 # What Lens may do in an application it has no rule for.
 #   allow      read whenever the pointer rests
