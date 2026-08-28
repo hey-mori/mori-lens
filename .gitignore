@@ -21,3 +21,7 @@ apps/shell-spike/gen/
 apps/lens-window/target/
 apps/lens-window/gen/
 apps/lens-window/Cargo.lock
+
+# And for the integrated Tauri window in lens.
+apps/lens/target/
+apps/lens/gen/
