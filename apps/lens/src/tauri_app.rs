@@ -5,7 +5,24 @@
 //! to hold the settings window; the product now runs it directly so the
 //! lifecycle is single-owner (#164, #165).
 
+use std::sync::{Arc, Mutex};
+
+use serde::Serialize;
 use tauri::Manager;
+
+/// A snapshot of the session's diagnostics, shared with the webview.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct DiagnosticsSnapshot {
+    pub build: String,
+    pub configuration: Vec<(String, String)>,
+    pub cards: u32,
+    pub settled_hovers: u32,
+    pub refusals: Vec<(String, u32)>,
+    pub ocr_mode: String,
+}
+
+/// Shared diagnostics state, updated by the polling loop and read by Tauri commands.
+pub type SharedDiagnostics = Arc<Mutex<DiagnosticsSnapshot>>;
 
 /// Handle to the running Tauri application.
 ///
@@ -29,13 +46,23 @@ impl AppHandle {
     }
 }
 
-/// Build the Tauri application and return its handle and the `App` itself.
+/// Tauri command: return the current diagnostics snapshot.
+#[tauri::command]
+fn get_diagnostics(state: tauri::State<'_, SharedDiagnostics>) -> DiagnosticsSnapshot {
+    state.lock().unwrap().clone()
+}
+
+/// Build the Tauri application and return its handle, shared diagnostics, and the `App` itself.
 ///
 /// The `App` must be kept alive and `.run()` must be called on it. Dropping
 /// it without running destroys the event loop; keeping only the `AppHandle`
 /// without the `App` leaves no event loop running.
-pub fn build() -> Result<(AppHandle, tauri::App), tauri::Error> {
+pub fn build() -> Result<(AppHandle, SharedDiagnostics, tauri::App), tauri::Error> {
+    let diagnostics: SharedDiagnostics = Arc::new(Mutex::new(DiagnosticsSnapshot::default()));
+
     let app = tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![get_diagnostics])
+        .manage(diagnostics.clone())
         .setup(|app| {
             // Hide the window at startup. The reader opens it from the tray;
             // a product that opens a settings window on every launch is not
@@ -48,7 +75,7 @@ pub fn build() -> Result<(AppHandle, tauri::App), tauri::Error> {
         .build(tauri::generate_context!())?;
 
     let handle = AppHandle(app.handle().clone());
-    Ok((handle, app))
+    Ok((handle, diagnostics, app))
 }
 
 /// Run the Tauri event loop. Consumes the `App`.
