@@ -100,10 +100,7 @@ apps/lens/                 the product
   refresh.rs               noticing an edited settings file and dark mode
   silence.rs               why no card appeared
   console.rs               where the banner goes when there is no console
-
-apps/lens-window/          the Tauri v2 main window (settings, diagnostics)
-  src/main.rs              reads diagnostics.json, serves it to the webview
-  web/index.html           the diagnostics view (session stats, config, build)
+  web/index.html           settings and diagnostics in a Tauri webview
 ```
 
 The dependency arrow only ever points from an adapter to the core. A
@@ -222,11 +219,8 @@ about a service split names its own: *until there is a UI to protect*.
   source of truth, with `saved.md` surviving as the human-readable
   export. **Nothing described in ADR-0013 is built yet.**
 - **No settings UI.** *Written when the probe was the only binary;
-  corrected 2026-08-13; updated 2026-08-27.* The product reads
-  `%APPDATA%\Mori Lens\settings.conf` and writes a commented template
-  on first run. A versioned TOML replacement (`settings.toml`) and
-  a Tauri v2 settings window are in progress
-  ([#165](https://github.com/swarea/mori-lens/issues/165)):
-  `crates/lens-settings/` owns the file format, and
-  `apps/lens-window/` is the Tauri webview. **Neither is wired into
-  the running product yet.**
+  corrected 2026-08-13; updated 2026-08-28.* The product reads
+  `%APPDATA%\Mori Lens\settings.toml` on launch. A versioned TOML
+  settings file (`crates/lens-settings/`) and a Tauri v2 settings
+  window (`apps/lens/web/index.html`) are built and wired into the
+  running product ([#165](https://github.com/swarea/mori-lens/issues/165)).
