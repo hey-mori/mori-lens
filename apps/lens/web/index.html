@@ -791,6 +791,20 @@
       loadLibrary();
     });
 
+    // Listen for the detail window's "Open in Library" button.
+    // Switches to the Library tab and shows the item if it has been saved.
+    window.__TAURI__.event.listen('open-library-item', async (event) => {
+      // Switch to Library tab.
+      document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
+      document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+      document.querySelector('[data-section="library"]').classList.add('active');
+      document.getElementById('section-library').classList.add('active');
+      await loadLibrary();
+      if (event.payload) {
+        await showLibraryItem(event.payload);
+      }
+    });
+
     // Search on Enter
     document.getElementById('lib-search').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') searchLibrary();
