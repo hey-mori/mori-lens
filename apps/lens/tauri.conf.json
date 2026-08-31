@@ -8,10 +8,19 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Mori Lens",
         "width": 800,
         "height": 600,
         "visible": false
+      },
+      {
+        "label": "detail",
+        "title": "Mori Lens · Detail",
+        "width": 480,
+        "height": 400,
+        "visible": false,
+        "resizable": true
       }
     ],
     "security": {

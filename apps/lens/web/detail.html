@@ -1,0 +1,289 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Mori Lens · Detail</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font: 14px system-ui, -apple-system, sans-serif;
+    color: #1a1a1a;
+    background: #fafafa;
+    padding: 20px;
+    min-height: 100vh;
+  }
+  .block { margin-bottom: 16px; }
+  .label {
+    font-size: 11px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+  .original {
+    color: #666;
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .translation {
+    font-size: 16px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .rows { font-size: 13px; line-height: 1.6; }
+  .row-label {
+    display: inline-block;
+    width: 80px;
+    color: #888;
+    vertical-align: top;
+  }
+  .row-value {
+    display: inline-block;
+    max-width: calc(100% - 90px);
+    vertical-align: top;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .footer {
+    font-size: 11px;
+    color: #999;
+    margin-top: 20px;
+    padding-top: 12px;
+    border-top: 1px solid #eee;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 16px;
+  }
+  .btn {
+    padding: 5px 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: white;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+  }
+  .btn:hover { background: #f5f5f5; }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+  .btn-primary { background: #0066cc; color: white; border-color: #0066cc; }
+  .btn-primary:hover { background: #0055aa; }
+  .note-area {
+    margin-top: 16px;
+    display: none;
+  }
+  .note-area.visible { display: block; }
+  .note-area textarea {
+    width: 100%;
+    min-height: 60px;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font: inherit;
+    font-size: 13px;
+    resize: vertical;
+    background: white;
+  }
+  .note-area textarea:focus {
+    outline: none;
+    border-color: #0066cc;
+  }
+  .note-saved {
+    font-size: 11px;
+    color: #0a0;
+    margin-top: 4px;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .note-saved.show { opacity: 1; }
+  .empty {
+    color: #999;
+    text-align: center;
+    padding: 40px 20px;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1a1a1a; color: #e0e0e0; }
+    .label { color: #777; }
+    .original { color: #999; }
+    .footer { border-top-color: #333; }
+    .btn { background: #2a2a2a; border-color: #444; color: #e0e0e0; }
+    .btn:hover { background: #333; }
+    .btn-primary { background: #0066cc; border-color: #0066cc; }
+    .note-area textarea { background: #2a2a2a; border-color: #444; color: #e0e0e0; }
+    .empty { color: #666; }
+  }
+</style>
+<body>
+  <div id="content">
+    <div class="empty" id="empty-msg">Loading...</div>
+  </div>
+
+  <script>
+  const { invoke } = window.__TAURI__.core;
+  const { listen } = window.__TAURI__.event;
+  let currentNote = '';
+  let noteDebounce = null;
+
+  async function load() {
+    const detail = await invoke('detail_read');
+    render(detail);
+  }
+
+  function render(detail) {
+    const content = document.getElementById('content');
+    const emptyMsg = document.getElementById('empty-msg');
+
+    if (!detail) {
+      emptyMsg.textContent = 'Nothing pinned yet.';
+      emptyMsg.style.display = 'block';
+      return;
+    }
+    emptyMsg.style.display = 'none';
+
+    let html = '';
+
+    // Original text (quiet)
+    if (detail.original) {
+      html += '<div class="block">';
+      html += '<div class="label">Original</div>';
+      html += '<div class="original">' + esc(detail.original) + '</div>';
+      html += '</div>';
+    }
+
+    // Translation (prominent)
+    if (detail.translation) {
+      html += '<div class="block">';
+      html += '<div class="label">Translation</div>';
+      html += '<div class="translation">' + esc(detail.translation) + '</div>';
+      html += '</div>';
+    }
+
+    // Explanation rows
+    if (detail.rows && detail.rows.length > 0) {
+      html += '<div class="block">';
+      html += '<div class="label">Explanation</div>';
+      html += '<div class="rows">';
+      for (const [label, value] of detail.rows) {
+        if (value && value.trim()) {
+          html += '<div><span class="row-label">' + esc(label) + '</span>';
+          html += '<span class="row-value">' + esc(value) + '</span></div>';
+        }
+      }
+      html += '</div></div>';
+    }
+
+    // Footer
+    if (detail.footer) {
+      html += '<div class="footer">' + esc(detail.footer) + '</div>';
+    }
+
+    // Actions
+    html += '<div class="actions">';
+    html += '<button class="btn" onclick="doCopy()">Copy</button>';
+    html += '<button class="btn btn-primary" id="save-btn" onclick="doSave()"'
+    if (detail.item_id) {
+      html += ' disabled>Saved</button>';
+    } else {
+      html += '>Save</button>';
+    }
+    html += '<button class="btn" onclick="doExplain()">Explain Again</button>';
+    html += '<button class="btn" onclick="doOpenLibrary()">Open in Library</button>';
+    html += '</div>';
+
+    // Note area (visible after save)
+    const noteVisible = detail.item_id ? ' visible' : '';
+    html += '<div class="note-area' + noteVisible + '" id="note-area">';
+    html += '<div class="label" style="margin-top:8px">Note</div>';
+    html += '<textarea id="note-text" placeholder="Your note...">'
+      + esc(detail.note || '') + '</textarea>';
+    html += '<div class="note-saved" id="note-saved">Saved</div>';
+    html += '</div>';
+
+    content.innerHTML = html;
+    currentNote = detail.note || '';
+
+    // Wire up note textarea blur-save
+    const textarea = document.getElementById('note-text');
+    if (textarea && detail.item_id) {
+      textarea.addEventListener('input', onNoteInput);
+      textarea.addEventListener('blur', onNoteBlur);
+    }
+  }
+
+  function esc(s) {
+    if (!s) return '';
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  async function doCopy() {
+    const ok = await invoke('detail_copy');
+    if (!ok) {
+      console.warn('clipboard unavailable');
+    }
+  }
+
+  async function doSave() {
+    try {
+      const itemId = await invoke('detail_save');
+      if (itemId) {
+        // Re-render to show the note area and disable the save button.
+        await load();
+      }
+    } catch (e) {
+      console.error('save failed:', e);
+    }
+  }
+
+  async function doExplain() {
+    await invoke('detail_request_explain');
+  }
+
+  async function doOpenLibrary() {
+    await invoke('detail_open_in_library');
+    // The main window receives the event and switches to the Library tab.
+  }
+
+  function onNoteInput() {
+    // Debounced save: wait until the reader stops typing.
+    clearTimeout(noteDebounce);
+    noteDebounce = setTimeout(onNoteBlur, 1000);
+  }
+
+  async function onNoteBlur() {
+    clearTimeout(noteDebounce);
+    const textarea = document.getElementById('note-text');
+    if (!textarea) return;
+    const detail = await invoke('detail_read');
+    if (!detail || !detail.item_id) return;
+    const text = textarea.value;
+    if (text === currentNote) return;
+    try {
+      await invoke('detail_save_note', { id: detail.item_id, note: text });
+      currentNote = text;
+      flashSaved();
+    } catch (e) {
+      console.error('note save failed:', e);
+    }
+  }
+
+  function flashSaved() {
+    const el = document.getElementById('note-saved');
+    if (!el) return;
+    el.classList.add('show');
+    setTimeout(() => el.classList.remove('show'), 1500);
+  }
+
+  // Listen for the open-library-item event (from the main window side)
+  // in case the detail window needs to react. For now, the main window's
+  // index.html is the listener.
+
+  load();
+  // Refresh periodically so a re-explain result picked up by the polling
+  // loop is reflected here.
+  setInterval(load, 2000);
+  </script>
+</body>
