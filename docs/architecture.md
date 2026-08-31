@@ -70,6 +70,9 @@ crates/lens-settings/      versioned TOML settings, round-trip preservation
   write.rs                 atomic write with rollback on invalid output
   migrate.rs               settings.conf to settings.toml migration
 
+crates/lens-storage/      SQLite library for saved items (ADR-0013, ADR-0015)
+  lib.rs                   schema, migrations, CRUD, search, saved.md import
+
 crates/platform-windows/   the Windows implementation of TextAcquirer
   com.rs                   apartment handling for a call
   window.rs                foreground window, process name, DPI, monitors
