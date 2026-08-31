@@ -304,6 +304,31 @@ fn library_get_tags(
     lib.library().get_tags(id).map_err(|e| format!("{e}"))
 }
 
+/// Tauri command: get distinct app names from the library.
+#[tauri::command]
+fn library_distinct_apps(state: tauri::State<'_, SharedLibrary>) -> Result<Vec<String>, String> {
+    let lib = state.lock().unwrap();
+    lib.library().distinct_apps().map_err(|e| format!("{e}"))
+}
+
+/// Tauri command: get distinct source languages from the library.
+#[tauri::command]
+fn library_distinct_source_languages(
+    state: tauri::State<'_, SharedLibrary>,
+) -> Result<Vec<String>, String> {
+    let lib = state.lock().unwrap();
+    lib.library().distinct_source_languages().map_err(|e| format!("{e}"))
+}
+
+/// Tauri command: get distinct target languages from the library.
+#[tauri::command]
+fn library_distinct_target_languages(
+    state: tauri::State<'_, SharedLibrary>,
+) -> Result<Vec<String>, String> {
+    let lib = state.lock().unwrap();
+    lib.library().distinct_target_languages().map_err(|e| format!("{e}"))
+}
+
 /// Tauri command: get the library count.
 #[tauri::command]
 fn library_count(state: tauri::State<'_, SharedLibrary>) -> Result<i64, String> {
@@ -354,6 +379,9 @@ pub fn build(
             library_update_note,
             library_set_tags,
             library_get_tags,
+            library_distinct_apps,
+            library_distinct_source_languages,
+            library_distinct_target_languages,
             library_count,
             library_export,
             library_export_json,
