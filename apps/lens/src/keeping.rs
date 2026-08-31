@@ -1,4 +1,4 @@
-//! Appending what a reader kept to a file they own.
+//! Appending what a reader kept to a file they own, and to the library database.
 //!
 //! The format is [`lens_core::keep`]; this is the part that touches a disk,
 //! which is why it is here and not there.
@@ -21,12 +21,21 @@
 //! parses it, and never rewrites it, which is what makes it safe for a reader
 //! to keep their own notes in it and what makes deleting a block a real
 //! deletion rather than a flag.
+//!
+//! # The library database
+//!
+//! Every entry that goes to `saved.md` also goes to `library.db`
+//! ([ADR-0013](../../docs/decisions/ADR-0013-the-local-library.md)). The
+//! database is the structured store; the file is the human-readable export.
+//! If the database write fails the entry is still written to the file: the
+//! file is the safety net that was there before the database existed.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use lens_core::keep::{block, Entry, PREAMBLE};
+use lens_storage::{Item, Library};
 
 /// Where saved items go, beside the settings file.
 ///
@@ -64,10 +73,14 @@ impl NotKept {
     }
 }
 
-/// Append one entry, creating the file and its heading if it is not there.
+/// Append one entry to `saved.md` and insert it into `library.db`.
 ///
-/// Returns the path, so the caller can say where it went. A reader who presses
-/// a key and is told only "saved" has been told the least useful half.
+/// The file write is the primary store. The database write is best effort:
+/// if it fails the entry is still saved to the file. Both files live beside
+/// the settings file.
+///
+/// Creates the file and its heading on first use, and opens (or creates) the
+/// database and runs any pending migrations.
 pub fn append(file: &Path, entry: &Entry, at: SystemTime) -> Result<(), NotKept> {
     if let Some(folder) = file.parent() {
         // The settings folder already exists by the time anything is saved,
@@ -93,7 +106,51 @@ pub fn append(file: &Path, entry: &Entry, at: SystemTime) -> Result<(), NotKept>
     handle
         .write_all(block(entry, at).as_bytes())
         .map_err(|_| NotKept::NotWritten)?;
+
+    // The structured store. If the database write fails, the file has
+    // already succeeded, and the entry is not lost.
+    write_to_library(file, entry, at);
+
     Ok(())
+}
+
+/// Insert the entry into `library.db` beside the saved.md file.
+///
+/// Failures are silently ignored: the file write in [`append`] has already
+/// succeeded, and a database error should not prevent a save from
+/// completing. The reader's data is in the file either way.
+fn write_to_library(md_path: &Path, entry: &Entry, at: SystemTime) {
+    let db_path = md_path
+        .parent()
+        .map(|folder| folder.join("library.db"))
+        .unwrap_or_else(|| PathBuf::from("library.db"));
+
+    let Ok(lib) = Library::open(&db_path) else {
+        return;
+    };
+    let seconds = at
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or(std::time::Duration::ZERO)
+        .as_secs() as i64;
+    let kind = if entry.caveat.is_some() {
+        "analysis"
+    } else {
+        "translation"
+    };
+    let item = Item {
+        id: 0,
+        original: entry.original.clone(),
+        answer: entry.answer.clone(),
+        caveat: entry.caveat.clone(),
+        app: entry.app.clone(),
+        created_at: seconds,
+        kind: kind.to_owned(),
+        source_language: None,
+        target_language: None,
+        model: None,
+        note: None,
+    };
+    let _ = lib.insert(&item);
 }
 
 #[cfg(test)]
@@ -170,10 +227,60 @@ mod tests {
     }
 
     #[test]
+    fn the_database_lands_beside_the_settings() {
+        let settings =
+            PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\Mori Lens\\settings.conf");
+        let db = settings.parent().map(|p| p.join("library.db")).unwrap();
+        assert_eq!(
+            db,
+            PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\Mori Lens\\library.db"),
+        );
+    }
+
+    #[test]
     fn every_refusal_has_a_sentence_and_a_reason() {
         for refusal in [NotKept::NothingToKeep, NotKept::NotWritten] {
             assert!(!refusal.user_message().is_empty());
             assert_ne!(refusal.user_message(), refusal.reason());
         }
+    }
+
+    /// A save also creates a library.db with the item in it.
+    #[test]
+    fn a_save_also_writes_to_the_library_database() {
+        let file = scratch("library-write");
+        let at = UNIX_EPOCH + Duration::from_secs(1_786_075_140);
+        append(&file, &an_entry("hello"), at).expect("kept");
+
+        let db_path = file.parent().unwrap().join("library.db");
+        assert!(db_path.exists(), "library.db was created");
+
+        let lib = Library::open(&db_path).unwrap();
+        assert_eq!(lib.count().unwrap(), 1);
+        let item = lib.get(1).unwrap().unwrap();
+        assert_eq!(item.original, "hello");
+        assert_eq!(item.kind, "translation");
+        let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
+    }
+
+    /// An analysis entry is stored with kind "analysis".
+    #[test]
+    fn an_analysis_entry_is_kind_analysis_in_the_database() {
+        let file = scratch("library-analysis");
+        let at = UNIX_EPOCH;
+        let entry = Entry {
+            original: "멱등성".to_owned(),
+            answer: "원형 · 멱등성".to_owned(),
+            caveat: Some("AI 설명 · 사실 확인 필요".to_owned()),
+            app: None,
+        };
+        append(&file, &entry, at).expect("kept");
+
+        let db_path = file.parent().unwrap().join("library.db");
+        let lib = Library::open(&db_path).unwrap();
+        let item = lib.get(1).unwrap().unwrap();
+        assert_eq!(item.kind, "analysis");
+        assert!(item.caveat.is_some());
+        let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
     }
 }
