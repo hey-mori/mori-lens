@@ -114,7 +114,8 @@
       <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
         <input type="text" id="lib-search" placeholder="Search saved items..." style="flex:1;max-width:400px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;background:white">
         <button class="btn" onclick="searchLibrary()" style="padding:6px 12px">Search</button>
-        <button class="btn" onclick="exportLibrary()" style="padding:6px 12px">Export</button>
+        <button class="btn" onclick="exportLibrary()" style="padding:6px 12px">Export MD</button>
+        <button class="btn" onclick="exportLibraryJson()" style="padding:6px 12px">Export JSON</button>
         <span id="lib-count" style="color:#888;font-size:12px;margin-left:auto"></span>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
@@ -562,6 +563,27 @@
         const a = document.createElement('a');
         a.href = url;
         a.download = 'saved.md';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        alert('Export failed: ' + e);
+      }
+    }
+
+    async function exportLibraryJson() {
+      try {
+        const json = await invoke('library_export_json');
+        if (!json || json === '[]') {
+          alert('Library is empty.');
+          return;
+        }
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'library.json';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);

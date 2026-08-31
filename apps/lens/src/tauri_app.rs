@@ -320,6 +320,13 @@ fn library_export(state: tauri::State<'_, SharedLibrary>) -> Result<String, Stri
         .map_err(|e| format!("{e}"))
 }
 
+/// Tauri command: export the library as JSON (lossless format).
+#[tauri::command]
+fn library_export_json(state: tauri::State<'_, SharedLibrary>) -> Result<String, String> {
+    let lib = state.lock().unwrap();
+    lib.library().export_json().map_err(|e| format!("{e}"))
+}
+
 /// Build the Tauri application and return its handle, shared diagnostics, and the `App` itself.
 ///
 /// The `App` must be kept alive and `.run()` must be called on it. Dropping
@@ -349,6 +356,7 @@ pub fn build(
             library_get_tags,
             library_count,
             library_export,
+            library_export_json,
         ])
         .manage(diagnostics.clone())
         .manage(shared_settings)
