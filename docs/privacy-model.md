@@ -37,36 +37,44 @@ read outside the process, and three things bound it:
   explanation, the label saying a model wrote it. Not the model name and
   not the timing.
 
-**One file holds what was read, and a person put every line in it.**
+**One file and one database hold what was read, and a person put every line in them.**
 Since 2026-08-07, `Ctrl+Alt+S` appends the card in front of the reader to
-`saved.md`, beside the settings file. Everything else about a durable
-record still holds: the translation cache is memory and dies with the
-process, because a cache **nobody asked for** that survived a restart
-would be a log of what somebody read.
+`saved.md`, beside the settings file. Since 2026-08-31, the same entry is
+stored in `library.db` for structured access: search, filters, notes, tags,
+and export. Everything else about a durable record still holds: the
+translation cache is memory and dies with the process, because a cache
+**nobody asked for** that survived a restart would be a log of what somebody
+read.
 
 What makes this one allowed is the trigger, not the format. Every entry
 is one keypress, made while looking at the card, so the file is a record
 of what a person decided to keep rather than of what they looked at.
 Nothing here is reachable from a hover.
 
-**The deferral this page has carried since it was written now has an
-answer, and the answer is not yet code.**
-[ADR-0013](decisions/ADR-0013-the-local-library.md) records that the
-library becomes SQLite with this file preserved as its export, and
-[ADR-0014](decisions/ADR-0014-three-tiers-of-history.md) records three
-tiers of history of which only a memory-only one is on by default. Both
-are **Accepted** (2026-08-27), and **nothing described in either exists**. Everything
-on this page still describes what the code does today, which is one
-appended file and a cache that dies with the process. When either is
-built, this section changes and says so with a date, in the same way §2
-already had to.
+**The deferral this page has carried since it was written now has an answer,
+and the answer is code.** [ADR-0013](decisions/ADR-0013-the-local-library.md)
+records that the library becomes SQLite with the file preserved as its export,
+and [ADR-0014](decisions/ADR-0014-three-tiers-of-history.md) records three
+tiers of history of which only a memory-only one is on by default. Both are
+**Accepted** (2026-08-27). The library was built on 2026-08-31: `library.db`
+is the structured store, `saved.md` is its export, and the Library tab in the
+settings window lists what was kept.
 
 It is plain Markdown, and that is the privacy property rather than a
-convenience. **Deletion is selecting a block and pressing delete**, which
-is more real than a button that sets a flag, and the export is the file.
-Lens never reads it back, never parses it, and only ever appends, so a
-reader's own notes in it are safe and nothing Lens does depends on what
-is in there.
+convenience. **Deletion is selecting a block and pressing delete** in the
+export, or removing an item in the Library tab, which removes the row, its
+full text search entry, and any tags. A plain SQLite `DELETE` is not
+erasure; see [ADR-0013](decisions/ADR-0013-the-local-library.md) for what
+`secure_delete` and `VACUUM` additionally provide. The export is still a
+file anybody can open. Lens never reads the file back after import, never
+parses it, and only ever appends, so a reader's own notes in it are safe
+and nothing Lens does depends on what is in there.
+
+The Library window shows only what a person chose to keep, one keypress at
+a time. A window left open on a shared screen reveals a collection rather
+than a single card, but the collection is still the reader's deliberate
+choices and not a log of what they looked at. No additional lock or blur
+is applied; the privacy property is the same as the file's.
 
 **No screen image is ever written to disk.** Including for debugging.
 Including in a debug build. An OCR crop lives in memory for the duration
@@ -365,7 +373,7 @@ Every claim on this page, and whether the code keeps it:
 | Claim | State |
 |---|---|
 | Nothing leaves the machine by default | **kept**, and the reason changed on 2026-08-06. The endpoint is now a setting and a flag, because Ollama does not always listen on the default port. Both go through one check, `translate::engine_for`, which accepts `localhost`, `127.0.0.0/8` and `::1` and refuses everything else as a settings error. A name that might resolve to a loopback address is refused too: this cannot resolve names, and guessing from a string is how a promise gets broken quietly. The HTTP client still has no TLS, which is why the restriction is a refusal rather than a warning. |
-| Nothing is recorded | **kept for everything automatic, and one file is the exception.** No hover writes anything. Since 2026-08-07 `Ctrl+Alt+S` appends the card in front of the reader to `saved.md`, one keypress at a time, which is §2 and is a record a person made rather than one this product kept. The translation cache is still in memory and still dies with the process. **This row said "No file is written" until 2026-08-13**, four days after that stopped being true, on the page whose own preamble says a stale privacy document is worse than none because it is believed. |
+| Nothing is recorded | **kept for everything automatic, and two stores are the exception.** No hover writes anything. Since 2026-08-07 `Ctrl+Alt+S` appends the card in front of the reader to `saved.md`, one keypress at a time. Since 2026-08-31 the same entry goes to `library.db`, a SQLite database beside the file. The database is the structured store; the file is the human-readable export. Both hold only what a person chose to keep, which is §1 and is a record a person made rather than one this product kept. The translation cache is still in memory and still dies with the process. |
 | No screen image written to disk | **kept**, and no longer trivially. Two capture paths exist as of M4, and **how often each runs** is below. Both capture a band around the pointer, recognise it, and drop the pixels. `Capture` is not `Clone`, holds no path, and its `Debug` omits the buffer. The claim used to be kept because there was nothing to write. |
 | How often the screen is captured is stated, not only what | **kept** since 2026-08-06, and it was not before. This page said what a capture contains and never how many there are, which is most of what somebody deciding about a screen-reading tool wants to know. §7. |
 | Protected fields refused before they are read | **kept and executed**, against a real `ES_PASSWORD` control. See §1. |
