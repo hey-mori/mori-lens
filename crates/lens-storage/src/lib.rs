@@ -15,10 +15,11 @@
 //! migration runs once and is never re-applied.
 
 use rusqlite::{params, Connection};
+use serde::Serialize;
 use std::path::Path;
 
 /// One item in the library.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Item {
     /// Stable identity. Zero before insertion.
     pub id: i64,
@@ -42,6 +43,9 @@ pub struct Item {
     pub model: Option<String>,
     /// The reader's own note.
     pub note: Option<String>,
+    /// Tags for this item, populated on demand.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
 }
 
 /// A page of items returned by [`Library::list`] or [`Library::search`].
@@ -441,6 +445,34 @@ impl Library {
         Ok(out)
     }
 
+    /// Export the library as a JSON string, including all fields and tags.
+    /// This is the lossless export format.
+    pub fn export_json(&self) -> Result<String, Error> {
+        // Fetch all items by iterating through pages.
+        let mut all_items = Vec::new();
+        let mut offset = 0i64;
+        loop {
+            let page = self.list(offset)?;
+            if page.items.is_empty() {
+                break;
+            }
+            let mut items = page.items;
+            // Populate tags for each item.
+            for item in &mut items {
+                item.tags = Some(self.get_tags(item.id)?);
+            }
+            all_items.extend(items);
+            if !page.has_more {
+                break;
+            }
+            offset += PAGE_SIZE;
+        }
+
+        serde_json::to_string_pretty(&all_items).map_err(|e| {
+            Error::Io(std::io::Error::other(e.to_string()))
+        })
+    }
+
     /// The database connection, for callers that need to run their own
     /// queries (e.g. schema introspection in tests).
     pub fn conn(&self) -> &Connection {
@@ -556,6 +588,7 @@ fn row_to_item(row: &rusqlite::Row) -> rusqlite::Result<Item> {
         target_language: row.get(8)?,
         model: row.get(9)?,
         note: row.get(10)?,
+        tags: None,
     })
 }
 
@@ -788,6 +821,7 @@ mod tests {
             target_language: Some("ko".to_owned()),
             model: None,
             note: None,
+            tags: None,
         }
     }
 
@@ -804,6 +838,7 @@ mod tests {
             target_language: Some("ko".to_owned()),
             model: Some("qwen2.5:7b".to_owned()),
             note: None,
+            tags: None,
         }
     }
 
@@ -1158,6 +1193,7 @@ mod tests {
             target_language: Some("ko".to_owned()),
             model: None,
             note: None,
+            tags: None,
         };
         lib.insert(&item).unwrap();
 
@@ -1169,6 +1205,45 @@ mod tests {
             entries[0].caveat.as_deref(),
             Some("This is an AI explanation.")
         );
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn exporting_json_includes_all_fields_and_tags() {
+        let path = temp_db("export-json");
+        let lib = Library::open(&path).unwrap();
+
+        let item = Item {
+            id: 0,
+            original: "test".to_owned(),
+            answer: "답".to_owned(),
+            caveat: Some("note".to_owned()),
+            app: Some("App".to_owned()),
+            created_at: 1_786_075_140,
+            kind: "translation".to_owned(),
+            source_language: Some("en".to_owned()),
+            target_language: Some("ko".to_owned()),
+            model: Some("qwen".to_owned()),
+            note: Some("my note".to_owned()),
+            tags: None,
+        };
+        let id = lib.insert(&item).unwrap();
+        lib.set_tags(id, &["tag1".to_owned(), "tag2".to_owned()])
+            .unwrap();
+
+        let json = lib.export_json().unwrap();
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.len(), 1);
+
+        let obj = &parsed[0];
+        assert_eq!(obj["original"], "test");
+        assert_eq!(obj["answer"], "답");
+        assert_eq!(obj["caveat"], "note");
+        assert_eq!(obj["app"], "App");
+        assert_eq!(obj["kind"], "translation");
+        assert_eq!(obj["note"], "my note");
+        assert_eq!(obj["tags"], serde_json::json!(["tag1", "tag2"]));
 
         cleanup(&path);
     }
