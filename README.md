@@ -46,8 +46,8 @@ What ships:
 - `Ctrl+Alt+D` for grammar, structure, and vocabulary explanation.
 - `Ctrl+Alt+C` and `Ctrl+Alt+S` to copy or save the card.
 
-What does not exist yet: macOS, saved vocabulary review, and a settings
-window. Sequenced in [docs/roadmap.md](docs/roadmap.md).
+What does not exist yet: macOS and saved vocabulary review. Sequenced
+in [docs/roadmap.md](docs/roadmap.md).
 
 The authoritative list, capability by capability, is in
 [`docs/mori-lens-project-goal.md`](docs/mori-lens-project-goal.md).
@@ -91,7 +91,8 @@ dependency in either direction.
 - Local inference: Ollama over `127.0.0.1`, never bundled, spoken to
   over hand-written HTTP with no client dependency
 - Storage: `settings.toml` (versioned, round-trip TOML via `lens-settings`);
-  SQLite library planned ([ADR-0013](docs/decisions/ADR-0013-the-local-library.md))
+  `library.db` (SQLite, [ADR-0013](docs/decisions/ADR-0013-the-local-library.md),
+  [ADR-0015](docs/decisions/ADR-0015-the-library-schema.md))
 
 ## Layout
 
@@ -99,6 +100,7 @@ dependency in either direction.
 crates/lens-core/          domain types, hover machine, segmentation, theme,
                            card layout, settings, model choice. No OS types.
 crates/lens-settings/      versioned TOML settings, round-trip preservation
+crates/lens-storage/       SQLite library for saved items
 crates/lens-translate/     the Ollama client, HTTP and JSON by hand
 crates/platform-windows/   UI Automation, the Direct2D card, tray, autostart
 apps/lens/                 the product
