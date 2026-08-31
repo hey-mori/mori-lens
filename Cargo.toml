@@ -4,6 +4,7 @@ members = [
   "crates/build-stamp",
   "crates/lens-core",
   "crates/lens-settings",
+  "crates/lens-storage",
   "crates/lens-translate",
   "crates/platform-windows",
   "apps/hover-probe",

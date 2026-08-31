@@ -1916,7 +1916,7 @@ fn main() -> std::process::ExitCode {
                             translating &= jobs_tx
                                 .send(Job::Translate(Translate {
                                     generation,
-                                    original: sentence,
+                                    original: sentence.clone(),
                                     display_text: display_text.to_owned(),
                                     focused_word: target.segmented.word_text().map(str::to_owned),
                                     anchor,
