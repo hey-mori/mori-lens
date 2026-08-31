@@ -337,6 +337,7 @@ mod tests {
             scrolling: false,
             typing: false,
             modifier_held: true,
+            ctrl_held: false,
             ocr_requested: false,
         }
     }
