@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tauri::Manager;
 
+use crate::detail_view::{ExplainFlag, SharedDetail, SharedSavePath};
 use crate::library_service::SharedLibrary;
 use crate::settings_service::{SettingsView, SharedSettings};
 
@@ -93,6 +94,14 @@ impl AppHandle {
     /// Show the main settings/diagnostics window.
     pub fn show_window(&self) {
         if let Some(window) = self.0.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }
+
+    /// Show the pinned detail window.
+    pub fn show_detail_window(&self) {
+        if let Some(window) = self.0.get_webview_window("detail") {
             let _ = window.show();
             let _ = window.set_focus();
         }
@@ -360,6 +369,9 @@ fn library_export_json(state: tauri::State<'_, SharedLibrary>) -> Result<String,
 pub fn build(
     shared_settings: SharedSettings,
     shared_library: SharedLibrary,
+    shared_detail: SharedDetail,
+    explain_flag: ExplainFlag,
+    save_path: SharedSavePath,
 ) -> Result<(AppHandle, SharedDiagnostics, tauri::App), tauri::Error> {
     let diagnostics: SharedDiagnostics = Arc::new(Mutex::new(DiagnosticsSnapshot::default()));
 
@@ -385,10 +397,19 @@ pub fn build(
             library_count,
             library_export,
             library_export_json,
+            crate::detail_view::detail_read,
+            crate::detail_view::detail_copy,
+            crate::detail_view::detail_save,
+            crate::detail_view::detail_save_note,
+            crate::detail_view::detail_request_explain,
+            crate::detail_view::detail_open_in_library,
         ])
         .manage(diagnostics.clone())
         .manage(shared_settings)
         .manage(shared_library)
+        .manage(shared_detail)
+        .manage(explain_flag)
+        .manage(save_path)
         .setup(|app| {
             // Hide the window at startup. The reader opens it from the tray;
             // a product that opens a settings window on every launch is not

@@ -49,6 +49,7 @@ use lens_platform_windows::{
 use lens_translate::OllamaTranslator;
 
 mod console;
+mod detail_view;
 mod hover_worker;
 mod keeping;
 mod lesson;
@@ -1162,8 +1163,18 @@ fn main() -> std::process::ExitCode {
     ));
     println!("  library   {:?}", shared_library.lock().unwrap().path());
 
+    let (shared_detail, explain_flag) = detail_view::new_shared();
+    let shared_save_path: detail_view::SharedSavePath =
+        std::sync::Arc::new(saved_to.clone());
+
     let (tauri_handle, shared_diagnostics, tauri_app) =
-        match tauri_app::build(shared_settings.clone(), shared_library) {
+        match tauri_app::build(
+            shared_settings.clone(),
+            shared_library,
+            shared_detail.clone(),
+            explain_flag.clone(),
+            shared_save_path,
+        ) {
             Ok(triple) => triple,
             Err(error) => {
                 eprintln!("Tauri initialization failed: {error}");
@@ -1180,6 +1191,8 @@ fn main() -> std::process::ExitCode {
     let loop_tauri = tauri_handle.clone();
     let loop_diagnostics = shared_diagnostics.clone();
     let loop_settings = shared_settings.clone();
+    let loop_detail = shared_detail.clone();
+    let loop_explain_flag = explain_flag.clone();
     std::thread::spawn(move || {
         let mut quitting = false;
         while !pointer::stopping() && !quitting {
@@ -1240,6 +1253,12 @@ fn main() -> std::process::ExitCode {
             }
             let mut read_with_ocr = false;
             let mut explain = false;
+            // The detail window's "Explain Again" button sets this flag.
+            // Combined with the keyboard chord below, so a single handler
+            // dispatches both.
+            if loop_explain_flag.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                explain = true;
+            }
             let mut copy = false;
             let mut keep = false;
             let mut pin = false;
@@ -1266,7 +1285,7 @@ fn main() -> std::process::ExitCode {
                 }) {
                     Some((entry, anchor)) => {
                         match keeping::append(&saved_to, &entry, std::time::SystemTime::now()) {
-                            Ok(()) => {
+                            Ok(_item_id) => {
                                 // Lengths and lines, never the text
                                 // (`docs/privacy-model.md` §3). The path is not
                                 // secret and is the useful half.
@@ -1316,29 +1335,23 @@ fn main() -> std::process::ExitCode {
 
             if pin && !pause.is_paused() {
                 // Opened by a key and by nothing else. There is no path from a
-                // settled hover to this: `Detail::from_card` takes a card the reader
+                // settled hover to this: `view_from_card` takes a card the reader
                 // has already been shown, which is what keeps a dwell from becoming
                 // a window.
                 match on_screen
                     .as_ref()
-                    .and_then(|(card, _)| lens_core::detail::Detail::from_card(card))
+                    .and_then(|(card, _)| detail_view::view_from_card(card))
                 {
-                    Some(detail) => {
-                        let explained = detail.is_explained();
-                        // Taken and dropped first, so the old window is closed and
-                        // its thread joined before the new one takes focus, rather
-                        // than the two fighting for the front. Written this way
-                        // because an assignment reads as dead and this is not.
-                        drop(pinned.take());
-                        pinned = lens_platform_windows::PanelWindow::open(
-                            detail.as_panel(&lens_core::detail::Detail::nothing_explained_yet(
-                                "Ctrl+Alt+D",
-                            )),
-                            theme,
-                        );
+                    Some(mut view) => {
+                        // Capture the application name from under the pointer,
+                        // so the detail save can store it in the library.
+                        view.app = pointer::position()
+                            .and_then(pointer::process_name_at);
+                        let explained = view.rows.iter().any(|(_, v)| !v.trim().is_empty());
+                        *loop_detail.lock().unwrap() = Some(view);
+                        loop_tauri.show_detail_window();
                         println!(
-                            "pin   {} · {}",
-                            if pinned.is_some() { "opened" } else { "FAILED" },
+                            "pin   opened · {}",
                             if explained {
                                 "with the explanation"
                             } else {
@@ -1456,6 +1469,7 @@ fn main() -> std::process::ExitCode {
                     }
                 }
             }
+
             if pause_changed {
                 if pause.is_paused() {
                     if life.dismiss_now() == lifecycle::Action::Hide {
@@ -2732,7 +2746,7 @@ total {}ms from acquisition to card",
                     .and_then(|entry| {
                         keeping::append(&scratch, &entry, std::time::SystemTime::now())
                     }) {
-                    Ok(()) => {
+                    Ok(_item_id) => {
                         let written = std::fs::read_to_string(&scratch).unwrap_or_default();
                         // Shape, not content: the file holds a sentence off
                         // this machine's screen (`docs/privacy-model.md` §3).
