@@ -118,12 +118,24 @@
         <button class="btn" onclick="exportLibraryJson()" style="padding:6px 12px">Export JSON</button>
         <span id="lib-count" style="color:#888;font-size:12px;margin-left:auto"></span>
       </div>
-      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
         <label style="font-size:12px;color:#666">Type:</label>
         <select id="lib-filter-kind" onchange="applyFilters()" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
           <option value="">All</option>
           <option value="translation">Translations</option>
           <option value="analysis">Analyses</option>
+        </select>
+        <label style="font-size:12px;color:#666">App:</label>
+        <select id="lib-filter-app" onchange="applyFilters()" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
+          <option value="">All</option>
+        </select>
+        <label style="font-size:12px;color:#666">Source:</label>
+        <select id="lib-filter-source" onchange="applyFilters()" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
+          <option value="">All</option>
+        </select>
+        <label style="font-size:12px;color:#666">Target:</label>
+        <select id="lib-filter-target" onchange="applyFilters()" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
+          <option value="">All</option>
         </select>
         <button class="btn" onclick="clearFilters()" style="padding:4px 12px;font-size:12px">Clear filters</button>
       </div>
@@ -528,7 +540,34 @@
       libraryFilters = { kind: null, app: null, source_language: null, target_language: null };
       document.getElementById('lib-search').value = '';
       document.getElementById('lib-filter-kind').value = '';
-      await fetchLibraryPage();
+      document.getElementById('lib-filter-app').value = '';
+      document.getElementById('lib-filter-source').value = '';
+      document.getElementById('lib-filter-target').value = '';
+      await Promise.all([loadFilterOptions(), fetchLibraryPage()]);
+    }
+
+    async function loadFilterOptions() {
+      try {
+        const [apps, sources, targets] = await Promise.all([
+          invoke('library_distinct_apps'),
+          invoke('library_distinct_source_languages'),
+          invoke('library_distinct_target_languages'),
+        ]);
+        populateSelect('lib-filter-app', apps);
+        populateSelect('lib-filter-source', sources);
+        populateSelect('lib-filter-target', targets);
+      } catch (e) {
+        // Ignore; dropdowns stay at "All".
+      }
+    }
+
+    function populateSelect(id, values) {
+      const sel = document.getElementById(id);
+      const current = sel.value;
+      sel.innerHTML = '<option value="">All</option>';
+      for (const v of values) {
+        sel.innerHTML += '<option value="' + escapeHtml(v) + '"' + (v === current ? ' selected' : '') + '>' + escapeHtml(v) + '</option>';
+      }
     }
 
     async function searchLibrary() {
@@ -539,7 +578,10 @@
 
     function applyFilters() {
       const kind = document.getElementById('lib-filter-kind').value || null;
-      libraryFilters = { kind, app: null, source_language: null, target_language: null };
+      const app = document.getElementById('lib-filter-app').value || null;
+      const source_language = document.getElementById('lib-filter-source').value || null;
+      const target_language = document.getElementById('lib-filter-target').value || null;
+      libraryFilters = { kind, app, source_language, target_language };
       libraryOffset = 0;
       fetchLibraryPage();
     }
@@ -547,6 +589,9 @@
     function clearFilters() {
       libraryFilters = { kind: null, app: null, source_language: null, target_language: null };
       document.getElementById('lib-filter-kind').value = '';
+      document.getElementById('lib-filter-app').value = '';
+      document.getElementById('lib-filter-source').value = '';
+      document.getElementById('lib-filter-target').value = '';
       libraryOffset = 0;
       fetchLibraryPage();
     }
