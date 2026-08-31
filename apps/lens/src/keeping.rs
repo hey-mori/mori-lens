@@ -119,6 +119,10 @@ pub fn append(file: &Path, entry: &Entry, at: SystemTime) -> Result<(), NotKept>
 /// Failures are silently ignored: the file write in [`append`] has already
 /// succeeded, and a database error should not prevent a save from
 /// completing. The reader's data is in the file either way.
+///
+/// A duplicate (same original text and kind) is silently skipped: the file
+/// still gets the entry because it is append-only, but the database does not
+/// store the same sentence twice.
 fn write_to_library(md_path: &Path, entry: &Entry, at: SystemTime) {
     let db_path = md_path
         .parent()
@@ -137,6 +141,12 @@ fn write_to_library(md_path: &Path, entry: &Entry, at: SystemTime) {
     } else {
         "translation"
     };
+
+    // Skip duplicates: a sentence kept twice produces one database row.
+    if lib.has_duplicate(&entry.original, kind).unwrap_or(false) {
+        return;
+    }
+
     let item = Item {
         id: 0,
         original: entry.original.clone(),
@@ -149,6 +159,7 @@ fn write_to_library(md_path: &Path, entry: &Entry, at: SystemTime) {
         target_language: None,
         model: None,
         note: None,
+        tags: None,
     };
     let _ = lib.insert(&item);
 }
@@ -281,6 +292,31 @@ mod tests {
         let item = lib.get(1).unwrap().unwrap();
         assert_eq!(item.kind, "analysis");
         assert!(item.caveat.is_some());
+        let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
+    }
+
+    /// A duplicate sentence is written to the file but not stored twice.
+    #[test]
+    fn a_duplicate_sentence_is_not_stored_twice_in_the_database() {
+        let file = scratch("library-duplicate");
+        let at = UNIX_EPOCH + Duration::from_secs(1_786_075_140);
+        let entry = an_entry("the same sentence");
+
+        append(&file, &entry, at).expect("first keep");
+        append(&file, &entry, at).expect("second keep");
+
+        // The file has both entries (append-only).
+        let written = std::fs::read_to_string(&file).expect("a file");
+        assert_eq!(
+            written.matches("> the same sentence").count(),
+            2,
+            "file is append-only"
+        );
+
+        // The database has only one (deduplicated).
+        let db_path = file.parent().unwrap().join("library.db");
+        let lib = Library::open(&db_path).unwrap();
+        assert_eq!(lib.count().unwrap(), 1, "database deduplicates");
         let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
     }
 }
