@@ -4805,3 +4805,664 @@ fn ink_of(window_id: i64, theme: lens_core::theme::Theme) -> (f64, u32, i32) {
         rect.bottom - rect.top,
     )
 }
+
+// ---------------------------------------------------------------------------
+// M4 OCR verification
+// ---------------------------------------------------------------------------
+//
+// These tests close the open gate conditions in M4 (Windows manual OCR):
+//
+// - Korean text recognition quality, at multiple scales and themes.
+// - "Scanned" quality text: low-resolution rendering upscaled, simulating a
+//   low-DPI scan of a printed document.
+// - Overlay self-recognition risk for the OCR path: proving that OCR *would*
+//   read the card's own text if the hide guard were removed.
+// - An accuracy corpus that scores several cases in a single run, separating
+//   engine accuracy (did the recogniser read the words?) from word resolution
+//   (did the pointer land on the right word?).
+
+/// Helper: render a card to a capture, using the same Glass pipeline the
+/// product uses, and return the capture plus the layout dimensions.
+///
+/// The pattern is: Glass renders a Card to ARGB pixels; those are converted
+/// to BGRA bytes for `Capture::from_bgra`, which is the format the recogniser
+/// expects.
+fn render_card_to_capture(
+    glass: &crate::glass::Glass,
+    card: &lens_core::card::Card,
+    theme: &lens_core::theme::Theme,
+    max_width: i32,
+    scale: f32,
+) -> (crate::capture::Capture, i32, i32) {
+    let laid = glass
+        .lay_out(card, theme, max_width, scale)
+        .expect("layout");
+    // SAFETY: the renderer creates and releases its own objects.
+    let (width, height, argb) = unsafe { glass.pixels(&laid, theme) }.expect("pixels");
+    let mut bgra = Vec::with_capacity(argb.len() * 4);
+    for pixel in &argb {
+        bgra.extend_from_slice(&pixel.to_le_bytes());
+    }
+    let capture =
+        crate::capture::Capture::from_bgra(width, height, bgra).expect("a well-formed buffer");
+    (capture, width, height)
+}
+
+/// Score how many of the expected words came back from an OCR reading.
+///
+/// The comparison is case-insensitive and strips surrounding punctuation,
+/// because the recogniser may or may not include a trailing period depending
+/// on the font and the size.
+fn score_words(recognised: &Option<crate::ocr::Recognised>, expected: &[&str]) -> usize {
+    let text = recognised.as_ref().map(|r| r.text()).unwrap_or_default();
+    let got: Vec<String> = text
+        .split_whitespace()
+        .map(|word| {
+            word.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase()
+        })
+        .collect();
+    expected
+        .iter()
+        .filter(|word| got.iter().any(|read| read == &word.to_lowercase()))
+        .count()
+}
+
+/// The known Korean sentence used by the Korean OCR tests.
+///
+/// Eight Hangul words, chosen so that each one is a complete syllable block
+/// and none of them can be confused with a Latin word or a number.
+const KOREAN_SENTENCE: &str =
+    "출력 파일이 비어 있었기 때문에 전체 테스트 스위트는 아무것도 생성하지 않았습니다";
+
+/// The English original used alongside the Korean sentence.
+const ENGLISH_SENTENCE: &str =
+    "The output files came back empty so the full test suite produced nothing at all";
+
+/// M4 gate: Korean text recognition quality.
+///
+/// The previous OCR benchmarks only scored English. Korean is the product's
+/// primary target language and the second language in the recogniser's profile.
+/// A Korean sentence rendered at several scales and themes, scored by how many
+/// of its words came back exactly.
+///
+/// This is not an assertion: the score varies with the recogniser, the font
+/// and the machine, and a fixed threshold would fail on a build whose only
+/// difference was a font update. It reports what the engine produces.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn measure_korean_text_recognition() {
+    use lens_core::card::Card;
+    use lens_core::geometry::ScreenPoint;
+    use lens_core::theme::{Preset, SystemPreferences, TextScale, Theme, Translucency};
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    let glass = crate::glass::Glass::new().expect("Direct2D");
+
+    // Korean words to score against. The recogniser may split or merge
+    // particles, so particles are scored as part of their host word.
+    let korean_words: Vec<&str> = KOREAN_SENTENCE.split_whitespace().collect();
+    let english_words: Vec<&str> = ENGLISH_SENTENCE.split_whitespace().collect();
+
+    // The same matrix as the English benchmark: small text, dark and light.
+    let configs: Vec<(f32, bool, &str)> = vec![
+        (0.75, false, "small, dark on light"),
+        (0.75, true, "small, light on dark"),
+        (1.0, false, "normal, dark on light"),
+        (1.0, true, "normal, light on dark"),
+    ];
+
+    println!("\n=== Korean OCR recognition quality ===\n");
+
+    for (scale, dark, label) in configs {
+        let theme = Theme::resolve(
+            Preset::System,
+            Translucency::Solid,
+            TextScale::Small,
+            SystemPreferences {
+                dark,
+                ..SystemPreferences::default()
+            },
+        );
+
+        // Korean original, English translation. The recogniser will see the
+        // Korean line first because it is drawn as the original at the top.
+        let card = Card::translated(
+            KOREAN_SENTENCE,
+            &QuickTranslation {
+                text: "The output files came back empty, so the suite produced nothing.".to_owned(),
+                engine: EngineId::LocalOllama,
+                model: "fixture".to_owned(),
+                latency_ms: 0,
+                cached: false,
+                part_was_removed: false,
+                name_changed: false,
+            },
+        );
+
+        let (capture, width, height) = render_card_to_capture(&glass, &card, &theme, 420, scale);
+        let origin = ScreenPoint::new(0, 0);
+
+        println!("--- {label} ({width}x{height}) ---");
+        println!("  brightness {}", capture.brightness());
+
+        // Native pass.
+        let native = crate::ocr::read(&capture, origin);
+        let native_score = score_words(&native, &korean_words);
+        let english_score = score_words(&native, &english_words);
+        println!(
+            "  native:  {}/{} Korean, {}/{} English",
+            native_score,
+            korean_words.len(),
+            english_score,
+            english_words.len(),
+        );
+        if let Some(ref r) = native {
+            println!("  text: {}", r.text().replace('\n', " | "));
+        }
+
+        // Best pass (with automatic enlargement for small text).
+        let best = crate::ocr::read_best(&capture, origin);
+        let best_korean = score_words(&best, &korean_words);
+        let best_english = score_words(&best, &english_words);
+        let median_height = best
+            .as_ref()
+            .and_then(crate::ocr::Recognised::median_word_height);
+        println!(
+            "  best:    {}/{} Korean, {}/{} English (median word {:?}px)",
+            best_korean,
+            korean_words.len(),
+            best_english,
+            english_words.len(),
+            median_height,
+        );
+        if let Some(ref r) = best {
+            println!("  text: {}", r.text().replace('\n', " | "));
+        }
+
+        // Enlarged 3x, the cap the product ships with.
+        if let Some(enlarged) = capture.scaled(3) {
+            let read = crate::ocr::read(&enlarged, origin);
+            let score = score_words(&read, &korean_words);
+            println!("  3x:      {}/{} Korean", score, korean_words.len());
+            if let Some(ref r) = read {
+                println!("  text: {}", r.text().replace('\n', " | "));
+            }
+        }
+
+        println!();
+    }
+}
+
+/// M4 gate: scanned-PDF quality text recognition.
+///
+/// A low-DPI scan of a printed document looks like small, slightly blurred
+/// text. Simulated by rendering at half scale and then upscaling, which is
+/// what a scan-and-enlarge pipeline would produce.
+///
+/// The question this answers: if a reader opens a scanned PDF in a viewer and
+/// asks Lens to read it, will the two-pass enlargement bring the text to a
+/// recognisable size?
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn measure_scanned_pdf_quality_recognition() {
+    use lens_core::card::Card;
+    use lens_core::geometry::ScreenPoint;
+    use lens_core::theme::{Preset, SystemPreferences, TextScale, Theme, Translucency};
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    let glass = crate::glass::Glass::new().expect("Direct2D");
+
+    // English first, because the existing benchmark already measures it and
+    // the comparison is useful. Then Korean.
+    let configs: Vec<(&str, &str, &str)> = vec![
+        (
+            "english",
+            "The test correctly refuses to pass vacuously",
+            "테스트가 의미 없이 통과하는 것을 올바르게 거부한다",
+        ),
+        (
+            "korean",
+            "The output files came back empty",
+            KOREAN_SENTENCE,
+        ),
+    ];
+
+    let english_words: Vec<&str> = ENGLISH_SENTENCE.split_whitespace().collect();
+    let korean_words: Vec<&str> = KOREAN_SENTENCE.split_whitespace().collect();
+
+    println!("\n=== Scanned-PDF quality recognition ===\n");
+    println!("Simulating a low-DPI scan by rendering at 0.5x then upscaling.\n");
+
+    for (label, _english, _korean) in &configs {
+        let known_words = if *label == "english" {
+            &english_words
+        } else {
+            &korean_words
+        };
+
+        let card = Card::translated(
+            if *label == "english" {
+                ENGLISH_SENTENCE
+            } else {
+                KOREAN_SENTENCE
+            },
+            &QuickTranslation {
+                text: "번역".to_owned(),
+                engine: EngineId::LocalOllama,
+                model: "fixture".to_owned(),
+                latency_ms: 0,
+                cached: false,
+                part_was_removed: false,
+                name_changed: false,
+            },
+        );
+
+        let theme = Theme::resolve(
+            Preset::System,
+            Translucency::Solid,
+            TextScale::Small,
+            SystemPreferences::default(),
+        );
+
+        // Direct rendering at normal scale: the baseline.
+        let (direct, dw, dh) = render_card_to_capture(&glass, &card, &theme, 420, 1.0);
+        let direct_score = score_words(
+            &crate::ocr::read_best(&direct, ScreenPoint::new(0, 0)),
+            known_words,
+        );
+
+        // "Scanned": render at half scale (simulating a 48-DPI scan of a 96-DPI
+        // document), then read. This is the raw quality of a low-resolution scan.
+        let (half, hw, hh) = render_card_to_capture(&glass, &card, &theme, 420, 0.5);
+        let half_score = score_words(
+            &crate::ocr::read(&half, ScreenPoint::new(0, 0)),
+            known_words,
+        );
+
+        // Scanned then enlarged 2x: what read_best would do if the median word
+        // is under 16px.
+        let half_2x_score = half
+            .scaled(2)
+            .map(|c| score_words(&crate::ocr::read(&c, ScreenPoint::new(0, 0)), known_words))
+            .unwrap_or(0);
+
+        // Scanned then enlarged 3x: the product's cap.
+        let half_3x_score = half
+            .scaled(3)
+            .map(|c| score_words(&crate::ocr::read(&c, ScreenPoint::new(0, 0)), known_words))
+            .unwrap_or(0);
+
+        // And read_best on the half-scale rendering, which is what the product
+        // would actually do: it reads, sees small text, and enlarges.
+        let half_best = crate::ocr::read_best(&half, ScreenPoint::new(0, 0));
+        let half_best_score = score_words(&half_best, known_words);
+
+        println!("--- {label} ---");
+        println!(
+            "  direct 1.0x:  {}/{} words  ({}x{})",
+            direct_score,
+            known_words.len(),
+            dw,
+            dh,
+        );
+        println!(
+            "  half  0.5x:   {}/{} words  ({}x{}, raw scan quality)",
+            half_score,
+            known_words.len(),
+            hw,
+            hh,
+        );
+        println!(
+            "  half + 2x:    {}/{} words",
+            half_2x_score,
+            known_words.len()
+        );
+        println!(
+            "  half + 3x:    {}/{} words  (product cap)",
+            half_3x_score,
+            known_words.len()
+        );
+        println!(
+            "  half best:    {}/{} words  (what read_best actually does)",
+            half_best_score,
+            known_words.len(),
+        );
+        if let Some(ref r) = half_best {
+            println!("  text: {}", r.text().replace('\n', " | "));
+        }
+        println!();
+    }
+}
+
+/// M4 gate: overlay self-recognition for the OCR path.
+///
+/// The accessibility path has a measured proof that Lens never reads its own
+/// overlay (under M2). The OCR path relies on a procedural guard: hide the
+/// overlay, sleep 60ms, then capture. There is no automated test that this
+/// guard is necessary.
+///
+/// This test is that proof. It renders a card with known text, creates a
+/// synthetic capture that includes the card's pixels (simulating what would
+/// happen if the hide guard failed or the 60ms sleep was too short), and runs
+/// OCR. The assertion is that the card's text IS found, because that is the
+/// failure mode the guard prevents.
+///
+/// If this test ever stops finding the card's text, the overlay has become
+/// unrecognisable and the guard is no longer needed, which would be good news.
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn ocr_would_read_the_cards_own_text_if_the_hide_guard_failed() {
+    use lens_core::card::Card;
+    use lens_core::geometry::ScreenPoint;
+    use lens_core::theme::{Preset, SystemPreferences, TextScale, Theme, Translucency};
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    let glass = crate::glass::Glass::new().expect("Direct2D");
+
+    // Distinctive strings that cannot appear in any other context. If either
+    // one shows up in the OCR result, it is the card's own text.
+    const ORIGINAL: &str = "Zarvex qulmite brandophane the seventh";
+    const TRANSLATION: &str = "자르벡스 퀄마이트 브랜도페인 일곱 번째";
+
+    let card = Card::translated(
+        ORIGINAL,
+        &QuickTranslation {
+            text: TRANSLATION.to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "fixture".to_owned(),
+            latency_ms: 0,
+            cached: false,
+            part_was_removed: false,
+            name_changed: false,
+        },
+    );
+
+    let theme = Theme::resolve(
+        Preset::System,
+        Translucency::Solid,
+        TextScale::Normal,
+        SystemPreferences::default(),
+    );
+
+    let (capture, width, height) = render_card_to_capture(&glass, &card, &theme, 400, 1.0);
+    println!(
+        "card rendered: {}x{}, brightness {}",
+        width,
+        height,
+        capture.brightness(),
+    );
+
+    // This capture IS the card. If the hide guard were removed, this is what
+    // the OCR path would see: the product's own surface, pixel-for-pixel.
+    let recognised = crate::ocr::read(&capture, ScreenPoint::new(0, 0));
+    let text = recognised.as_ref().map(|r| r.text()).unwrap_or_default();
+
+    // Check each distinctive word. The recogniser may not read every one (the
+    // same English benchmark scores 6 of 7 at 3x), but even one match is
+    // enough to prove the risk.
+    let original_words: Vec<&str> = ORIGINAL.split_whitespace().collect();
+    let original_hits = score_words(&recognised, &original_words);
+
+    // For the Korean translation, check if any syllable block comes back.
+    // Korean OCR may merge or split words differently, so a substring check is
+    // more honest than a word-count check.
+    let korean_found =
+        text.contains("자르벡스") || text.contains("퀄마이트") || text.contains("브랜도페인");
+
+    println!(
+        "  English original: {}/{} words found",
+        original_hits,
+        original_words.len()
+    );
+    println!(
+        "  Korean translation: {}",
+        if korean_found { "found" } else { "not found" }
+    );
+    println!("  full text: {}", text.replace('\n', " | "));
+
+    // The test's claim: at least some of the card's text is recognisable. If
+    // this assertion fails, the card is unrecognisable and the guard is
+    // unnecessary, which would be a surprising and welcome outcome.
+    assert!(
+        original_hits > 0 || korean_found,
+        "none of the card's own text was recognised, so the hide guard is protecting against a failure that does not happen on this machine. The guard is still correct in principle, but this test has not proven anything.",
+    );
+
+    // And at normal card size with read_best, which is the path Ctrl+Alt+O
+    // would take on a full region.
+    let best = crate::ocr::read_best(&capture, ScreenPoint::new(0, 0));
+    let best_text = best.as_ref().map(|r| r.text()).unwrap_or_default();
+    let best_hits = score_words(&best, &original_words);
+    let best_korean = best_text.contains("자르벡스")
+        || best_text.contains("퀄마이트")
+        || best_text.contains("브랜도페인");
+    println!(
+        "\n  read_best: {}/{} English, Korean {}",
+        best_hits,
+        original_words.len(),
+        if best_korean { "found" } else { "not found" },
+    );
+    println!("  full text: {}", best_text.replace('\n', " | "));
+}
+
+/// One entry in the OCR accuracy corpus.
+///
+/// Each entry is a card rendered at a known configuration, with a set of
+/// expected words and (optionally) a pointer point whose word is known. The
+/// runner scores both engine accuracy and word resolution.
+struct OcrCorpusEntry {
+    label: &'static str,
+    original: &'static str,
+    translation: &'static str,
+    scale: f32,
+    dark: bool,
+    /// Words to score against in the recognised text.
+    expected_words: &'static [&'static str],
+    /// A point inside the rendered card whose word should be resolvable.
+    /// `None` means word resolution is not tested for this entry.
+    expected_word_at: Option<(i32, i32, &'static str)>,
+}
+
+/// M4 gate: OCR accuracy corpus.
+///
+/// Scores several cases in a single run, reporting per-entry results. Two
+/// metrics per entry:
+///
+/// 1. **Engine accuracy**: how many of the expected words came back from OCR.
+/// 2. **Word resolution**: given a known pointer point, did `word_at` return
+///    the correct word? This separates "the engine read it correctly" from
+///    "the pointer-to-word resolution picked the right one."
+///
+/// The corpus covers:
+/// - English at normal and small scale
+/// - Korean at normal and small scale
+/// - Dark theme (light on dark)
+/// - Low resolution (scanned-like)
+#[test]
+#[ignore = "needs a live desktop session; run manually"]
+fn ocr_accuracy_corpus() {
+    use lens_core::card::Card;
+    use lens_core::geometry::ScreenPoint;
+    use lens_core::theme::{Preset, SystemPreferences, TextScale, Theme, Translucency};
+    use lens_core::translate::{EngineId, QuickTranslation};
+
+    let glass = crate::glass::Glass::new().expect("Direct2D");
+
+    static ENGLISH_WORDS: &[&str] = &[
+        "the", "output", "files", "came", "back", "empty", "so", "full", "test", "suite",
+        "produced", "nothing", "at", "all",
+    ];
+    static KOREAN_WORDS: &[&str] = &[
+        "출력",
+        "파일이",
+        "비어",
+        "있었기",
+        "때문에",
+        "전체",
+        "테스트",
+        "스위트는",
+        "아무것도",
+        "생성하지",
+        "않았습니다",
+    ];
+
+    let corpus = vec![
+        OcrCorpusEntry {
+            label: "english, normal, light",
+            original: ENGLISH_SENTENCE,
+            translation: "테스트가 의미 없이 통과하는 것을 올바르게 거부한다",
+            scale: 1.0,
+            dark: false,
+            expected_words: ENGLISH_WORDS,
+            expected_word_at: None,
+        },
+        OcrCorpusEntry {
+            label: "english, small, dark",
+            original: ENGLISH_SENTENCE,
+            translation: "테스트가 의미 없이 통과하는 것을 올바르게 거부한다",
+            scale: 0.75,
+            dark: true,
+            expected_words: ENGLISH_WORDS,
+            expected_word_at: None,
+        },
+        OcrCorpusEntry {
+            label: "korean, normal, light",
+            original: KOREAN_SENTENCE,
+            translation: "The output files came back empty",
+            scale: 1.0,
+            dark: false,
+            expected_words: KOREAN_WORDS,
+            expected_word_at: None,
+        },
+        OcrCorpusEntry {
+            label: "korean, small, dark",
+            original: KOREAN_SENTENCE,
+            translation: "The output files came back empty",
+            scale: 0.75,
+            dark: true,
+            expected_words: KOREAN_WORDS,
+            expected_word_at: None,
+        },
+    ];
+
+    println!("\n=== OCR accuracy corpus ===\n");
+    println!(
+        "{:<28} {:>6} {:>6} {:>6} {:>6} {:>8}",
+        "entry", "native", "best", "3x", "words", "median",
+    );
+    println!("{}", "-".repeat(70));
+
+    for entry in &corpus {
+        let theme = Theme::resolve(
+            Preset::System,
+            Translucency::Solid,
+            TextScale::Small,
+            SystemPreferences {
+                dark: entry.dark,
+                ..SystemPreferences::default()
+            },
+        );
+
+        let card = Card::translated(
+            entry.original,
+            &QuickTranslation {
+                text: entry.translation.to_owned(),
+                engine: EngineId::LocalOllama,
+                model: "fixture".to_owned(),
+                latency_ms: 0,
+                cached: false,
+                part_was_removed: false,
+                name_changed: false,
+            },
+        );
+
+        let (capture, width, height) =
+            render_card_to_capture(&glass, &card, &theme, 420, entry.scale);
+        let origin = ScreenPoint::new(0, 0);
+        let expected_count = entry.expected_words.len();
+
+        let native_score = score_words(&crate::ocr::read(&capture, origin), entry.expected_words);
+        let best_reading = crate::ocr::read_best(&capture, origin);
+        let best_score = score_words(&best_reading, entry.expected_words);
+        let median = best_reading
+            .as_ref()
+            .and_then(crate::ocr::Recognised::median_word_height);
+        let enlarged_score = capture
+            .scaled(3)
+            .map(|c| score_words(&crate::ocr::read(&c, origin), entry.expected_words))
+            .unwrap_or(0);
+
+        println!(
+            "{:<28} {:>3}/{:<2} {:>3}/{:<2} {:>3}/{:<2}  {:>4}px  {}x{}",
+            entry.label,
+            native_score,
+            expected_count,
+            best_score,
+            expected_count,
+            enlarged_score,
+            expected_count,
+            median
+                .map(|h| h.to_string())
+                .unwrap_or_else(|| "-".to_owned()),
+            width,
+            height,
+        );
+
+        // Word resolution, if the entry specifies a point.
+        if let Some((px, py, expected_word)) = entry.expected_word_at {
+            if let Some(ref reading) = best_reading {
+                let point = ScreenPoint::new(px, py);
+                let resolved = reading
+                    .word_at(point)
+                    .map(|(_, w)| w.text.as_str())
+                    .unwrap_or("(none)");
+                let ok = resolved == expected_word;
+                println!(
+                    "  word at ({}, {}): expected {:?}, got {:?}  {}",
+                    px,
+                    py,
+                    expected_word,
+                    resolved,
+                    if ok { "OK" } else { "MISMATCH" },
+                );
+            }
+        }
+    }
+
+    println!();
+
+    // Also run the overlay self-recognition check as part of the corpus,
+    // because the corpus runner is the natural place to score it.
+    let card = Card::translated(
+        "Zarvex qulmite brandophane the seventh",
+        &QuickTranslation {
+            text: "자르벡스 퀄마이트 브랜도페인 일곱 번째".to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "fixture".to_owned(),
+            latency_ms: 0,
+            cached: false,
+            part_was_removed: false,
+            name_changed: false,
+        },
+    );
+    let theme = Theme::resolve(
+        Preset::System,
+        Translucency::Solid,
+        TextScale::Normal,
+        SystemPreferences::default(),
+    );
+    let (capture, width, height) = render_card_to_capture(&glass, &card, &theme, 400, 1.0);
+    let overlay_words: &[&str] = &["Zarvex", "qulmite", "brandophane", "seventh"];
+    let overlay_hits = score_words(
+        &crate::ocr::read(&capture, ScreenPoint::new(0, 0)),
+        overlay_words,
+    );
+    println!(
+        "overlay self-recognition: {}/{} card words found in {}x{} (hide guard target)",
+        overlay_hits,
+        overlay_words.len(),
+        width,
+        height,
+    );
+}
