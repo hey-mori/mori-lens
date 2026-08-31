@@ -88,11 +88,15 @@
     .stat-label { color: #777; }
     .loading { color: #666; }
     .status-line { color: #666; }
+    #lib-search { background: #2a2a2a; border-color: #444; color: #e0e0e0; }
+    #lib-search::placeholder { color: #777; }
+    #lib-detail textarea { background: #2a2a2a; border-color: #444; color: #e0e0e0; }
   }
 </style>
 <body>
   <div class="sidebar">
     <div class="sidebar-item active" data-section="status">Status</div>
+    <div class="sidebar-item" data-section="library">Library</div>
     <div class="sidebar-item" data-section="general">General</div>
     <div class="sidebar-item" data-section="models">Models</div>
     <div class="sidebar-item" data-section="apps">Apps</div>
@@ -103,6 +107,17 @@
     <div class="section active" id="section-status">
       <h1>Status</h1>
       <div id="status-content"><p class="loading">Loading...</p></div>
+    </div>
+    <!-- Library -->
+    <div class="section" id="section-library">
+      <h1>Library</h1>
+      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+        <input type="text" id="lib-search" placeholder="Search saved items..." style="flex:1;max-width:400px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;background:white">
+        <button class="btn" onclick="searchLibrary()" style="padding:6px 12px">Search</button>
+        <span id="lib-count" style="color:#888;font-size:12px;margin-left:auto"></span>
+      </div>
+      <div id="lib-list"><p class="loading">Loading...</p></div>
+      <div id="lib-detail" style="display:none;margin-top:24px;padding:16px;background:rgba(0,0,0,0.02);border-radius:6px"></div>
     </div>
     <!-- General -->
     <div class="section" id="section-general">
@@ -490,6 +505,144 @@
         '<tr><td>Data location</td><td>%APPDATA%\\Mori Lens\\</td></tr>' +
         '</table>';
     }
+
+    // Library functions
+    let libraryOffset = 0;
+    let libraryQuery = '';
+
+    async function loadLibrary() {
+      libraryOffset = 0;
+      libraryQuery = '';
+      document.getElementById('lib-search').value = '';
+      await fetchLibraryPage();
+    }
+
+    async function searchLibrary() {
+      libraryQuery = document.getElementById('lib-search').value.trim();
+      libraryOffset = 0;
+      await fetchLibraryPage();
+    }
+
+    async function fetchLibraryPage() {
+      const listEl = document.getElementById('lib-list');
+      const countEl = document.getElementById('lib-count');
+      try {
+        let page;
+        if (libraryQuery) {
+          page = await invoke('library_search', { query: libraryQuery, offset: libraryOffset });
+        } else {
+          page = await invoke('library_list', { offset: libraryOffset });
+        }
+        countEl.textContent = page.total + ' item' + (page.total !== 1 ? 's' : '');
+        if (page.items.length === 0) {
+          listEl.innerHTML = '<p style="color:#888;font-size:13px">' +
+            (libraryQuery ? 'No items match "' + escapeHtml(libraryQuery) + '".' : 'No saved items yet.') + '</p>';
+          return;
+        }
+        let html = '<table style="max-width:100%">';
+        for (const item of page.items) {
+          const date = new Date(item.created_at * 1000).toLocaleDateString();
+          const kind = item.kind === 'analysis' ? 'analysis' : 'translation';
+          const preview = item.original.length > 60 ? item.original.slice(0, 60) + '...' : item.original;
+          html += '<tr style="cursor:pointer" onclick="showLibraryItem(' + item.id + ')">';
+          html += '<td style="width:60%;color:#333">' + escapeHtml(preview) + '</td>';
+          html += '<td style="width:15%;color:#888;font-size:12px">' + kind + '</td>';
+          html += '<td style="width:15%;color:#888;font-size:12px">' + (item.app || '') + '</td>';
+          html += '<td style="width:10%;color:#888;font-size:12px;text-align:right">' + date + '</td>';
+          html += '</tr>';
+        }
+        html += '</table>';
+        if (page.has_more) {
+          html += '<button class="btn" onclick="loadMoreLibrary()" style="margin-top:8px;padding:4px 12px;font-size:12px">Load more</button>';
+        }
+        listEl.innerHTML = html;
+      } catch (e) {
+        listEl.innerHTML = '<p class="error">Error: ' + e + '</p>';
+      }
+    }
+
+    async function loadMoreLibrary() {
+      libraryOffset += 50;
+      await fetchLibraryPage();
+    }
+
+    async function showLibraryItem(id) {
+      const detailEl = document.getElementById('lib-detail');
+      try {
+        const item = await invoke('library_get', { id });
+        if (!item) {
+          detailEl.innerHTML = '<p class="error">Item not found.</p>';
+          detailEl.style.display = 'block';
+          return;
+        }
+        const date = new Date(item.created_at * 1000).toLocaleString();
+        let html = '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:12px">';
+        html += '<div>';
+        html += '<div style="font-size:12px;color:#888;margin-bottom:4px">' + item.kind + ' · ' + (item.app || 'unknown') + ' · ' + date + '</div>';
+        if (item.model) html += '<div style="font-size:11px;color:#aaa">' + escapeHtml(item.model) + '</div>';
+        html += '</div>';
+        html += '<button class="btn" onclick="deleteLibraryItem(' + item.id + ')" style="padding:4px 10px;font-size:12px;color:#c00;border-color:#c00">Delete</button>';
+        html += '</div>';
+        html += '<div style="margin-bottom:12px;padding:12px;background:white;border-radius:4px;border:1px solid #eee">';
+        html += '<div style="font-size:13px;color:#333;line-height:1.5">' + escapeHtml(item.original) + '</div>';
+        html += '</div>';
+        html += '<div style="margin-bottom:12px;padding:12px;background:white;border-radius:4px;border:1px solid #eee">';
+        html += '<div style="font-size:13px;color:#333;line-height:1.5">' + escapeHtml(item.answer) + '</div>';
+        if (item.caveat) html += '<div style="font-size:12px;color:#888;margin-top:8px;font-style:italic">' + escapeHtml(item.caveat) + '</div>';
+        html += '</div>';
+        html += '<div style="margin-top:12px">';
+        html += '<label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Note</label>';
+        html += '<textarea id="lib-note-' + item.id + '" style="width:100%;min-height:60px;padding:8px;border:1px solid #ccc;border-radius:4px;font:inherit;resize:vertical;background:white">' + escapeHtml(item.note || '') + '</textarea>';
+        html += '<button class="btn btn-primary" onclick="saveLibraryNote(' + item.id + ')" style="margin-top:8px;padding:4px 12px;font-size:12px">Save note</button>';
+        html += '<span id="lib-note-status-' + item.id + '" style="margin-left:8px;font-size:12px;color:#888"></span>';
+        html += '</div>';
+        detailEl.innerHTML = html;
+        detailEl.style.display = 'block';
+      } catch (e) {
+        detailEl.innerHTML = '<p class="error">Error: ' + e + '</p>';
+        detailEl.style.display = 'block';
+      }
+    }
+
+    async function deleteLibraryItem(id) {
+      if (!confirm('Delete this item? This cannot be undone.')) return;
+      try {
+        await invoke('library_delete', { id });
+        document.getElementById('lib-detail').style.display = 'none';
+        await fetchLibraryPage();
+      } catch (e) {
+        alert('Error: ' + e);
+      }
+    }
+
+    async function saveLibraryNote(id) {
+      const textarea = document.getElementById('lib-note-' + id);
+      const statusEl = document.getElementById('lib-note-status-' + id);
+      try {
+        await invoke('library_update_note', { id, note: textarea.value });
+        statusEl.textContent = 'Saved';
+        setTimeout(() => { statusEl.textContent = ''; }, 2000);
+      } catch (e) {
+        statusEl.textContent = 'Error: ' + e;
+        statusEl.style.color = '#c00';
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Load library when Library tab is clicked
+    document.querySelector('[data-section="library"]').addEventListener('click', () => {
+      loadLibrary();
+    });
+
+    // Search on Enter
+    document.getElementById('lib-search').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') searchLibrary();
+    });
 
     loadAll();
   </script>

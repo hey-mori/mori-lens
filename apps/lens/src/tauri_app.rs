@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tauri::Manager;
 
+use crate::library_service::SharedLibrary;
 use crate::settings_service::{SettingsView, SharedSettings};
 
 /// A snapshot of the session's diagnostics, shared with the webview.
@@ -37,6 +38,48 @@ pub struct TestResultView {
     pub translated: String,
     pub latency_ms: u64,
     pub model: String,
+}
+
+/// A library item for the webview.
+#[derive(Clone, Debug, Serialize)]
+pub struct LibraryItemView {
+    pub id: i64,
+    pub original: String,
+    pub answer: String,
+    pub caveat: Option<String>,
+    pub app: Option<String>,
+    pub created_at: i64,
+    pub kind: String,
+    pub source_language: Option<String>,
+    pub target_language: Option<String>,
+    pub model: Option<String>,
+    pub note: Option<String>,
+}
+
+/// A page of library items for the webview.
+#[derive(Clone, Debug, Serialize)]
+pub struct LibraryPageView {
+    pub items: Vec<LibraryItemView>,
+    pub has_more: bool,
+    pub total: i64,
+}
+
+impl From<&lens_storage::Item> for LibraryItemView {
+    fn from(item: &lens_storage::Item) -> Self {
+        Self {
+            id: item.id,
+            original: item.original.clone(),
+            answer: item.answer.clone(),
+            caveat: item.caveat.clone(),
+            app: item.app.clone(),
+            created_at: item.created_at,
+            kind: item.kind.clone(),
+            source_language: item.source_language.clone(),
+            target_language: item.target_language.clone(),
+            model: item.model.clone(),
+            note: item.note.clone(),
+        }
+    }
 }
 
 /// Handle to the running Tauri application.
@@ -138,6 +181,83 @@ async fn test_model(endpoint: String, model: String) -> Result<TestResultView, S
         .map_err(|e| format!("{e:?}"))
 }
 
+/// Tauri command: list library items, newest first.
+#[tauri::command]
+fn library_list(
+    state: tauri::State<'_, SharedLibrary>,
+    offset: i64,
+) -> Result<LibraryPageView, String> {
+    let lib = state.lock().unwrap();
+    let page = lib
+        .library()
+        .list(offset)
+        .map_err(|e| format!("{e}"))?;
+    let total = lib.library().count().unwrap_or(0);
+    Ok(LibraryPageView {
+        items: page.items.iter().map(LibraryItemView::from).collect(),
+        has_more: page.has_more,
+        total,
+    })
+}
+
+/// Tauri command: search the library.
+#[tauri::command]
+fn library_search(
+    state: tauri::State<'_, SharedLibrary>,
+    query: String,
+    offset: i64,
+) -> Result<LibraryPageView, String> {
+    let lib = state.lock().unwrap();
+    let page = lib
+        .library()
+        .search(&query, offset)
+        .map_err(|e| format!("{e}"))?;
+    let total = lib.library().count().unwrap_or(0);
+    Ok(LibraryPageView {
+        items: page.items.iter().map(LibraryItemView::from).collect(),
+        has_more: page.has_more,
+        total,
+    })
+}
+
+/// Tauri command: get a single library item.
+#[tauri::command]
+fn library_get(
+    state: tauri::State<'_, SharedLibrary>,
+    id: i64,
+) -> Result<Option<LibraryItemView>, String> {
+    let lib = state.lock().unwrap();
+    let item = lib.library().get(id).map_err(|e| format!("{e}"))?;
+    Ok(item.as_ref().map(LibraryItemView::from))
+}
+
+/// Tauri command: delete a library item.
+#[tauri::command]
+fn library_delete(state: tauri::State<'_, SharedLibrary>, id: i64) -> Result<bool, String> {
+    let lib = state.lock().unwrap();
+    lib.library().delete(id).map_err(|e| format!("{e}"))
+}
+
+/// Tauri command: update the note on a library item.
+#[tauri::command]
+fn library_update_note(
+    state: tauri::State<'_, SharedLibrary>,
+    id: i64,
+    note: String,
+) -> Result<bool, String> {
+    let lib = state.lock().unwrap();
+    lib.library()
+        .update_note(id, &note)
+        .map_err(|e| format!("{e}"))
+}
+
+/// Tauri command: get the library count.
+#[tauri::command]
+fn library_count(state: tauri::State<'_, SharedLibrary>) -> Result<i64, String> {
+    let lib = state.lock().unwrap();
+    lib.library().count().map_err(|e| format!("{e}"))
+}
+
 /// Build the Tauri application and return its handle, shared diagnostics, and the `App` itself.
 ///
 /// The `App` must be kept alive and `.run()` must be called on it. Dropping
@@ -145,6 +265,7 @@ async fn test_model(endpoint: String, model: String) -> Result<TestResultView, S
 /// without the `App` leaves no event loop running.
 pub fn build(
     shared_settings: SharedSettings,
+    shared_library: SharedLibrary,
 ) -> Result<(AppHandle, SharedDiagnostics, tauri::App), tauri::Error> {
     let diagnostics: SharedDiagnostics = Arc::new(Mutex::new(DiagnosticsSnapshot::default()));
 
@@ -156,9 +277,16 @@ pub fn build(
             list_models,
             check_ollama,
             test_model,
+            library_list,
+            library_search,
+            library_get,
+            library_delete,
+            library_update_note,
+            library_count,
         ])
         .manage(diagnostics.clone())
         .manage(shared_settings)
+        .manage(shared_library)
         .setup(|app| {
             // Hide the window at startup. The reader opens it from the tray;
             // a product that opens a settings window on every launch is not
