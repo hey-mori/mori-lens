@@ -117,6 +117,15 @@
         <button class="btn" onclick="exportLibrary()" style="padding:6px 12px">Export</button>
         <span id="lib-count" style="color:#888;font-size:12px;margin-left:auto"></span>
       </div>
+      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+        <label style="font-size:12px;color:#666">Type:</label>
+        <select id="lib-filter-kind" onchange="applyFilters()" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
+          <option value="">All</option>
+          <option value="translation">Translations</option>
+          <option value="analysis">Analyses</option>
+        </select>
+        <button class="btn" onclick="clearFilters()" style="padding:4px 12px;font-size:12px">Clear filters</button>
+      </div>
       <div id="lib-list"><p class="loading">Loading...</p></div>
       <div id="lib-detail" style="display:none;margin-top:24px;padding:16px;background:rgba(0,0,0,0.02);border-radius:6px"></div>
     </div>
@@ -510,11 +519,14 @@
     // Library functions
     let libraryOffset = 0;
     let libraryQuery = '';
+    let libraryFilters = { kind: null, app: null, source_language: null, target_language: null };
 
     async function loadLibrary() {
       libraryOffset = 0;
       libraryQuery = '';
+      libraryFilters = { kind: null, app: null, source_language: null, target_language: null };
       document.getElementById('lib-search').value = '';
+      document.getElementById('lib-filter-kind').value = '';
       await fetchLibraryPage();
     }
 
@@ -522,6 +534,20 @@
       libraryQuery = document.getElementById('lib-search').value.trim();
       libraryOffset = 0;
       await fetchLibraryPage();
+    }
+
+    function applyFilters() {
+      const kind = document.getElementById('lib-filter-kind').value || null;
+      libraryFilters = { kind, app: null, source_language: null, target_language: null };
+      libraryOffset = 0;
+      fetchLibraryPage();
+    }
+
+    function clearFilters() {
+      libraryFilters = { kind: null, app: null, source_language: null, target_language: null };
+      document.getElementById('lib-filter-kind').value = '';
+      libraryOffset = 0;
+      fetchLibraryPage();
     }
 
     async function exportLibrary() {
@@ -550,8 +576,17 @@
       const countEl = document.getElementById('lib-count');
       try {
         let page;
+        const hasFilters = libraryFilters.kind || libraryFilters.app || libraryFilters.source_language || libraryFilters.target_language;
         if (libraryQuery) {
           page = await invoke('library_search', { query: libraryQuery, offset: libraryOffset });
+        } else if (hasFilters) {
+          page = await invoke('library_filter', {
+            kind: libraryFilters.kind,
+            app: libraryFilters.app,
+            source_language: libraryFilters.source_language,
+            target_language: libraryFilters.target_language,
+            offset: libraryOffset
+          });
         } else {
           page = await invoke('library_list', { offset: libraryOffset });
         }

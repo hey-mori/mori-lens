@@ -200,6 +200,36 @@ fn library_list(
     })
 }
 
+/// Tauri command: list library items with filters.
+#[tauri::command]
+fn library_filter(
+    state: tauri::State<'_, SharedLibrary>,
+    kind: Option<String>,
+    app: Option<String>,
+    source_language: Option<String>,
+    target_language: Option<String>,
+    offset: i64,
+) -> Result<LibraryPageView, String> {
+    use lens_storage::Filter;
+    let lib = state.lock().unwrap();
+    let filter = Filter {
+        kind,
+        app,
+        source_language,
+        target_language,
+    };
+    let page = lib
+        .library()
+        .list_filtered(&filter, offset)
+        .map_err(|e| format!("{e}"))?;
+    let total = lib.library().count().unwrap_or(0);
+    Ok(LibraryPageView {
+        items: page.items.iter().map(LibraryItemView::from).collect(),
+        has_more: page.has_more,
+        total,
+    })
+}
+
 /// Tauri command: search the library.
 #[tauri::command]
 fn library_search(
@@ -287,6 +317,7 @@ pub fn build(
             check_ollama,
             test_model,
             library_list,
+            library_filter,
             library_search,
             library_get,
             library_delete,
