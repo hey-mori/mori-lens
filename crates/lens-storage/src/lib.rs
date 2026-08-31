@@ -72,6 +72,19 @@ impl Kind {
     }
 }
 
+/// Filter criteria for listing items.
+#[derive(Debug, Default, Clone)]
+pub struct Filter {
+    /// Filter by kind: "translation" or "analysis".
+    pub kind: Option<String>,
+    /// Filter by source application name.
+    pub app: Option<String>,
+    /// Filter by source language code.
+    pub source_language: Option<String>,
+    /// Filter by target language code.
+    pub target_language: Option<String>,
+}
+
 /// A page size for listing and searching.
 const PAGE_SIZE: i64 = 50;
 
@@ -218,6 +231,58 @@ impl Library {
         )?;
         let items: Vec<Item> = stmt
             .query_map(params![pattern, limit, offset], row_to_item)?
+            .collect::<Result<_, _>>()?;
+        let has_more = items.len() as i64 > PAGE_SIZE;
+        let mut items = items;
+        items.truncate(PAGE_SIZE as usize);
+        Ok(Page { items, has_more })
+    }
+
+    /// List items matching the given filter, newest first.
+    pub fn list_filtered(&self, filter: &Filter, offset: i64) -> Result<Page, Error> {
+        let mut conditions = Vec::new();
+        let mut param_values: Vec<String> = Vec::new();
+
+        if let Some(ref kind) = filter.kind {
+            param_values.push(kind.clone());
+            conditions.push(format!("kind = ?{}", param_values.len()));
+        }
+        if let Some(ref app) = filter.app {
+            param_values.push(app.clone());
+            conditions.push(format!("app = ?{}", param_values.len()));
+        }
+        if let Some(ref src) = filter.source_language {
+            param_values.push(src.clone());
+            conditions.push(format!("source_language = ?{}", param_values.len()));
+        }
+        if let Some(ref tgt) = filter.target_language {
+            param_values.push(tgt.clone());
+            conditions.push(format!("target_language = ?{}", param_values.len()));
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
+
+        let limit = PAGE_SIZE + 1;
+        let sql = format!(
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note FROM library{where_clause} ORDER BY created_at DESC, id DESC LIMIT ?{} OFFSET ?{}",
+            param_values.len() + 1,
+            param_values.len() + 2
+        );
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut params: Vec<&dyn rusqlite::types::ToSql> = param_values
+            .iter()
+            .map(|p| p as &dyn rusqlite::types::ToSql)
+            .collect();
+        params.push(&limit);
+        params.push(&offset);
+
+        let items: Vec<Item> = stmt
+            .query_map(params.as_slice(), row_to_item)?
             .collect::<Result<_, _>>()?;
         let has_more = items.len() as i64 > PAGE_SIZE;
         let mut items = items;
@@ -771,6 +836,59 @@ mod tests {
         let second = lib.list(50).unwrap();
         assert_eq!(second.items.len(), 5);
         assert!(!second.has_more);
+        cleanup(&path);
+    }
+
+    // -- filtered list ------------------------------------------------------
+
+    #[test]
+    fn filtering_by_kind_returns_only_matching_items() {
+        let path = temp_db("filter-kind");
+        let lib = Library::open(&path).unwrap();
+
+        lib.insert(&a_translation()).unwrap();
+        lib.insert(&an_analysis()).unwrap();
+
+        let filter = Filter {
+            kind: Some("translation".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.list_filtered(&filter, 0).unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].kind, "translation");
+
+        let filter = Filter {
+            kind: Some("analysis".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.list_filtered(&filter, 0).unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].kind, "analysis");
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn filtering_by_app_returns_only_matching_items() {
+        let path = temp_db("filter-app");
+        let lib = Library::open(&path).unwrap();
+
+        let mut item1 = a_translation();
+        item1.app = Some("Chrome".to_owned());
+        lib.insert(&item1).unwrap();
+
+        let mut item2 = a_translation();
+        item2.app = Some("VSCode".to_owned());
+        lib.insert(&item2).unwrap();
+
+        let filter = Filter {
+            app: Some("Chrome".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.list_filtered(&filter, 0).unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].app.as_deref(), Some("Chrome"));
+
         cleanup(&path);
     }
 
