@@ -81,7 +81,11 @@ impl NotKept {
 ///
 /// Creates the file and its heading on first use, and opens (or creates) the
 /// database and runs any pending migrations.
-pub fn append(file: &Path, entry: &Entry, at: SystemTime) -> Result<(), NotKept> {
+///
+/// Returns the library item id when the database insert succeeds, or `None`
+/// when the database write was skipped (duplicate or error). The file write
+/// always succeeds independently.
+pub fn append(file: &Path, entry: &Entry, at: SystemTime) -> Result<Option<i64>, NotKept> {
     if let Some(folder) = file.parent() {
         // The settings folder already exists by the time anything is saved,
         // but a reader who pointed `--settings` somewhere new has not created
@@ -109,28 +113,26 @@ pub fn append(file: &Path, entry: &Entry, at: SystemTime) -> Result<(), NotKept>
 
     // The structured store. If the database write fails, the file has
     // already succeeded, and the entry is not lost.
-    write_to_library(file, entry, at);
-
-    Ok(())
+    Ok(write_to_library(file, entry, at))
 }
 
 /// Insert the entry into `library.db` beside the saved.md file.
 ///
-/// Failures are silently ignored: the file write in [`append`] has already
-/// succeeded, and a database error should not prevent a save from
-/// completing. The reader's data is in the file either way.
+/// Returns the new row id on success, or `None` on failure or duplicate.
+/// The caller (append) has already written the file, so a database error
+/// here does not prevent the save from completing.
 ///
 /// A duplicate (same original text and kind) is silently skipped: the file
 /// still gets the entry because it is append-only, but the database does not
 /// store the same sentence twice.
-fn write_to_library(md_path: &Path, entry: &Entry, at: SystemTime) {
+fn write_to_library(md_path: &Path, entry: &Entry, at: SystemTime) -> Option<i64> {
     let db_path = md_path
         .parent()
         .map(|folder| folder.join("library.db"))
         .unwrap_or_else(|| PathBuf::from("library.db"));
 
     let Ok(lib) = Library::open(&db_path) else {
-        return;
+        return None;
     };
     let seconds = at
         .duration_since(std::time::UNIX_EPOCH)
@@ -144,7 +146,7 @@ fn write_to_library(md_path: &Path, entry: &Entry, at: SystemTime) {
 
     // Skip duplicates: a sentence kept twice produces one database row.
     if lib.has_duplicate(&entry.original, kind).unwrap_or(false) {
-        return;
+        return None;
     }
 
     let item = Item {
@@ -161,7 +163,7 @@ fn write_to_library(md_path: &Path, entry: &Entry, at: SystemTime) {
         note: None,
         tags: None,
     };
-    let _ = lib.insert(&item);
+    lib.insert(&item).ok()
 }
 
 #[cfg(test)]
@@ -292,6 +294,23 @@ mod tests {
         let item = lib.get(1).unwrap().unwrap();
         assert_eq!(item.kind, "analysis");
         assert!(item.caveat.is_some());
+        let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
+    }
+
+    /// A save returns the library item id so the caller can attach a note.
+    #[test]
+    fn append_returns_the_library_item_id() {
+        let file = scratch("append-returns-id");
+        let at = UNIX_EPOCH + Duration::from_secs(1_786_075_140);
+
+        let id = append(&file, &an_entry("hello"), at)
+            .expect("kept")
+            .expect("an id");
+        assert!(id > 0, "id is a positive row id");
+
+        // A duplicate returns None (file succeeds, database skips).
+        let dup = append(&file, &an_entry("hello"), at).expect("kept");
+        assert!(dup.is_none(), "duplicate returns None");
         let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
     }
 
