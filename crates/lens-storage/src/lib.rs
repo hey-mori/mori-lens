@@ -190,6 +190,17 @@ impl Library {
         Ok(affected > 0)
     }
 
+    /// Update the reader's note on an item.
+    ///
+    /// Returns whether the item existed.
+    pub fn update_note(&self, id: i64, note: &str) -> Result<bool, Error> {
+        let affected = self.conn.execute(
+            "UPDATE library SET note = ?1 WHERE id = ?2",
+            params![note, id],
+        )?;
+        Ok(affected > 0)
+    }
+
     /// Search across original and answer fields.
     ///
     /// Uses SQLite LIKE with the query as a substring match. Works
@@ -749,6 +760,24 @@ mod tests {
         let path = temp_db("delete-miss");
         let lib = Library::open(&path).unwrap();
         assert!(!lib.delete(999).unwrap());
+        cleanup(&path);
+    }
+
+    #[test]
+    fn updating_a_note_changes_it_and_returns_true() {
+        let path = temp_db("update-note");
+        let lib = Library::open(&path).unwrap();
+        let id = lib.insert(&a_translation()).unwrap();
+
+        assert!(lib.update_note(id, "my note").unwrap());
+        let item = lib.get(id).unwrap().unwrap();
+        assert_eq!(item.note.as_deref(), Some("my note"));
+
+        assert!(lib.update_note(id, "").unwrap());
+        let item = lib.get(id).unwrap().unwrap();
+        assert_eq!(item.note.as_deref(), Some(""));
+
+        assert!(!lib.update_note(999, "no such item").unwrap());
         cleanup(&path);
     }
 
