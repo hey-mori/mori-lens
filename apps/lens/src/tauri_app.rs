@@ -281,6 +281,29 @@ fn library_update_note(
         .map_err(|e| format!("{e}"))
 }
 
+/// Tauri command: set tags for a library item.
+#[tauri::command]
+fn library_set_tags(
+    state: tauri::State<'_, SharedLibrary>,
+    id: i64,
+    tags: Vec<String>,
+) -> Result<bool, String> {
+    let lib = state.lock().unwrap();
+    lib.library()
+        .set_tags(id, &tags)
+        .map_err(|e| format!("{e}"))
+}
+
+/// Tauri command: get tags for a library item.
+#[tauri::command]
+fn library_get_tags(
+    state: tauri::State<'_, SharedLibrary>,
+    id: i64,
+) -> Result<Vec<String>, String> {
+    let lib = state.lock().unwrap();
+    lib.library().get_tags(id).map_err(|e| format!("{e}"))
+}
+
 /// Tauri command: get the library count.
 #[tauri::command]
 fn library_count(state: tauri::State<'_, SharedLibrary>) -> Result<i64, String> {
@@ -322,6 +345,8 @@ pub fn build(
             library_get,
             library_delete,
             library_update_note,
+            library_set_tags,
+            library_get_tags,
             library_count,
             library_export,
         ])
