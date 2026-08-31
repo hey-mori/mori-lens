@@ -490,6 +490,7 @@ mod gate {
             scrolling: false,
             typing: false,
             modifier_held: false,
+            ctrl_held: false,
             ocr_requested: false,
         }
     }
