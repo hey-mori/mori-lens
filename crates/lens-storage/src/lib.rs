@@ -196,6 +196,18 @@ impl Library {
         }
     }
 
+    /// Check whether an item with the same original text and kind already exists.
+    ///
+    /// Used by the keep flow to avoid storing the same sentence twice. The
+    /// file remains append-only; this is for the database only.
+    pub fn has_duplicate(&self, original: &str, kind: &str) -> Result<bool, Error> {
+        let exists: bool = self
+            .conn
+            .prepare("SELECT 1 FROM library WHERE original = ?1 AND kind = ?2")?
+            .exists(params![original, kind])?;
+        Ok(exists)
+    }
+
     /// Delete one item.
     ///
     /// A plain DELETE removes the row; it is not forensic erasure. See
@@ -1506,6 +1518,20 @@ mod tests {
 
         let langs = lib.distinct_target_languages().unwrap();
         assert_eq!(langs, vec!["ja", "ko"]);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn has_duplicate_finds_matching_original_and_kind() {
+        let path = temp_db("has-duplicate");
+        let lib = Library::open(&path).unwrap();
+
+        let item = a_translation();
+        lib.insert(&item).unwrap();
+
+        assert!(lib.has_duplicate(&item.original, "translation").unwrap());
+        assert!(!lib.has_duplicate(&item.original, "analysis").unwrap());
+        assert!(!lib.has_duplicate("different text", "translation").unwrap());
         cleanup(&path);
     }
 }
