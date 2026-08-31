@@ -362,6 +362,39 @@ impl Library {
             .map_err(Error::Sqlite)
     }
 
+    /// Get distinct source applications, sorted alphabetically.
+    pub fn distinct_apps(&self) -> Result<Vec<String>, Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT app FROM library WHERE app IS NOT NULL AND app != '' ORDER BY app",
+        )?;
+        let apps = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(apps)
+    }
+
+    /// Get distinct source languages, sorted alphabetically.
+    pub fn distinct_source_languages(&self) -> Result<Vec<String>, Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT source_language FROM library WHERE source_language IS NOT NULL AND source_language != '' ORDER BY source_language",
+        )?;
+        let langs = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(langs)
+    }
+
+    /// Get distinct target languages, sorted alphabetically.
+    pub fn distinct_target_languages(&self) -> Result<Vec<String>, Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT target_language FROM library WHERE target_language IS NOT NULL AND target_language != '' ORDER BY target_language",
+        )?;
+        let langs = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(langs)
+    }
+
     /// Whether the library has been used (any imports tracked).
     pub fn is_imported(&self) -> Result<bool, Error> {
         let exists: bool = self
@@ -468,9 +501,8 @@ impl Library {
             offset += PAGE_SIZE;
         }
 
-        serde_json::to_string_pretty(&all_items).map_err(|e| {
-            Error::Io(std::io::Error::other(e.to_string()))
-        })
+        serde_json::to_string_pretty(&all_items)
+            .map_err(|e| Error::Io(std::io::Error::other(e.to_string())))
     }
 
     /// The database connection, for callers that need to run their own
@@ -1413,5 +1445,67 @@ mod tests {
                 "round-trip at {seconds}"
             );
         }
+    }
+
+    // -- distinct queries ---------------------------------------------------
+
+    #[test]
+    fn distinct_apps_returns_sorted_unique_values() {
+        let path = temp_db("distinct-apps");
+        let lib = Library::open(&path).unwrap();
+
+        let mut item = a_translation();
+        item.app = Some("Firefox".to_owned());
+        lib.insert(&item).unwrap();
+
+        item.app = Some("Code".to_owned());
+        lib.insert(&item).unwrap();
+
+        item.app = Some("Firefox".to_owned());
+        lib.insert(&item).unwrap();
+
+        item.app = None;
+        lib.insert(&item).unwrap();
+
+        let apps = lib.distinct_apps().unwrap();
+        assert_eq!(apps, vec!["Code", "Firefox"]);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn distinct_source_languages_returns_sorted_unique_values() {
+        let path = temp_db("distinct-sources");
+        let lib = Library::open(&path).unwrap();
+
+        let mut item = a_translation();
+        item.source_language = Some("en".to_owned());
+        lib.insert(&item).unwrap();
+
+        item.source_language = Some("ja".to_owned());
+        lib.insert(&item).unwrap();
+
+        item.source_language = None;
+        lib.insert(&item).unwrap();
+
+        let langs = lib.distinct_source_languages().unwrap();
+        assert_eq!(langs, vec!["en", "ja"]);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn distinct_target_languages_returns_sorted_unique_values() {
+        let path = temp_db("distinct-targets");
+        let lib = Library::open(&path).unwrap();
+
+        let mut item = a_translation();
+        item.target_language = Some("ko".to_owned());
+        lib.insert(&item).unwrap();
+
+        item.target_language = Some("ja".to_owned());
+        lib.insert(&item).unwrap();
+
+        let langs = lib.distinct_target_languages().unwrap();
+        assert_eq!(langs, vec!["ja", "ko"]);
+        cleanup(&path);
     }
 }
