@@ -258,6 +258,15 @@ fn library_count(state: tauri::State<'_, SharedLibrary>) -> Result<i64, String> 
     lib.library().count().map_err(|e| format!("{e}"))
 }
 
+/// Tauri command: export the library as Markdown.
+#[tauri::command]
+fn library_export(state: tauri::State<'_, SharedLibrary>) -> Result<String, String> {
+    let lib = state.lock().unwrap();
+    lib.library()
+        .export_markdown()
+        .map_err(|e| format!("{e}"))
+}
+
 /// Build the Tauri application and return its handle, shared diagnostics, and the `App` itself.
 ///
 /// The `App` must be kept alive and `.run()` must be called on it. Dropping
@@ -283,6 +292,7 @@ pub fn build(
             library_delete,
             library_update_note,
             library_count,
+            library_export,
         ])
         .manage(diagnostics.clone())
         .manage(shared_settings)

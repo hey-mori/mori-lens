@@ -258,6 +258,63 @@ impl Library {
         Ok(())
     }
 
+    /// Export the library as a Markdown string in the saved.md format.
+    /// Items are sorted newest first, separated by `---`.
+    pub fn export_markdown(&self) -> Result<String, Error> {
+        // Fetch all items by iterating through pages.
+        let mut all_items = Vec::new();
+        let mut offset = 0i64;
+        loop {
+            let page = self.list(offset)?;
+            if page.items.is_empty() {
+                break;
+            }
+            all_items.extend(page.items);
+            if !page.has_more {
+                break;
+            }
+            offset += PAGE_SIZE;
+        }
+
+        if all_items.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut out = String::new();
+        for (i, item) in all_items.iter().enumerate() {
+            if i > 0 {
+                out.push_str("\n---\n\n");
+            }
+
+            // Format timestamp as "YYYY-MM-DD HH:MM"
+            let datetime = format_datetime(item.created_at);
+            out.push_str("## ");
+            out.push_str(&datetime);
+            if let Some(ref app) = item.app {
+                if !app.is_empty() {
+                    out.push_str(" · ");
+                    out.push_str(app);
+                }
+            }
+            out.push('\n');
+
+            out.push_str("\n> ");
+            out.push_str(&item.original.replace('\n', "\n> "));
+
+            out.push_str("\n\n> ");
+            out.push_str(&item.answer.replace('\n', "\n> "));
+
+            if let Some(ref caveat) = item.caveat {
+                if !caveat.is_empty() {
+                    out.push_str("\n\n");
+                    out.push_str(caveat);
+                }
+            }
+        }
+
+        Ok(out)
+    }
+
     /// The database connection, for callers that need to run their own
     /// queries (e.g. schema introspection in tests).
     pub fn conn(&self) -> &Connection {
@@ -525,6 +582,33 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
+/// Format a Unix timestamp as "YYYY-MM-DD HH:MM" in UTC.
+fn format_datetime(seconds: i64) -> String {
+    let days = seconds / 86_400;
+    let time_of_day = seconds % 86_400;
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+
+    // Reverse civil_from_days (from keep.rs)
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let day_of_era = (z - era * 146_097) as u64;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146_096) / 365;
+    let year = year_of_era as i64 + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    };
+    let year = if month <= 2 { year + 1 } else { year };
+
+    format!("{year}-{month:02}-{day:02} {hours:02}:{minutes:02}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -778,6 +862,70 @@ mod tests {
         assert_eq!(item.note.as_deref(), Some(""));
 
         assert!(!lib.update_note(999, "no such item").unwrap());
+        cleanup(&path);
+    }
+
+    #[test]
+    fn exporting_generates_saved_md_format() {
+        let path = temp_db("export");
+        let lib = Library::open(&path).unwrap();
+
+        // Empty library exports to empty string.
+        assert_eq!(lib.export_markdown().unwrap(), "");
+
+        let id = lib.insert(&a_translation()).unwrap();
+        let md = lib.export_markdown().unwrap();
+
+        // Should contain the heading with timestamp and app.
+        assert!(md.contains("## 2026-08-07 03:59 · Code"), "md was: {md}");
+        // Should contain quoted original.
+        assert!(md.contains("> The pointer must rest"));
+        // Should contain quoted translation.
+        assert!(md.contains("> 포인터가 멈춘"));
+
+        // Parse it back and verify it round-trips.
+        let entries = parse_saved_md(&md);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].original,
+            "The pointer must rest before anything is read."
+        );
+        assert_eq!(entries[0].answer, "포인터가 멈춘 뒤에야 무엇이든 읽습니다.");
+        assert_eq!(entries[0].app.as_deref(), Some("Code"));
+
+        let _ = id;
+        cleanup(&path);
+    }
+
+    #[test]
+    fn export_includes_caveat_when_present() {
+        let path = temp_db("export-caveat");
+        let lib = Library::open(&path).unwrap();
+
+        let item = Item {
+            id: 0,
+            original: "The output files came back empty.".to_owned(),
+            answer: "출력 파일이 비어 있었습니다.".to_owned(),
+            caveat: Some("This is an AI explanation.".to_owned()),
+            app: Some("TestApp".to_owned()),
+            created_at: 1_786_075_140,
+            kind: "translation".to_owned(),
+            source_language: Some("en".to_owned()),
+            target_language: Some("ko".to_owned()),
+            model: None,
+            note: None,
+        };
+        lib.insert(&item).unwrap();
+
+        let md = lib.export_markdown().unwrap();
+        assert!(md.contains("This is an AI explanation."));
+
+        let entries = parse_saved_md(&md);
+        assert_eq!(
+            entries[0].caveat.as_deref(),
+            Some("This is an AI explanation.")
+        );
+
         cleanup(&path);
     }
 
