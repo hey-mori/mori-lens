@@ -1,6 +1,12 @@
 # ADR-0012 · Three product surfaces
 
 **Status** · Accepted, 2026-08-27 (proposed 2026-08-13)
+**Amended** · 2026-09-01: the pinned detail is a Tauri webview window
+  rather than a native GDI panel. The decision rule and the three-surface
+  structure are unchanged; only the implementation of surface 2 changed,
+  because adding buttons and a textarea to a PanelWindow would be several
+  hundred lines of Win32 while the product already has a Tauri webview for
+  the settings and library.
 **Amends** · [ADR-0004](ADR-0004-native-overlay.md)
 
 ## Context
@@ -42,9 +48,10 @@ Unchanged by this ADR, and the reason for the other two is to keep it that way.
 
 ### 2. Pinned interactive detail
 
-Native, exactly as ADR-0004 already decided. Opened **only** by an explicit
-action, never by a dwell. **One at a time**: pinned details do not stack, so the
-screen cannot fill with them.
+A second Tauri webview window (amended 2026-09-01 from the native panel
+originally decided). Opened **only** by an explicit action, never by a
+dwell. **One at a time**: pinned details do not stack, so the screen
+cannot fill with them.
 
 It may hold the full original and translation, the explanation, the provider and
 model, and the controls that have been living as chords: copy, save, note, open
