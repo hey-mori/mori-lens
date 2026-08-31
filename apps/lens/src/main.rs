@@ -52,6 +52,7 @@ mod console;
 mod hover_worker;
 mod keeping;
 mod lesson;
+mod library_service;
 mod lifecycle;
 mod manual_ocr;
 mod pause;
@@ -1156,8 +1157,13 @@ fn main() -> std::process::ExitCode {
         shared_settings.lock().unwrap().current()
     );
 
+    let shared_library = std::sync::Arc::new(std::sync::Mutex::new(
+        library_service::open(&data_dir),
+    ));
+    println!("  library   {:?}", shared_library.lock().unwrap().path());
+
     let (tauri_handle, shared_diagnostics, tauri_app) =
-        match tauri_app::build(shared_settings.clone()) {
+        match tauri_app::build(shared_settings.clone(), shared_library) {
             Ok(triple) => triple,
             Err(error) => {
                 eprintln!("Tauri initialization failed: {error}");
