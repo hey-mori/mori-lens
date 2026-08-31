@@ -653,8 +653,22 @@
         html += '<button class="btn btn-primary" onclick="saveLibraryNote(' + item.id + ')" style="margin-top:8px;padding:4px 12px;font-size:12px">Save note</button>';
         html += '<span id="lib-note-status-' + item.id + '" style="margin-left:8px;font-size:12px;color:#888"></span>';
         html += '</div>';
+        html += '<div style="margin-top:16px">';
+        html += '<label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Tags</label>';
+        html += '<input type="text" id="lib-tags-' + item.id + '" placeholder="comma, separated, tags" style="width:100%;max-width:300px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;background:white">';
+        html += '<button class="btn btn-primary" onclick="saveLibraryTags(' + item.id + ')" style="margin-top:8px;padding:4px 12px;font-size:12px">Save tags</button>';
+        html += '<span id="lib-tags-status-' + item.id + '" style="margin-left:8px;font-size:12px;color:#888"></span>';
+        html += '</div>';
         detailEl.innerHTML = html;
         detailEl.style.display = 'block';
+
+        // Load tags for this item.
+        try {
+          const tags = await invoke('library_get_tags', { id });
+          document.getElementById('lib-tags-' + item.id).value = tags.join(', ');
+        } catch (e) {
+          // Ignore tag loading errors.
+        }
       } catch (e) {
         detailEl.innerHTML = '<p class="error">Error: ' + e + '</p>';
         detailEl.style.display = 'block';
@@ -677,6 +691,20 @@
       const statusEl = document.getElementById('lib-note-status-' + id);
       try {
         await invoke('library_update_note', { id, note: textarea.value });
+        statusEl.textContent = 'Saved';
+        setTimeout(() => { statusEl.textContent = ''; }, 2000);
+      } catch (e) {
+        statusEl.textContent = 'Error: ' + e;
+        statusEl.style.color = '#c00';
+      }
+    }
+
+    async function saveLibraryTags(id) {
+      const input = document.getElementById('lib-tags-' + id);
+      const statusEl = document.getElementById('lib-tags-status-' + id);
+      try {
+        const tags = input.value.split(',').map(t => t.trim()).filter(t => t.length > 0);
+        await invoke('library_set_tags', { id, tags });
         statusEl.textContent = 'Saved';
         setTimeout(() => { statusEl.textContent = ''; }, 2000);
       } catch (e) {

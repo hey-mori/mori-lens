@@ -214,6 +214,67 @@ impl Library {
         Ok(affected > 0)
     }
 
+    /// Set the tags for an item, replacing any existing tags.
+    ///
+    /// Tags are created if they don't exist. Returns whether the item existed.
+    pub fn set_tags(&self, id: i64, tags: &[String]) -> Result<bool, Error> {
+        // Check if the item exists.
+        let exists: bool = self
+            .conn
+            .prepare("SELECT 1 FROM library WHERE id = ?1")?
+            .exists(params![id])?;
+        if !exists {
+            return Ok(false);
+        }
+
+        // Remove existing tags for this item.
+        self.conn.execute(
+            "DELETE FROM library_tags WHERE library_id = ?1",
+            params![id],
+        )?;
+
+        // Insert each tag, creating it if needed.
+        for tag in tags {
+            let tag = tag.trim();
+            if tag.is_empty() {
+                continue;
+            }
+
+            // Insert or get the tag id.
+            self.conn.execute(
+                "INSERT OR IGNORE INTO tags (name) VALUES (?1)",
+                params![tag],
+            )?;
+            let tag_id: i64 = self.conn.query_row(
+                "SELECT id FROM tags WHERE name = ?1",
+                params![tag],
+                |row| row.get(0),
+            )?;
+
+            // Link the tag to the item.
+            self.conn.execute(
+                "INSERT OR IGNORE INTO library_tags (library_id, tag_id) VALUES (?1, ?2)",
+                params![id, tag_id],
+            )?;
+        }
+
+        Ok(true)
+    }
+
+    /// Get the tags for an item.
+    pub fn get_tags(&self, id: i64) -> Result<Vec<String>, Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT t.name FROM tags t
+             JOIN library_tags lt ON lt.tag_id = t.id
+             WHERE lt.library_id = ?1
+             ORDER BY t.name",
+        )?;
+        let tags = stmt
+            .query_map(params![id], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(tags)
+    }
+
     /// Search across original and answer fields.
     ///
     /// Uses SQLite LIKE with the query as a substring match. Works
@@ -431,6 +492,28 @@ impl Library {
                 );
 
                 INSERT INTO schema_migrations (version) VALUES (2);",
+            )?;
+        }
+
+        // Tags: a many-to-many relationship between items and tags.
+        if !applied.contains(&3) {
+            self.conn.execute_batch(
+                "CREATE TABLE tags (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE
+                );
+
+                CREATE TABLE library_tags (
+                    library_id INTEGER NOT NULL,
+                    tag_id INTEGER NOT NULL,
+                    PRIMARY KEY (library_id, tag_id),
+                    FOREIGN KEY (library_id) REFERENCES library(id) ON DELETE CASCADE,
+                    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX library_tags_tag_id ON library_tags(tag_id);
+
+                INSERT INTO schema_migrations (version) VALUES (3);",
             )?;
         }
 
@@ -732,7 +815,7 @@ mod tests {
         let lib = Library::open(&path).unwrap();
         assert_eq!(lib.count().unwrap(), 0);
 
-        // Both migration versions are recorded.
+        // All migration versions are recorded.
         let versions: Vec<i64> = lib
             .conn()
             .prepare("SELECT version FROM schema_migrations ORDER BY version")
@@ -741,7 +824,7 @@ mod tests {
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
-        assert_eq!(versions, vec![1, 2]);
+        assert_eq!(versions, vec![1, 2, 3]);
         cleanup(&path);
     }
 
@@ -888,6 +971,49 @@ mod tests {
         let page = lib.list_filtered(&filter, 0).unwrap();
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.items[0].app.as_deref(), Some("Chrome"));
+
+        cleanup(&path);
+    }
+
+    // -- tags ---------------------------------------------------------------
+
+    #[test]
+    fn setting_and_getting_tags() {
+        let path = temp_db("tags");
+        let lib = Library::open(&path).unwrap();
+        let id = lib.insert(&a_translation()).unwrap();
+
+        // Initially no tags.
+        assert!(lib.get_tags(id).unwrap().is_empty());
+
+        // Set some tags.
+        assert!(lib
+            .set_tags(id, &["grammar".to_owned(), "vocabulary".to_owned()])
+            .unwrap());
+        let tags = lib.get_tags(id).unwrap();
+        assert_eq!(tags, vec!["grammar", "vocabulary"]);
+
+        // Replace tags.
+        assert!(lib.set_tags(id, &["review".to_owned()]).unwrap());
+        let tags = lib.get_tags(id).unwrap();
+        assert_eq!(tags, vec!["review"]);
+
+        // Setting tags on a nonexistent item returns false.
+        assert!(!lib.set_tags(999, &["orphan".to_owned()]).unwrap());
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn empty_tags_are_ignored() {
+        let path = temp_db("tags-empty");
+        let lib = Library::open(&path).unwrap();
+        let id = lib.insert(&a_translation()).unwrap();
+
+        lib.set_tags(id, &["".to_owned(), "  ".to_owned(), "valid".to_owned()])
+            .unwrap();
+        let tags = lib.get_tags(id).unwrap();
+        assert_eq!(tags, vec!["valid"]);
 
         cleanup(&path);
     }
