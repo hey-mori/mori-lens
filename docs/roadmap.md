@@ -174,8 +174,8 @@ benchmark; the analysis model is never called without a user action; a
 schema violation degrades instead of crashing; output is labelled as an
 AI explanation.
 
-Standing, 2026-08-06. The model side is built and measured; nothing in
-the product calls it.
+Standing, 2026-08-06, updated 2026-09-01. The model side is built and
+measured; the product calls it; explanation quality is measured.
 
 | Condition | State |
 |---|---|
@@ -183,7 +183,7 @@ the product calls it.
 | never called without a user action | held by construction: `lens-core::session` has no reference to an `Analyser` and there is no path from a settled hover to one. The only caller is a `Ctrl+Alt+D` press |
 | a schema violation degrades | built: a missing field is an empty field, an answer that was not JSON says nothing, and an analysis that says nothing is a typed error rather than a card of headings over blanks |
 | output labelled as an AI explanation | built and shown: `DeepAnalysis::LABEL`, first in the footer because a card cuts from the end |
-| the explanations are right | **open**, and the reason the label exists. `passed` came back with 원형 `passed` rather than `pass` |
+| the explanations are right | **open**, measured on 2026-09-01 ([`deep analysis evaluation`](benchmarks/2026-09-01-deep-analysis-evaluation.md), [`prompt A/B`](benchmarks/2026-09-01-prompt-ab-comparison.md), [`counterpart analysis`](benchmarks/2026-09-01-counterpart-ab-analysis.md), [`P1 full corpus validation`](benchmarks/2026-09-01-p1-full-corpus-validation.md), [`evaluation integrity audit`](benchmarks/2026-09-01-evaluation-integrity-audit.md), [`P3 prompt evaluation`](benchmarks/2026-09-01-p3-prompt-evaluation.md), [`Phase 13 final report`](benchmarks/2026-09-01-m5-phase13-final-report.md), [`Phase 14 final report`](benchmarks/2026-09-01-phase14-final-report.md), [`Phase 15 final report`](benchmarks/2026-09-01-phase15-final-report.md), [`Phase 16 final report`](benchmarks/2026-09-01-phase16-final-report.md)): P0 lemma 40%, P1 lemma 63%, P3 lemma 64%. No-word hallucination is a model capability limit. Phase 15: deterministic answerability projection (`only_answerable()`) enforces the Answerable contract on model output. Phase 16: verified production flow separates raw model quality from product-visible quality. Eliminates 3/6 misleading entries (C01, C02, E03 unanswerable field hallucination). Remaining 3/6 (A04, E02, B03) are model-dependent errors (M6 work). M5 pipeline correctness is closeable. M6 model quality remains open. Counterpart invariant satisfied: no model calls when `word=None`. Zero performance regression. The product label `AI 설명 · 사실 확인 필요` is doing the work it was designed to do |
 
 The trigger and the card are built. `Ctrl+Alt+D`, not a button, because
 the overlay passes clicks through
@@ -236,7 +236,15 @@ Measured over twelve runs a profile
 | developer spends the note on jargon | **1 of 24, and left alone.** The shipped instruction says most sentences need no note, and it is right; a profile line strong enough to beat it would put a note on every card |
 | fewer rows are faster | no. The rows a profile drops are short and the sense line dominates |
 
-Not started: nothing else in M5 except the two open conditions above.
+The evaluation harness is built
+([`deep_eval.rs`](../crates/lens-translate/src/deep_eval.rs)): 25 entries,
+9 test functions, prompt A/B, model comparison, counterpart analysis. The
+failure taxonomy is recorded
+([`M5 failure taxonomy`](benchmarks/2026-09-01-m5-failure-taxonomy.md)).
+The P1 prompt (lemmatisation examples) was tested on the full corpus and
+improved lemma accuracy (+23pp) but caused POS regression (-8pp) and did
+not reduce misleading rate (24%). The gate stays open pending a prompt
+that improves lemma without regressing POS or increasing misleading rate.
 
 ## M6 · macOS acquisition
 
