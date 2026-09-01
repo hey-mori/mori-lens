@@ -485,6 +485,31 @@ impl DeepAnalysis {
     /// Dropped rather than retried. A retry doubles the wait for an answer
     /// that was wrong in a way the model has just shown it does not notice,
     /// and a shorter honest analysis is better than a slower one.
+    /// Drop fields the request says cannot be answered.
+    ///
+    /// The model is asked to leave unanswerable fields empty, but a small local
+    /// model sometimes invents values anyway. This is a deterministic projection
+    /// that enforces the [`Answerable`] contract on the output: if the request
+    /// says a field cannot be answered, the field is cleared regardless of what
+    /// the model returned.
+    ///
+    /// This is not a filter for model errors. A wrong lemma on a valid word is
+    /// still shown; a hallucinated lemma when no word was pointed at is not.
+    pub fn only_answerable(mut self, answerable: Answerable) -> Self {
+        if !answerable.the_word {
+            self.lemma.clear();
+            self.part_of_speech.clear();
+            self.sense.clear();
+            self.word = None;
+            self.counterpart = None;
+        }
+        if !answerable.the_structure {
+            self.structure.clear();
+        }
+        self
+    }
+
+    /// Drop fields whose language does not match the reader's.
     ///
     /// **[`Self::lemma`] is exempt, and that is the whole subtlety.** It is the
     /// dictionary form of the word the reader pointed at, so it belongs in the
@@ -991,7 +1016,7 @@ mod counterpart_tests {
 
 #[cfg(test)]
 mod profile_tests {
-    use crate::analyse::{DeepRequest, Profile};
+    use crate::analyse::{Answerable, DeepAnalysis, DeepRequest, Profile};
 
     /// The settings value round-trips, and an unknown one is refused here
     /// rather than silently becoming the default somewhere downstream.
@@ -1038,5 +1063,90 @@ mod profile_tests {
             assert_eq!(with, plain, "{profile:?} changed what can be answered");
             assert!(with.anything(), "{profile:?} lost the follow-up entirely");
         }
+    }
+
+    #[test]
+    fn only_answerable_clears_word_fields_when_no_word() {
+        let analysis = DeepAnalysis {
+            lemma: "invented".to_owned(),
+            part_of_speech: "명사".to_owned(),
+            sense: "invented sense".to_owned(),
+            structure: "valid structure".to_owned(),
+            note: "valid note".to_owned(),
+            word: Some("invented".to_owned()),
+            counterpart: Some("counterpart".to_owned()),
+            translation: None,
+            model: "test".to_owned(),
+            latency_ms: 100,
+            cached: false,
+        };
+        let answerable = Answerable {
+            the_word: false,
+            the_structure: true,
+        };
+        let projected = analysis.only_answerable(answerable);
+        assert_eq!(projected.lemma, "");
+        assert_eq!(projected.part_of_speech, "");
+        assert_eq!(projected.sense, "");
+        assert_eq!(projected.word, None);
+        assert_eq!(projected.counterpart, None);
+        assert_eq!(projected.structure, "valid structure");
+        assert_eq!(projected.note, "valid note");
+    }
+
+    #[test]
+    fn only_answerable_clears_structure_when_single_word() {
+        let analysis = DeepAnalysis {
+            lemma: "rest".to_owned(),
+            part_of_speech: "동사".to_owned(),
+            sense: "멈추다".to_owned(),
+            structure: "invented structure".to_owned(),
+            note: "valid note".to_owned(),
+            word: Some("rest".to_owned()),
+            counterpart: None,
+            translation: None,
+            model: "test".to_owned(),
+            latency_ms: 100,
+            cached: false,
+        };
+        let answerable = Answerable {
+            the_word: true,
+            the_structure: false,
+        };
+        let projected = analysis.only_answerable(answerable);
+        assert_eq!(projected.lemma, "rest");
+        assert_eq!(projected.part_of_speech, "동사");
+        assert_eq!(projected.sense, "멈추다");
+        assert_eq!(projected.structure, "");
+        assert_eq!(projected.note, "valid note");
+    }
+
+    #[test]
+    fn only_answerable_preserves_all_fields_when_both_answerable() {
+        let analysis = DeepAnalysis {
+            lemma: "rest".to_owned(),
+            part_of_speech: "동사".to_owned(),
+            sense: "멈추다".to_owned(),
+            structure: "valid structure".to_owned(),
+            note: "valid note".to_owned(),
+            word: Some("rest".to_owned()),
+            counterpart: Some("counterpart".to_owned()),
+            translation: None,
+            model: "test".to_owned(),
+            latency_ms: 100,
+            cached: false,
+        };
+        let answerable = Answerable {
+            the_word: true,
+            the_structure: true,
+        };
+        let projected = analysis.only_answerable(answerable);
+        assert_eq!(projected.lemma, "rest");
+        assert_eq!(projected.part_of_speech, "동사");
+        assert_eq!(projected.sense, "멈추다");
+        assert_eq!(projected.structure, "valid structure");
+        assert_eq!(projected.note, "valid note");
+        assert_eq!(projected.word, Some("rest".to_owned()));
+        assert_eq!(projected.counterpart, Some("counterpart".to_owned()));
     }
 }
