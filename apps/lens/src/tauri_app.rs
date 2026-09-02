@@ -197,10 +197,7 @@ fn library_list(
     offset: i64,
 ) -> Result<LibraryPageView, String> {
     let lib = state.lock().unwrap();
-    let page = lib
-        .library()
-        .list(offset)
-        .map_err(|e| format!("{e}"))?;
+    let page = lib.library().list(offset).map_err(|e| format!("{e}"))?;
     let total = lib.library().count().unwrap_or(0);
     Ok(LibraryPageView {
         items: page.items.iter().map(LibraryItemView::from).collect(),
@@ -326,7 +323,9 @@ fn library_distinct_source_languages(
     state: tauri::State<'_, SharedLibrary>,
 ) -> Result<Vec<String>, String> {
     let lib = state.lock().unwrap();
-    lib.library().distinct_source_languages().map_err(|e| format!("{e}"))
+    lib.library()
+        .distinct_source_languages()
+        .map_err(|e| format!("{e}"))
 }
 
 /// Tauri command: get distinct target languages from the library.
@@ -335,7 +334,9 @@ fn library_distinct_target_languages(
     state: tauri::State<'_, SharedLibrary>,
 ) -> Result<Vec<String>, String> {
     let lib = state.lock().unwrap();
-    lib.library().distinct_target_languages().map_err(|e| format!("{e}"))
+    lib.library()
+        .distinct_target_languages()
+        .map_err(|e| format!("{e}"))
 }
 
 /// Tauri command: get the library count.
@@ -349,9 +350,7 @@ fn library_count(state: tauri::State<'_, SharedLibrary>) -> Result<i64, String> 
 #[tauri::command]
 fn library_export(state: tauri::State<'_, SharedLibrary>) -> Result<String, String> {
     let lib = state.lock().unwrap();
-    lib.library()
-        .export_markdown()
-        .map_err(|e| format!("{e}"))
+    lib.library().export_markdown().map_err(|e| format!("{e}"))
 }
 
 /// Tauri command: export the library as JSON (lossless format).
@@ -359,6 +358,18 @@ fn library_export(state: tauri::State<'_, SharedLibrary>) -> Result<String, Stri
 fn library_export_json(state: tauri::State<'_, SharedLibrary>) -> Result<String, String> {
     let lib = state.lock().unwrap();
     lib.library().export_json().map_err(|e| format!("{e}"))
+}
+
+/// Tauri command: securely wipe all data from the library database.
+///
+/// Checkpoints the WAL, enables `secure_delete`, deletes all rows, and
+/// runs `VACUUM` to rebuild the file. See
+/// [ADR-0013](../../../docs/decisions/ADR-0013-the-local-library.md) for
+/// what this reaches and what it does not.
+#[tauri::command]
+fn library_secure_wipe(state: tauri::State<'_, SharedLibrary>) -> Result<(), String> {
+    let lib = state.lock().unwrap();
+    lib.library().secure_wipe().map_err(|e| format!("{e}"))
 }
 
 /// Build the Tauri application and return its handle, shared diagnostics, and the `App` itself.
@@ -397,6 +408,7 @@ pub fn build(
             library_count,
             library_export,
             library_export_json,
+            library_secure_wipe,
             crate::detail_view::detail_read,
             crate::detail_view::detail_copy,
             crate::detail_view::detail_save,
