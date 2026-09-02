@@ -679,8 +679,25 @@ fallback appeared once in VS Code, `Ctrl+Alt+O` over the editor read 44
 characters, and the translation came back in 1.7s. That is the whole
 path working in the application that prompted the milestone swap.
 
-Still open for the M4 gate: KakaoTalk (#34), a scanned PDF, and an
-image-text case.
+### Chrome OCR, 2026-09-01: a real-desktop OCR measurement
+
+Build `5a11303`, `hover-probe ocr --budget 200`, Chrome on the secondary
+monitor (1920x1080 at 100%), 252 grid points:
+
+```
+recognition  38 lines, 222 words, 1143 characters in 709ms
+misread      5 of 222 words (2.3%) have a shape that cannot be right
+median word  30x13px
+grid         252 points, 35 of those on a word
+OCR text covers 13.9% of the window
+```
+
+The 2.3% misread rate is how often `is_misread` fires on real content.
+The other half of issue #86 (whether the words it stayed quiet about were
+read correctly) needs a person.
+
+Still open for the M4 gate: KakaoTalk (#34) with a visible conversation
+window, and a real scanned PDF with a real file.
 
 ### Win32 `EDIT` across a process boundary, 2026-08-06
 
