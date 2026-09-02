@@ -50,6 +50,10 @@ pub struct SettingsView {
     pub ocr: String,
     pub profile: String,
     pub hover_scope: String,
+    pub history: bool,
+    pub history_days: u32,
+    pub history_store_app: bool,
+    pub history_excluded: Vec<String>,
     pub quick_engine: String,
     pub quick_model: Option<String>,
     pub quick_endpoint: String,
@@ -131,6 +135,10 @@ impl SettingsState {
             ocr: schema.general.ocr.clone(),
             profile: schema.general.profile.clone(),
             hover_scope: schema.general.hover_scope.clone(),
+            history: schema.general.history,
+            history_days: schema.general.history_days,
+            history_store_app: schema.general.history_store_app,
+            history_excluded: schema.general.history_excluded.clone(),
             quick_engine: schema.quick.engine.clone(),
             quick_model: schema.quick.model.clone(),
             quick_endpoint: schema.quick.endpoint.clone(),
@@ -159,6 +167,10 @@ impl SettingsState {
         schema.general.ocr = view.ocr;
         schema.general.profile = view.profile;
         schema.general.hover_scope = view.hover_scope;
+        schema.general.history = view.history;
+        schema.general.history_days = view.history_days;
+        schema.general.history_store_app = view.history_store_app;
+        schema.general.history_excluded = view.history_excluded;
 
         schema.quick = EngineConfig {
             engine: view.quick_engine,
