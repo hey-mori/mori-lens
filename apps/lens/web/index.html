@@ -309,6 +309,9 @@
     <div class="section" id="section-about">
       <h1>About</h1>
       <div id="about-content"><p class="loading">Loading...</p></div>
+      <h2 style="margin-top:32px;color:#c00">Danger zone</h2>
+      <p style="font-size:12px;color:#888;margin-bottom:12px">Permanently delete all library data. This runs a secure wipe (WAL checkpoint, secure_delete, DELETE, VACUUM). It does not reach filesystem snapshots, drive controller remapped blocks, backups, or exports you have made.</p>
+      <button class="btn" onclick="secureWipe()" style="padding:6px 16px;border-color:#c00;color:#c00">Delete all library data</button>
     </div>
   </div>
 
@@ -678,6 +681,22 @@
       }
     }
 
+    async function secureWipe() {
+      if (!confirm('Delete ALL library data? This cannot be undone.\n\nThis securely wipes the database (WAL checkpoint, secure_delete, DELETE, VACUUM). It does not reach filesystem snapshots, backups, or exports you have made.')) {
+        return;
+      }
+      if (!confirm('Are you absolutely sure? All saved items, notes, tags, and review progress will be permanently deleted.')) {
+        return;
+      }
+      try {
+        await invoke('library_secure_wipe');
+        alert('All library data has been deleted.');
+        loadLibrary();
+      } catch (e) {
+        alert('Secure wipe failed: ' + e);
+      }
+    }
+
     async function fetchLibraryPage() {
       const listEl = document.getElementById('lib-list');
       const countEl = document.getElementById('lib-count');
@@ -707,10 +726,14 @@
         for (const item of page.items) {
           const date = new Date(item.created_at * 1000).toLocaleDateString();
           const kind = item.kind === 'analysis' ? 'analysis' : 'translation';
+          const review = item.review_state || 'new';
+          const reviewBadge = review === 'mastered' ? '<span style="color:#2e7d32;font-size:11px" title="Mastered"> ✓</span>'
+            : review === 'learning' ? '<span style="color:#f57c00;font-size:11px" title="Learning"> ◐</span>'
+            : '<span style="color:#888;font-size:11px" title="New"> ○</span>';
           const preview = item.original.length > 60 ? item.original.slice(0, 60) + '...' : item.original;
           html += '<tr style="cursor:pointer" onclick="showLibraryItem(' + item.id + ')">';
           html += '<td style="width:60%;color:#333">' + escapeHtml(preview) + '</td>';
-          html += '<td style="width:15%;color:#888;font-size:12px">' + kind + '</td>';
+          html += '<td style="width:15%;color:#888;font-size:12px">' + kind + reviewBadge + '</td>';
           html += '<td style="width:15%;color:#888;font-size:12px">' + (item.app || '') + '</td>';
           html += '<td style="width:10%;color:#888;font-size:12px;text-align:right">' + date + '</td>';
           html += '</tr>';
