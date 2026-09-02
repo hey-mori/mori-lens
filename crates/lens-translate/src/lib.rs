@@ -38,6 +38,9 @@ mod http;
 mod json;
 
 #[cfg(test)]
+mod deep_eval;
+
+#[cfg(test)]
 mod live_tests;
 
 /// Where Ollama listens when nobody has changed anything.
