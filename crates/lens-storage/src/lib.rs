@@ -15,11 +15,11 @@
 //! migration runs once and is never re-applied.
 
 use rusqlite::{params, Connection};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// One item in the library.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
     /// Stable identity. Zero before insertion.
     pub id: i64,
@@ -46,6 +46,16 @@ pub struct Item {
     /// Tags for this item, populated on demand.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
+    /// Review state: `"new"`, `"learning"`, or `"mastered"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review_state: Option<String>,
+    /// When the item is next due for review, seconds since the Unix epoch.
+    /// NULL when mastered or not yet scheduled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_review_at: Option<i64>,
+    /// How many times the reader has successfully reviewed this item.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review_count: Option<i64>,
 }
 
 /// A page of items returned by [`Library::list`] or [`Library::search`].
@@ -91,6 +101,21 @@ pub struct Filter {
 
 /// A page size for listing and searching.
 const PAGE_SIZE: i64 = 50;
+
+/// Review intervals in seconds, indexed by the number of successful reviews.
+///
+/// A simplified SM-2 schedule: 1 day, 3 days, 7 days, 14 days, 30 days.
+/// After five successful reviews the item is mastered.
+const REVIEW_INTERVALS: [i64; 5] = [
+    86_400,    // 1 day
+    259_200,   // 3 days
+    604_800,   // 7 days
+    1_209_600, // 14 days
+    2_592_000, // 30 days
+];
+
+/// The review state for an item that has been mastered.
+const REVIEW_MASTERED: &str = "mastered";
 
 /// Errors from library operations.
 #[derive(Debug)]
@@ -149,9 +174,16 @@ impl Library {
     /// Insert one item. Returns the new item's id.
     ///
     /// The `id` field on the item is ignored; the database assigns one.
+    /// Review state starts as `"new"` with `next_review_at` set to one day
+    /// from now.
     pub fn insert(&self, item: &Item) -> Result<i64, Error> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let next_review = now + REVIEW_INTERVALS[0];
         self.conn.execute(
-            "INSERT INTO library (original, answer, caveat, app, created_at, kind, source_language, target_language, model, note) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO library (original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state, next_review_at, review_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'new', ?11, 0)",
             params![
                 item.original,
                 item.answer,
@@ -163,6 +195,7 @@ impl Library {
                 item.target_language,
                 item.model,
                 item.note,
+                next_review,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -172,7 +205,7 @@ impl Library {
     pub fn list(&self, offset: i64) -> Result<Page, Error> {
         let limit = PAGE_SIZE + 1;
         let mut stmt = self.conn.prepare(
-            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note FROM library ORDER BY created_at DESC, id DESC LIMIT ?1 OFFSET ?2",
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state, next_review_at, review_count FROM library ORDER BY created_at DESC, id DESC LIMIT ?1 OFFSET ?2",
         )?;
         let items: Vec<Item> = stmt
             .query_map(params![limit, offset], row_to_item)?
@@ -186,7 +219,7 @@ impl Library {
     /// Get one item by id.
     pub fn get(&self, id: i64) -> Result<Option<Item>, Error> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note FROM library WHERE id = ?1",
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state, next_review_at, review_count FROM library WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id], row_to_item)?;
         match rows.next() {
@@ -304,7 +337,7 @@ impl Library {
         let pattern = format!("%{trimmed}%");
         let limit = PAGE_SIZE + 1;
         let mut stmt = self.conn.prepare(
-            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note FROM library WHERE original LIKE ?1 OR answer LIKE ?1 ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3",
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state, next_review_at, review_count FROM library WHERE original LIKE ?1 OR answer LIKE ?1 ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3",
         )?;
         let items: Vec<Item> = stmt
             .query_map(params![pattern, limit, offset], row_to_item)?
@@ -345,7 +378,7 @@ impl Library {
 
         let limit = PAGE_SIZE + 1;
         let sql = format!(
-            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note FROM library{where_clause} ORDER BY created_at DESC, id DESC LIMIT ?{} OFFSET ?{}",
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state, next_review_at, review_count FROM library{where_clause} ORDER BY created_at DESC, id DESC LIMIT ?{} OFFSET ?{}",
             param_values.len() + 1,
             param_values.len() + 2
         );
@@ -517,10 +550,238 @@ impl Library {
             .map_err(|e| Error::Io(std::io::Error::other(e.to_string())))
     }
 
+    /// Export the library as a versioned JSONL string.
+    ///
+    /// The first line is a version header (`{"version": 1}`). Each
+    /// subsequent line is one JSON object representing an item, including
+    /// all fields and tags. This is the lossless round-trip format
+    /// described by [ADR-0013](../../docs/decisions/ADR-0013-the-local-library.md):
+    /// line-oriented, append-friendly, and resilient to partial corruption
+    /// (a damaged line loses one record, not the whole file).
+    pub fn export_jsonl(&self) -> Result<String, Error> {
+        let mut all_items = Vec::new();
+        let mut offset = 0i64;
+        loop {
+            let page = self.list(offset)?;
+            if page.items.is_empty() {
+                break;
+            }
+            let mut items = page.items;
+            for item in &mut items {
+                item.tags = Some(self.get_tags(item.id)?);
+            }
+            all_items.extend(items);
+            if !page.has_more {
+                break;
+            }
+            offset += PAGE_SIZE;
+        }
+
+        let mut out = String::from("{\"version\":1}\n");
+        for item in &all_items {
+            let line = serde_json::to_string(item)
+                .map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
+            out.push_str(&line);
+            out.push('\n');
+        }
+        Ok(out)
+    }
+
+    /// Import items from a versioned JSONL string.
+    ///
+    /// The first line must be a version header (`{"version": 1}`). Each
+    /// subsequent line is one JSON object. Items with the same original
+    /// text and kind as an existing row are skipped (duplicate detection).
+    ///
+    /// Returns the number of items imported (not counting skipped
+    /// duplicates).
+    pub fn import_jsonl(&self, jsonl: &str) -> Result<i64, Error> {
+        let mut imported = 0i64;
+        for (i, line) in jsonl.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            // First line is the version header.
+            if i == 0 {
+                let header: serde_json::Value = serde_json::from_str(trimmed)
+                    .map_err(|e| Error::Io(std::io::Error::other(format!("line 1: {e}"))))?;
+                let version = header.get("version").and_then(|v| v.as_i64()).unwrap_or(0);
+                if version != 1 {
+                    return Err(Error::Io(std::io::Error::other(format!(
+                        "unsupported JSONL version: {version}"
+                    ))));
+                }
+                continue;
+            }
+
+            let item: Item = serde_json::from_str(trimmed)
+                .map_err(|e| Error::Io(std::io::Error::other(format!("line {}: {e}", i + 1))))?;
+
+            // Skip duplicates.
+            if self
+                .has_duplicate(&item.original, &item.kind)
+                .unwrap_or(false)
+            {
+                continue;
+            }
+
+            // Insert without review state: the import preserves the
+            // original creation date but schedules a fresh review.
+            let insert_item = Item {
+                id: 0,
+                original: item.original,
+                answer: item.answer,
+                caveat: item.caveat,
+                app: item.app,
+                created_at: item.created_at,
+                kind: item.kind,
+                source_language: item.source_language,
+                target_language: item.target_language,
+                model: item.model,
+                note: item.note,
+                tags: None,
+                review_state: None,
+                next_review_at: None,
+                review_count: None,
+            };
+            let id = self.insert(&insert_item)?;
+
+            // Restore tags.
+            if let Some(tags) = item.tags {
+                if !tags.is_empty() {
+                    self.set_tags(id, &tags)?;
+                }
+            }
+
+            imported += 1;
+        }
+        Ok(imported)
+    }
+
     /// The database connection, for callers that need to run their own
     /// queries (e.g. schema introspection in tests).
     pub fn conn(&self) -> &Connection {
         &self.conn
+    }
+
+    // -- review list --------------------------------------------------------
+
+    /// List items due for review at the given time.
+    ///
+    /// An item is due when its `review_state` is not `"mastered"` and its
+    /// `next_review_at` is at or before `now`. Results are ordered by
+    /// `next_review_at` ascending (most overdue first).
+    pub fn list_due(&self, now: i64, offset: i64) -> Result<Page, Error> {
+        let limit = PAGE_SIZE + 1;
+        let mut stmt = self.conn.prepare(
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state, next_review_at, review_count FROM library WHERE review_state != 'mastered' AND next_review_at IS NOT NULL AND next_review_at <= ?1 ORDER BY next_review_at ASC, id ASC LIMIT ?2 OFFSET ?3",
+        )?;
+        let items: Vec<Item> = stmt
+            .query_map(params![now, limit, offset], row_to_item)?
+            .collect::<Result<_, _>>()?;
+        let has_more = items.len() as i64 > PAGE_SIZE;
+        let mut items = items;
+        items.truncate(PAGE_SIZE as usize);
+        Ok(Page { items, has_more })
+    }
+
+    /// Count items due for review at the given time.
+    pub fn count_due(&self, now: i64) -> Result<i64, Error> {
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM library WHERE review_state != 'mastered' AND next_review_at IS NOT NULL AND next_review_at <= ?1",
+            params![now],
+            |row| row.get(0),
+        ).map_err(Error::Sqlite)
+    }
+
+    /// Record a review outcome for an item.
+    ///
+    /// When `success` is true, the review count increments and the next
+    /// review is scheduled according to the interval table. After five
+    /// successful reviews the item is mastered and `next_review_at` is
+    /// cleared.
+    ///
+    /// When `success` is false, the review count resets to zero and the
+    /// next review is scheduled for one day from now.
+    ///
+    /// Returns whether the item existed.
+    pub fn record_review(&self, id: i64, success: bool, now: i64) -> Result<bool, Error> {
+        let item = match self.get(id)? {
+            Some(item) => item,
+            None => return Ok(false),
+        };
+
+        let count = item.review_count.unwrap_or(0);
+        let (new_state, new_count, next_at) = if success {
+            let new_count = count + 1;
+            if new_count >= REVIEW_INTERVALS.len() as i64 {
+                (REVIEW_MASTERED.to_owned(), new_count, None)
+            } else {
+                let state = if new_count == 1 {
+                    "learning".to_owned()
+                } else {
+                    item.review_state
+                        .clone()
+                        .unwrap_or_else(|| "new".to_owned())
+                };
+                let next = now + REVIEW_INTERVALS[new_count as usize];
+                (state, new_count, Some(next))
+            }
+        } else {
+            let next = now + REVIEW_INTERVALS[0];
+            ("learning".to_owned(), 0, Some(next))
+        };
+
+        self.conn.execute(
+            "UPDATE library SET review_state = ?1, review_count = ?2, next_review_at = ?3 WHERE id = ?4",
+            params![new_state, new_count, next_at, id],
+        )?;
+        Ok(true)
+    }
+
+    /// Securely wipe all data from the database.
+    ///
+    /// A plain SQLite `DELETE` frees pages but does not erase their content;
+    /// the bytes remain until the pages are reused. This method goes further,
+    /// following [ADR-0013](../../docs/decisions/ADR-0013-the-local-library.md):
+    ///
+    /// 1. Checkpoint the WAL so all pending writes are in the main database.
+    /// 2. Run `secure_delete = ON` so future deletes overwrite with zeros.
+    /// 3. Delete all rows from every content table.
+    /// 4. `VACUUM` to rebuild the database file, which reclaims freed pages
+    ///    and removes residual data from the file.
+    ///
+    /// This removes data **inside the SQLite file**. It does not reach
+    /// filesystem snapshots, drive controller remapped blocks, backups, or
+    /// exports the reader made. Each is named in the interface rather than
+    /// covered by a promise that sounds larger than it is.
+    pub fn secure_wipe(&self) -> Result<(), Error> {
+        // Checkpoint the WAL so all pending writes land in the main file.
+        // Ignore errors: a database without WAL mode returns an error that
+        // is harmless (there is nothing to checkpoint).
+        let _ = self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+
+        // Enable secure_delete so the DELETE below overwrites freed pages
+        // with zeros rather than leaving the old content in place.
+        self.conn.execute_batch("PRAGMA secure_delete = ON;")?;
+
+        // Remove all content. The order matters: child tables first because
+        // foreign keys reference library rows.
+        self.conn.execute_batch(
+            "DELETE FROM library_tags;
+             DELETE FROM tags;
+             DELETE FROM library;
+             DELETE FROM meta;",
+        )?;
+
+        // Rebuild the database file from scratch. VACUUM creates a new file,
+        // copies live pages into it, and replaces the old one. Any residual
+        // data in freed pages is gone after this.
+        self.conn.execute_batch("VACUUM;")?;
+
+        Ok(())
     }
 
     // -- migrations ---------------------------------------------------------
@@ -593,6 +854,20 @@ impl Library {
             )?;
         }
 
+        // Review state: spaced repetition scheduling for saved items.
+        if !applied.contains(&4) {
+            self.conn.execute_batch(
+                "ALTER TABLE library ADD COLUMN review_state TEXT NOT NULL DEFAULT 'new';
+                 ALTER TABLE library ADD COLUMN next_review_at INTEGER;
+                 ALTER TABLE library ADD COLUMN review_count INTEGER NOT NULL DEFAULT 0;
+
+                 CREATE INDEX library_review_due ON library (next_review_at)
+                     WHERE review_state != 'mastered';
+
+                 INSERT INTO schema_migrations (version) VALUES (4);",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -632,6 +907,9 @@ fn row_to_item(row: &rusqlite::Row) -> rusqlite::Result<Item> {
         target_language: row.get(8)?,
         model: row.get(9)?,
         note: row.get(10)?,
+        review_state: row.get::<_, Option<String>>(11)?.or(Some("new".to_owned())),
+        next_review_at: row.get(12)?,
+        review_count: row.get::<_, Option<i64>>(13)?.or(Some(0)),
         tags: None,
     })
 }
@@ -866,6 +1144,9 @@ mod tests {
             model: None,
             note: None,
             tags: None,
+            review_state: None,
+            next_review_at: None,
+            review_count: None,
         }
     }
 
@@ -883,6 +1164,9 @@ mod tests {
             model: Some("qwen2.5:7b".to_owned()),
             note: None,
             tags: None,
+            review_state: None,
+            next_review_at: None,
+            review_count: None,
         }
     }
 
@@ -903,7 +1187,7 @@ mod tests {
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
-        assert_eq!(versions, vec![1, 2, 3]);
+        assert_eq!(versions, vec![1, 2, 3, 4]);
         cleanup(&path);
     }
 
@@ -1238,6 +1522,9 @@ mod tests {
             model: None,
             note: None,
             tags: None,
+            review_state: None,
+            next_review_at: None,
+            review_count: None,
         };
         lib.insert(&item).unwrap();
 
@@ -1271,6 +1558,9 @@ mod tests {
             model: Some("qwen".to_owned()),
             note: Some("my note".to_owned()),
             tags: None,
+            review_state: None,
+            next_review_at: None,
+            review_count: None,
         };
         let id = lib.insert(&item).unwrap();
         lib.set_tags(id, &["tag1".to_owned(), "tag2".to_owned()])
@@ -1290,6 +1580,107 @@ mod tests {
         assert_eq!(obj["tags"], serde_json::json!(["tag1", "tag2"]));
 
         cleanup(&path);
+    }
+
+    #[test]
+    fn jsonl_export_has_a_version_header_and_one_item_per_line() {
+        let path = temp_db("export-jsonl");
+        let lib = Library::open(&path).unwrap();
+
+        let mut item = Item {
+            id: 0,
+            original: "first".to_owned(),
+            answer: "첫째".to_owned(),
+            caveat: None,
+            app: None,
+            created_at: 1_786_075_140,
+            kind: "translation".to_owned(),
+            source_language: None,
+            target_language: None,
+            model: None,
+            note: None,
+            tags: None,
+            review_state: None,
+            next_review_at: None,
+            review_count: None,
+        };
+        lib.insert(&item).unwrap();
+        item.original = "second".to_owned();
+        item.answer = "둘째".to_owned();
+        item.created_at = 1_786_075_200;
+        lib.insert(&item).unwrap();
+
+        let jsonl = lib.export_jsonl().unwrap();
+        let lines: Vec<&str> = jsonl.trim().lines().collect();
+        assert_eq!(lines.len(), 3);
+
+        let header: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(header["version"], 1);
+
+        let first: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        let second: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
+        assert_eq!(first["original"], "second");
+        assert_eq!(second["original"], "first");
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn jsonl_round_trip_preserves_items_and_tags() {
+        let src = temp_db("jsonl-src");
+        let dst = temp_db("jsonl-dst");
+        let lib_a = Library::open(&src).unwrap();
+
+        let mut item = Item {
+            id: 0,
+            original: "hello world".to_owned(),
+            answer: "안녕 세상".to_owned(),
+            caveat: None,
+            app: Some("TestApp".to_owned()),
+            created_at: 1_786_075_140,
+            kind: "translation".to_owned(),
+            source_language: Some("en".to_owned()),
+            target_language: Some("ko".to_owned()),
+            model: None,
+            note: Some("a note".to_owned()),
+            tags: None,
+            review_state: None,
+            next_review_at: None,
+            review_count: None,
+        };
+        let id = lib_a.insert(&item).unwrap();
+        lib_a
+            .set_tags(id, &["greeting".to_owned(), "test".to_owned()])
+            .unwrap();
+
+        item.original = "second item".to_owned();
+        item.answer = "둘째 항목".to_owned();
+        item.created_at = 1_786_075_200;
+        item.kind = "analysis".to_owned();
+        lib_a.insert(&item).unwrap();
+
+        let jsonl = lib_a.export_jsonl().unwrap();
+
+        // Import into a fresh database.
+        let lib_b = Library::open(&dst).unwrap();
+        let count = lib_b.import_jsonl(&jsonl).unwrap();
+        assert_eq!(count, 2);
+
+        // Verify the imported data.
+        assert_eq!(lib_b.count().unwrap(), 2);
+        let page = lib_b.search("hello world", 0).unwrap();
+        assert_eq!(page.items.len(), 1);
+        let tags = lib_b.get_tags(page.items[0].id).unwrap();
+        assert!(tags.contains(&"greeting".to_owned()));
+        assert!(tags.contains(&"test".to_owned()));
+
+        // Re-importing the same data skips duplicates.
+        let count2 = lib_b.import_jsonl(&jsonl).unwrap();
+        assert_eq!(count2, 0);
+        assert_eq!(lib_b.count().unwrap(), 2);
+
+        cleanup(&src);
+        cleanup(&dst);
     }
 
     // -- import tracking ----------------------------------------------------
@@ -1532,6 +1923,157 @@ mod tests {
         assert!(lib.has_duplicate(&item.original, "translation").unwrap());
         assert!(!lib.has_duplicate(&item.original, "analysis").unwrap());
         assert!(!lib.has_duplicate("different text", "translation").unwrap());
+        cleanup(&path);
+    }
+
+    /// A secure wipe removes all rows and leaves a usable database.
+    #[test]
+    fn secure_wipe_removes_everything_and_leaves_a_working_database() {
+        let path = temp_db("secure-wipe");
+        let lib = Library::open(&path).unwrap();
+
+        // Insert a few items with tags.
+        let mut item = a_translation();
+        lib.insert(&item).unwrap();
+        item.original = "A second sentence.".to_owned();
+        lib.insert(&item).unwrap();
+        lib.set_tags(1, &["vocab".to_owned(), "important".to_owned()])
+            .unwrap();
+
+        assert_eq!(lib.count().unwrap(), 2);
+
+        // Wipe.
+        lib.secure_wipe().unwrap();
+
+        // Everything is gone.
+        assert_eq!(lib.count().unwrap(), 0);
+        assert!(lib.get(1).unwrap().is_none());
+        assert!(lib.search("sentence", 0).unwrap().items.is_empty());
+
+        // The database is still usable.
+        item.original = "After the wipe.".to_owned();
+        lib.insert(&item).unwrap();
+        assert_eq!(lib.count().unwrap(), 1);
+
+        cleanup(&path);
+    }
+
+    // -- review list --------------------------------------------------------
+
+    #[test]
+    fn new_items_are_scheduled_for_review_one_day_later() {
+        let path = temp_db("review-new");
+        let lib = Library::open(&path).unwrap();
+        let id = lib.insert(&a_translation()).unwrap();
+
+        let item = lib.get(id).unwrap().unwrap();
+        assert_eq!(item.review_state.as_deref(), Some("new"));
+        assert_eq!(item.review_count, Some(0));
+        assert!(item.next_review_at.is_some());
+
+        // The next review should be roughly 1 day from now.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let scheduled = item.next_review_at.unwrap();
+        assert!(scheduled > now);
+        assert!(scheduled <= now + 86_400 + 10);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn list_due_returns_items_past_their_review_time() {
+        let path = temp_db("review-due");
+        let lib = Library::open(&path).unwrap();
+        let id = lib.insert(&a_translation()).unwrap();
+
+        // Not yet due (just scheduled).
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        assert_eq!(lib.count_due(now).unwrap(), 0);
+        assert!(lib.list_due(now, 0).unwrap().items.is_empty());
+
+        // Fast forward past the review time.
+        let future = now + 100_000;
+        assert_eq!(lib.count_due(future).unwrap(), 1);
+        let page = lib.list_due(future, 0).unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].id, id);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_successful_review_advances_the_schedule() {
+        let path = temp_db("review-success");
+        let lib = Library::open(&path).unwrap();
+        let id = lib.insert(&a_translation()).unwrap();
+
+        let now = 1_700_000_000i64;
+        assert!(lib.record_review(id, true, now).unwrap());
+
+        let item = lib.get(id).unwrap().unwrap();
+        assert_eq!(item.review_state.as_deref(), Some("learning"));
+        assert_eq!(item.review_count, Some(1));
+        // After 1 success, next review is 3 days out.
+        assert_eq!(item.next_review_at, Some(now + 259_200));
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_failed_review_resets_the_count() {
+        let path = temp_db("review-fail");
+        let lib = Library::open(&path).unwrap();
+        let id = lib.insert(&a_translation()).unwrap();
+
+        // First, a success to bump the count.
+        lib.record_review(id, true, 1_700_000_000).unwrap();
+        let item = lib.get(id).unwrap().unwrap();
+        assert_eq!(item.review_count, Some(1));
+
+        // Then a failure resets to zero.
+        let now = 1_700_100_000i64;
+        lib.record_review(id, false, now).unwrap();
+        let item = lib.get(id).unwrap().unwrap();
+        assert_eq!(item.review_count, Some(0));
+        assert_eq!(item.next_review_at, Some(now + 86_400));
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn five_successes_master_the_item() {
+        let path = temp_db("review-master");
+        let lib = Library::open(&path).unwrap();
+        let id = lib.insert(&a_translation()).unwrap();
+
+        let mut now = 1_700_000_000i64;
+        for _ in 0..5 {
+            lib.record_review(id, true, now).unwrap();
+            now += 86_400;
+        }
+
+        let item = lib.get(id).unwrap().unwrap();
+        assert_eq!(item.review_state.as_deref(), Some("mastered"));
+        assert_eq!(item.review_count, Some(5));
+        assert!(item.next_review_at.is_none());
+
+        // Mastered items are not due.
+        assert_eq!(lib.count_due(now + 1_000_000).unwrap(), 0);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn recording_a_review_on_a_missing_item_returns_false() {
+        let path = temp_db("review-missing");
+        let lib = Library::open(&path).unwrap();
+        assert!(!lib.record_review(999, true, 0).unwrap());
         cleanup(&path);
     }
 }

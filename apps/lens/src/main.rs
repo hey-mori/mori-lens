@@ -719,6 +719,9 @@ fn main() -> std::process::ExitCode {
     let (answers_tx, answers_rx) = mpsc::channel::<Answer>();
 
     let mut cache = TranslationCache::new(CACHE_ENTRIES);
+    // Captured before the worker takes the translator, so the keep and detail
+    // paths can record which model produced a saved entry.
+    let model_name = translator.model().to_owned();
     let warm_translator = translator.clone();
     // Kept for the exit path: the worker takes ownership of the translator.
     let releaser = translator.clone();
@@ -1158,29 +1161,26 @@ fn main() -> std::process::ExitCode {
         shared_settings.lock().unwrap().current()
     );
 
-    let shared_library = std::sync::Arc::new(std::sync::Mutex::new(
-        library_service::open(&data_dir),
-    ));
+    let shared_library =
+        std::sync::Arc::new(std::sync::Mutex::new(library_service::open(&data_dir)));
     println!("  library   {:?}", shared_library.lock().unwrap().path());
 
     let (shared_detail, explain_flag) = detail_view::new_shared();
-    let shared_save_path: detail_view::SharedSavePath =
-        std::sync::Arc::new(saved_to.clone());
+    let shared_save_path: detail_view::SharedSavePath = std::sync::Arc::new(saved_to.clone());
 
-    let (tauri_handle, shared_diagnostics, tauri_app) =
-        match tauri_app::build(
-            shared_settings.clone(),
-            shared_library,
-            shared_detail.clone(),
-            explain_flag.clone(),
-            shared_save_path,
-        ) {
-            Ok(triple) => triple,
-            Err(error) => {
-                eprintln!("Tauri initialization failed: {error}");
-                return std::process::ExitCode::from(1);
-            }
-        };
+    let (tauri_handle, shared_diagnostics, tauri_app) = match tauri_app::build(
+        shared_settings.clone(),
+        shared_library,
+        shared_detail.clone(),
+        explain_flag.clone(),
+        shared_save_path,
+    ) {
+        Ok(triple) => triple,
+        Err(error) => {
+            eprintln!("Tauri initialization failed: {error}");
+            return std::process::ExitCode::from(1);
+        }
+    };
     println!("  tauri     running");
 
     // Pause has three entrances now: the hotkey, the tray icon, and the tray
@@ -1281,7 +1281,15 @@ fn main() -> std::process::ExitCode {
                 // reachable from a hover (`docs/privacy-model.md` §1).
                 let under = pointer::position().and_then(pointer::process_name_at);
                 match on_screen.as_ref().and_then(|(card, anchor)| {
-                    card.kept_as(under.as_deref()).map(|entry| (entry, *anchor))
+                    card.kept_as(under.as_deref()).map(|mut entry| {
+                        // Populate the metadata the library stores alongside
+                        // the entry. The model name was captured before the
+                        // worker took the translator; the target language is
+                        // the reader's own, from settings.
+                        entry.target_language = Some(language.clone());
+                        entry.model = Some(model_name.clone());
+                        (entry, *anchor)
+                    })
                 }) {
                     Some((entry, anchor)) => {
                         match keeping::append(&saved_to, &entry, std::time::SystemTime::now()) {
@@ -1345,8 +1353,11 @@ fn main() -> std::process::ExitCode {
                     Some(mut view) => {
                         // Capture the application name from under the pointer,
                         // so the detail save can store it in the library.
-                        view.app = pointer::position()
-                            .and_then(pointer::process_name_at);
+                        view.app = pointer::position().and_then(pointer::process_name_at);
+                        // Record which model and target language produced this
+                        // answer, so the detail save can store them.
+                        view.target_language = Some(language.clone());
+                        view.model = Some(model_name.clone());
                         let explained = view.rows.iter().any(|(_, v)| !v.trim().is_empty());
                         *loop_detail.lock().unwrap() = Some(view);
                         loop_tauri.show_detail_window();

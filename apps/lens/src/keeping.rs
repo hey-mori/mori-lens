@@ -157,11 +157,14 @@ fn write_to_library(md_path: &Path, entry: &Entry, at: SystemTime) -> Option<i64
         app: entry.app.clone(),
         created_at: seconds,
         kind: kind.to_owned(),
-        source_language: None,
-        target_language: None,
-        model: None,
+        source_language: entry.source_language.clone(),
+        target_language: entry.target_language.clone(),
+        model: entry.model.clone(),
         note: None,
         tags: None,
+        review_state: None,
+        next_review_at: None,
+        review_count: None,
     };
     lib.insert(&item).ok()
 }
@@ -183,6 +186,9 @@ mod tests {
             answer: "포인터가 멈춘 뒤에야 읽습니다.".to_owned(),
             caveat: None,
             app: Some("Code".to_owned()),
+            source_language: None,
+            target_language: None,
+            model: None,
         }
     }
 
@@ -286,6 +292,9 @@ mod tests {
             answer: "원형 · 멱등성".to_owned(),
             caveat: Some("AI 설명 · 사실 확인 필요".to_owned()),
             app: None,
+            source_language: None,
+            target_language: None,
+            model: None,
         };
         append(&file, &entry, at).expect("kept");
 
@@ -336,6 +345,31 @@ mod tests {
         let db_path = file.parent().unwrap().join("library.db");
         let lib = Library::open(&db_path).unwrap();
         assert_eq!(lib.count().unwrap(), 1, "database deduplicates");
+        let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
+    }
+
+    /// Language and model metadata survive the round-trip into the database.
+    #[test]
+    fn language_and_model_metadata_are_stored_in_the_database() {
+        let file = scratch("library-metadata");
+        let at = UNIX_EPOCH + Duration::from_secs(1_786_075_140);
+        let entry = Entry {
+            original: "The pointer must rest.".to_owned(),
+            answer: "포인터가 멈춘 뒤에야 읽습니다.".to_owned(),
+            caveat: None,
+            app: Some("Code".to_owned()),
+            source_language: Some("English".to_owned()),
+            target_language: Some("Korean".to_owned()),
+            model: Some("qwen2.5:7b".to_owned()),
+        };
+        append(&file, &entry, at).expect("kept");
+
+        let db_path = file.parent().unwrap().join("library.db");
+        let lib = Library::open(&db_path).unwrap();
+        let item = lib.get(1).unwrap().unwrap();
+        assert_eq!(item.source_language.as_deref(), Some("English"));
+        assert_eq!(item.target_language.as_deref(), Some("Korean"));
+        assert_eq!(item.model.as_deref(), Some("qwen2.5:7b"));
         let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
     }
 }
