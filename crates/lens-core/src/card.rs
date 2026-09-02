@@ -739,6 +739,9 @@ impl Card {
             app: app
                 .map(str::to_owned)
                 .filter(|name| !name.trim().is_empty()),
+            source_language: None,
+            target_language: None,
+            model: None,
         })
     }
 
