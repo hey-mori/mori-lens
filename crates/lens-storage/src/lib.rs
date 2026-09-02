@@ -15,11 +15,11 @@
 //! migration runs once and is never re-applied.
 
 use rusqlite::{params, Connection};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// One item in the library.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
     /// Stable identity. Zero before insertion.
     pub id: i64,
@@ -585,6 +585,79 @@ impl Library {
             out.push('\n');
         }
         Ok(out)
+    }
+
+    /// Import items from a versioned JSONL string.
+    ///
+    /// The first line must be a version header (`{"version": 1}`). Each
+    /// subsequent line is one JSON object. Items with the same original
+    /// text and kind as an existing row are skipped (duplicate detection).
+    ///
+    /// Returns the number of items imported (not counting skipped
+    /// duplicates).
+    pub fn import_jsonl(&self, jsonl: &str) -> Result<i64, Error> {
+        let mut imported = 0i64;
+        for (i, line) in jsonl.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            // First line is the version header.
+            if i == 0 {
+                let header: serde_json::Value = serde_json::from_str(trimmed)
+                    .map_err(|e| Error::Io(std::io::Error::other(format!("line 1: {e}"))))?;
+                let version = header.get("version").and_then(|v| v.as_i64()).unwrap_or(0);
+                if version != 1 {
+                    return Err(Error::Io(std::io::Error::other(format!(
+                        "unsupported JSONL version: {version}"
+                    ))));
+                }
+                continue;
+            }
+
+            let item: Item = serde_json::from_str(trimmed)
+                .map_err(|e| Error::Io(std::io::Error::other(format!("line {}: {e}", i + 1))))?;
+
+            // Skip duplicates.
+            if self
+                .has_duplicate(&item.original, &item.kind)
+                .unwrap_or(false)
+            {
+                continue;
+            }
+
+            // Insert without review state: the import preserves the
+            // original creation date but schedules a fresh review.
+            let insert_item = Item {
+                id: 0,
+                original: item.original,
+                answer: item.answer,
+                caveat: item.caveat,
+                app: item.app,
+                created_at: item.created_at,
+                kind: item.kind,
+                source_language: item.source_language,
+                target_language: item.target_language,
+                model: item.model,
+                note: item.note,
+                tags: None,
+                review_state: None,
+                next_review_at: None,
+                review_count: None,
+            };
+            let id = self.insert(&insert_item)?;
+
+            // Restore tags.
+            if let Some(tags) = item.tags {
+                if !tags.is_empty() {
+                    self.set_tags(id, &tags)?;
+                }
+            }
+
+            imported += 1;
+        }
+        Ok(imported)
     }
 
     /// The database connection, for callers that need to run their own
@@ -1550,6 +1623,64 @@ mod tests {
         assert_eq!(second["original"], "first");
 
         cleanup(&path);
+    }
+
+    #[test]
+    fn jsonl_round_trip_preserves_items_and_tags() {
+        let src = temp_db("jsonl-src");
+        let dst = temp_db("jsonl-dst");
+        let lib_a = Library::open(&src).unwrap();
+
+        let mut item = Item {
+            id: 0,
+            original: "hello world".to_owned(),
+            answer: "안녕 세상".to_owned(),
+            caveat: None,
+            app: Some("TestApp".to_owned()),
+            created_at: 1_786_075_140,
+            kind: "translation".to_owned(),
+            source_language: Some("en".to_owned()),
+            target_language: Some("ko".to_owned()),
+            model: None,
+            note: Some("a note".to_owned()),
+            tags: None,
+            review_state: None,
+            next_review_at: None,
+            review_count: None,
+        };
+        let id = lib_a.insert(&item).unwrap();
+        lib_a
+            .set_tags(id, &["greeting".to_owned(), "test".to_owned()])
+            .unwrap();
+
+        item.original = "second item".to_owned();
+        item.answer = "둘째 항목".to_owned();
+        item.created_at = 1_786_075_200;
+        item.kind = "analysis".to_owned();
+        lib_a.insert(&item).unwrap();
+
+        let jsonl = lib_a.export_jsonl().unwrap();
+
+        // Import into a fresh database.
+        let lib_b = Library::open(&dst).unwrap();
+        let count = lib_b.import_jsonl(&jsonl).unwrap();
+        assert_eq!(count, 2);
+
+        // Verify the imported data.
+        assert_eq!(lib_b.count().unwrap(), 2);
+        let page = lib_b.search("hello world", 0).unwrap();
+        assert_eq!(page.items.len(), 1);
+        let tags = lib_b.get_tags(page.items[0].id).unwrap();
+        assert!(tags.contains(&"greeting".to_owned()));
+        assert!(tags.contains(&"test".to_owned()));
+
+        // Re-importing the same data skips duplicates.
+        let count2 = lib_b.import_jsonl(&jsonl).unwrap();
+        assert_eq!(count2, 0);
+        assert_eq!(lib_b.count().unwrap(), 2);
+
+        cleanup(&src);
+        cleanup(&dst);
     }
 
     // -- import tracking ----------------------------------------------------
