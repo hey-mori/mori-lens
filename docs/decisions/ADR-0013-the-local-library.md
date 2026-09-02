@@ -14,7 +14,10 @@
 
 That argument is sound, and it is about **durability**. It says nothing about
 structure, and structure is what M8's other three words need: *saved words and
-sentences, **notes, review list, export***. One of the four is built.
+sentences, **notes, review list, export***. All four are now built: saving
+inserts into `library.db`, notes are editable in the library UI, a review list
+with spaced repetition scheduling is in the settings window, and export is
+available as Markdown and JSON.
 
 `README.md` has meanwhile carried `Storage (later): SQLite, opt-in history`
 since before any of this was discussed. A proposal that a database should wait

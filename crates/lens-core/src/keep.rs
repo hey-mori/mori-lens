@@ -47,6 +47,22 @@ pub struct Entry {
     /// looking back, and it is the process name the policy already works with
     /// rather than anything new.
     pub app: Option<String>,
+    /// The source language of the original text, when known.
+    ///
+    /// Stored in the library database for structured queries. The saved.md
+    /// file does not use it; it is metadata for the reader looking back.
+    pub source_language: Option<String>,
+    /// The target language the text was translated into.
+    ///
+    /// The reader's own language, from the settings file. Carried so a library
+    /// entry can be searched by language pair.
+    pub target_language: Option<String>,
+    /// The model that produced the answer.
+    ///
+    /// The name the engine reported, e.g. `qwen2.5:7b`. Useful when a reader
+    /// is comparing answers across models, and it is what the footer already
+    /// shows on the card.
+    pub model: Option<String>,
 }
 
 /// The heading a file starts with, written once when it is created.
@@ -167,6 +183,9 @@ mod tests {
             answer: "포인터가 멈춘 뒤에야 무엇이든 읽습니다.".to_owned(),
             caveat: None,
             app: Some("Code".to_owned()),
+            source_language: Some("English".to_owned()),
+            target_language: Some("Korean".to_owned()),
+            model: Some("qwen2.5:7b".to_owned()),
         }
     }
 
@@ -194,6 +213,9 @@ mod tests {
             answer: "원형 · 멱등성\n품사 · 명사".to_owned(),
             caveat: Some(crate::analyse::DeepAnalysis::LABEL.to_owned()),
             app: None,
+            source_language: None,
+            target_language: None,
+            model: None,
         };
         let block = block(&entry, at(0));
         assert!(
@@ -215,6 +237,9 @@ mod tests {
             answer: "a\nb\nc".to_owned(),
             caveat: None,
             app: None,
+            source_language: None,
+            target_language: None,
+            model: None,
         };
         let block = block(&entry, at(0));
         for line in ["> a", "> b", "> c"] {
@@ -230,6 +255,9 @@ mod tests {
             answer: "제목이 아닙니다".to_owned(),
             caveat: None,
             app: None,
+            source_language: None,
+            target_language: None,
+            model: None,
         };
         let block = block(&entry, at(0));
         assert!(block.contains("> # not a heading"), "{block}");

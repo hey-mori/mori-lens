@@ -117,11 +117,11 @@ match is not a ranked full-text search, and the product does not claim
 it is. For a personal library, it finds what a reader types, in any
 language, with no configuration.
 
-**The schema has room for notes, tags, and review state, but none of
-them are built yet.** `note` is in the schema because the M8 gate asks
-for it and adding a column later is a migration that is easier to write
-now than to design under pressure. Tags and review state are not yet in
-the schema; they arrive when the review list does.
+**The schema has room for notes, tags, and review state.** `note` is in
+the schema because the M8 gate asks for it. Tags arrived in migration 3
+as a many-to-many relationship. Review state arrived in migration 4 with
+`review_state`, `next_review_at`, and `review_count` columns and a
+partial index on `next_review_at` for the due-items query.
 
 **`saved.md` is still written on every save.** The database is a second
 store alongside the file, not a replacement. If the database write
