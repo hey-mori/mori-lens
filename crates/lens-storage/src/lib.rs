@@ -550,6 +550,43 @@ impl Library {
             .map_err(|e| Error::Io(std::io::Error::other(e.to_string())))
     }
 
+    /// Export the library as a versioned JSONL string.
+    ///
+    /// The first line is a version header (`{"version": 1}`). Each
+    /// subsequent line is one JSON object representing an item, including
+    /// all fields and tags. This is the lossless round-trip format
+    /// described by [ADR-0013](../../docs/decisions/ADR-0013-the-local-library.md):
+    /// line-oriented, append-friendly, and resilient to partial corruption
+    /// (a damaged line loses one record, not the whole file).
+    pub fn export_jsonl(&self) -> Result<String, Error> {
+        let mut all_items = Vec::new();
+        let mut offset = 0i64;
+        loop {
+            let page = self.list(offset)?;
+            if page.items.is_empty() {
+                break;
+            }
+            let mut items = page.items;
+            for item in &mut items {
+                item.tags = Some(self.get_tags(item.id)?);
+            }
+            all_items.extend(items);
+            if !page.has_more {
+                break;
+            }
+            offset += PAGE_SIZE;
+        }
+
+        let mut out = String::from("{\"version\":1}\n");
+        for item in &all_items {
+            let line = serde_json::to_string(item)
+                .map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
+            out.push_str(&line);
+            out.push('\n');
+        }
+        Ok(out)
+    }
+
     /// The database connection, for callers that need to run their own
     /// queries (e.g. schema introspection in tests).
     pub fn conn(&self) -> &Connection {
@@ -1468,6 +1505,49 @@ mod tests {
         assert_eq!(obj["kind"], "translation");
         assert_eq!(obj["note"], "my note");
         assert_eq!(obj["tags"], serde_json::json!(["tag1", "tag2"]));
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn jsonl_export_has_a_version_header_and_one_item_per_line() {
+        let path = temp_db("export-jsonl");
+        let lib = Library::open(&path).unwrap();
+
+        let mut item = Item {
+            id: 0,
+            original: "first".to_owned(),
+            answer: "첫째".to_owned(),
+            caveat: None,
+            app: None,
+            created_at: 1_786_075_140,
+            kind: "translation".to_owned(),
+            source_language: None,
+            target_language: None,
+            model: None,
+            note: None,
+            tags: None,
+            review_state: None,
+            next_review_at: None,
+            review_count: None,
+        };
+        lib.insert(&item).unwrap();
+        item.original = "second".to_owned();
+        item.answer = "둘째".to_owned();
+        item.created_at = 1_786_075_200;
+        lib.insert(&item).unwrap();
+
+        let jsonl = lib.export_jsonl().unwrap();
+        let lines: Vec<&str> = jsonl.trim().lines().collect();
+        assert_eq!(lines.len(), 3);
+
+        let header: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(header["version"], 1);
+
+        let first: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        let second: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
+        assert_eq!(first["original"], "second");
+        assert_eq!(second["original"], "first");
 
         cleanup(&path);
     }
