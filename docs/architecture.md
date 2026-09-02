@@ -23,10 +23,11 @@ Segmentation          lens-core::text         built
   word · sentence · paragraph around the pointer
   │
   ▼
-Language routing      (M3)                    partial
+Language routing      (M3)                    shipped
   script detection, language id, engine choice
-  script detection and target-language routing are built; full source
-  language identification is not
+  script detection and target-language routing are built; Latin-script
+  language identification (English vs French) returns Undecidable and
+  translates, which is the safe default
   │
   ▼
 Translation           (M3)                    shipped
@@ -52,11 +53,13 @@ crates/lens-core/          no OS dependencies, no async runtime
   session.rs               policy plus intent plus acquisition routing
   text.rs                  TextTarget and word/sentence/paragraph spans
   acquire.rs               the TextAcquirer trait and AcquireError
+  barren.rs                not photographing the screen when there is nothing there
   language.rs              which script a text is in, and whether to translate
   policy.rs                per-application allow / modifier / deny
   translate.rs             the Translator trait, TranslateError, echo checks
   cache.rs                 the same sentence twice costs nothing
   card.rs                  what a card says, and where it sits
+  panel.rs                 what any non-card surface shows, as blocks of text (ADR-0012)
   keep.rs                  what a reader keeps, and the file shape
   analyse.rs               deep analysis: schema, parser, answerable filter
   detail.rs                the read-only panel content from a card
@@ -64,6 +67,9 @@ crates/lens-core/          no OS dependencies, no async runtime
   welcome.rs               the first-run lesson
   theme.rs                 what a card looks like, as data
   settings.rs              what the user chose, parsed from their file
+  recent.rs                session-recent tier: 50 cards, 2 hours, memory only (ADR-0014)
+  tally.rs                 session counts and what the numbers suggest
+  diagnostics.rs           is this working for me, in a window rather than a console (#165)
   icon.rs                  the tray glyph, computed rather than shipped
 
 crates/lens-translate/     the Ollama client, no HTTP or JSON dependency
@@ -76,8 +82,8 @@ crates/lens-settings/      versioned TOML settings, round-trip preservation
   write.rs                 atomic write with rollback on invalid output
   migrate.rs               settings.conf to settings.toml migration
 
-crates/lens-storage/      SQLite library for saved items (ADR-0013, ADR-0015)
-  lib.rs                   schema, migrations, CRUD, search, saved.md import
+crates/lens-storage/      SQLite library for saved items and persistent history (ADR-0013, ADR-0014, ADR-0015)
+  lib.rs                   schema, migrations, CRUD, search, saved.md import, history with cap and provenance
 
 crates/platform-windows/   the Windows implementation of TextAcquirer
   com.rs                   apartment handling for a call
