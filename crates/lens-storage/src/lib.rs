@@ -67,6 +67,46 @@ pub struct Page {
     pub has_more: bool,
 }
 
+/// One entry in the persistent history (ADR-0014 Tier 3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryEntry {
+    /// Stable identity. Zero before insertion.
+    pub id: i64,
+    /// The text on the screen.
+    pub original: String,
+    /// The translation or explanation.
+    pub answer: String,
+    /// `"translation"` or `"analysis"`.
+    pub kind: String,
+    /// Source language code.
+    pub source_language: Option<String>,
+    /// Target language code.
+    pub target_language: Option<String>,
+    /// The model that produced the answer.
+    pub model: Option<String>,
+    /// The source application's process name. Only stored when
+    /// `history_store_app` is on.
+    pub app: Option<String>,
+    /// How the text was acquired: `"accessibility"` or `"ocr"`.
+    pub provenance: String,
+    /// Where the inference ran: `"local"`, `"external"`, or `"unknown"`.
+    /// Existing rows before migration 6 have `"unknown"`.
+    pub provider_scope: String,
+    /// When the card was shown, seconds since the Unix epoch.
+    pub created_at: i64,
+}
+
+/// A page of history entries.
+#[derive(Debug, Clone)]
+pub struct HistoryPage {
+    /// The entries in this page, newest first.
+    pub entries: Vec<HistoryEntry>,
+    /// Whether more entries exist beyond this page.
+    pub has_more: bool,
+    /// Total number of entries in the history.
+    pub total: i64,
+}
+
 /// The kind of a kept item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -101,6 +141,12 @@ pub struct Filter {
 
 /// A page size for listing and searching.
 const PAGE_SIZE: i64 = 50;
+
+/// The default maximum number of history entries (ADR-0014).
+///
+/// When the count exceeds this, the oldest entries are removed. Ordering is
+/// deterministic: `created_at ASC, id ASC`.
+const DEFAULT_HISTORY_MAX_ENTRIES: i64 = 1000;
 
 /// Review intervals in seconds, indexed by the number of successful reviews.
 ///
@@ -768,10 +814,12 @@ impl Library {
         self.conn.execute_batch("PRAGMA secure_delete = ON;")?;
 
         // Remove all content. The order matters: child tables first because
-        // foreign keys reference library rows.
+        // foreign keys reference library rows. History is also user-owned
+        // persistent data and must be wiped.
         self.conn.execute_batch(
             "DELETE FROM library_tags;
              DELETE FROM tags;
+             DELETE FROM history;
              DELETE FROM library;
              DELETE FROM meta;",
         )?;
@@ -868,7 +916,176 @@ impl Library {
             )?;
         }
 
+        // Persistent history (ADR-0014 Tier 3).
+        // Off by default; nothing is written until the reader turns it on.
+        if !applied.contains(&5) {
+            self.conn.execute_batch(
+                "CREATE TABLE history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    original TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    kind TEXT NOT NULL DEFAULT 'translation',
+                    source_language TEXT,
+                    target_language TEXT,
+                    model TEXT,
+                    app TEXT,
+                    provenance TEXT NOT NULL DEFAULT 'accessibility',
+                    created_at INTEGER NOT NULL
+                );
+
+                CREATE INDEX history_created_at ON history (created_at DESC);
+
+                INSERT INTO schema_migrations (version) VALUES (5);",
+            )?;
+        }
+
+        // Provider scope: whether the inference ran locally or externally.
+        // ADR-0014 requires both acquisition and provider provenance to be visible.
+        if !applied.contains(&6) {
+            self.conn.execute_batch(
+                "ALTER TABLE history ADD COLUMN provider_scope TEXT NOT NULL DEFAULT 'unknown';
+
+                 INSERT INTO schema_migrations (version) VALUES (6);",
+            )?;
+        }
+
         Ok(())
+    }
+
+    /// Record one entry in the persistent history.
+    ///
+    /// Only written when the reader has turned history on (ADR-0014 Tier 3).
+    /// The caller is responsible for checking the setting; this method always
+    /// writes if called. After insertion, enforces the default maximum entry
+    /// count by removing the oldest entries if needed.
+    pub fn record_history(&self, entry: &HistoryEntry) -> Result<i64, Error> {
+        self.conn.execute(
+            "INSERT INTO history (original, answer, kind, source_language, target_language, model, app, provenance, provider_scope, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                entry.original,
+                entry.answer,
+                entry.kind,
+                entry.source_language,
+                entry.target_language,
+                entry.model,
+                entry.app,
+                entry.provenance,
+                entry.provider_scope,
+                entry.created_at,
+            ],
+        )?;
+        let id = self.conn.last_insert_rowid();
+
+        // Enforce the default maximum entry count (ADR-0014).
+        // Remove the oldest entries if the count exceeds the limit.
+        // Ordering: created_at ASC, id ASC (deterministic).
+        self.conn.execute(
+            "DELETE FROM history WHERE id NOT IN (
+                SELECT id FROM history ORDER BY created_at DESC, id DESC LIMIT ?1
+            )",
+            params![DEFAULT_HISTORY_MAX_ENTRIES],
+        )?;
+
+        Ok(id)
+    }
+
+    /// List history entries, newest first.
+    pub fn history_list(&self, offset: i64) -> Result<HistoryPage, Error> {
+        let limit = PAGE_SIZE + 1;
+        let total: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM history", [], |row| row.get(0))?;
+        let mut stmt = self.conn.prepare(
+            "SELECT id, original, answer, kind, source_language, target_language, model, app, provenance, provider_scope, created_at FROM history ORDER BY created_at DESC, id DESC LIMIT ?1 OFFSET ?2",
+        )?;
+        let entries: Vec<HistoryEntry> = stmt
+            .query_map(params![limit, offset], row_to_history_entry)?
+            .collect::<Result<_, _>>()?;
+        let has_more = entries.len() as i64 > PAGE_SIZE;
+        let mut entries = entries;
+        entries.truncate(PAGE_SIZE as usize);
+        Ok(HistoryPage {
+            entries,
+            has_more,
+            total,
+        })
+    }
+
+    /// Delete one history entry.
+    pub fn history_delete(&self, id: i64) -> Result<bool, Error> {
+        let changed = self
+            .conn
+            .execute("DELETE FROM history WHERE id = ?1", params![id])?;
+        Ok(changed > 0)
+    }
+
+    /// Prune history entries older than the retention period.
+    ///
+    /// `retention_secs` is the maximum age in seconds. Entries older than this
+    /// are deleted. Pass 0 to skip pruning (forever retention). `now` is the
+    /// current time in seconds since the Unix epoch.
+    pub fn history_prune(&self, now: i64, retention_secs: i64) -> Result<usize, Error> {
+        if retention_secs <= 0 {
+            return Ok(0);
+        }
+        let cutoff = now - retention_secs;
+        let changed = self
+            .conn
+            .execute("DELETE FROM history WHERE created_at < ?1", params![cutoff])?;
+        Ok(changed)
+    }
+
+    /// Promote a history entry to the library.
+    ///
+    /// Creates a library item from the history entry, then deletes the history
+    /// entry. The promoted item survives history expiry because it is now in
+    /// the library (ADR-0014).
+    pub fn history_promote(&self, history_id: i64) -> Result<i64, Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, original, answer, kind, source_language, target_language, model, app, provenance, provider_scope, created_at FROM history WHERE id = ?1",
+        )?;
+        let entry = stmt
+            .query_row(params![history_id], row_to_history_entry)
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    Error::Sqlite(rusqlite::Error::QueryReturnedNoRows)
+                }
+                other => Error::Sqlite(other),
+            })?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let next_review = now + REVIEW_INTERVALS[0];
+        self.conn.execute(
+            "INSERT INTO library (original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state, next_review_at, review_count) VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, NULL, 'new', ?9, 0)",
+            params![
+                entry.original,
+                entry.answer,
+                entry.app,
+                entry.created_at,
+                entry.kind,
+                entry.source_language,
+                entry.target_language,
+                entry.model,
+                next_review,
+            ],
+        )?;
+        let library_id = self.conn.last_insert_rowid();
+
+        self.conn
+            .execute("DELETE FROM history WHERE id = ?1", params![history_id])?;
+
+        Ok(library_id)
+    }
+
+    /// Count all history entries.
+    pub fn history_count(&self) -> Result<i64, Error> {
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM history", [], |row| row.get(0))?;
+        Ok(count)
     }
 
     fn applied_versions(&self) -> Result<Vec<i64>, Error> {
@@ -911,6 +1128,23 @@ fn row_to_item(row: &rusqlite::Row) -> rusqlite::Result<Item> {
         next_review_at: row.get(12)?,
         review_count: row.get::<_, Option<i64>>(13)?.or(Some(0)),
         tags: None,
+    })
+}
+
+/// Map a result row to a [`HistoryEntry`].
+fn row_to_history_entry(row: &rusqlite::Row) -> rusqlite::Result<HistoryEntry> {
+    Ok(HistoryEntry {
+        id: row.get(0)?,
+        original: row.get(1)?,
+        answer: row.get(2)?,
+        kind: row.get(3)?,
+        source_language: row.get(4)?,
+        target_language: row.get(5)?,
+        model: row.get(6)?,
+        app: row.get(7)?,
+        provenance: row.get(8)?,
+        provider_scope: row.get(9)?,
+        created_at: row.get(10)?,
     })
 }
 
@@ -1187,7 +1421,7 @@ mod tests {
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
-        assert_eq!(versions, vec![1, 2, 3, 4]);
+        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
         cleanup(&path);
     }
 
@@ -1958,6 +2192,535 @@ mod tests {
         cleanup(&path);
     }
 
+    /// Secure wipe also removes persistent history (CORRECTNESS fix).
+    #[test]
+    fn secure_wipe_removes_history() {
+        let path = temp_db("wipe-history");
+        let lib = Library::open(&path).unwrap();
+
+        // Add library items
+        let item = a_translation();
+        lib.insert(&item).unwrap();
+
+        // Add history entries
+        let entry = HistoryEntry {
+            id: 0,
+            original: "history original".to_owned(),
+            answer: "history answer".to_owned(),
+            kind: "translation".to_owned(),
+            source_language: None,
+            target_language: None,
+            model: None,
+            app: Some("chrome.exe".to_owned()),
+            provenance: "accessibility".to_owned(),
+            provider_scope: "local".to_owned(),
+            created_at: 1000,
+        };
+        lib.record_history(&entry).unwrap();
+        assert_eq!(lib.history_count().unwrap(), 1);
+
+        // Wipe
+        lib.secure_wipe().unwrap();
+
+        // Verify library is empty
+        assert_eq!(lib.count().unwrap(), 0);
+
+        // Verify history is also empty
+        assert_eq!(lib.history_count().unwrap(), 0);
+        assert_eq!(lib.history_list(0).unwrap().entries.len(), 0);
+
+        cleanup(&path);
+    }
+
+    /// Secure wipe persists across database restart.
+    #[test]
+    fn secure_wipe_survives_reopen() {
+        let path = temp_db("wipe-reopen");
+        let lib = Library::open(&path).unwrap();
+
+        // Add data
+        let item = a_translation();
+        lib.insert(&item).unwrap();
+
+        let entry = HistoryEntry {
+            id: 0,
+            original: "test".to_owned(),
+            answer: "test".to_owned(),
+            kind: "translation".to_owned(),
+            source_language: None,
+            target_language: None,
+            model: None,
+            app: None,
+            provenance: "accessibility".to_owned(),
+            provider_scope: "local".to_owned(),
+            created_at: 1000,
+        };
+        lib.record_history(&entry).unwrap();
+
+        lib.secure_wipe().unwrap();
+        drop(lib);
+
+        // Reopen
+        let lib2 = Library::open(&path).unwrap();
+        assert_eq!(lib2.count().unwrap(), 0);
+        assert_eq!(lib2.history_count().unwrap(), 0);
+
+        cleanup(&path);
+    }
+
+    /// Fresh database reaches latest schema with all tables and indexes.
+    #[test]
+    fn fresh_database_reaches_latest_schema() {
+        let path = temp_db("fresh-schema");
+        let lib = Library::open(&path).unwrap();
+
+        // Verify all tables exist
+        let tables: Vec<String> = lib
+            .conn
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert!(tables.contains(&"library".to_owned()));
+        assert!(tables.contains(&"meta".to_owned()));
+        assert!(tables.contains(&"tags".to_owned()));
+        assert!(tables.contains(&"library_tags".to_owned()));
+        assert!(tables.contains(&"history".to_owned()));
+        assert!(tables.contains(&"schema_migrations".to_owned()));
+
+        // Verify schema version is 5
+        let version: i64 = lib
+            .conn
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, 6);
+
+        // Verify library table has review columns (from migration 4)
+        let columns: Vec<String> = lib
+            .conn
+            .prepare("PRAGMA table_info(library)")
+            .unwrap()
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(columns.contains(&"review_state".to_owned()));
+        assert!(columns.contains(&"next_review_at".to_owned()));
+        assert!(columns.contains(&"review_count".to_owned()));
+
+        cleanup(&path);
+    }
+
+    /// Reopening latest schema is idempotent (no re-migration).
+    #[test]
+    fn latest_schema_reopen_is_idempotent() {
+        let path = temp_db("idempotent-reopen");
+        let lib = Library::open(&path).unwrap();
+
+        // Add some data
+        let item = a_translation();
+        lib.insert(&item).unwrap();
+        lib.set_tags(1, &["test".to_owned()]).unwrap();
+
+        let entry = HistoryEntry {
+            id: 0,
+            original: "test".to_owned(),
+            answer: "test".to_owned(),
+            kind: "translation".to_owned(),
+            source_language: None,
+            target_language: None,
+            model: None,
+            app: None,
+            provenance: "accessibility".to_owned(),
+            provider_scope: "local".to_owned(),
+            created_at: 1000,
+        };
+        lib.record_history(&entry).unwrap();
+
+        // Record counts before reopen
+        let count_before = lib.count().unwrap();
+        let history_before = lib.history_count().unwrap();
+
+        drop(lib);
+
+        // Reopen
+        let lib2 = Library::open(&path).unwrap();
+
+        // Verify no data duplication or loss
+        assert_eq!(lib2.count().unwrap(), count_before);
+        assert_eq!(lib2.history_count().unwrap(), history_before);
+
+        // Verify schema version is still 5
+        let version: i64 = lib2
+            .conn
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, 6);
+
+        cleanup(&path);
+    }
+
+    /// JSONL semantic round-trip preserves user-visible content.
+    #[test]
+    fn jsonl_semantic_round_trip() {
+        let path_a = temp_db("jsonl-export");
+        let lib_a = Library::open(&path_a).unwrap();
+
+        // Create diverse items
+        let mut item1 = a_translation();
+        item1.original = "plain item".to_owned();
+        lib_a.insert(&item1).unwrap();
+
+        let mut item2 = a_translation();
+        item2.original = "item with note".to_owned();
+        item2.note = Some("my note".to_owned());
+        let id2 = lib_a.insert(&item2).unwrap();
+        lib_a
+            .set_tags(id2, &["tag1".to_owned(), "tag2".to_owned()])
+            .unwrap();
+
+        let mut item3 = a_translation();
+        item3.original = "Unicode: 안녕하세요 세계".to_owned();
+        item3.answer = "Hello world".to_owned();
+        lib_a.insert(&item3).unwrap();
+
+        let mut item4 = a_translation();
+        item4.original = "quotes \"and\" newlines\n".to_owned();
+        lib_a.insert(&item4).unwrap();
+
+        // Export
+        let jsonl = lib_a.export_jsonl().unwrap();
+        drop(lib_a);
+
+        // Import to fresh DB
+        let path_b = temp_db("jsonl-import");
+        let lib_b = Library::open(&path_b).unwrap();
+        let imported = lib_b.import_jsonl(&jsonl).unwrap();
+        assert_eq!(imported, 4);
+
+        // Verify semantic equality (not ID equality)
+        let items = lib_b.list(0).unwrap().items;
+        assert_eq!(items.len(), 4);
+
+        // Check specific items
+        let plain = items.iter().find(|i| i.original == "plain item").unwrap();
+        assert!(plain.note.is_none());
+
+        let with_note = items
+            .iter()
+            .find(|i| i.original == "item with note")
+            .unwrap();
+        assert_eq!(with_note.note.as_deref(), Some("my note"));
+        let tags = lib_b.get_tags(with_note.id).unwrap();
+        assert_eq!(tags, vec!["tag1".to_owned(), "tag2".to_owned()]);
+
+        let unicode = items
+            .iter()
+            .find(|i| i.original.contains("안녕하세요"))
+            .unwrap();
+        assert_eq!(unicode.answer, "Hello world");
+
+        cleanup(&path_a);
+        cleanup(&path_b);
+    }
+
+    /// JSONL import does not preserve review state (intentional).
+    #[test]
+    fn jsonl_round_trip_resets_review_state() {
+        let path_a = temp_db("jsonl-review-export");
+        let lib_a = Library::open(&path_a).unwrap();
+
+        // Create item and advance review state
+        let item = a_translation();
+        let id = lib_a.insert(&item).unwrap();
+        lib_a.record_review(id, true, 1000).unwrap(); // review_state -> 'learning'
+
+        // Verify review state before export
+        let item_before = lib_a.get(id).unwrap().unwrap();
+        assert_eq!(item_before.review_state.as_deref(), Some("learning"));
+
+        // Export and import
+        let jsonl = lib_a.export_jsonl().unwrap();
+        let path_b = temp_db("jsonl-review-import");
+        let lib_b = Library::open(&path_b).unwrap();
+        lib_b.import_jsonl(&jsonl).unwrap();
+
+        // Verify review state is reset
+        let items = lib_b.list(0).unwrap().items;
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].review_state.as_deref(), Some("new")); // Reset to 'new'
+        assert_eq!(items[0].review_count, Some(0)); // Reset to 0
+
+        cleanup(&path_a);
+        cleanup(&path_b);
+    }
+
+    /// Malformed JSONL does not corrupt database.
+    #[test]
+    fn malformed_jsonl_does_not_corrupt_database() {
+        let path = temp_db("jsonl-malformed");
+        let lib = Library::open(&path).unwrap();
+
+        // Add a valid item first
+        let item = a_translation();
+        lib.insert(&item).unwrap();
+        assert_eq!(lib.count().unwrap(), 1);
+
+        // Try to import malformed JSONL
+        let malformed = r#"{"version":1}
+{"id":0,"original":"valid","answer":"valid","kind":"translation","created_at":1000}
+{invalid json here}
+{"id":0,"original":"after","answer":"after","kind":"translation","created_at":2000}
+"#;
+
+        // Import should fail
+        let result = lib.import_jsonl(malformed);
+        assert!(result.is_err());
+
+        // But the first valid item should have been imported (partial import)
+        // and the database should not be corrupted
+        assert_eq!(lib.count().unwrap(), 2); // original + first valid line
+
+        // Database is still usable
+        let new_item = a_translation();
+        lib.insert(&new_item).unwrap();
+        assert_eq!(lib.count().unwrap(), 3);
+
+        cleanup(&path);
+    }
+
+    /// Missing required field in JSONL causes error.
+    #[test]
+    fn jsonl_missing_required_field() {
+        let path = temp_db("jsonl-missing-field");
+        let lib = Library::open(&path).unwrap();
+
+        let missing_original = r#"{"version":1}
+{"id":0,"answer":"has answer but no original","kind":"translation","created_at":1000}
+"#;
+
+        let result = lib.import_jsonl(missing_original);
+        assert!(result.is_err());
+        assert_eq!(lib.count().unwrap(), 0); // Nothing imported
+
+        cleanup(&path);
+    }
+
+    /// Unknown extra fields in JSONL are ignored.
+    #[test]
+    fn jsonl_unknown_extra_fields_ignored() {
+        let path = temp_db("jsonl-extra-fields");
+        let lib = Library::open(&path).unwrap();
+
+        let extra_fields = r#"{"version":1}
+{"id":0,"original":"test","answer":"test","kind":"translation","created_at":1000,"unknown_field":"value","another":123}
+"#;
+
+        let result = lib.import_jsonl(extra_fields);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
+        assert_eq!(lib.count().unwrap(), 1);
+
+        cleanup(&path);
+    }
+
+    /// Blank lines in JSONL are skipped.
+    #[test]
+    fn jsonl_blank_lines_skipped() {
+        let path = temp_db("jsonl-blank-lines");
+        let lib = Library::open(&path).unwrap();
+
+        let with_blanks = r#"{"version":1}
+
+{"id":0,"original":"test","answer":"test","kind":"translation","created_at":1000}
+
+"#;
+
+        let result = lib.import_jsonl(with_blanks);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
+
+        cleanup(&path);
+    }
+
+    /// Duplicate items are silently skipped.
+    #[test]
+    fn jsonl_duplicates_silently_skipped() {
+        let path = temp_db("jsonl-duplicates");
+        let lib = Library::open(&path).unwrap();
+
+        let duplicates = r#"{"version":1}
+{"id":0,"original":"same","answer":"first","kind":"translation","created_at":1000}
+{"id":0,"original":"same","answer":"second","kind":"translation","created_at":2000}
+{"id":0,"original":"different","answer":"third","kind":"translation","created_at":3000}
+"#;
+
+        let result = lib.import_jsonl(duplicates);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 2); // First "same" + "different"
+        assert_eq!(lib.count().unwrap(), 2);
+
+        // Verify first answer was kept
+        let items = lib.list(0).unwrap().items;
+        let same_item = items.iter().find(|i| i.original == "same").unwrap();
+        assert_eq!(same_item.answer, "first");
+
+        cleanup(&path);
+    }
+
+    /// History → Library promotion creates independent item.
+    #[test]
+    fn history_promoted_to_library_is_independent() {
+        let path = temp_db("history-to-library");
+        let lib = Library::open(&path).unwrap();
+
+        // Create history entry
+        let entry = HistoryEntry {
+            id: 0,
+            original: "test original".to_owned(),
+            answer: "test answer".to_owned(),
+            kind: "translation".to_owned(),
+            source_language: None,
+            target_language: None,
+            model: None,
+            app: Some("chrome.exe".to_owned()),
+            provenance: "accessibility".to_owned(),
+            provider_scope: "local".to_owned(),
+            created_at: 1000,
+        };
+        let history_id = lib.record_history(&entry).unwrap();
+        assert_eq!(lib.history_count().unwrap(), 1);
+
+        // Promote to library
+        let library_id = lib.history_promote(history_id).unwrap();
+        assert!(library_id > 0);
+
+        // Verify history entry is deleted
+        assert_eq!(lib.history_count().unwrap(), 0);
+
+        // Verify library item exists
+        let item = lib.get(library_id).unwrap().unwrap();
+        assert_eq!(item.original, "test original");
+        assert_eq!(item.answer, "test answer");
+        assert_eq!(item.review_state.as_deref(), Some("new")); // Fresh review state
+
+        cleanup(&path);
+    }
+
+    /// Deleting library item does not affect history (they're independent).
+    #[test]
+    fn library_delete_does_not_affect_history() {
+        let path = temp_db("library-delete-independence");
+        let lib = Library::open(&path).unwrap();
+
+        // Create library item
+        let item = a_translation();
+        let lib_id = lib.insert(&item).unwrap();
+
+        // Create history entry with same content
+        let entry = HistoryEntry {
+            id: 0,
+            original: item.original.clone(),
+            answer: item.answer.clone(),
+            kind: "translation".to_owned(),
+            source_language: None,
+            target_language: None,
+            model: None,
+            app: None,
+            provenance: "accessibility".to_owned(),
+            provider_scope: "local".to_owned(),
+            created_at: 1000,
+        };
+        let history_id = lib.record_history(&entry).unwrap();
+
+        // Delete library item
+        lib.delete(lib_id).unwrap();
+        assert_eq!(lib.count().unwrap(), 0);
+
+        // History should still exist
+        assert_eq!(lib.history_count().unwrap(), 1);
+        let history_item = lib.history_list(0).unwrap().entries[0].clone();
+        assert_eq!(history_item.id, history_id);
+
+        cleanup(&path);
+    }
+
+    /// Promoting same history entry twice: second attempt fails.
+    #[test]
+    fn history_promote_twice_fails() {
+        // After promotion, the history entry is deleted, so promoting again fails.
+        let path = temp_db("history-promote-twice");
+        let lib = Library::open(&path).unwrap();
+
+        let entry = HistoryEntry {
+            id: 0,
+            original: "test".to_owned(),
+            answer: "test".to_owned(),
+            kind: "translation".to_owned(),
+            source_language: None,
+            target_language: None,
+            model: None,
+            app: None,
+            provenance: "accessibility".to_owned(),
+            provider_scope: "local".to_owned(),
+            created_at: 1000,
+        };
+        let history_id = lib.record_history(&entry).unwrap();
+
+        // Promote once
+        let _lib_id_1 = lib.history_promote(history_id).unwrap();
+        assert_eq!(lib.count().unwrap(), 1);
+        assert_eq!(lib.history_count().unwrap(), 0); // History entry deleted
+
+        // Try to promote again - should fail because history entry is gone
+        let result = lib.history_promote(history_id);
+        assert!(result.is_err());
+
+        // Still only one library item
+        assert_eq!(lib.count().unwrap(), 1);
+
+        cleanup(&path);
+    }
+
+    /// Review state is initialized to 'new' when promoting history to library.
+    #[test]
+    fn history_promote_initializes_review_state() {
+        let path = temp_db("history-promote-review");
+        let lib = Library::open(&path).unwrap();
+
+        let entry = HistoryEntry {
+            id: 0,
+            original: "test".to_owned(),
+            answer: "test".to_owned(),
+            kind: "translation".to_owned(),
+            source_language: None,
+            target_language: None,
+            model: None,
+            app: None,
+            provenance: "accessibility".to_owned(),
+            provider_scope: "local".to_owned(),
+            created_at: 1000,
+        };
+        let history_id = lib.record_history(&entry).unwrap();
+        let library_id = lib.history_promote(history_id).unwrap();
+
+        let item = lib.get(library_id).unwrap().unwrap();
+        assert_eq!(item.review_state.as_deref(), Some("new"));
+        assert_eq!(item.review_count, Some(0));
+        assert!(item.next_review_at.is_some()); // Scheduled for review
+
+        cleanup(&path);
+    }
+
     // -- review list --------------------------------------------------------
 
     #[test]
@@ -2074,6 +2837,376 @@ mod tests {
         let path = temp_db("review-missing");
         let lib = Library::open(&path).unwrap();
         assert!(!lib.record_review(999, true, 0).unwrap());
+        cleanup(&path);
+    }
+
+    // -- History tests ------------------------------------------------------
+
+    fn a_history_entry() -> HistoryEntry {
+        HistoryEntry {
+            id: 0,
+            original: "hello world".to_owned(),
+            answer: "안녕 세상".to_owned(),
+            kind: "translation".to_owned(),
+            source_language: Some("en".to_owned()),
+            target_language: Some("ko".to_owned()),
+            model: Some("qwen2.5:3b".to_owned()),
+            app: None,
+            provenance: "accessibility".to_owned(),
+            provider_scope: "local".to_owned(),
+            created_at: 1_786_075_140,
+        }
+    }
+
+    #[test]
+    fn history_records_and_lists_entries() {
+        let path = temp_db("history-basic");
+        let lib = Library::open(&path).unwrap();
+
+        let entry = a_history_entry();
+        let id = lib.record_history(&entry).unwrap();
+        assert!(id > 0);
+
+        let page = lib.history_list(0).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.entries.len(), 1);
+        assert_eq!(page.entries[0].original, "hello world");
+        assert_eq!(page.entries[0].provenance, "accessibility");
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn history_count_reflects_insertions_and_deletions() {
+        let path = temp_db("history-count");
+        let lib = Library::open(&path).unwrap();
+
+        assert_eq!(lib.history_count().unwrap(), 0);
+
+        let mut entry = a_history_entry();
+        entry.created_at = 1000;
+        lib.record_history(&entry).unwrap();
+        entry.created_at = 1001;
+        entry.original = "second".to_owned();
+        lib.record_history(&entry).unwrap();
+
+        assert_eq!(lib.history_count().unwrap(), 2);
+
+        let page = lib.history_list(0).unwrap();
+        lib.history_delete(page.entries[0].id).unwrap();
+        assert_eq!(lib.history_count().unwrap(), 1);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn history_prune_removes_old_entries() {
+        let path = temp_db("history-prune");
+        let lib = Library::open(&path).unwrap();
+
+        let mut entry = a_history_entry();
+        entry.created_at = 1000;
+        lib.record_history(&entry).unwrap();
+        entry.created_at = 2000;
+        entry.original = "newer".to_owned();
+        lib.record_history(&entry).unwrap();
+
+        // Prune entries older than 500 seconds from now=2100.
+        let pruned = lib.history_prune(2100, 500).unwrap();
+        assert_eq!(pruned, 1);
+        assert_eq!(lib.history_count().unwrap(), 1);
+
+        let page = lib.history_list(0).unwrap();
+        assert_eq!(page.entries[0].original, "newer");
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn history_prune_zero_does_nothing() {
+        let path = temp_db("history-prune-zero");
+        let lib = Library::open(&path).unwrap();
+
+        let entry = a_history_entry();
+        lib.record_history(&entry).unwrap();
+        assert_eq!(lib.history_prune(2100, 0).unwrap(), 0);
+        assert_eq!(lib.history_count().unwrap(), 1);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn history_promote_creates_library_item_and_removes_entry() {
+        let path = temp_db("history-promote");
+        let lib = Library::open(&path).unwrap();
+
+        let entry = a_history_entry();
+        let hid = lib.record_history(&entry).unwrap();
+        assert_eq!(lib.history_count().unwrap(), 1);
+
+        let library_id = lib.history_promote(hid).unwrap();
+        assert!(library_id > 0);
+        assert_eq!(lib.history_count().unwrap(), 0);
+
+        // The promoted item is in the library.
+        let item = lib.get(library_id).unwrap().unwrap();
+        assert_eq!(item.original, "hello world");
+        assert_eq!(item.answer, "안녕 세상");
+        assert_eq!(item.review_state.as_deref(), Some("new"));
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn history_entries_are_newest_first() {
+        let path = temp_db("history-order");
+        let lib = Library::open(&path).unwrap();
+
+        let mut entry = a_history_entry();
+        for i in 0..3 {
+            entry.created_at = 1000 + i;
+            entry.original = format!("entry {i}");
+            lib.record_history(&entry).unwrap();
+        }
+
+        let page = lib.history_list(0).unwrap();
+        assert_eq!(page.entries.len(), 3);
+        assert_eq!(page.entries[0].original, "entry 2");
+        assert_eq!(page.entries[2].original, "entry 0");
+
+        cleanup(&path);
+    }
+
+    // M8 privacy invariant tests
+
+    #[test]
+    fn application_name_is_not_persisted_when_disabled() {
+        // When history_store_app is false, the app field is None.
+        // Verify it's stored as NULL in the database.
+        let path = temp_db("history-no-app");
+        let lib = Library::open(&path).unwrap();
+
+        let mut entry = a_history_entry();
+        entry.app = None; // Simulates history_store_app = false
+        lib.record_history(&entry).unwrap();
+
+        // Read the raw row to verify app is NULL
+        let app_value: Option<String> = lib
+            .conn
+            .query_row("SELECT app FROM history WHERE id = 1", [], |row| row.get(0))
+            .unwrap();
+        assert!(
+            app_value.is_none(),
+            "app field must be NULL when history_store_app is disabled"
+        );
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn startup_prune_keeps_nonexpired_entries() {
+        // Verify that prune only removes entries older than retention period.
+        let path = temp_db("history-prune-keeps");
+        let lib = Library::open(&path).unwrap();
+
+        let mut entry = a_history_entry();
+
+        // Add entries at different ages
+        entry.created_at = 1000; // Old
+        entry.original = "old".to_owned();
+        lib.record_history(&entry).unwrap();
+
+        entry.created_at = 1500; // Middle
+        entry.original = "middle".to_owned();
+        lib.record_history(&entry).unwrap();
+
+        entry.created_at = 1900; // Recent
+        entry.original = "recent".to_owned();
+        lib.record_history(&entry).unwrap();
+
+        // Prune entries older than 500 seconds from now=2000
+        // Only the entry at t=1000 should be removed (age 1000 > 500)
+        // Entries at t=1500 and t=1900 should remain (age 500 and 100 <= 500)
+        let pruned = lib.history_prune(2000, 500).unwrap();
+        assert_eq!(pruned, 1, "only one entry should be pruned");
+        assert_eq!(lib.history_count().unwrap(), 2, "two entries should remain");
+
+        let page = lib.history_list(0).unwrap();
+        assert_eq!(page.entries.len(), 2);
+        assert_eq!(page.entries[0].original, "recent");
+        assert_eq!(page.entries[1].original, "middle");
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn history_table_schema_columns() {
+        // Document the history table schema for privacy audit.
+        let path = temp_db("history-schema");
+        let lib = Library::open(&path).unwrap();
+
+        // Get column info
+        let mut stmt = lib.conn.prepare("PRAGMA table_info(history)").unwrap();
+        let columns: Vec<(String, String, bool)> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(1)?, // name
+                    row.get::<_, String>(2)?, // type
+                    row.get::<_, bool>(3)?,   // notnull
+                ))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        // Verify expected columns exist
+        let column_names: Vec<&str> = columns.iter().map(|(name, _, _)| name.as_str()).collect();
+        assert!(column_names.contains(&"id"));
+        assert!(column_names.contains(&"original"));
+        assert!(column_names.contains(&"answer"));
+        assert!(column_names.contains(&"app"));
+        assert!(column_names.contains(&"created_at"));
+
+        // Verify app is nullable (notnull = false)
+        let app_column = columns.iter().find(|(name, _, _)| name == "app").unwrap();
+        assert!(
+            !app_column.2,
+            "app column must be nullable for privacy minimization"
+        );
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn history_cap_enforced_at_1000() {
+        // ADR-0014: at most 1,000 entries by default.
+        let path = temp_db("history-cap-1000");
+        let lib = Library::open(&path).unwrap();
+
+        let mut entry = HistoryEntry {
+            id: 0,
+            original: "test".to_owned(),
+            answer: "answer".to_owned(),
+            kind: "translation".to_owned(),
+            source_language: None,
+            target_language: None,
+            model: None,
+            app: None,
+            provenance: "accessibility".to_owned(),
+            provider_scope: "local".to_owned(),
+            created_at: 1000,
+        };
+
+        // Insert exactly 1000 entries
+        for i in 0..1000 {
+            entry.original = format!("entry-{i}");
+            entry.created_at = 1000 + i;
+            lib.record_history(&entry).unwrap();
+        }
+
+        assert_eq!(
+            lib.history_count().unwrap(),
+            1000,
+            "exactly 1000 entries should remain"
+        );
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn history_cap_prunes_oldest_when_exceeded() {
+        // ADR-0014: oldest entries are removed when cap is exceeded.
+        let path = temp_db("history-cap-prune");
+        let lib = Library::open(&path).unwrap();
+
+        let mut entry = HistoryEntry {
+            id: 0,
+            original: "test".to_owned(),
+            answer: "answer".to_owned(),
+            kind: "translation".to_owned(),
+            source_language: None,
+            target_language: None,
+            model: None,
+            app: None,
+            provenance: "accessibility".to_owned(),
+            provider_scope: "local".to_owned(),
+            created_at: 1000,
+        };
+
+        // Insert 1001 entries
+        for i in 0..1001 {
+            entry.original = format!("entry-{i}");
+            entry.created_at = 1000 + i;
+            lib.record_history(&entry).unwrap();
+        }
+
+        // Should be capped at 1000
+        assert_eq!(
+            lib.history_count().unwrap(),
+            1000,
+            "should be capped at 1000 entries"
+        );
+
+        // The oldest entry (entry-0) should be gone
+        let page = lib.history_list(0).unwrap();
+        let originals: Vec<&str> = page.entries.iter().map(|e| e.original.as_str()).collect();
+        assert!(
+            !originals.contains(&"entry-0"),
+            "oldest entry should be pruned"
+        );
+        assert!(
+            originals.contains(&"entry-1000"),
+            "newest entry should remain"
+        );
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn history_cap_deterministic_ordering_with_same_timestamp() {
+        // When multiple entries have the same timestamp, ordering is deterministic by id.
+        let path = temp_db("history-cap-deterministic");
+        let lib = Library::open(&path).unwrap();
+
+        let mut entry = HistoryEntry {
+            id: 0,
+            original: "test".to_owned(),
+            answer: "answer".to_owned(),
+            kind: "translation".to_owned(),
+            source_language: None,
+            target_language: None,
+            model: None,
+            app: None,
+            provenance: "accessibility".to_owned(),
+            provider_scope: "local".to_owned(),
+            created_at: 1000, // All same timestamp
+        };
+
+        // Insert 1005 entries all with the same timestamp
+        for i in 0..1005 {
+            entry.original = format!("entry-{i}");
+            lib.record_history(&entry).unwrap();
+        }
+
+        // Should be capped at 1000
+        assert_eq!(lib.history_count().unwrap(), 1000);
+
+        // The first 5 entries (lowest ids) should be gone
+        let page = lib.history_list(0).unwrap();
+        let originals: Vec<&str> = page.entries.iter().map(|e| e.original.as_str()).collect();
+        for i in 0..5 {
+            assert!(
+                !originals.contains(&format!("entry-{i}").as_str()),
+                "entry-{i} should be pruned (lowest id)"
+            );
+        }
+        for i in 1000..1005 {
+            assert!(
+                originals.contains(&format!("entry-{i}").as_str()),
+                "entry-{i} should remain (highest id)"
+            );
+        }
+
         cleanup(&path);
     }
 }

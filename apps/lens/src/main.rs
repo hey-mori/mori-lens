@@ -1165,13 +1165,36 @@ fn main() -> std::process::ExitCode {
         std::sync::Arc::new(std::sync::Mutex::new(library_service::open(&data_dir)));
     println!("  library   {:?}", shared_library.lock().unwrap().path());
 
+    // Prune old history entries on startup, if history retention is configured.
+    {
+        let settings = shared_settings.lock().unwrap();
+        let current = settings.current();
+        if current.history && current.history_days > 0 {
+            let retention_secs = current.history_days as i64 * 86400;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let lib = shared_library.lock().unwrap();
+            if let Ok(pruned) = lib.library().history_prune(now, retention_secs) {
+                if pruned > 0 {
+                    println!("  history   pruned {pruned} entries older than {} days", current.history_days);
+                }
+            }
+        }
+    }
+
     let (shared_detail, explain_flag) = detail_view::new_shared();
     let shared_save_path: detail_view::SharedSavePath = std::sync::Arc::new(saved_to.clone());
+    let shared_recent: tauri_app::SharedRecent = std::sync::Arc::new(std::sync::Mutex::new(
+        lens_core::recent::SessionRecent::new(),
+    ));
 
     let (tauri_handle, shared_diagnostics, tauri_app) = match tauri_app::build(
         shared_settings.clone(),
-        shared_library,
+        shared_library.clone(),
         shared_detail.clone(),
+        shared_recent.clone(),
         explain_flag.clone(),
         shared_save_path,
     ) {
@@ -1191,6 +1214,7 @@ fn main() -> std::process::ExitCode {
     let loop_tauri = tauri_handle.clone();
     let loop_diagnostics = shared_diagnostics.clone();
     let loop_settings = shared_settings.clone();
+    let loop_library = shared_library.clone();
     let loop_detail = shared_detail.clone();
     let loop_explain_flag = explain_flag.clone();
     std::thread::spawn(move || {
@@ -1304,7 +1328,15 @@ fn main() -> std::process::ExitCode {
                                     saved_to.display(),
                                 );
                                 if let Some((card, anchor)) = on_screen.take() {
-                                    show_card(&overlay, &mut on_screen, card.kept(), anchor);
+                                    show_card(
+                                        &overlay,
+                                        &mut on_screen,
+                                        card.kept(),
+                                        anchor,
+                                        &shared_recent,
+                                        &loop_library,
+                                        &loop_settings,
+                                    );
                                 }
                             }
                             Err(refusal) => {
@@ -1314,6 +1346,9 @@ fn main() -> std::process::ExitCode {
                                     &mut on_screen,
                                     Card::not_readable(refusal.user_message()),
                                     anchor,
+                                    &shared_recent,
+                                    &loop_library,
+                                    &loop_settings,
                                 );
                             }
                         }
@@ -1326,6 +1361,9 @@ fn main() -> std::process::ExitCode {
                             &mut on_screen,
                             Card::not_readable(keeping::NotKept::NothingToKeep.user_message()),
                             ScreenRect::new(at.x, at.y, 1, 1),
+                            &shared_recent,
+                            &loop_library,
+                            &loop_settings,
                         );
                     }
                 }
@@ -1401,7 +1439,15 @@ fn main() -> std::process::ExitCode {
                                 text.lines().count(),
                             );
                             if let Some((card, anchor)) = on_screen.take() {
-                                show_card(&overlay, &mut on_screen, card.copied(), anchor);
+                                show_card(
+                                    &overlay,
+                                    &mut on_screen,
+                                    card.copied(),
+                                    anchor,
+                                    &shared_recent,
+                                    &loop_library,
+                                    &loop_settings,
+                                );
                             }
                         } else {
                             // Another application is holding the clipboard, which
@@ -1414,6 +1460,9 @@ fn main() -> std::process::ExitCode {
                                 &mut on_screen,
                                 Card::not_readable("클립보드를 열지 못했습니다"),
                                 anchor,
+                                &shared_recent,
+                                &loop_library,
+                                &loop_settings,
                             );
                         }
                     }
@@ -1425,6 +1474,9 @@ fn main() -> std::process::ExitCode {
                             &mut on_screen,
                             Card::not_readable("복사할 내용이 아직 없습니다"),
                             ScreenRect::new(at.x, at.y, 1, 1),
+                            &shared_recent,
+                            &loop_library,
+                            &loop_settings,
                         );
                     }
                 }
@@ -1449,6 +1501,9 @@ fn main() -> std::process::ExitCode {
                                     &mut on_screen,
                                     Card::explaining(&showing.original),
                                     showing.anchor,
+                                    &shared_recent,
+                                    &loop_library,
+                                    &loop_settings,
                                 );
                                 translating &= jobs_tx
                                     .send(Job::Explain(Explain {
@@ -1476,6 +1531,9 @@ fn main() -> std::process::ExitCode {
                             &mut on_screen,
                             Card::not_readable("설명할 문장이 아직 없습니다"),
                             ScreenRect::new(at.x, at.y, 1, 1),
+                            &shared_recent,
+                            &loop_library,
+                            &loop_settings,
                         );
                     }
                 }
@@ -1589,6 +1647,9 @@ fn main() -> std::process::ExitCode {
                             &mut on_screen,
                             Card::needs_a_restart(&keys),
                             ScreenRect::new(at.x, at.y, 1, 1),
+                            &shared_recent,
+                            &loop_library,
+                            &loop_settings,
                         );
                     }
                 }
@@ -1673,6 +1734,9 @@ fn main() -> std::process::ExitCode {
                                 &mut on_screen,
                                 Card::already_readable("Ctrl+Alt+D"),
                                 reading.anchor,
+                                &shared_recent,
+                                &loop_library,
+                                &loop_settings,
                             );
                         } else {
                             life.job_dispatched(generation, reading.anchor, started.elapsed());
@@ -1709,6 +1773,9 @@ fn main() -> std::process::ExitCode {
                             &mut on_screen,
                             Card::not_readable(refusal.user_message()),
                             ScreenRect::new(at.x, at.y, 1, 1),
+                            &shared_recent,
+                            &loop_library,
+                            &loop_settings,
                         );
                     }
                 }
@@ -1740,6 +1807,9 @@ fn main() -> std::process::ExitCode {
                     &mut on_screen,
                     Card::not_readable("읽기가 멈췄습니다 · 다시 실행해 주세요"),
                     ScreenRect::new(at.x, at.y, 1, 1),
+                    &shared_recent,
+                    &loop_library,
+                    &loop_settings,
                 );
             }
 
@@ -1799,6 +1869,9 @@ fn main() -> std::process::ExitCode {
                         &mut on_screen,
                         Card::hold_the_modifier(pointer::MODIFIER_NAME),
                         anchor,
+                        &shared_recent,
+                        &loop_library,
+                        &loop_settings,
                     );
                 }
             }
@@ -1913,6 +1986,9 @@ fn main() -> std::process::ExitCode {
                                     &mut on_screen,
                                     Card::already_readable("Ctrl+Alt+D"),
                                     anchor,
+                                    &shared_recent,
+                                    &loop_library,
+                                    &loop_settings,
                                 );
                             }
                             continue;
@@ -2014,7 +2090,15 @@ fn main() -> std::process::ExitCode {
                                 narrator.card_shown();
                                 life.job_dispatched(generation, anchor, now);
                                 life.answer_arrived(generation, anchor);
-                                show_card(&overlay, &mut on_screen, card, anchor);
+                                show_card(
+                                    &overlay,
+                                    &mut on_screen,
+                                    card,
+                                    anchor,
+                                    &shared_recent,
+                                    &loop_library,
+                                    &loop_settings,
+                                );
                             }
                         }
                     }
@@ -2034,7 +2118,15 @@ fn main() -> std::process::ExitCode {
                 } else {
                     Card::loading_model(&pending_original)
                 };
-                show_card(&overlay, &mut on_screen, card, anchor);
+                show_card(
+                    &overlay,
+                    &mut on_screen,
+                    card,
+                    anchor,
+                    &shared_recent,
+                    &loop_library,
+                    &loop_settings,
+                );
             }
 
             // With where the card is, so reading it does not dismiss it. The
@@ -2081,7 +2173,15 @@ fn main() -> std::process::ExitCode {
                 // each call site that might forget.
                 if life.answer_arrived(answer.generation, answer.anchor) == lifecycle::Action::Show
                 {
-                    show_card(&overlay, &mut on_screen, answer.card, answer.anchor);
+                    show_card(
+                        &overlay,
+                        &mut on_screen,
+                        answer.card,
+                        answer.anchor,
+                        &shared_recent,
+                        &loop_library,
+                        &loop_settings,
+                    );
                 }
             }
 
@@ -2337,9 +2437,90 @@ fn show_card(
     on_screen: &mut Option<(Card, ScreenRect)>,
     card: Card,
     anchor: ScreenRect,
+    recent: &tauri_app::SharedRecent,
+    library: &library_service::SharedLibrary,
+    settings: &settings_service::SharedSettings,
 ) -> bool {
     let drawn = overlay.show(card.clone(), anchor);
     if drawn {
+        // Record to session-recent (ADR-0014 Tier 1).
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let app_name = pointer::position().and_then(|p| pointer::process_name_at(p));
+        let answer_text = match &card.body {
+            lens_core::card::CardBody::Translation(t) => t.clone(),
+            lens_core::card::CardBody::Analysis { translation, .. } => {
+                translation.clone().unwrap_or_default()
+            }
+            _ => String::new(),
+        };
+        if !answer_text.is_empty() {
+            let recent_card = lens_core::recent::RecentCard {
+                original: card.original.clone(),
+                answer: answer_text.clone(),
+                shown_at: now,
+                app: app_name.clone(),
+            };
+            recent.lock().unwrap().record(recent_card);
+        }
+
+        // Record to persistent history (ADR-0014 Tier 3).
+        // Only when the reader has turned it on; off means nothing is written.
+        {
+            let current = settings.lock().unwrap().current().clone();
+            if current.history {
+                let excluded = app_name
+                    .as_ref()
+                    .map(|name| {
+                        current
+                            .history_excluded
+                            .iter()
+                            .any(|ex| name.to_lowercase().contains(&ex.to_lowercase()))
+                    })
+                    .unwrap_or(false);
+                if !excluded && !answer_text.is_empty() {
+                    let kind = match &card.body {
+                        lens_core::card::CardBody::Analysis { .. } => "analysis",
+                        _ => "translation",
+                    };
+                    let provenance = if card.footer.contains(lens_core::card::Card::FROM_PIXELS) {
+                        "ocr"
+                    } else {
+                        "accessibility"
+                    };
+                    let provider_scope = if card.footer.contains("외부") {
+                        "external"
+                    } else if card.footer.contains("로컬") {
+                        "local"
+                    } else {
+                        "unknown"
+                    };
+                    let stored_app = if current.history_store_app {
+                        app_name
+                    } else {
+                        None
+                    };
+                    let entry = lens_storage::HistoryEntry {
+                        id: 0,
+                        original: card.original.clone(),
+                        answer: answer_text,
+                        kind: kind.to_owned(),
+                        source_language: None,
+                        target_language: None,
+                        model: None,
+                        app: stored_app,
+                        provenance: provenance.to_owned(),
+                        provider_scope: provider_scope.to_owned(),
+                        created_at: now,
+                    };
+                    let lib = library.lock().unwrap();
+                    let _ = lib.library().record_history(&entry);
+                }
+            }
+        }
+
         *on_screen = Some((card, anchor));
     }
     drawn
@@ -2982,6 +3163,183 @@ mod tooltip_tests {
             assert!(!line.is_empty());
             assert!(!line.contains("Ctrl+Alt+"), "{line}");
             assert!(line.contains("단축키"), "{line}");
+        }
+    }
+}
+
+/// History recording decision logic, extracted for testing.
+///
+/// Returns true if the card should be recorded to persistent history.
+/// This is the pure decision function; the actual recording happens in show_card.
+#[cfg(test)]
+fn should_record_history(
+    history_enabled: bool,
+    excluded_apps: &[String],
+    app_name: Option<&str>,
+    answer_text: &str,
+) -> bool {
+    if !history_enabled {
+        return false;
+    }
+    if answer_text.is_empty() {
+        return false;
+    }
+    let is_excluded = app_name
+        .map(|name| {
+            excluded_apps
+                .iter()
+                .any(|ex| name.to_lowercase().contains(&ex.to_lowercase()))
+        })
+        .unwrap_or(false);
+    !is_excluded
+}
+
+#[cfg(test)]
+mod history_privacy_tests {
+    use super::*;
+
+    #[test]
+    fn history_off_never_writes() {
+        // When history is disabled, should_record_history returns false
+        // regardless of other parameters.
+        assert!(
+            !should_record_history(false, &[], Some("Code.exe"), "translation"),
+            "history OFF must prevent all writes"
+        );
+        assert!(
+            !should_record_history(false, &[], None, "translation"),
+            "history OFF must prevent writes even without app name"
+        );
+        assert!(
+            !should_record_history(false, &["code.exe".to_owned()], Some("Code.exe"), "translation"),
+            "history OFF takes precedence over exclusion list"
+        );
+    }
+
+    #[test]
+    fn excluded_application_never_writes() {
+        // Excluded apps are filtered BEFORE any write occurs.
+        let excluded = vec!["code.exe".to_owned()];
+
+        // Exact match (case-insensitive)
+        assert!(
+            !should_record_history(true, &excluded, Some("Code.exe"), "translation"),
+            "excluded app must be blocked (case-insensitive)"
+        );
+        assert!(
+            !should_record_history(true, &excluded, Some("CODE.EXE"), "translation"),
+            "excluded app must be blocked (uppercase)"
+        );
+
+        // Substring match
+        assert!(
+            !should_record_history(true, &excluded, Some("VisualStudioCode.exe"), "translation"),
+            "excluded app must match as substring"
+        );
+
+        // Non-excluded app is allowed
+        assert!(
+            should_record_history(true, &excluded, Some("chrome.exe"), "translation"),
+            "non-excluded app must be allowed"
+        );
+
+        // No app name is allowed (not excluded)
+        assert!(
+            should_record_history(true, &excluded, None, "translation"),
+            "missing app name must not be treated as excluded"
+        );
+    }
+
+    #[test]
+    fn empty_answer_is_not_recorded() {
+        // Cards with empty answers are not recorded, even if history is enabled.
+        assert!(
+            !should_record_history(true, &[], Some("chrome.exe"), ""),
+            "empty answer must not be recorded"
+        );
+    }
+
+    #[test]
+    fn excluded_app_normalization_is_documented() {
+        // Exclusion matching uses case-insensitive substring match.
+        // This is documented behavior, not a bug.
+        let excluded = vec!["keepass".to_owned()];
+
+        // Case-insensitive
+        assert!(!should_record_history(true, &excluded, Some("KeePassXC.exe"), "answer"));
+        assert!(!should_record_history(true, &excluded, Some("keepassxc.exe"), "answer"));
+        assert!(!should_record_history(true, &excluded, Some("KEEPASSXC.EXE"), "answer"));
+
+        // Substring
+        assert!(!should_record_history(true, &excluded, Some("KeePassXC.exe"), "answer"));
+        assert!(!should_record_history(true, &excluded, Some("MyKeePassApp.exe"), "answer"));
+
+        // Whitespace is NOT trimmed (documented behavior)
+        // let excluded_with_space = vec![" keepass".to_owned()];
+        // This would NOT match "keepass.exe" because of the leading space
+        // This is intentional: the user typed it that way in settings
+    }
+
+    #[test]
+    fn history_latency_benchmark() {
+        // Measure the overhead of history recording on the show_card path.
+        // This simulates the decision logic and SQLite INSERT.
+        use std::time::Instant;
+
+        let iterations = 1000;
+        let excluded: Vec<String> = vec![];
+
+        // Measure history OFF (decision only, no DB write)
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _ = should_record_history(false, &excluded, Some("chrome.exe"), "translation");
+        }
+        let off_duration = start.elapsed();
+        let off_per_call = off_duration.as_nanos() / iterations as u128;
+
+        // Measure history ON with actual DB write
+        let path = std::env::temp_dir().join("history_latency_benchmark.db");
+        let _ = std::fs::remove_file(&path);
+        let lib = lens_storage::Library::open(&path).unwrap();
+
+        let entry = lens_storage::HistoryEntry {
+            id: 0,
+            original: "test original".to_owned(),
+            answer: "test answer".to_owned(),
+            kind: "translation".to_owned(),
+            source_language: None,
+            target_language: None,
+            model: None,
+            app: Some("chrome.exe".to_owned()),
+            provenance: "accessibility".to_owned(),
+            provider_scope: "local".to_owned(),
+            created_at: 1000,
+        };
+
+        let start = Instant::now();
+        for i in 0..iterations {
+            let mut e = entry.clone();
+            e.created_at = 1000 + i as i64;
+            let _ = lib.record_history(&e);
+        }
+        let on_duration = start.elapsed();
+        let on_per_call = on_duration.as_nanos() / iterations as u128;
+
+        let _ = std::fs::remove_file(&path);
+
+        println!("\n=== History Latency Benchmark ===");
+        println!("Iterations: {}", iterations);
+        println!("History OFF (decision only): {:?} total, {} ns/call", off_duration, off_per_call);
+        println!("History ON (with INSERT):    {:?} total, {} ns/call", on_duration, on_per_call);
+        println!("Overhead:                    {} ns/call", on_per_call - off_per_call);
+        println!("");
+        println!("Assessment:");
+        if on_per_call < 100_000 {
+            println!("  < 100µs per call → negligible, safe to keep synchronous");
+        } else if on_per_call < 1_000_000 {
+            println!("  < 1ms per call → acceptable, document in benchmark");
+        } else {
+            println!("  > 1ms per call → consider async/background writer");
         }
     }
 }

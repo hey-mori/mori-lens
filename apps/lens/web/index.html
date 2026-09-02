@@ -100,6 +100,8 @@
     <div class="sidebar-item active" data-section="status">Status</div>
     <div class="sidebar-item" data-section="library">Library</div>
     <div class="sidebar-item" data-section="review">Review</div>
+    <div class="sidebar-item" data-section="recent">Recent</div>
+    <div class="sidebar-item" data-section="history">History</div>
     <div class="sidebar-item" data-section="general">General</div>
     <div class="sidebar-item" data-section="models">Models</div>
     <div class="sidebar-item" data-section="apps">Apps</div>
@@ -161,6 +163,22 @@
           <button class="btn" onclick="reviewItem(false)" id="review-learn-btn" style="padding:8px 16px;display:none;background:#c62828;color:white;border-color:#c62828">Still learning</button>
         </div>
       </div>
+    </div>
+    <!-- Recent -->
+    <div class="section" id="section-recent">
+      <h1>Recent</h1>
+      <p style="color:#888;font-size:12px;margin-bottom:16px">Cards shown during this session. Disappears when the app closes.</p>
+      <div id="recent-list"><p style="color:#888;font-size:13px">No recent cards.</p></div>
+    </div>
+    <!-- History -->
+    <div class="section" id="section-history">
+      <h1>History</h1>
+      <p style="color:#888;font-size:12px;margin-bottom:16px">Persistent record of all cards. Retained according to settings.</p>
+      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+        <span id="history-count" style="color:#888;font-size:12px"></span>
+        <button class="btn" onclick="pruneHistory()" style="padding:4px 12px;font-size:12px;margin-left:auto">Prune old entries</button>
+      </div>
+      <div id="history-list"><p class="loading">Loading...</p></div>
     </div>
     <!-- General -->
     <div class="section" id="section-general">
@@ -230,6 +248,30 @@
           <option value="modifier">Modifier</option>
           <option value="deny">Deny</option>
         </select>
+      </div>
+      <h2>History</h2>
+      <div class="field">
+        <label><input type="checkbox" id="f-history" style="margin-right:8px">Enable persistent history</label>
+        <p class="hint">Stores all cards in a database. Disabled by default for privacy.</p>
+      </div>
+      <div class="field">
+        <label>Retention period</label>
+        <select id="f-history-days">
+          <option value="1">1 day</option>
+          <option value="7">7 days</option>
+          <option value="30" selected>30 days (default)</option>
+          <option value="90">90 days</option>
+          <option value="0">Forever</option>
+        </select>
+      </div>
+      <div class="field">
+        <label><input type="checkbox" id="f-history-store-app" style="margin-right:8px">Store application name</label>
+        <p class="hint">Records which app the card came from. Disable for more privacy.</p>
+      </div>
+      <div class="field">
+        <label>Excluded applications (comma-separated)</label>
+        <input type="text" id="f-history-excluded" placeholder="e.g. keepass,password">
+        <p class="hint">Cards from these apps are never recorded in history.</p>
       </div>
       <div class="btn-row">
         <button class="btn btn-primary" onclick="saveSettings()">Save</button>
@@ -311,8 +353,8 @@
       <h1>About</h1>
       <div id="about-content"><p class="loading">Loading...</p></div>
       <h2 style="margin-top:32px;color:#c00">Danger zone</h2>
-      <p style="font-size:12px;color:#888;margin-bottom:12px">Permanently delete all library data. This runs a secure wipe (WAL checkpoint, secure_delete, DELETE, VACUUM). It does not reach filesystem snapshots, drive controller remapped blocks, backups, or exports you have made.</p>
-      <button class="btn" onclick="secureWipe()" style="padding:6px 16px;border-color:#c00;color:#c00">Delete all library data</button>
+      <p style="font-size:12px;color:#888;margin-bottom:12px">Permanently delete all library and history data. This runs a secure wipe (WAL checkpoint, secure_delete, DELETE, VACUUM). Library items and persistent history are removed. saved.md and exports you have made are not affected. This does not reach filesystem snapshots, drive controller remapped blocks, or backups.</p>
+      <button class="btn" onclick="secureWipe()" style="padding:6px 16px;border-color:#c00;color:#c00">Delete all library and history data</button>
     </div>
   </div>
 
@@ -375,6 +417,10 @@
       document.getElementById('f-profile').value = currentSettings.profile;
       document.getElementById('f-hover-scope').value = currentSettings.hover_scope;
       document.getElementById('f-default-tier').value = currentSettings.default_tier;
+      document.getElementById('f-history').checked = currentSettings.history;
+      document.getElementById('f-history-days').value = currentSettings.history_days;
+      document.getElementById('f-history-store-app').checked = currentSettings.history_store_app;
+      document.getElementById('f-history-excluded').value = (currentSettings.history_excluded || []).join(',');
       document.getElementById('f-quick-endpoint').value = currentSettings.quick_endpoint;
       document.getElementById('f-deep-engine').value = currentSettings.deep_engine;
       document.getElementById('f-deep-model').value = currentSettings.deep_model || '';
@@ -436,6 +482,11 @@
         profile: document.getElementById('f-profile').value,
         hover_scope: document.getElementById('f-hover-scope').value,
         default_tier: document.getElementById('f-default-tier').value,
+        history: document.getElementById('f-history').checked,
+        history_days: parseInt(document.getElementById('f-history-days').value) || 0,
+        history_store_app: document.getElementById('f-history-store-app').checked,
+        history_excluded: document.getElementById('f-history-excluded').value
+          .split(',').map(s => s.trim().toLowerCase()).filter(s => s.length > 0),
         quick_engine: currentSettings.quick_engine,
         quick_model: document.getElementById('f-quick-model-select').value || null,
         quick_endpoint: document.getElementById('f-quick-endpoint').value,
@@ -702,10 +753,10 @@
     }
 
     async function secureWipe() {
-      if (!confirm('Delete ALL library data? This cannot be undone.\n\nThis securely wipes the database (WAL checkpoint, secure_delete, DELETE, VACUUM). It does not reach filesystem snapshots, backups, or exports you have made.')) {
+      if (!confirm('Delete ALL library and history data? This cannot be undone.\n\nThis securely wipes the database (WAL checkpoint, secure_delete, DELETE, VACUUM). Library items and persistent history are removed. saved.md and exports are not affected. This does not reach filesystem snapshots, backups, or exports you have made.')) {
         return;
       }
-      if (!confirm('Are you absolutely sure? All saved items, notes, tags, and review progress will be permanently deleted.')) {
+      if (!confirm('Are you absolutely sure? All saved items, notes, tags, review progress, and persistent history will be permanently deleted.')) {
         return;
       }
       try {
@@ -963,6 +1014,134 @@
     // Load review when Review tab is clicked
     document.querySelector('[data-section="review"]').addEventListener('click', () => {
       loadReview();
+    });
+
+    // -- Recent (session history) -------------------------------------------
+
+    async function loadRecent() {
+      const el = document.getElementById('recent-list');
+      try {
+        const cards = await invoke('recent_list');
+        if (!cards || cards.length === 0) {
+          el.innerHTML = '<p style="color:#888;font-size:13px">No recent cards.</p>';
+          return;
+        }
+        let html = '<table style="max-width:100%">';
+        for (const c of cards) {
+          const time = new Date(c.shown_at * 1000).toLocaleTimeString();
+          const preview = c.original.length > 60 ? c.original.slice(0, 60) + '...' : c.original;
+          const answer = c.answer.length > 60 ? c.answer.slice(0, 60) + '...' : c.answer;
+          html += '<tr>';
+          html += '<td style="width:50%;color:#333">' + escapeHtml(preview) + '</td>';
+          html += '<td style="width:35%;color:#666">' + escapeHtml(answer) + '</td>';
+          html += '<td style="width:8%;color:#888;font-size:12px">' + (c.app || '') + '</td>';
+          html += '<td style="width:7%;color:#888;font-size:12px;text-align:right">' + time + '</td>';
+          html += '</tr>';
+        }
+        html += '</table>';
+        el.innerHTML = html;
+      } catch (e) {
+        el.innerHTML = '<p class="error">Error: ' + e + '</p>';
+      }
+    }
+
+    // Load recent when Recent tab is clicked
+    document.querySelector('[data-section="recent"]').addEventListener('click', () => {
+      loadRecent();
+    });
+
+    // -- History (persistent) ------------------------------------------------
+
+    let historyOffset = 0;
+
+    async function loadHistory() {
+      historyOffset = 0;
+      await fetchHistoryPage();
+    }
+
+    async function fetchHistoryPage() {
+      const listEl = document.getElementById('history-list');
+      const countEl = document.getElementById('history-count');
+      try {
+        const [page, count] = await Promise.all([
+          invoke('history_list', { offset: historyOffset }),
+          invoke('history_count')
+        ]);
+        countEl.textContent = count + ' entr' + (count !== 1 ? 'ies' : 'y');
+        if (!page.entries || page.entries.length === 0) {
+          listEl.innerHTML = '<p style="color:#888;font-size:13px">No history entries yet.</p>';
+          return;
+        }
+        let html = '<table style="max-width:100%">';
+        for (const entry of page.entries) {
+          const date = new Date(entry.created_at * 1000).toLocaleDateString();
+          const preview = entry.original.length > 60 ? entry.original.slice(0, 60) + '...' : entry.original;
+          const answer = entry.answer.length > 60 ? entry.answer.slice(0, 60) + '...' : entry.answer;
+          const provenanceLabel = entry.provenance === 'ocr' ? '📷' : entry.provenance === 'accessibility' ? '♿' : entry.provenance || '?';
+          const provenanceTitle = entry.provenance === 'ocr' ? 'OCR (screen reading)' : entry.provenance === 'accessibility' ? 'Accessibility API' : entry.provenance || 'Unknown';
+          const providerLabel = entry.provider_scope === 'external' ? '🌐' : entry.provider_scope === 'local' ? '' : entry.provider_scope || '?';
+          const providerTitle = entry.provider_scope === 'external' ? 'External provider (text left machine)' : entry.provider_scope === 'local' ? 'Local inference' : entry.provider_scope || 'Unknown provider';
+          html += '<tr>';
+          html += '<td style="width:40%;color:#333">' + escapeHtml(preview) + '</td>';
+          html += '<td style="width:35%;color:#666">' + escapeHtml(answer) + '</td>';
+          html += '<td style="width:5%;text-align:center;font-size:14px" title="' + provenanceTitle + '">' + provenanceLabel + '</td>';
+          html += '<td style="width:5%;text-align:center;font-size:14px" title="' + providerTitle + '">' + providerLabel + '</td>';
+          html += '<td style="width:10%;color:#888;font-size:12px">' + (entry.app || '') + '</td>';
+          html += '<td style="width:5%;color:#888;font-size:12px">' + date + '</td>';
+          html += '<td style="width:5%;text-align:right">';
+          html += '<button class="btn" onclick="promoteHistoryEntry(' + entry.id + ')" style="padding:2px 6px;font-size:11px" title="Save to library">Save</button> ';
+          html += '<button class="btn" onclick="deleteHistoryEntry(' + entry.id + ')" style="padding:2px 6px;font-size:11px;color:#c00;border-color:#c00" title="Delete">✕</button>';
+          html += '</td>';
+          html += '</tr>';
+        }
+        html += '</table>';
+        if (page.has_more) {
+          html += '<button class="btn" onclick="loadMoreHistory()" style="margin-top:8px;padding:4px 12px;font-size:12px">Load more</button>';
+        }
+        listEl.innerHTML = html;
+      } catch (e) {
+        listEl.innerHTML = '<p class="error">Error: ' + e + '</p>';
+      }
+    }
+
+    async function loadMoreHistory() {
+      historyOffset += 50;
+      await fetchHistoryPage();
+    }
+
+    async function deleteHistoryEntry(id) {
+      if (!confirm('Delete this history entry?')) return;
+      try {
+        await invoke('history_delete', { id });
+        await fetchHistoryPage();
+      } catch (e) {
+        alert('Error: ' + e);
+      }
+    }
+
+    async function promoteHistoryEntry(id) {
+      try {
+        await invoke('history_promote', { id });
+        alert('Saved to library.');
+      } catch (e) {
+        alert('Error: ' + e);
+      }
+    }
+
+    async function pruneHistory() {
+      if (!confirm('Prune history entries older than the retention period?')) return;
+      try {
+        const count = await invoke('history_prune');
+        alert('Pruned ' + count + ' entries.');
+        await fetchHistoryPage();
+      } catch (e) {
+        alert('Error: ' + e);
+      }
+    }
+
+    // Load history when History tab is clicked
+    document.querySelector('[data-section="history"]').addEventListener('click', () => {
+      loadHistory();
     });
 
     loadAll();
