@@ -120,6 +120,7 @@
         <button class="btn" onclick="exportLibrary()" style="padding:6px 12px">Export MD</button>
         <button class="btn" onclick="exportLibraryJson()" style="padding:6px 12px">Export JSON</button>
         <button class="btn" onclick="exportLibraryJsonl()" style="padding:6px 12px">Export JSONL</button>
+        <button class="btn" onclick="importLibraryJsonl()" style="padding:6px 12px">Import JSONL</button>
         <span id="lib-count" style="color:#888;font-size:12px;margin-left:auto"></span>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
@@ -679,6 +680,25 @@
       } catch (e) {
         alert('Export failed: ' + e);
       }
+    }
+
+    async function importLibraryJsonl() {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.jsonl,.ndjson';
+      input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+          const text = await file.text();
+          const count = await invoke('library_import_jsonl', { jsonl: text });
+          alert(`Imported ${count} item(s). Duplicates were skipped.`);
+          loadLibrary();
+        } catch (e) {
+          alert('Import failed: ' + e);
+        }
+      };
+      input.click();
     }
 
     async function secureWipe() {
