@@ -95,7 +95,11 @@ Seventeen capabilities have passed it. The rest have unit tests, which
 prove the logic and prove nothing about a desktop.
 
 What is still missing before this is something a person installs: **a
-signed binary**. That is the whole of the remaining list.
+signed binary**. That is the whole of the remaining list. The decision is
+made ([ADR-0017](decisions/ADR-0017-signed-binary-distribution.md)): the
+primary channel is a Microsoft Store MSIX, which the Store signs. What
+remains is the Store developer account and MSIX packaging, both external
+dependencies.
 
 It is the whole of the remaining list **for installable**, which is not
 the same as finished. The distance from one to the other is nothing on
@@ -116,9 +120,10 @@ installer that made it for somebody would be deciding for them.
 `uninstall.ps1` reverses all of it and keeps the settings file, which is
 the only thing in this product a person wrote themselves.
 
-Signing needs a certificate, which is a purchase and a decision. Until
-there is one, SmartScreen will say the publisher is unknown, and it is
-right to: the checksum is what a person has instead.
+Signing is decided ([ADR-0017](decisions/ADR-0017-signed-binary-distribution.md)):
+the primary channel is a Microsoft Store MSIX. Until the Store account and
+MSIX packaging are ready, SmartScreen will say the publisher is unknown,
+and it is right to: the checksum is what a person has instead.
 
 **What the measurement found, since it changes what "works" means
 here:** acquisition succeeds, at p50 10ms, and returns the *right* text
