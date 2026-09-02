@@ -115,6 +115,9 @@ fn import_saved_md(library: &Library, data_dir: &Path) {
             model: None,
             note: None,
             tags: None,
+            review_state: None,
+            next_review_at: None,
+            review_count: None,
         };
         match library.insert(&item) {
             Ok(_) => imported += 1,
