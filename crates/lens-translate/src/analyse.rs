@@ -208,6 +208,7 @@ impl Analyser for OllamaTranslator {
         // explanation came back in the source's language degrades to
         // `Malformed` rather than to a card of English under Korean headings.
         let analysis = parse(&answer, self.model.clone(), latency_ms as u64, &fence)
+            .only_answerable(request.answerable())
             .only_what_is_written_in(&request.target_language)
             .without_restatements_of(&request.sentence);
         // A schema satisfied with five empty strings is shaped and says
