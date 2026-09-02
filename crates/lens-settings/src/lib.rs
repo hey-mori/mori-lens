@@ -294,6 +294,27 @@ fn extract_general(doc: &toml_edit::DocumentMut) -> schema::General {
         ocr: get_str("ocr").unwrap_or(defaults.ocr),
         profile: get_str("profile").unwrap_or(defaults.profile),
         hover_scope: get_str("hover_scope").unwrap_or(defaults.hover_scope),
+        history: table
+            .get("history")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(defaults.history),
+        history_days: get_int("history_days")
+            .filter(|v| [0, 1, 7, 30, 90].contains(v))
+            .map(|v| v as u32)
+            .unwrap_or(defaults.history_days),
+        history_store_app: table
+            .get("history_store_app")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(defaults.history_store_app),
+        history_excluded: table
+            .get("history_excluded")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_owned()))
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -374,6 +395,10 @@ fn apply_schema_to_document(schema: &Schema, doc: &mut toml_edit::DocumentMut) {
         set_str(table, "ocr", &schema.general.ocr);
         set_str(table, "profile", &schema.general.profile);
         set_str(table, "hover_scope", &schema.general.hover_scope);
+        set_bool(table, "history", schema.general.history);
+        set_int(table, "history_days", schema.general.history_days as i64);
+        set_bool(table, "history_store_app", schema.general.history_store_app);
+        set_str_array(table, "history_excluded", &schema.general.history_excluded);
     }
 
     // [quick]
@@ -431,6 +456,28 @@ fn set_int(table: &mut dyn toml_edit::TableLike, key: &str, value: i64) {
     table.insert(key, toml_edit::value(value));
 }
 
+fn set_bool(table: &mut dyn toml_edit::TableLike, key: &str, value: bool) {
+    if let Some(item) = table.get_mut(key) {
+        if let Some(v) = item.as_value_mut() {
+            *v = toml_edit::Value::from(value);
+            return;
+        }
+    }
+    table.insert(key, toml_edit::value(value));
+}
+
+fn set_str_array(table: &mut dyn toml_edit::TableLike, key: &str, values: &[String]) {
+    let mut arr = toml_edit::Array::new();
+    for v in values {
+        arr.push(v.as_str());
+    }
+    if let Some(item) = table.get_mut(key) {
+        *item = toml_edit::Item::Value(toml_edit::Value::Array(arr));
+        return;
+    }
+    table.insert(key, toml_edit::Item::Value(toml_edit::Value::Array(arr)));
+}
+
 /// Build a fresh TOML document from a schema, used when there is no
 /// existing document to preserve.
 fn build_document_from_schema(schema: &Schema) -> toml_edit::DocumentMut {
@@ -454,6 +501,23 @@ fn build_document_from_schema(schema: &Schema) -> toml_edit::DocumentMut {
     general.insert("ocr", toml_edit::value(&schema.general.ocr));
     general.insert("profile", toml_edit::value(&schema.general.profile));
     general.insert("hover_scope", toml_edit::value(&schema.general.hover_scope));
+    general.insert("history", toml_edit::value(schema.general.history));
+    general.insert(
+        "history_days",
+        toml_edit::value(schema.general.history_days as i64),
+    );
+    general.insert(
+        "history_store_app",
+        toml_edit::value(schema.general.history_store_app),
+    );
+    let mut excl_arr = toml_edit::Array::new();
+    for v in &schema.general.history_excluded {
+        excl_arr.push(v.as_str());
+    }
+    general.insert(
+        "history_excluded",
+        toml_edit::Item::Value(toml_edit::Value::Array(excl_arr)),
+    );
     doc["general"] = toml_edit::Item::Table(general);
 
     let quick = engine_to_table(&schema.quick);

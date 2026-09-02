@@ -33,7 +33,7 @@ use crate::policy::{AppPolicy, AppTier};
 /// Used only to give a better message when one turns up below it, so a missing
 /// entry costs a worse sentence rather than a wrong parse. Kept beside the
 /// match that handles them, which is the only way it stays right.
-const GLOBAL_KEYS: [&str; 10] = [
+const GLOBAL_KEYS: [&str; 13] = [
     "language",
     "model",
     "dwell_ms",
@@ -44,6 +44,9 @@ const GLOBAL_KEYS: [&str; 10] = [
     "text",
     "profile",
     "hover_scope",
+    "history",
+    "history_days",
+    "history_store_app",
 ];
 
 /// A line the parser did not understand, and where it was.
@@ -100,10 +103,24 @@ pub struct Settings {
     /// sentence or the word under the pointer. `Ctrl` toggles the other
     /// (`docs/benchmarks/2026-08-18-a-word-without-its-sentence.md`).
     pub hover_scope: String,
+    /// Whether persistent history is enabled (ADR-0014 Tier 3).
+    ///
+    /// Off by default. When off, nothing is written. When on, every card
+    /// shown is recorded to the database for the configured retention period.
+    pub history: bool,
+    /// How many days to keep history entries. 0 means forever.
+    pub history_days: u32,
+    /// Whether to store the source application name in history entries.
+    ///
+    /// Off by default, because a list of which programs somebody reads in is
+    /// a different fact from what they read (ADR-0014).
+    pub history_store_app: bool,
     /// The tier for an application with no rule of its own.
     pub default_tier: AppTier,
     /// Process-name substring to tier, in the order they were written.
     pub applications: Vec<(String, AppTier)>,
+    /// Applications excluded from history recording.
+    pub history_excluded: Vec<String>,
 }
 
 impl Default for Settings {
@@ -119,11 +136,15 @@ impl Default for Settings {
             profile: crate::analyse::Profile::default().as_str().to_owned(),
             text: "normal".to_owned(),
             hover_scope: "sentence".to_owned(),
+            history: false,
+            history_days: 30,
+            history_store_app: false,
             // Not `allow`. A tool that reads every window from first launch has
             // to earn that, and the file is where a user grants it
             // (`docs/privacy-model.md` §2).
             default_tier: AppTier::Modifier,
             applications: Vec::new(),
+            history_excluded: Vec::new(),
         }
     }
 }
@@ -133,7 +154,9 @@ impl Settings {
     pub fn parse(text: &str) -> (Self, Vec<Problem>) {
         let mut settings = Self::default();
         let mut problems = Vec::new();
-        let mut in_applications = false;
+        // Track which section we are in: 0 = global, 1 = [applications],
+        // 2 = [history_excluded].
+        let mut section: u8 = 0;
 
         for (index, raw) in text.lines().enumerate() {
             let line = index + 1;
@@ -142,11 +165,16 @@ impl Settings {
                 continue;
             }
 
-            if let Some(section) = content.strip_prefix('[') {
-                match section.strip_suffix(']').map(str::trim) {
-                    Some("applications") => in_applications = true,
+            if let Some(section_name) = content.strip_prefix('[') {
+                match section_name.strip_suffix(']').map(str::trim) {
+                    Some("applications") => {
+                        section = 1;
+                    }
+                    Some("history_excluded") => {
+                        section = 2;
+                    }
                     Some(other) => {
-                        in_applications = false;
+                        section = 0;
                         problems.push(Problem {
                             line,
                             message: format!("unknown section [{other}]"),
@@ -186,8 +214,10 @@ impl Settings {
             if key.is_empty() {
                 problems.push(Problem {
                     line,
-                    message: if in_applications {
+                    message: if section == 1 {
                         "an application rule needs a name before the =".to_owned()
+                    } else if section == 2 {
+                        "an excluded app needs a name before the =".to_owned()
                     } else {
                         "a setting needs a name before the =".to_owned()
                     },
@@ -203,7 +233,7 @@ impl Settings {
                 continue;
             }
 
-            if in_applications {
+            if section == 1 {
                 // **A setting written in the wrong half of the file.** The
                 // template puts the settings at the top, commented, and
                 // `[applications]` at the bottom, so somebody adding a line
@@ -227,6 +257,22 @@ impl Settings {
                         message: format!("{key} must be allow, modifier, or deny, not {value}"),
                     }),
                 }
+                continue;
+            }
+
+            if section == 2 {
+                // [history_excluded] section: each line is `app_name = true`
+                // or just the app name as a key.
+                if GLOBAL_KEYS.contains(&key) {
+                    problems.push(Problem {
+                        line,
+                        message: format!(
+                            "{key} is a setting, not an exclusion; move it above [history_excluded]"
+                        ),
+                    });
+                    continue;
+                }
+                settings.history_excluded.push(value_key(key));
                 continue;
             }
 
@@ -289,6 +335,26 @@ impl Settings {
             "hover_scope" => match value {
                 "sentence" | "word" => self.hover_scope = value.to_owned(),
                 _ => reject("sentence or word"),
+            },
+            "history" => match value {
+                "on" | "true" | "yes" => self.history = true,
+                "off" | "false" | "no" => self.history = false,
+                _ => reject("on or off"),
+            },
+            "history_days" => match value.parse::<u32>() {
+                Ok(parsed) => {
+                    if parsed == 0 || parsed == 1 || parsed == 7 || parsed == 30 || parsed == 90 {
+                        self.history_days = parsed;
+                    } else {
+                        reject("0 (forever), 1, 7, 30, or 90");
+                    }
+                }
+                Err(_) => reject("a whole number of days"),
+            },
+            "history_store_app" => match value {
+                "on" | "true" | "yes" => self.history_store_app = true,
+                "off" | "false" | "no" => self.history_store_app = false,
+                _ => reject("on or off"),
             },
             "default" => match tier(value) {
                 Some(tier) => self.default_tier = tier,
@@ -366,6 +432,16 @@ pub const TEMPLATE: &str = "# Mori Lens settings.
                                # Hold Ctrl to toggle the other. The model always
                                # receives the sentence; only the card changes.
 
+# history      = off           # on or off. Whether Lens keeps a durable record
+                               # of every card shown. Off by default, and off
+                               # means nothing is written (ADR-0014).
+# history_days = 30            # 0 (forever), 1, 7, 30, or 90. How long history
+                               # entries are kept before automatic deletion.
+# history_store_app = off      # on or off. Whether to record which application
+                               # a history entry came from. Off by default,
+                               # because a list of programs is a different fact
+                               # from the words in them.
+
 # What Lens may do in an application it has no rule for.
 #   allow      read whenever the pointer rests
 #   modifier   only while Alt is held
@@ -379,6 +455,10 @@ pub const TEMPLATE: &str = "# Mori Lens settings.
 [applications]
 # chrome = allow
 # msedge = allow
+
+# Applications excluded from history recording. One name per line.
+# Only matters when history = on.
+[history_excluded]
 ";
 
 fn strip_comment(line: &str) -> &str {
