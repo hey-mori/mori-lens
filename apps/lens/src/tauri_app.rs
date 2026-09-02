@@ -12,6 +12,18 @@ use crate::detail_view::{ExplainFlag, SharedDetail, SharedSavePath};
 use crate::library_service::SharedLibrary;
 use crate::settings_service::{SettingsView, SharedSettings};
 
+/// Shared session-recent state, written by the polling loop and read by Tauri commands.
+pub type SharedRecent = Arc<Mutex<lens_core::recent::SessionRecent>>;
+
+/// A recent card for the webview.
+#[derive(Clone, Debug, Serialize)]
+pub struct RecentCardView {
+    pub original: String,
+    pub answer: String,
+    pub shown_at: i64,
+    pub app: Option<String>,
+}
+
 /// A snapshot of the session's diagnostics, shared with the webview.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct DiagnosticsSnapshot {
@@ -378,7 +390,28 @@ fn library_import_jsonl(
     jsonl: String,
 ) -> Result<i64, String> {
     let lib = state.lock().unwrap();
-    lib.library().import_jsonl(&jsonl).map_err(|e| format!("{e}"))
+    lib.library()
+        .import_jsonl(&jsonl)
+        .map_err(|e| format!("{e}"))
+}
+
+#[tauri::command]
+fn recent_list(recent: tauri::State<'_, SharedRecent>) -> Vec<RecentCardView> {
+    let mut guard = recent.lock().unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    guard
+        .list(now)
+        .into_iter()
+        .map(|c| RecentCardView {
+            original: c.original,
+            answer: c.answer,
+            shown_at: c.shown_at,
+            app: c.app,
+        })
+        .collect()
 }
 
 /// Tauri command: securely wipe all data from the library database.
@@ -441,6 +474,100 @@ fn library_record_review(
         .map_err(|e| format!("{e}"))
 }
 
+// -- History commands (ADR-0014 Tier 3) -------------------------------------
+
+/// A history entry for the webview.
+#[derive(Clone, Debug, Serialize)]
+pub struct HistoryEntryView {
+    pub id: i64,
+    pub original: String,
+    pub answer: String,
+    pub kind: String,
+    pub source_language: Option<String>,
+    pub target_language: Option<String>,
+    pub model: Option<String>,
+    pub app: Option<String>,
+    pub provenance: String,
+    pub created_at: i64,
+}
+
+/// A page of history entries for the webview.
+#[derive(Clone, Debug, Serialize)]
+pub struct HistoryPageView {
+    pub entries: Vec<HistoryEntryView>,
+    pub has_more: bool,
+    pub total: i64,
+}
+
+impl From<&lens_storage::HistoryEntry> for HistoryEntryView {
+    fn from(e: &lens_storage::HistoryEntry) -> Self {
+        Self {
+            id: e.id,
+            original: e.original.clone(),
+            answer: e.answer.clone(),
+            kind: e.kind.clone(),
+            source_language: e.source_language.clone(),
+            target_language: e.target_language.clone(),
+            model: e.model.clone(),
+            app: e.app.clone(),
+            provenance: e.provenance.clone(),
+            created_at: e.created_at,
+        }
+    }
+}
+
+#[tauri::command]
+fn history_list(
+    state: tauri::State<'_, SharedLibrary>,
+    offset: Option<i64>,
+) -> Result<HistoryPageView, String> {
+    let lib = state.lock().unwrap();
+    let page = lib
+        .library()
+        .history_list(offset.unwrap_or(0))
+        .map_err(|e| format!("{e}"))?;
+    Ok(HistoryPageView {
+        entries: page.entries.iter().map(HistoryEntryView::from).collect(),
+        has_more: page.has_more,
+        total: page.total,
+    })
+}
+
+#[tauri::command]
+fn history_count(state: tauri::State<'_, SharedLibrary>) -> Result<i64, String> {
+    let lib = state.lock().unwrap();
+    lib.library().history_count().map_err(|e| format!("{e}"))
+}
+
+#[tauri::command]
+fn history_delete(state: tauri::State<'_, SharedLibrary>, id: i64) -> Result<bool, String> {
+    let lib = state.lock().unwrap();
+    lib.library().history_delete(id).map_err(|e| format!("{e}"))
+}
+
+#[tauri::command]
+fn history_promote(state: tauri::State<'_, SharedLibrary>, id: i64) -> Result<i64, String> {
+    let lib = state.lock().unwrap();
+    lib.library()
+        .history_promote(id)
+        .map_err(|e| format!("{e}"))
+}
+
+#[tauri::command]
+fn history_prune(
+    state: tauri::State<'_, SharedLibrary>,
+    retention_secs: i64,
+) -> Result<usize, String> {
+    let lib = state.lock().unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    lib.library()
+        .history_prune(now, retention_secs)
+        .map_err(|e| format!("{e}"))
+}
+
 /// Build the Tauri application and return its handle, shared diagnostics, and the `App` itself.
 ///
 /// The `App` must be kept alive and `.run()` must be called on it. Dropping
@@ -450,6 +577,7 @@ pub fn build(
     shared_settings: SharedSettings,
     shared_library: SharedLibrary,
     shared_detail: SharedDetail,
+    shared_recent: SharedRecent,
     explain_flag: ExplainFlag,
     save_path: SharedSavePath,
 ) -> Result<(AppHandle, SharedDiagnostics, tauri::App), tauri::Error> {
@@ -480,9 +608,15 @@ pub fn build(
             library_export_jsonl,
             library_import_jsonl,
             library_secure_wipe,
+            recent_list,
             library_review_list,
             library_review_count,
             library_record_review,
+            history_list,
+            history_count,
+            history_delete,
+            history_promote,
+            history_prune,
             crate::detail_view::detail_read,
             crate::detail_view::detail_copy,
             crate::detail_view::detail_save,
@@ -494,6 +628,7 @@ pub fn build(
         .manage(shared_settings)
         .manage(shared_library)
         .manage(shared_detail)
+        .manage(shared_recent)
         .manage(explain_flag)
         .manage(save_path)
         .setup(|app| {
