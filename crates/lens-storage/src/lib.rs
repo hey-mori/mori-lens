@@ -523,6 +523,49 @@ impl Library {
         &self.conn
     }
 
+    /// Securely wipe all data from the database.
+    ///
+    /// A plain SQLite `DELETE` frees pages but does not erase their content;
+    /// the bytes remain until the pages are reused. This method goes further,
+    /// following [ADR-0013](../../docs/decisions/ADR-0013-the-local-library.md):
+    ///
+    /// 1. Checkpoint the WAL so all pending writes are in the main database.
+    /// 2. Run `secure_delete = ON` so future deletes overwrite with zeros.
+    /// 3. Delete all rows from every content table.
+    /// 4. `VACUUM` to rebuild the database file, which reclaims freed pages
+    ///    and removes residual data from the file.
+    ///
+    /// This removes data **inside the SQLite file**. It does not reach
+    /// filesystem snapshots, drive controller remapped blocks, backups, or
+    /// exports the reader made. Each is named in the interface rather than
+    /// covered by a promise that sounds larger than it is.
+    pub fn secure_wipe(&self) -> Result<(), Error> {
+        // Checkpoint the WAL so all pending writes land in the main file.
+        // Ignore errors: a database without WAL mode returns an error that
+        // is harmless (there is nothing to checkpoint).
+        let _ = self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+
+        // Enable secure_delete so the DELETE below overwrites freed pages
+        // with zeros rather than leaving the old content in place.
+        self.conn.execute_batch("PRAGMA secure_delete = ON;")?;
+
+        // Remove all content. The order matters: child tables first because
+        // foreign keys reference library rows.
+        self.conn.execute_batch(
+            "DELETE FROM library_tags;
+             DELETE FROM tags;
+             DELETE FROM library;
+             DELETE FROM meta;",
+        )?;
+
+        // Rebuild the database file from scratch. VACUUM creates a new file,
+        // copies live pages into it, and replaces the old one. Any residual
+        // data in freed pages is gone after this.
+        self.conn.execute_batch("VACUUM;")?;
+
+        Ok(())
+    }
+
     // -- migrations ---------------------------------------------------------
 
     fn migrate(&self) -> Result<(), Error> {
@@ -1532,6 +1575,38 @@ mod tests {
         assert!(lib.has_duplicate(&item.original, "translation").unwrap());
         assert!(!lib.has_duplicate(&item.original, "analysis").unwrap());
         assert!(!lib.has_duplicate("different text", "translation").unwrap());
+        cleanup(&path);
+    }
+
+    /// A secure wipe removes all rows and leaves a usable database.
+    #[test]
+    fn secure_wipe_removes_everything_and_leaves_a_working_database() {
+        let path = temp_db("secure-wipe");
+        let lib = Library::open(&path).unwrap();
+
+        // Insert a few items with tags.
+        let mut item = a_translation();
+        lib.insert(&item).unwrap();
+        item.original = "A second sentence.".to_owned();
+        lib.insert(&item).unwrap();
+        lib.set_tags(1, &["vocab".to_owned(), "important".to_owned()])
+            .unwrap();
+
+        assert_eq!(lib.count().unwrap(), 2);
+
+        // Wipe.
+        lib.secure_wipe().unwrap();
+
+        // Everything is gone.
+        assert_eq!(lib.count().unwrap(), 0);
+        assert!(lib.get(1).unwrap().is_none());
+        assert!(lib.search("sentence", 0).unwrap().items.is_empty());
+
+        // The database is still usable.
+        item.original = "After the wipe.".to_owned();
+        lib.insert(&item).unwrap();
+        assert_eq!(lib.count().unwrap(), 1);
+
         cleanup(&path);
     }
 }
