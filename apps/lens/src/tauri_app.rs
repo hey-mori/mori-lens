@@ -55,6 +55,9 @@ pub struct LibraryItemView {
     pub target_language: Option<String>,
     pub model: Option<String>,
     pub note: Option<String>,
+    pub review_state: Option<String>,
+    pub next_review_at: Option<i64>,
+    pub review_count: Option<i64>,
 }
 
 /// A page of library items for the webview.
@@ -79,6 +82,9 @@ impl From<&lens_storage::Item> for LibraryItemView {
             target_language: item.target_language.clone(),
             model: item.model.clone(),
             note: item.note.clone(),
+            review_state: item.review_state.clone(),
+            next_review_at: item.next_review_at,
+            review_count: item.review_count,
         }
     }
 }
@@ -372,6 +378,54 @@ fn library_secure_wipe(state: tauri::State<'_, SharedLibrary>) -> Result<(), Str
     lib.library().secure_wipe().map_err(|e| format!("{e}"))
 }
 
+#[tauri::command]
+fn library_review_list(
+    state: tauri::State<'_, SharedLibrary>,
+    offset: Option<i64>,
+) -> Result<LibraryPageView, String> {
+    let lib = state.lock().unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let page = lib
+        .library()
+        .list_due(now, offset.unwrap_or(0))
+        .map_err(|e| format!("{e}"))?;
+    let total = lib.library().count_due(now).unwrap_or(0);
+    Ok(LibraryPageView {
+        items: page.items.iter().map(LibraryItemView::from).collect(),
+        has_more: page.has_more,
+        total,
+    })
+}
+
+#[tauri::command]
+fn library_review_count(state: tauri::State<'_, SharedLibrary>) -> Result<i64, String> {
+    let lib = state.lock().unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    lib.library().count_due(now).map_err(|e| format!("{e}"))
+}
+
+#[tauri::command]
+fn library_record_review(
+    state: tauri::State<'_, SharedLibrary>,
+    id: i64,
+    success: bool,
+) -> Result<bool, String> {
+    let lib = state.lock().unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    lib.library()
+        .record_review(id, success, now)
+        .map_err(|e| format!("{e}"))
+}
+
 /// Build the Tauri application and return its handle, shared diagnostics, and the `App` itself.
 ///
 /// The `App` must be kept alive and `.run()` must be called on it. Dropping
@@ -409,6 +463,9 @@ pub fn build(
             library_export,
             library_export_json,
             library_secure_wipe,
+            library_review_list,
+            library_review_count,
+            library_record_review,
             crate::detail_view::detail_read,
             crate::detail_view::detail_copy,
             crate::detail_view::detail_save,
