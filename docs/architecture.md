@@ -24,7 +24,7 @@ Segmentation          lens-core::text         built
   │
   ▼
 Language routing      (M3)                    shipped
-  script detection, language id, engine choice
+  script detection, safe fallback, engine choice
   script detection and target-language routing are built; Latin-script
   language identification (English vs French) returns Undecidable and
   translates, which is the safe default
