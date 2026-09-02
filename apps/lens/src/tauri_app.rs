@@ -366,6 +366,12 @@ fn library_export_json(state: tauri::State<'_, SharedLibrary>) -> Result<String,
     lib.library().export_json().map_err(|e| format!("{e}"))
 }
 
+#[tauri::command]
+fn library_export_jsonl(state: tauri::State<'_, SharedLibrary>) -> Result<String, String> {
+    let lib = state.lock().unwrap();
+    lib.library().export_jsonl().map_err(|e| format!("{e}"))
+}
+
 /// Tauri command: securely wipe all data from the library database.
 ///
 /// Checkpoints the WAL, enables `secure_delete`, deletes all rows, and
@@ -462,6 +468,7 @@ pub fn build(
             library_count,
             library_export,
             library_export_json,
+            library_export_jsonl,
             library_secure_wipe,
             library_review_list,
             library_review_count,
