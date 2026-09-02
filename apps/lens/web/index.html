@@ -119,6 +119,7 @@
         <button class="btn" onclick="searchLibrary()" style="padding:6px 12px">Search</button>
         <button class="btn" onclick="exportLibrary()" style="padding:6px 12px">Export MD</button>
         <button class="btn" onclick="exportLibraryJson()" style="padding:6px 12px">Export JSON</button>
+        <button class="btn" onclick="exportLibraryJsonl()" style="padding:6px 12px">Export JSONL</button>
         <span id="lib-count" style="color:#888;font-size:12px;margin-left:auto"></span>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
@@ -647,6 +648,27 @@
         const a = document.createElement('a');
         a.href = url;
         a.download = 'library.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        alert('Export failed: ' + e);
+      }
+    }
+
+    async function exportLibraryJsonl() {
+      try {
+        const jsonl = await invoke('library_export_jsonl');
+        if (!jsonl || jsonl.trim().split('\n').length <= 1) {
+          alert('Library is empty.');
+          return;
+        }
+        const blob = new Blob([jsonl], { type: 'application/x-ndjson' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'library.jsonl';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
