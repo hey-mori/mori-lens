@@ -122,15 +122,22 @@ both work; Lens never recognises its own overlay; no captured image
 reaches disk; and VS Code and KakaoTalk, the two applications that
 prompted the swap, are measured again with it.
 
-Standing, 2026-09-01:
+**IMPLEMENTATION: complete.** All OCR code paths, the overlay exclusion
+guard, the capture pipeline, and the contract tests are merged and
+verified by automated tests. What remains is real-world measurement on
+actual desktop surfaces, which requires a human operator and is tracked
+as validation debt.
 
-| Condition | State |
-|---|---|
-| OCR never runs unasked | measured, and it was already measured before this row was written. `lens_core::contract_tests` covers all four cases against an acquirer that counts its calls: a successful accessibility read never reaches OCR, `automatic` falls through, `manual` runs only when asked, and a protected field is refused in every mode. `ocr_that_is_off_does_not_run_even_when_asked_for` closes the fourth mode, added 2026-08-18 after the other three turned out to be covered and `off` did not |
-| a scanned PDF and an image-text case | **measured, partially.** Direct 1.0x rendering scores 82-86% for both English and Korean ([`OCR M4 verification`](benchmarks/2026-09-01-ocr-m4-verification.md)). At half scale, the recogniser reads nothing at all, even after upscaling. A real scanned PDF with a real file remains a person's job |
-| Lens never recognises its own overlay | **measured** for both paths. The accessibility half was measured under M2. The OCR half: `ocr_would_read_the_cards_own_text_if_the_hide_guard_failed` renders a card and proves OCR reads it (5/5 English, Korean found). The hide guard is necessary ([`OCR M4 verification`](benchmarks/2026-09-01-ocr-m4-verification.md)) |
-| no captured image reaches disk | measured 2026-08-18, both halves: `scripts/check.sh` refuses a file API in `capture.rs` and `ocr_acquire.rs`, and `an_ocr_acquisition_writes_nothing_to_disk` takes real screenshots against a redirected temporary directory and watches where they could land ([`nothing reaches disk`](benchmarks/2026-08-18-nothing-reaches-disk.md)). **Two earlier versions of that test were green and worthless**, and the benchmark keeps both |
-| VS Code and KakaoTalk measured again | **partially.** VS Code measured 2026-08-06 with OCR (93 lines, 336 words). KakaoTalk measured 2026-08-05 for accessibility (one blob, OCR case). A fresh OCR measurement of KakaoTalk needs a visible conversation window |
+Standing, 2026-09-03:
+
+| Condition | Automated | Real-world |
+|---|---|---|
+| OCR never runs unasked | CLOSED (4 contract tests) | N/A |
+| a scanned PDF and an image-text case | CLOSED (synthetic 1.0x, 82-86%) | **AWAITING** real viewer measurement |
+| Lens never recognises its own overlay | CLOSED (contract + OCR test) | **AWAITING** real compositor timing |
+| no captured image reaches disk | CLOSED (clippy + test) | N/A |
+| VS Code measured again | CLOSED (2026-08-06, 93 lines) | **AWAITING** fresh measurement |
+| KakaoTalk measured again | CLOSED (accessibility only) | **AWAITING** fresh OCR measurement |
 
 **"Unasked" means as installed, and that is the whole of it.** As of
 2026-08-06 `ocr = automatic` exists, and under it a hover the
