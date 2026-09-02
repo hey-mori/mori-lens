@@ -91,12 +91,15 @@
     #lib-search { background: #2a2a2a; border-color: #444; color: #e0e0e0; }
     #lib-search::placeholder { color: #777; }
     #lib-detail textarea { background: #2a2a2a; border-color: #444; color: #e0e0e0; }
+    #review-card { background: rgba(255,255,255,0.03); }
+    #review-answer { background: rgba(255,255,255,0.05); color: #bbb; }
   }
 </style>
 <body>
   <div class="sidebar">
     <div class="sidebar-item active" data-section="status">Status</div>
     <div class="sidebar-item" data-section="library">Library</div>
+    <div class="sidebar-item" data-section="review">Review</div>
     <div class="sidebar-item" data-section="general">General</div>
     <div class="sidebar-item" data-section="models">Models</div>
     <div class="sidebar-item" data-section="apps">Apps</div>
@@ -116,6 +119,8 @@
         <button class="btn" onclick="searchLibrary()" style="padding:6px 12px">Search</button>
         <button class="btn" onclick="exportLibrary()" style="padding:6px 12px">Export MD</button>
         <button class="btn" onclick="exportLibraryJson()" style="padding:6px 12px">Export JSON</button>
+        <button class="btn" onclick="exportLibraryJsonl()" style="padding:6px 12px">Export JSONL</button>
+        <button class="btn" onclick="importLibraryJsonl()" style="padding:6px 12px">Import JSONL</button>
         <span id="lib-count" style="color:#888;font-size:12px;margin-left:auto"></span>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
@@ -141,6 +146,21 @@
       </div>
       <div id="lib-list"><p class="loading">Loading...</p></div>
       <div id="lib-detail" style="display:none;margin-top:24px;padding:16px;background:rgba(0,0,0,0.02);border-radius:6px"></div>
+    </div>
+    <!-- Review -->
+    <div class="section" id="section-review">
+      <h1>Review</h1>
+      <div id="review-summary" style="margin-bottom:16px"></div>
+      <div id="review-list"><p class="loading">Loading...</p></div>
+      <div id="review-card" style="display:none;margin-top:16px;padding:20px;background:rgba(0,0,0,0.02);border-radius:8px;max-width:500px">
+        <div id="review-original" style="font-size:16px;margin-bottom:12px;line-height:1.5"></div>
+        <div id="review-answer" style="color:#555;margin-bottom:16px;padding:12px;background:rgba(0,0,0,0.03);border-radius:4px;display:none"></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn" onclick="showReviewAnswer()" id="review-show-btn" style="padding:8px 16px">Show answer</button>
+          <button class="btn" onclick="reviewItem(true)" id="review-got-it-btn" style="padding:8px 16px;display:none;background:#2e7d32;color:white;border-color:#2e7d32">Got it</button>
+          <button class="btn" onclick="reviewItem(false)" id="review-learn-btn" style="padding:8px 16px;display:none;background:#c62828;color:white;border-color:#c62828">Still learning</button>
+        </div>
+      </div>
     </div>
     <!-- General -->
     <div class="section" id="section-general">
@@ -290,6 +310,9 @@
     <div class="section" id="section-about">
       <h1>About</h1>
       <div id="about-content"><p class="loading">Loading...</p></div>
+      <h2 style="margin-top:32px;color:#c00">Danger zone</h2>
+      <p style="font-size:12px;color:#888;margin-bottom:12px">Permanently delete all library data. This runs a secure wipe (WAL checkpoint, secure_delete, DELETE, VACUUM). It does not reach filesystem snapshots, drive controller remapped blocks, backups, or exports you have made.</p>
+      <button class="btn" onclick="secureWipe()" style="padding:6px 16px;border-color:#c00;color:#c00">Delete all library data</button>
     </div>
   </div>
 
@@ -638,6 +661,62 @@
       }
     }
 
+    async function exportLibraryJsonl() {
+      try {
+        const jsonl = await invoke('library_export_jsonl');
+        if (!jsonl || jsonl.trim().split('\n').length <= 1) {
+          alert('Library is empty.');
+          return;
+        }
+        const blob = new Blob([jsonl], { type: 'application/x-ndjson' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'library.jsonl';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        alert('Export failed: ' + e);
+      }
+    }
+
+    async function importLibraryJsonl() {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.jsonl,.ndjson';
+      input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+          const text = await file.text();
+          const count = await invoke('library_import_jsonl', { jsonl: text });
+          alert(`Imported ${count} item(s). Duplicates were skipped.`);
+          loadLibrary();
+        } catch (e) {
+          alert('Import failed: ' + e);
+        }
+      };
+      input.click();
+    }
+
+    async function secureWipe() {
+      if (!confirm('Delete ALL library data? This cannot be undone.\n\nThis securely wipes the database (WAL checkpoint, secure_delete, DELETE, VACUUM). It does not reach filesystem snapshots, backups, or exports you have made.')) {
+        return;
+      }
+      if (!confirm('Are you absolutely sure? All saved items, notes, tags, and review progress will be permanently deleted.')) {
+        return;
+      }
+      try {
+        await invoke('library_secure_wipe');
+        alert('All library data has been deleted.');
+        loadLibrary();
+      } catch (e) {
+        alert('Secure wipe failed: ' + e);
+      }
+    }
+
     async function fetchLibraryPage() {
       const listEl = document.getElementById('lib-list');
       const countEl = document.getElementById('lib-count');
@@ -667,10 +746,14 @@
         for (const item of page.items) {
           const date = new Date(item.created_at * 1000).toLocaleDateString();
           const kind = item.kind === 'analysis' ? 'analysis' : 'translation';
+          const review = item.review_state || 'new';
+          const reviewBadge = review === 'mastered' ? '<span style="color:#2e7d32;font-size:11px" title="Mastered"> ✓</span>'
+            : review === 'learning' ? '<span style="color:#f57c00;font-size:11px" title="Learning"> ◐</span>'
+            : '<span style="color:#888;font-size:11px" title="New"> ○</span>';
           const preview = item.original.length > 60 ? item.original.slice(0, 60) + '...' : item.original;
           html += '<tr style="cursor:pointer" onclick="showLibraryItem(' + item.id + ')">';
           html += '<td style="width:60%;color:#333">' + escapeHtml(preview) + '</td>';
-          html += '<td style="width:15%;color:#888;font-size:12px">' + kind + '</td>';
+          html += '<td style="width:15%;color:#888;font-size:12px">' + kind + reviewBadge + '</td>';
           html += '<td style="width:15%;color:#888;font-size:12px">' + (item.app || '') + '</td>';
           html += '<td style="width:10%;color:#888;font-size:12px;text-align:right">' + date + '</td>';
           html += '</tr>';
@@ -808,6 +891,78 @@
     // Search on Enter
     document.getElementById('lib-search').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') searchLibrary();
+    });
+
+    // -- Review list --------------------------------------------------------
+
+    let reviewItems = [];
+    let currentReviewIndex = 0;
+
+    async function loadReview() {
+      const list = document.getElementById('review-list');
+      const summary = document.getElementById('review-summary');
+      try {
+        const count = await window.__TAURI__.invoke('library_review_count');
+        summary.innerHTML = `<span style="font-size:24px;font-weight:600">${count}</span> <span style="color:#888;font-size:12px">items due for review</span>`;
+
+        if (count === 0) {
+          list.innerHTML = '<p style="color:#888;padding:20px 0">No items due for review. Saved items will appear here when their review date arrives.</p>';
+          document.getElementById('review-card').style.display = 'none';
+          return;
+        }
+
+        const page = await window.__TAURI__.invoke('library_review_list', { offset: 0 });
+        reviewItems = page.items;
+        currentReviewIndex = 0;
+        list.innerHTML = '';
+        showReviewCard();
+      } catch (e) {
+        list.innerHTML = `<p class="error">Failed to load review list: ${e}</p>`;
+      }
+    }
+
+    function showReviewCard() {
+      const card = document.getElementById('review-card');
+      if (currentReviewIndex >= reviewItems.length) {
+        card.style.display = 'none';
+        document.getElementById('review-list').innerHTML = '<p style="color:#2e7d32;padding:20px 0">All caught up! No more items to review right now.</p>';
+        return;
+      }
+      const item = reviewItems[currentReviewIndex];
+      card.style.display = 'block';
+      document.getElementById('review-original').textContent = item.original;
+      document.getElementById('review-answer').textContent = item.answer;
+      document.getElementById('review-answer').style.display = 'none';
+      document.getElementById('review-show-btn').style.display = '';
+      document.getElementById('review-got-it-btn').style.display = 'none';
+      document.getElementById('review-learn-btn').style.display = 'none';
+      document.getElementById('review-list').innerHTML = `<p style="color:#888;font-size:12px">Item ${currentReviewIndex + 1} of ${reviewItems.length}</p>`;
+    }
+
+    function showReviewAnswer() {
+      document.getElementById('review-answer').style.display = 'block';
+      document.getElementById('review-show-btn').style.display = 'none';
+      document.getElementById('review-got-it-btn').style.display = '';
+      document.getElementById('review-learn-btn').style.display = '';
+    }
+
+    async function reviewItem(success) {
+      const item = reviewItems[currentReviewIndex];
+      try {
+        await window.__TAURI__.invoke('library_record_review', { id: item.id, success: success });
+        currentReviewIndex++;
+        showReviewCard();
+        // Update the summary count.
+        const count = await window.__TAURI__.invoke('library_review_count');
+        document.getElementById('review-summary').innerHTML = `<span style="font-size:24px;font-weight:600">${count}</span> <span style="color:#888;font-size:12px">items due for review</span>`;
+      } catch (e) {
+        alert('Failed to record review: ' + e);
+      }
+    }
+
+    // Load review when Review tab is clicked
+    document.querySelector('[data-section="review"]').addEventListener('click', () => {
+      loadReview();
     });
 
     loadAll();

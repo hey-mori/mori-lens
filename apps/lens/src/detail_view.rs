@@ -20,7 +20,10 @@
 //! pointer leaves, but the detail stays because the reader pinned it.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 
 use serde::Serialize;
 use tauri::Emitter;
@@ -51,6 +54,12 @@ pub struct DetailView {
     pub item_id: Option<i64>,
     /// The reader's note, read back from the library after save.
     pub note: Option<String>,
+    /// The source language of the original text.
+    pub source_language: Option<String>,
+    /// The target language the text was translated into.
+    pub target_language: Option<String>,
+    /// The model that produced the answer.
+    pub model: Option<String>,
 }
 
 /// Shared detail state, written by the polling loop and read by Tauri commands.
@@ -94,6 +103,9 @@ pub fn view_from_card(card: &lens_core::card::Card) -> Option<DetailView> {
         app: None,
         item_id: None,
         note: None,
+        source_language: None,
+        target_language: None,
+        model: None,
     })
 }
 
@@ -144,20 +156,16 @@ pub(crate) fn detail_save(
     };
     let entry = lens_core::keep::Entry {
         original: view.original.clone(),
-        answer: view
-            .translation
-            .clone()
-            .unwrap_or_default(),
+        answer: view.translation.clone().unwrap_or_default(),
         caveat: view.caveat.clone(),
         app: view.app.clone(),
+        source_language: view.source_language.clone(),
+        target_language: view.target_language.clone(),
+        model: view.model.clone(),
     };
     drop(guard);
 
-    let result = keeping::append(
-        save_path.as_ref(),
-        &entry,
-        std::time::SystemTime::now(),
-    );
+    let result = keeping::append(save_path.as_ref(), &entry, std::time::SystemTime::now());
     match result {
         Ok(item_id) => {
             // Store the item id so the note and open-in-library can find it.
@@ -220,8 +228,5 @@ pub(crate) fn detail_open_in_library(
 
 /// Build the shared detail state and explain flag.
 pub fn new_shared() -> (SharedDetail, ExplainFlag) {
-    (
-        Arc::new(Mutex::new(None)),
-        Arc::new(AtomicBool::new(false)),
-    )
+    (Arc::new(Mutex::new(None)), Arc::new(AtomicBool::new(false)))
 }
