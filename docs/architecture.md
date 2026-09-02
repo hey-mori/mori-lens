@@ -16,16 +16,17 @@ Hover intent          lens-core::hover        built
   ▼
 Text acquisition      lens-core::acquire      trait, built
   ├─ accessibility    platform-windows        built (Windows)
-  └─ OCR fallback     (M4)                    planned
+  └─ OCR fallback     (M4)                    built (Windows)
   │
   ▼
 Segmentation          lens-core::text         built
   word · sentence · paragraph around the pointer
   │
   ▼
-Language routing      (M3)                    not built
+Language routing      (M3)                    partial
   script detection, language id, engine choice
-  the target language is a flag; nothing detects the source
+  script detection and target-language routing are built; full source
+  language identification is not
   │
   ▼
 Translation           (M3)                    shipped
@@ -56,12 +57,17 @@ crates/lens-core/          no OS dependencies, no async runtime
   translate.rs             the Translator trait, TranslateError, echo checks
   cache.rs                 the same sentence twice costs nothing
   card.rs                  what a card says, and where it sits
+  keep.rs                  what a reader keeps, and the file shape
+  analyse.rs               deep analysis: schema, parser, answerable filter
+  detail.rs                the read-only panel content from a card
   reach.rs                 when to tell a reader why nothing happened
+  welcome.rs               the first-run lesson
   theme.rs                 what a card looks like, as data
   settings.rs              what the user chose, parsed from their file
   icon.rs                  the tray glyph, computed rather than shipped
 
 crates/lens-translate/     the Ollama client, no HTTP or JSON dependency
+  lib.rs                   OllamaTranslator: quick, streaming, deep
   http.rs                  just enough HTTP/1.1 for a loopback socket
   json.rs                  just enough JSON, with the escaping that matters
 
@@ -103,7 +109,12 @@ apps/lens/                 the product
   refresh.rs               noticing an edited settings file and dark mode
   silence.rs               why no card appeared
   console.rs               where the banner goes when there is no console
-  web/index.html           settings and diagnostics in a Tauri webview
+  keeping.rs               appending to saved.md and library.db
+  library_service.rs       the shared library handle, saved.md import
+  detail_view.rs           the pinned interactive detail window
+  settings_service.rs      the Tauri-managed settings state
+  tauri_app.rs             the Tauri webview surface and commands
+  web/index.html           settings, library and diagnostics in a Tauri webview
 ```
 
 The dependency arrow only ever points from an adapter to the core. A
@@ -213,14 +224,13 @@ about a service split names its own: *until there is a UI to protect*.
   loopback client on blocking sockets, and translation runs on a worker
   thread rather than a runtime.
 - **No structured storage layer.** *Written before `keep.rs`; corrected
-  2026-08-13; updated 2026-08-27.* Two files are persisted today:
-  `settings.conf`, which the user typed, and `saved.md`, which they
-  appended to one keypress at a time. Neither is a store this code
-  reads back. The translation cache is still memory and still dies
-  with the process. [ADR-0013](decisions/ADR-0013-the-local-library.md)
-  (Accepted) decides that `library.db` (SQLite) becomes the structured
-  source of truth, with `saved.md` surviving as the human-readable
-  export. **Nothing described in ADR-0013 is built yet.**
+  2026-08-13; updated 2026-09-02.* `library.db` (SQLite) is the
+  structured source of truth
+  ([ADR-0013](decisions/ADR-0013-the-local-library.md)). CRUD, search,
+  tags, Markdown and JSON export, `secure_wipe`, and `saved.md` import
+  are built and wired into the running product. `saved.md` survives as
+  the human-readable export. The translation cache is still memory and
+  still dies with the process.
 - **No settings UI.** *Written when the probe was the only binary;
   corrected 2026-08-13; updated 2026-08-28.* The product reads
   `%APPDATA%\Mori Lens\settings.toml` on launch. A versioned TOML
