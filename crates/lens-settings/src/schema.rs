@@ -40,6 +40,14 @@ pub struct General {
     pub ocr: String,
     pub profile: String,
     pub hover_scope: String,
+    /// Whether persistent history is enabled (ADR-0014 Tier 3).
+    pub history: bool,
+    /// How many days to keep history entries. 0 means forever.
+    pub history_days: u32,
+    /// Whether to store the source application name in history entries.
+    pub history_store_app: bool,
+    /// Applications excluded from history recording.
+    pub history_excluded: Vec<String>,
 }
 
 /// One engine's configuration: where it is, and which model to use.
@@ -89,6 +97,10 @@ impl Schema {
                 ocr: settings.ocr.clone(),
                 profile: settings.profile.clone(),
                 hover_scope: settings.hover_scope.clone(),
+                history: settings.history,
+                history_days: settings.history_days,
+                history_store_app: settings.history_store_app,
+                history_excluded: settings.history_excluded.clone(),
             },
             quick: engine.clone(),
             deep: engine,
@@ -113,6 +125,10 @@ impl Schema {
             profile: self.general.profile.clone(),
             text: self.general.text_size.clone(),
             hover_scope: self.general.hover_scope.clone(),
+            history: self.general.history,
+            history_days: self.general.history_days,
+            history_store_app: self.general.history_store_app,
+            history_excluded: self.general.history_excluded.clone(),
             default_tier: self.general.default_tier,
             applications: self.applications.clone(),
         }
@@ -145,6 +161,10 @@ mod tests {
             hover_scope: "word".to_owned(),
             default_tier: AppTier::Allow,
             applications: vec![("chrome".to_owned(), AppTier::Allow)],
+            history: false,
+            history_days: 30,
+            history_store_app: false,
+            history_excluded: vec![],
         };
         let schema = Schema::from_settings(&original);
         let round_tripped = schema.to_settings();

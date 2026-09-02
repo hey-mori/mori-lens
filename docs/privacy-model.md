@@ -14,12 +14,21 @@ per-provider grant, an unknown endpoint counts as external, and a remote
 Ollama address is a cloud provider because the text leaves the machine
 ([ADR-0007](decisions/ADR-0007-local-first-inference.md)).
 
-**Nothing is recorded.** There is no screen recording, no keylogging, no
+**Nothing is recorded by default.** There is no screen recording, no keylogging, no
 clipboard history, and no automatic transcript of what was hovered. The
 translation cache is in memory only and dies with the process: it holds
-text the user looked at, never an image, and never reaches a file. A
-durable cache would be a record of what was read, so it is a separate
-opt-in and does not exist.
+text the user looked at, never an image, and never reaches a file.
+
+**Three tiers of history, decided separately** ([ADR-0014](decisions/ADR-0014-three-tiers-of-history.md)):
+- **Session recent** (on by default): memory only, gone when the process exits.
+  The latest 50 cards or two hours, whichever prunes first. Never written to disk.
+- **Saved library** (explicit save): what a reader chose to keep with `Ctrl+Alt+S`.
+  Stored in `library.db` with `saved.md` as its human-readable export.
+- **Persistent history** (off by default): an opt-in automatic transcript.
+  When the reader explicitly enables it, future translations are stored
+  according to retention and application-exclusion settings. Turning it off
+  means no new history rows are written. Off means nothing is written, not
+  hidden.
 
 **The clipboard is written on a keypress and never read.** Since
 2026-08-06, `Ctrl+Alt+C` puts the card's sentence and its answer on the
@@ -373,7 +382,7 @@ Every claim on this page, and whether the code keeps it:
 | Claim | State |
 |---|---|
 | Nothing leaves the machine by default | **kept**, and the reason changed on 2026-08-06. The endpoint is now a setting and a flag, because Ollama does not always listen on the default port. Both go through one check, `translate::engine_for`, which accepts `localhost`, `127.0.0.0/8` and `::1` and refuses everything else as a settings error. A name that might resolve to a loopback address is refused too: this cannot resolve names, and guessing from a string is how a promise gets broken quietly. The HTTP client still has no TLS, which is why the restriction is a refusal rather than a warning. |
-| Nothing is recorded | **kept for everything automatic, and two stores are the exception.** No hover writes anything. Since 2026-08-07 `Ctrl+Alt+S` appends the card in front of the reader to `saved.md`, one keypress at a time. Since 2026-08-31 the same entry goes to `library.db`, a SQLite database beside the file. The database is the structured store; the file is the human-readable export. Both hold only what a person chose to keep, which is §1 and is a record a person made rather than one this product kept. The translation cache is still in memory and still dies with the process. |
+| Nothing is recorded | **kept for everything automatic and default, and three tiers exist with different defaults** ([ADR-0014](decisions/ADR-0014-three-tiers-of-history.md)). Session recent is memory only and dies with the process. Saved library holds what a person chose to keep with `Ctrl+Alt+S`: since 2026-08-07 in `saved.md`, since 2026-08-31 also in `library.db` for structured access. Persistent history is off by default; when enabled, future translations are stored according to retention and application-exclusion settings. Off means nothing is written. |
 | No screen image written to disk | **kept**, and no longer trivially. Two capture paths exist as of M4, and **how often each runs** is below. Both capture a band around the pointer, recognise it, and drop the pixels. `Capture` is not `Clone`, holds no path, and its `Debug` omits the buffer. The claim used to be kept because there was nothing to write. |
 | How often the screen is captured is stated, not only what | **kept** since 2026-08-06, and it was not before. This page said what a capture contains and never how many there are, which is most of what somebody deciding about a screen-reading tool wants to know. §7. |
 | Protected fields refused before they are read | **kept and executed**, against a real `ES_PASSWORD` control. See §1. |
