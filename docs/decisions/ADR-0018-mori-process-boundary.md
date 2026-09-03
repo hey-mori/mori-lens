@@ -119,12 +119,27 @@ The transfer is one-way. Lens never reads from Mori.
 
 ### Capability discovery
 
-Lens checks whether `~/.mori/connectors/lens/` (or its parent
-`~/.mori/connectors/`) exists. If neither exists:
+Mori writes a capability marker at
+`~/.mori/connectors/lens/.capability.json` when it starts. The marker
+advertises which schema versions Mori supports:
 
-- Mori is not installed, or not this version
-- the Send button is hidden or disabled
-- nothing about Lens changes
+```json
+{
+  "product": "mori",
+  "supportedSchemaVersions": [1],
+  "capability": "lens-transfer"
+}
+```
+
+Lens reads this file to determine Mori's availability and version
+compatibility. Four states:
+
+| State | Meaning | Lens behaviour |
+|---|---|---|
+| `not-installed` | `~/.mori/connectors/` does not exist | Send button hidden |
+| `no-capability-marker` | Connectors dir exists but no `.capability.json` | Send button hidden; Mori too old or has not run |
+| `version-mismatch` | Marker exists but no common schema version | Send button hidden; versions incompatible |
+| `supported` | Both sides agree on a schema version | Send button visible |
 
 If the directory exists but Mori does not process the files (Mori is
 installed but not running), the files accumulate. Lens reports "sent"
@@ -135,7 +150,9 @@ yet.
 
 | Failure | Lens behaviour |
 |---|---|
-| Directory does not exist | Send button hidden; no error |
+| Connectors directory does not exist | Send button hidden; no error |
+| Capability marker missing | Send button hidden; Mori too old or not run yet |
+| Schema version mismatch | Send button hidden; upgrade either side |
 | Disk full | typed error, retryable |
 | Permission denied | typed error, not retryable without fix |
 | JSON serialization failure | typed error, not retryable (bug) |
@@ -151,11 +168,12 @@ presses Send twice) and the result is Mori's problem.
 
 ### Versioning
 
-`schemaVersion` starts at 1. If a later version adds fields, Mori
-ignores unknown fields (tolerant reader). If a later version removes
-or changes a required field, the version number increases and older
-Mori refuses the file with a typed error. Lens does not negotiate
-versions. It writes version 1 and that is what it writes.
+`schemaVersion` starts at 1. Lens checks the capability marker before
+showing the Send button. If Mori's `supportedSchemaVersions` does not
+include Lens's version, the button stays hidden. If a later version
+adds fields, Mori ignores unknown fields (tolerant reader). If a later
+version removes or changes a required field, the version number
+increases and older Mori refuses the file with a typed error.
 
 ### Privacy
 

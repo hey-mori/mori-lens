@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "transferId": "550e8400-e29b-41d4-a716-446655440000",
+  "original": "The output files came back empty.",
+  "answer": "출력 파일이 비어 있었습니다.",
+  "kind": "translation",
+  "sourceLanguage": "en",
+  "targetLanguage": "ko",
+  "note": "",
+  "tags": ["cargo", "build"],
+  "createdAt": "2026-09-03T14:30:00Z"
+}
