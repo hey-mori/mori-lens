@@ -533,6 +533,9 @@ fn main() -> std::process::ExitCode {
     };
 
     println!("Mori Lens");
+    if options.source.first_run {
+        println!("  first     this is the first run; a lesson window is on screen");
+    }
     println!(
         "  settings  {} · {}",
         options.source.path.display(),
@@ -739,11 +742,12 @@ fn main() -> std::process::ExitCode {
     let engine_warm = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let warmed = engine_warm.clone();
     std::thread::spawn(move || {
-        // Failure is silent by design: the user did not ask for this, so a
-        // warm that fails must not produce an error state. It only means the
-        // first hover pays for the load instead.
-        if let Ok(elapsed) = warm_translator.prewarm() {
-            println!("engine warm after {}ms", elapsed.as_millis());
+        // Failure is reported so a first-run user knows Ollama is not
+        // reachable. It is not an error state: the first hover will show
+        // the same fact on the card, and a warm that succeeded costs nothing.
+        match warm_translator.prewarm() {
+            Ok(elapsed) => println!("engine warm after {}ms", elapsed.as_millis()),
+            Err(_) => eprintln!("engine    Ollama did not respond; the first hover will say so on the card"),
         }
         // **Set on failure too.** An absent Ollama answers a hover with a card
         // naming ollama.com, not with a wait, so a flag left false would leave
