@@ -170,6 +170,10 @@ pub enum Error {
     Sqlite(rusqlite::Error),
     /// The database file could not be created or accessed.
     Io(std::io::Error),
+    /// The database was written by a newer Lens build. This build must
+    /// not mutate it: an older binary touching a newer schema corrupts
+    /// data silently.
+    FutureSchema { have: i64, understand: i64 },
 }
 
 impl std::fmt::Display for Error {
@@ -177,6 +181,10 @@ impl std::fmt::Display for Error {
         match self {
             Self::Sqlite(e) => write!(f, "library database: {e}"),
             Self::Io(e) => write!(f, "library file: {e}"),
+            Self::FutureSchema { have, understand } => write!(
+                f,
+                "library schema version {have} is newer than this build (version {understand}); upgrade Lens or do not open this database",
+            ),
         }
     }
 }
@@ -844,8 +852,21 @@ impl Library {
 
         let applied = self.applied_versions()?;
 
+        // The highest version this build understands. If the database has
+        // migrations beyond this, a newer build wrote them and this build
+        // must not mutate the schema.
+        const CURRENT_SCHEMA: i64 = 6;
+        let max_applied = applied.iter().copied().max().unwrap_or(0);
+        if max_applied > CURRENT_SCHEMA {
+            return Err(Error::FutureSchema {
+                have: max_applied,
+                understand: CURRENT_SCHEMA,
+            });
+        }
+
         if !applied.contains(&1) {
-            self.conn.execute_batch(
+            let tx = self.conn.unchecked_transaction()?;
+            tx.execute_batch(
                 "CREATE TABLE library (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     original TEXT NOT NULL,
@@ -865,12 +886,14 @@ impl Library {
 
                 INSERT INTO schema_migrations (version) VALUES (1);",
             )?;
+            tx.commit()?;
         }
 
         // The `meta` table for import tracking. Added as a separate
         // migration so an existing library from migration 1 gains it.
         if !applied.contains(&2) {
-            self.conn.execute_batch(
+            let tx = self.conn.unchecked_transaction()?;
+            tx.execute_batch(
                 "CREATE TABLE meta (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
@@ -878,11 +901,13 @@ impl Library {
 
                 INSERT INTO schema_migrations (version) VALUES (2);",
             )?;
+            tx.commit()?;
         }
 
         // Tags: a many-to-many relationship between items and tags.
         if !applied.contains(&3) {
-            self.conn.execute_batch(
+            let tx = self.conn.unchecked_transaction()?;
+            tx.execute_batch(
                 "CREATE TABLE tags (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL UNIQUE
@@ -900,11 +925,13 @@ impl Library {
 
                 INSERT INTO schema_migrations (version) VALUES (3);",
             )?;
+            tx.commit()?;
         }
 
         // Review state: spaced repetition scheduling for saved items.
         if !applied.contains(&4) {
-            self.conn.execute_batch(
+            let tx = self.conn.unchecked_transaction()?;
+            tx.execute_batch(
                 "ALTER TABLE library ADD COLUMN review_state TEXT NOT NULL DEFAULT 'new';
                  ALTER TABLE library ADD COLUMN next_review_at INTEGER;
                  ALTER TABLE library ADD COLUMN review_count INTEGER NOT NULL DEFAULT 0;
@@ -914,12 +941,14 @@ impl Library {
 
                  INSERT INTO schema_migrations (version) VALUES (4);",
             )?;
+            tx.commit()?;
         }
 
         // Persistent history (ADR-0014 Tier 3).
         // Off by default; nothing is written until the reader turns it on.
         if !applied.contains(&5) {
-            self.conn.execute_batch(
+            let tx = self.conn.unchecked_transaction()?;
+            tx.execute_batch(
                 "CREATE TABLE history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     original TEXT NOT NULL,
@@ -937,16 +966,19 @@ impl Library {
 
                 INSERT INTO schema_migrations (version) VALUES (5);",
             )?;
+            tx.commit()?;
         }
 
         // Provider scope: whether the inference ran locally or externally.
         // ADR-0014 requires both acquisition and provider provenance to be visible.
         if !applied.contains(&6) {
-            self.conn.execute_batch(
+            let tx = self.conn.unchecked_transaction()?;
+            tx.execute_batch(
                 "ALTER TABLE history ADD COLUMN provider_scope TEXT NOT NULL DEFAULT 'unknown';
 
                  INSERT INTO schema_migrations (version) VALUES (6);",
             )?;
+            tx.commit()?;
         }
 
         Ok(())
@@ -1107,6 +1139,28 @@ impl Library {
             versions.push(v?);
         }
         Ok(versions)
+    }
+
+    /// The highest applied migration version, or 0 for a fresh database.
+    ///
+    /// Useful for diagnostics: a reader reporting a problem can paste the
+    /// schema version so the developer knows which migrations have run.
+    pub fn schema_version(&self) -> Result<i64, Error> {
+        let exists: bool = self
+            .conn
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'",
+            )?
+            .exists([])?;
+        if !exists {
+            return Ok(0);
+        }
+        let max: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(max)
     }
 }
 
