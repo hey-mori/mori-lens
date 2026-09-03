@@ -1,0 +1,67 @@
+# Release workflow.
+#
+# Builds the NSIS installer when a version tag is pushed, then creates a
+# GitHub Release with the installer attached. The tag must match the version
+# in Cargo.toml and tauri.conf.json.
+#
+# CODE SIGNING: not configured. The Windows certificate must be imported as
+# GitHub secrets (WINDOWS_CERTIFICATE, WINDOWS_CERTIFICATE_PASSWORD) before
+# signing can be enabled. See docs/release-checklist.md for the procedure.
+#
+# AUTO-UPDATE: not configured. Tauri v2 updater needs a publishing endpoint
+# and a private key. See docs/release-checklist.md for the setup steps.
+name: release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build NSIS installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2"
+
+      - name: Verify version consistency
+        shell: bash
+        run: |
+          CARGO_VERSION=$(grep -m1 '^version' apps/lens/Cargo.toml | cut -d'"' -f2)
+          TAURI_VERSION=$(jq -r '.version' apps/lens/tauri.conf.json)
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$CARGO_VERSION" != "$TAG_VERSION" ] || [ "$TAURI_VERSION" != "$TAG_VERSION" ]; then
+            echo "version mismatch: cargo=$CARGO_VERSION tauri=$TAURI_VERSION tag=$TAG_VERSION"
+            exit 1
+          fi
+          echo "version $TAG_VERSION verified"
+
+      - name: Run checks
+        shell: bash
+        run: bash scripts/check.sh --full
+
+      - name: Build installer
+        run: cargo tauri build
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            apps/lens/target/release/bundle/nsis/*.exe
+          generate_release_notes: true
+          draft: true
