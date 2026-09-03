@@ -14,7 +14,7 @@
 //! or `docs/privacy-model.md`, and every one has a test in `contract_tests.rs`
 //! driven by fake acquirers.
 
-use crate::acquire::{AcquireContext, AcquireError, TextAcquirer, TextTarget};
+use crate::acquire::{AcquireContext, AcquireError, TextAcquirer, TextTarget, MAX_ACQUIRED_CHARS};
 use crate::geometry::ScreenPoint;
 use crate::hover::{
     Generation, HoverConfig, HoverEvent, HoverMachine, PointerSample, Presentation, Timestamp,
@@ -262,6 +262,14 @@ impl HoverSession {
                 None => return Resolution::Failed(error),
             },
         };
+
+        // A paragraph without sentence boundaries can arrive as one enormous
+        // string. Refused before deduplication or presentation: a text this
+        // long is not a sentence, and a model handed one will summarise rather
+        // than translate.
+        if target.segmented.sentence_text().chars().count() > MAX_ACQUIRED_CHARS {
+            return Resolution::Failed(AcquireError::TooLong);
+        }
 
         // Before deduplication, because an off-target resolution must not
         // occupy the "last presented" slot: the user has not been shown
