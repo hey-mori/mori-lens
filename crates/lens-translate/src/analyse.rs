@@ -63,9 +63,11 @@ fn schema() -> String {
         .map(|field| format!("\"{field}\":{{\"type\":\"string\"}}"))
         .collect::<Vec<_>>()
         .join(",");
-    let link_props = "\"links\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\
-        \"properties\":{\"source\":{\"type\":\"string\"},\"target\":{\"type\":\"string\"}},\
-        \"required\":[\"source\",\"target\"]}}";
+    let link_props = concat!(
+        "\"links\":{\"type\":\"array\",\"items\":{\"type\":\"object\",",
+        "\"properties\":{\"source\":{\"type\":\"string\"},\"target\":{\"type\":\"string\"}},",
+        "\"required\":[\"source\",\"target\"]}}"
+    );
     let all_props = format!("{string_props},{link_props}");
     let string_keys = FIELDS
         .iter()
@@ -129,11 +131,7 @@ fn system_prompt(request: &DeepRequest, fence: &str) -> String {
     prompt.push_str("\nIn \"note\", give one idiom, register or false-friend worth knowing, or an empty string. Most sentences need no note and an empty string is the expected answer.");
 
     prompt.push_str(
-        "\nIn \"links\", give an array of {\"source\": \"...\", \"target\": \"...\"} objects. \
-        Each pair is a substring from the original text and the corresponding substring from \
-        the translation that carries the same meaning. Use exact substrings only. Cover as many \
-        constituents as possible with exact visible substrings. An empty \
-        array is valid when no confident pair can be formed.",
+        "\nIn \"links\", give an array of {\"source\": \"...\", \"target\": \"...\"} objects. Each pair is a substring from the original text and the corresponding substring from the translation that carries the same meaning. Use exact substrings only. Cover as many constituents as possible with exact visible substrings. An empty array is valid when no confident pair can be formed.",
     );
 
     // Last, and in the system prompt rather than after the material. The
