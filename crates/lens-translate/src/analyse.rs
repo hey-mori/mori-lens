@@ -131,8 +131,8 @@ fn system_prompt(request: &DeepRequest, fence: &str) -> String {
     prompt.push_str(
         "\nIn \"links\", give an array of {\"source\": \"...\", \"target\": \"...\"} objects. \
         Each pair is a substring from the original text and the corresponding substring from \
-        the translation that carries the same meaning. Use exact substrings only. Include \
-        between 2 and 8 pairs, focusing on the most meaningful correspondences. An empty \
+        the translation that carries the same meaning. Use exact substrings only. Cover as many \
+        constituents as possible with exact visible substrings. An empty \
         array is valid when no confident pair can be formed.",
     );
 
