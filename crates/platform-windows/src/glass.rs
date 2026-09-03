@@ -358,6 +358,7 @@ impl Glass {
                 translation,
                 word_at,
                 counterpart_at,
+                links,
                 rows: pairs,
             } => {
                 // **The answer stays on the card.** `Ctrl+Alt+D` replaced the
@@ -372,6 +373,17 @@ impl Glass {
                         // SAFETY: marking a range of a layout this function
                         // owns and has not yet drawn.
                         unsafe { underline(&runs[index].layout, text, *counterpart_at) };
+                        // #148: underline each link's target span. Same style
+                        // as word_at/counterpart_at; links are distinguished by
+                        // position, not by colour or dash pattern.
+                        for link in links {
+                            // SAFETY: marking a range of a layout this function
+                            // owns and has not yet drawn, same invariant as the
+                            // word_at/counterpart_at underline above.
+                            unsafe {
+                                underline(&runs[index].layout, text, Some(link.target_range))
+                            };
+                        }
                         row += 1;
                     }
                 }
@@ -379,6 +391,14 @@ impl Glass {
                 if let Some(index) = original_run {
                     // SAFETY: as above.
                     unsafe { underline(&runs[index].layout, &card.original, *word_at) };
+                    // #148: underline each link's source span.
+                    for link in links {
+                        // SAFETY: same invariant as the word_at underline above;
+                        // marking a range of a layout this function owns.
+                        unsafe {
+                            underline(&runs[index].layout, &card.original, Some(link.source_range))
+                        };
+                    }
                 }
                 let first_row = row;
                 let mut labelled: Vec<(usize, &String)> = Vec::new();
