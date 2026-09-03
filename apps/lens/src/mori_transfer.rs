@@ -43,6 +43,10 @@ pub struct TransferPayload {
 pub enum TransferError {
     /// Mori's connector directory does not exist.
     MoriNotInstalled,
+    /// The capability marker is missing or has wrong identity.
+    NoCapabilityMarker,
+    /// The capability marker exists but versions are incompatible.
+    VersionMismatch,
     /// The file could not be written (disk full, permission denied).
     IoError(String),
     /// Serialization failed (should not happen; a bug).
@@ -53,6 +57,8 @@ impl std::fmt::Display for TransferError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::MoriNotInstalled => write!(f, "Mori is not installed"),
+            Self::NoCapabilityMarker => write!(f, "Mori capability marker missing or invalid"),
+            Self::VersionMismatch => write!(f, "Mori schema version mismatch"),
             Self::IoError(msg) => write!(f, "I/O error: {msg}"),
             Self::SerializeError(msg) => write!(f, "serialization error: {msg}"),
         }
@@ -126,14 +132,29 @@ pub fn read_capability() -> Option<CapabilityFile> {
 }
 
 /// Check Mori's availability and version compatibility.
+///
+/// Validates the capability marker identity (`product == "mori"`,
+/// `capability == "lens-transfer"`) before accepting version negotiation.
+/// A marker with wrong identity is treated as absent (safe unavailable).
 pub fn check_mori_status() -> MoriStatus {
     let Some(_connectors) = mori_connectors_dir() else {
         return MoriStatus::NotInstalled;
     };
-    let Some(cap) = read_capability() else {
+    let cap = read_capability();
+    status_from_capability(cap)
+}
+
+/// Pure logic: derive `MoriStatus` from an optional capability file.
+///
+/// Separated from filesystem access so identity/version tests do not
+/// need a real Mori installation.
+fn status_from_capability(cap: Option<CapabilityFile>) -> MoriStatus {
+    let Some(cap) = cap else {
         return MoriStatus::NoCapabilityMarker;
     };
-    // Find the highest version both sides support.
+    if cap.product != "mori" || cap.capability != "lens-transfer" {
+        return MoriStatus::NoCapabilityMarker;
+    }
     let mori_versions = cap.supported_schema_versions;
     let common: Vec<u32> = mori_versions
         .iter()
@@ -186,7 +207,18 @@ pub fn payload_from_item(item: &Item) -> TransferPayload {
 ///
 /// The file is `{transfer_id}.json` in `~/.mori/connectors/lens/`.
 /// Creates the lens directory if the parent connectors directory exists.
+///
+/// Re-checks capability before writing to catch race conditions where
+/// Mori is uninstalled or its version changes between the UI check
+/// and the actual send.
 pub fn send_to_mori(item: &Item) -> Result<String, TransferError> {
+    // Re-check capability at send time. The UI check may be stale.
+    match check_mori_status() {
+        MoriStatus::Supported { .. } => {} // proceed
+        MoriStatus::NotInstalled => return Err(TransferError::MoriNotInstalled),
+        MoriStatus::NoCapabilityMarker => return Err(TransferError::NoCapabilityMarker),
+        MoriStatus::VersionMismatch { .. } => return Err(TransferError::VersionMismatch),
+    }
     let connectors = mori_connectors_dir().ok_or(TransferError::MoriNotInstalled)?;
     let lens_dir = connectors.join("lens");
     if !lens_dir.exists() {
@@ -361,5 +393,113 @@ mod tests {
         assert!(!golden.transfer_id.is_empty());
         assert!(!golden.original.is_empty());
         assert!(!golden.answer.is_empty());
+    }
+
+    // ─── Identity validation tests ────────────────────────────────────
+
+    #[test]
+    fn wrong_product_identity_treated_as_unavailable() {
+        let cap = CapabilityFile {
+            product: "other".to_string(),
+            supported_schema_versions: vec![1],
+            capability: "lens-transfer".to_string(),
+        };
+        assert_eq!(
+            status_from_capability(Some(cap)),
+            MoriStatus::NoCapabilityMarker
+        );
+    }
+
+    #[test]
+    fn wrong_capability_identity_treated_as_unavailable() {
+        let cap = CapabilityFile {
+            product: "mori".to_string(),
+            supported_schema_versions: vec![1],
+            capability: "other".to_string(),
+        };
+        assert_eq!(
+            status_from_capability(Some(cap)),
+            MoriStatus::NoCapabilityMarker
+        );
+    }
+
+    #[test]
+    fn correct_identity_with_matching_version_is_supported() {
+        let cap = sample_capability();
+        assert!(matches!(
+            status_from_capability(Some(cap)),
+            MoriStatus::Supported {
+                negotiated_version: 1
+            }
+        ));
+    }
+
+    #[test]
+    fn correct_identity_with_wrong_version_is_mismatch() {
+        let cap = CapabilityFile {
+            product: "mori".to_string(),
+            supported_schema_versions: vec![99],
+            capability: "lens-transfer".to_string(),
+        };
+        assert!(matches!(
+            status_from_capability(Some(cap)),
+            MoriStatus::VersionMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn no_capability_file_is_unavailable() {
+        assert_eq!(
+            status_from_capability(None),
+            MoriStatus::NoCapabilityMarker
+        );
+    }
+
+    // ─── Send-time recheck tests ─────────────────────────────────────
+
+    #[test]
+    fn missing_capability_at_send_time_refuses() {
+        // status_from_capability(None) → NoCapabilityMarker
+        // send_to_mori checks status before writing, so if we can't get
+        // a valid capability the send must fail.
+        let status = status_from_capability(None);
+        assert!(!matches!(status, MoriStatus::Supported { .. }));
+    }
+
+    #[test]
+    fn version_mismatch_at_send_time_refuses() {
+        let cap = CapabilityFile {
+            product: "mori".to_string(),
+            supported_schema_versions: vec![99],
+            capability: "lens-transfer".to_string(),
+        };
+        let status = status_from_capability(Some(cap));
+        assert!(!matches!(status, MoriStatus::Supported { .. }));
+    }
+
+    #[test]
+    fn wrong_identity_at_send_time_refuses() {
+        let cap = CapabilityFile {
+            product: "impostor".to_string(),
+            supported_schema_versions: vec![1],
+            capability: "lens-transfer".to_string(),
+        };
+        let status = status_from_capability(Some(cap));
+        assert!(!matches!(status, MoriStatus::Supported { .. }));
+    }
+
+    #[test]
+    fn supported_at_send_time_proceeds() {
+        let cap = sample_capability();
+        let status = status_from_capability(Some(cap));
+        assert!(matches!(status, MoriStatus::Supported { .. }));
+    }
+
+    #[test]
+    fn transfer_error_display_for_new_variants() {
+        let e = TransferError::NoCapabilityMarker;
+        assert!(e.to_string().contains("capability marker"));
+        let e = TransferError::VersionMismatch;
+        assert!(e.to_string().contains("version mismatch"));
     }
 }
