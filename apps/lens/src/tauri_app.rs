@@ -568,6 +568,22 @@ fn history_prune(
         .map_err(|e| format!("{e}"))
 }
 
+#[tauri::command]
+fn mori_is_available() -> bool {
+    crate::mori_transfer::is_mori_available()
+}
+
+#[tauri::command]
+fn mori_send_item(state: tauri::State<'_, SharedLibrary>, item_id: i64) -> Result<String, String> {
+    let lib = state.lock().unwrap();
+    let item = lib
+        .library()
+        .get(item_id)
+        .map_err(|e| format!("{e}"))?
+        .ok_or_else(|| format!("item {item_id} not found"))?;
+    crate::mori_transfer::send_to_mori(&item).map_err(|e| format!("{e}"))
+}
+
 /// Build the Tauri application and return its handle, shared diagnostics, and the `App` itself.
 ///
 /// The `App` must be kept alive and `.run()` must be called on it. Dropping
@@ -617,6 +633,8 @@ pub fn build(
             history_delete,
             history_promote,
             history_prune,
+            mori_is_available,
+            mori_send_item,
             crate::detail_view::detail_read,
             crate::detail_view::detail_copy,
             crate::detail_view::detail_save,

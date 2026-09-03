@@ -56,6 +56,7 @@ mod lesson;
 mod library_service;
 mod lifecycle;
 mod manual_ocr;
+mod mori_transfer;
 mod pause;
 mod pointer;
 mod refresh;
