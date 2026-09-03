@@ -39,13 +39,30 @@ impl LibraryState {
 ///
 /// If a `saved.md` exists in the data directory and has not been imported
 /// yet, its entries are imported into the database before returning.
+///
+/// # Failure handling
+///
+/// If the database cannot be opened (corrupt, locked, permission denied),
+/// falls back to an in-memory database so the UI still works. If the
+/// database was written by a newer Lens build (future schema), the
+/// fallback is also in-memory but with a clearer diagnostic: the user
+/// needs to upgrade Lens, not repair the database.
 pub fn open(data_dir: &Path) -> LibraryState {
     let db_path = data_dir.join("library.db");
-    let library = Library::open(&db_path).unwrap_or_else(|e| {
-        eprintln!("library   cannot open {db_path:?}: {e}");
-        // Fall back to a temporary database so the UI still works.
-        Library::open(Path::new(":memory:")).expect("in-memory library")
-    });
+    let library = match Library::open(&db_path) {
+        Ok(lib) => lib,
+        Err(lens_storage::Error::FutureSchema { have, understand }) => {
+            eprintln!(
+                "library   {db_path:?} was written by a newer Lens (schema {have}, this build understands {understand}); using in-memory database until you upgrade"
+            );
+            Library::open(Path::new(":memory:")).expect("in-memory library")
+        }
+        Err(e) => {
+            eprintln!("library   cannot open {db_path:?}: {e}");
+            // Fall back to a temporary database so the UI still works.
+            Library::open(Path::new(":memory:")).expect("in-memory library")
+        }
+    };
     import_saved_md(&library, data_dir);
     LibraryState {
         library,
