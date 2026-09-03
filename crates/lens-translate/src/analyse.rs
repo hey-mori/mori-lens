@@ -228,6 +228,7 @@ impl Analyser for OllamaTranslator {
         // `Malformed` rather than to a card of English under Korean headings.
         let (analysis, raw_links) = parse(&answer, self.model.clone(), latency_ms as u64, &fence);
         let analysis = analysis
+            .bounded()
             .only_answerable(request.answerable())
             .only_what_is_written_in(&request.target_language)
             .without_restatements_of(&request.sentence);

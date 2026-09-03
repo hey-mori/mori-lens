@@ -595,3 +595,47 @@ fn a_scroll_between_hovers_reaches_the_next_acquisition() {
 
     assert_eq!(seen.borrow().as_slice(), &[true, false, true]);
 }
+
+/// An acquirer that returns text longer than the domain allows.
+struct LongTextAcquirer;
+
+impl TextAcquirer for LongTextAcquirer {
+    fn acquire(
+        &self,
+        _point: ScreenPoint,
+        _context: &AcquireContext,
+    ) -> Result<TextTarget, AcquireError> {
+        // No sentence boundaries, so the segmenter treats the whole thing as one sentence.
+        let long = "x".repeat(crate::acquire::MAX_ACQUIRED_CHARS + 100);
+        Ok(TextTarget {
+            app: AppIdentity {
+                process_name: Some("chrome".to_owned()),
+                window_title: None,
+            },
+            source: AcquisitionSource::Accessibility,
+            provider: ProviderInfo::default(),
+            segmented: text::segment(&long, 0),
+            word_bounds: vec![ScreenRect::new(100, 100, 60, 18)],
+            context_bounds: vec![ScreenRect::new(10, 100, 400, 18)],
+        })
+    }
+}
+
+/// A paragraph with no sentence boundary can arrive as one enormous string.
+/// The domain refuses it before it reaches the translator.
+#[test]
+fn text_longer_than_the_domain_allows_is_refused() {
+    let mut session = HoverSession::new(
+        HoverConfig::default(),
+        AppPolicy::default(),
+        Box::new(LongTextAcquirer),
+    );
+
+    let generation = settle(&mut session, POINT);
+    let resolution = session.resolve(generation, POINT, ms(400), InputState::default());
+
+    assert!(
+        matches!(resolution, Resolution::Failed(AcquireError::TooLong)),
+        "expected TooLong, got {resolution:?}"
+    );
+}

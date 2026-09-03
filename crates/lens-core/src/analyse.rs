@@ -602,6 +602,47 @@ impl DeepAnalysis {
         self.links = verify_links(&raw, source, translation);
         self
     }
+
+    /// The longest a single analysis field may be.
+    ///
+    /// A model that returns 5,000 characters for `sense` is either broken or
+    /// hostile. The card has room for one short line per field, and a field
+    /// this long would overflow the overlay. Truncated at the domain boundary
+    /// so no renderer ever sees one.
+    pub const MAX_FIELD_CHARS: usize = 300;
+
+    /// The most links the analysis will carry.
+    ///
+    /// A sentence has a handful of constituents. A model returning dozens of
+    /// links is not being thorough; it is producing noise. The card can show
+    /// perhaps five coloured spans before they overlap.
+    pub const MAX_LINKS: usize = 10;
+
+    /// Truncate every field to a safe maximum.
+    ///
+    /// Called after parsing, before the card sees the analysis. A model that
+    /// returns a novel in one field is not giving an explanation; it is
+    /// filling space. The card has five rows and each one is one line.
+    #[must_use]
+    pub fn bounded(mut self) -> Self {
+        let truncate = |field: &mut String| {
+            if field.chars().count() > Self::MAX_FIELD_CHARS {
+                *field = field.chars().take(Self::MAX_FIELD_CHARS).collect();
+            }
+        };
+        truncate(&mut self.lemma);
+        truncate(&mut self.part_of_speech);
+        truncate(&mut self.sense);
+        truncate(&mut self.structure);
+        truncate(&mut self.note);
+        if let Some(ref mut c) = self.counterpart {
+            truncate(c);
+        }
+        if self.links.len() > Self::MAX_LINKS {
+            self.links.truncate(Self::MAX_LINKS);
+        }
+        self
+    }
 }
 
 /// Resolve raw substring pairs to verified byte-offset spans.
@@ -1364,5 +1405,62 @@ mod profile_tests {
         assert_eq!(projected.note, "valid note");
         assert_eq!(projected.word, Some("rest".to_owned()));
         assert_eq!(projected.counterpart, Some("counterpart".to_owned()));
+    }
+}
+
+#[cfg(test)]
+mod bounded_tests {
+    use super::*;
+
+    #[test]
+    fn a_field_over_the_limit_is_truncated() {
+        let long_sense = "a".repeat(DeepAnalysis::MAX_FIELD_CHARS + 100);
+        let bounded = DeepAnalysis {
+            sense: long_sense,
+            ..DeepAnalysis::default()
+        }
+        .bounded();
+        assert_eq!(bounded.sense.chars().count(), DeepAnalysis::MAX_FIELD_CHARS);
+    }
+
+    #[test]
+    fn a_field_under_the_limit_is_untouched() {
+        let short = "짧은 설명".to_owned();
+        let bounded = DeepAnalysis {
+            sense: short.clone(),
+            ..DeepAnalysis::default()
+        }
+        .bounded();
+        assert_eq!(bounded.sense, short);
+    }
+
+    #[test]
+    fn links_are_capped_at_the_maximum() {
+        let many_links: Vec<TextLink> = (0..DeepAnalysis::MAX_LINKS + 5)
+            .map(|i| TextLink {
+                source_range: (i, i + 1),
+                target_range: (i, i + 1),
+            })
+            .collect();
+        let bounded = DeepAnalysis {
+            links: many_links,
+            ..DeepAnalysis::default()
+        }
+        .bounded();
+        assert_eq!(bounded.links.len(), DeepAnalysis::MAX_LINKS);
+    }
+
+    #[test]
+    fn a_counterpart_over_the_limit_is_truncated() {
+        let long = "a".repeat(DeepAnalysis::MAX_FIELD_CHARS + 50);
+        let bounded = DeepAnalysis {
+            counterpart: Some(long),
+            ..DeepAnalysis::default()
+        }
+        .bounded();
+        assert_eq!(
+            bounded.counterpart.unwrap().chars().count(),
+            DeepAnalysis::MAX_FIELD_CHARS
+        );
     }
 }
