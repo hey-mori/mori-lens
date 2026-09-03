@@ -24,6 +24,19 @@ use crate::text::SegmentedText;
 /// against.
 const ON_TARGET_LINE_HEIGHTS: f64 = 1.0;
 
+/// The longest sentence the domain will present.
+///
+/// A paragraph with no sentence boundary can arrive as one enormous string
+/// from the accessibility tree. Handing 50,000 characters to a translation
+/// model is neither useful nor safe: the model will summarise rather than
+/// translate, and a summary presented as a translation is the confident
+/// wrongness the product exists to avoid.
+///
+/// Generous against a sentence and firm against a document. The deep path
+/// has its own, tighter limit ([`crate::analyse::TOO_LONG`]) because an
+/// explanation has even less room than a translation.
+pub const MAX_ACQUIRED_CHARS: usize = 2_000;
+
 /// Where the characters came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcquisitionSource {
@@ -106,6 +119,12 @@ pub enum AcquireError {
     /// The accessibility layer itself is unreachable. A permission or policy
     /// problem, not a property of the application under the pointer.
     Unavailable,
+    /// The acquired text is longer than the domain allows.
+    ///
+    /// A paragraph with no sentence boundary can arrive as one enormous
+    /// string, and handing that to a model is neither useful nor safe.
+    /// Refused before it reaches the translator.
+    TooLong,
 }
 
 impl AcquireError {
@@ -122,6 +141,7 @@ impl AcquireError {
             Self::Timeout => "timeout",
             Self::Stale => "stale",
             Self::Unavailable => "unavailable",
+            Self::TooLong => "too-long",
         }
     }
 
@@ -136,6 +156,9 @@ impl AcquireError {
             // OCR is what said this, so there is nothing for it to repair.
             Self::KnownEmpty => false,
             Self::Protected(_) | Self::Timeout | Self::Stale | Self::Unavailable => false,
+            // A sentence that is too long will not be helped by reading its
+            // pixels; the characters are already there.
+            Self::TooLong => false,
         }
     }
 }
@@ -482,6 +505,7 @@ mod tests {
         assert!(!AcquireError::Timeout.ocr_can_help());
         assert!(!AcquireError::Stale.ocr_can_help());
         assert!(!AcquireError::Unavailable.ocr_can_help());
+        assert!(!AcquireError::TooLong.ocr_can_help());
     }
 
     #[test]
@@ -495,6 +519,7 @@ mod tests {
             AcquireError::Timeout,
             AcquireError::Stale,
             AcquireError::Unavailable,
+            AcquireError::TooLong,
         ]
         .map(AcquireError::reason);
 
