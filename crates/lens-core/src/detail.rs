@@ -244,6 +244,7 @@ mod tests {
                 translation: Some("임대는 갱신됩니다.".to_owned()),
                 word_at: None,
                 counterpart_at: None,
+                links: vec![],
                 rows: vec![("원형".to_owned(), "lease".to_owned())],
             },
             footer: "AI 설명 · 사실 확인 필요".to_owned(),
