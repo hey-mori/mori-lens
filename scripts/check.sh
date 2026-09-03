@@ -61,6 +61,31 @@ cargo clippy --workspace --all-targets -- -D warnings
 step "cargo test"
 cargo test --workspace
 
+# The workspace version is the single source of truth. `apps/lens` is excluded
+# from the workspace (Tauri dependency) and `apps/lens/tauri.conf.json` is not
+# Cargo at all, so both duplicate the version by necessity. If they disagree,
+# a release would ship with one number in `--version` and another in the
+# installer metadata, and a reader comparing them would conclude the build is
+# broken even when it is not.
+step "version consistency"
+WORKSPACE_VERSION="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+for f in apps/lens/Cargo.toml; do
+  if [[ -f "$f" ]]; then
+    V="$(grep -m1 '^version' "$f" | cut -d'"' -f2)"
+    if [[ "$V" != "$WORKSPACE_VERSION" ]]; then
+      printf '%s has version %s, workspace has %s\n' "$f" "$V" "$WORKSPACE_VERSION"
+      exit 1
+    fi
+  fi
+done
+if [[ -f apps/lens/tauri.conf.json ]]; then
+  V="$(grep -m1 '"version"' apps/lens/tauri.conf.json | cut -d'"' -f4)"
+  if [[ "$V" != "$WORKSPACE_VERSION" ]]; then
+    printf 'tauri.conf.json has version %s, workspace has %s\n' "$V" "$WORKSPACE_VERSION"
+    exit 1
+  fi
+fi
+
 if [[ "$FULL" == "1" ]]; then
   step "cargo build --release -p hover-probe"
   cargo build --release -p hover-probe
