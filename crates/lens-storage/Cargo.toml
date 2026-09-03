@@ -1,21 +1,17 @@
 [package]
 name = "lens-storage"
 description = "SQLite storage for Mori Lens saved items."
-version = "0.1.0"
-edition = "2021"
-rust-version = "1.85"
-license = "UNLICENSED"
-publish = false
-repository = "https://github.com/swarea/mori-lens"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
 
 [dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-[lints.rust]
-unsafe_op_in_unsafe_fn = "deny"
-missing_debug_implementations = "warn"
-
-[lints.clippy]
-undocumented_unsafe_blocks = "warn"
+[lints]
+workspace = true
