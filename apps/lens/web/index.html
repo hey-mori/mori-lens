@@ -899,22 +899,28 @@
 
     let moriAvailable = null;
     async function checkMoriAvailable() {
-      if (moriAvailable === null) {
-        try {
-          moriAvailable = await invoke('mori_is_available');
-        } catch (e) {
-          moriAvailable = false;
-        }
+      // Re-check each time (no stale cache across item views).
+      try {
+        const status = await invoke('mori_status');
+        moriAvailable = status.status === 'supported';
+      } catch (e) {
+        moriAvailable = false;
       }
       return moriAvailable;
+    }
+
+    function truncateSafe(str, maxChars) {
+      const chars = Array.from(str);
+      if (chars.length <= maxChars) return str;
+      return chars.slice(0, maxChars).join('') + '...';
     }
 
     async function sendToMori(id) {
       try {
         const item = await invoke('library_get', { id });
         if (!item) { alert('Item not found.'); return; }
-        const preview = item.original.length > 100 ? item.original.slice(0, 100) + '...' : item.original;
-        const answer = item.answer.length > 100 ? item.answer.slice(0, 100) + '...' : item.answer;
+        const preview = truncateSafe(item.original, 100);
+        const answer = truncateSafe(item.answer, 100);
         const msg = 'Send to Mori?\n\nOriginal: ' + preview + '\n\nAnswer: ' + answer + '\n\nKind: ' + item.kind +
           (item.note ? '\nNote: ' + item.note : '') +
           (item.tags && item.tags.length ? '\nTags: ' + item.tags.join(', ') : '');
