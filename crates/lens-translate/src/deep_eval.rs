@@ -750,6 +750,13 @@ fn corpus_full_output() {
                 if let Some(note) = entry.note {
                     println!("Note:              {note}");
                 }
+                // Linkage output for #148
+                println!("Links:           {} verified", analysis.links.len());
+                for (i, link) in analysis.links.iter().enumerate() {
+                    let src_span = &entry.source[link.source_range.0..link.source_range.1];
+                    let tgt_span = &entry.translation[link.target_range.0..link.target_range.1];
+                    println!("  [{i}] \"{src_span}\" ↔ \"{tgt_span}\"");
+                }
                 println!();
             }
             Err(error) => {
@@ -1688,6 +1695,104 @@ fn eligibility_gate_classification() {
             "\n⚠ {} of {} misleading entries can be prevented by pipeline gate",
             pipeline_preventable.len(),
             misleading_set.len()
+        );
+    }
+}
+
+/// --------------------------------------------------------------------------
+/// Test 10: Linkage quality benchmark (#148).
+///
+/// Measures the verify-and-drop contract on the existing 25-entry corpus:
+/// - verified links per entry
+/// - items with at least one verified link
+/// - average verified links per item
+/// - total verified links
+///
+/// Also checks that existing M5 metrics (lemma, POS, structure) have not
+/// regressed due to the link prompt addition.
+/// --------------------------------------------------------------------------
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn linkage_quality_benchmark() {
+    let Some(translator) = live() else { return };
+
+    println!("\n=== linkage quality benchmark (#148) ===\n");
+
+    let mut total_verified = 0usize;
+    let mut items_with_links = 0usize;
+    let mut total_entries = 0usize;
+    let mut lemma_hits = 0usize;
+    let mut lemma_total = 0usize;
+    let mut pos_hits = 0usize;
+    let mut pos_total = 0usize;
+
+    for entry in CORPUS {
+        let request = build_request(entry, None);
+        match translator.deep(&request) {
+            Ok(analysis) => {
+                total_entries += 1;
+                let verified = analysis.links.len();
+                total_verified += verified;
+                if verified > 0 {
+                    items_with_links += 1;
+                }
+                println!(
+                    "{}: {} verified links (source: \"{}\")",
+                    entry.id, verified, entry.source
+                );
+                for (i, link) in analysis.links.iter().enumerate() {
+                    let src_span = &entry.source[link.source_range.0..link.source_range.1];
+                    let tgt_span = &entry.translation[link.target_range.0..link.target_range.1];
+                    println!("  [{i}] \"{src_span}\" ↔ \"{tgt_span}\"");
+                }
+                // Check M5 metrics for regression
+                if let Some(expected) = entry.expected_lemma {
+                    lemma_total += 1;
+                    if lemma_matches(&analysis.lemma, expected) {
+                        lemma_hits += 1;
+                    }
+                }
+                if let Some(_expected) = entry.expected_pos {
+                    pos_total += 1;
+                    if !analysis.part_of_speech.is_empty() {
+                        pos_hits += 1;
+                    }
+                }
+            }
+            Err(error) => {
+                println!("{}: FAILED [{}]", entry.id, error.reason());
+            }
+        }
+    }
+
+    println!("\n=== linkage summary ===\n");
+    println!("Total entries:         {total_entries}");
+    println!("Items with ≥1 link:    {items_with_links}");
+    println!("Total verified links:  {total_verified}");
+    if total_entries > 0 {
+        let avg = total_verified as f64 / total_entries as f64;
+        println!("Average links/item:    {avg:.2}");
+    }
+    println!(
+        "Coverage:              {:.1}%",
+        if total_entries > 0 {
+            items_with_links as f64 / total_entries as f64 * 100.0
+        } else {
+            0.0
+        }
+    );
+
+    println!("\n=== M5 regression check ===\n");
+    if lemma_total > 0 {
+        println!(
+            "Lemma:   {lemma_hits}/{lemma_total} ({:.1}%)",
+            lemma_hits as f64 / lemma_total as f64 * 100.0
+        );
+    }
+    if pos_total > 0 {
+        println!(
+            "POS:     {pos_hits}/{pos_total} ({:.1}%)",
+            pos_hits as f64 / pos_total as f64 * 100.0
         );
     }
 }
