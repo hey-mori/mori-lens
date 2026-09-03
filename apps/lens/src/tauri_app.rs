@@ -623,6 +623,44 @@ fn mori_send_item(state: tauri::State<'_, SharedLibrary>, item_id: i64) -> Resul
     crate::mori_transfer::send_to_mori(&item).map_err(|e| format!("{e}"))
 }
 
+/// Diagnostics export for bug reports.
+///
+/// Explicit user action only: the reader clicks "Export diagnostics" in
+/// the settings window. The result is a JSON string they can paste into
+/// a bug report. **No captured text is included.** Everything here is
+/// metadata: versions, counts, configuration labels, and error classes.
+#[tauri::command]
+fn export_diagnostics(
+    diagnostics: tauri::State<'_, SharedDiagnostics>,
+    settings: tauri::State<'_, SharedSettings>,
+    library: tauri::State<'_, SharedLibrary>,
+) -> String {
+    let diag = diagnostics.lock().unwrap();
+    let conf = settings.lock().unwrap();
+    let lib = library.lock().unwrap();
+
+    let schema_version = lib.library().schema_version().unwrap_or(-1);
+    let library_count = lib.library().count().unwrap_or(0);
+    let history_count = lib.library().history_count().unwrap_or(0);
+
+    let report = serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "build": diag.build,
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "schema_version": schema_version,
+        "library_count": library_count,
+        "history_count": history_count,
+        "configuration": diag.configuration,
+        "cards": diag.cards,
+        "settled_hovers": diag.settled_hovers,
+        "refusals": diag.refusals,
+        "ocr_mode": diag.ocr_mode,
+    });
+
+    serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_owned())
+}
+
 /// Build the Tauri application and return its handle, shared diagnostics, and the `App` itself.
 ///
 /// The `App` must be kept alive and `.run()` must be called on it. Dropping
@@ -675,6 +713,7 @@ pub fn build(
             mori_is_available,
             mori_status,
             mori_send_item,
+            export_diagnostics,
             crate::detail_view::detail_read,
             crate::detail_view::detail_copy,
             crate::detail_view::detail_save,
