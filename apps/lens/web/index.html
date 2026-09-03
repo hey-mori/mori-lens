@@ -840,6 +840,7 @@
         if (item.model) html += '<div style="font-size:11px;color:#aaa">' + escapeHtml(item.model) + '</div>';
         html += '</div>';
         html += '<button class="btn" onclick="deleteLibraryItem(' + item.id + ')" style="padding:4px 10px;font-size:12px;color:#c00;border-color:#c00">Delete</button>';
+        html += '<button class="btn" id="mori-send-btn-' + item.id + '" onclick="sendToMori(' + item.id + ')" style="padding:4px 10px;font-size:12px;margin-left:8px;display:none">Send to Mori</button>';
         html += '</div>';
         html += '<div style="margin-bottom:12px;padding:12px;background:white;border-radius:4px;border:1px solid #eee">';
         html += '<div style="font-size:13px;color:#333;line-height:1.5">' + escapeHtml(item.original) + '</div>';
@@ -870,6 +871,15 @@
         } catch (e) {
           // Ignore tag loading errors.
         }
+
+        // Show Send to Mori button if Mori is available.
+        try {
+          const available = await checkMoriAvailable();
+          const btn = document.getElementById('mori-send-btn-' + item.id);
+          if (btn && available) btn.style.display = '';
+        } catch (e) {
+          // Ignore availability check errors.
+        }
       } catch (e) {
         detailEl.innerHTML = '<p class="error">Error: ' + e + '</p>';
         detailEl.style.display = 'block';
@@ -884,6 +894,35 @@
         await fetchLibraryPage();
       } catch (e) {
         alert('Error: ' + e);
+      }
+    }
+
+    let moriAvailable = null;
+    async function checkMoriAvailable() {
+      if (moriAvailable === null) {
+        try {
+          moriAvailable = await invoke('mori_is_available');
+        } catch (e) {
+          moriAvailable = false;
+        }
+      }
+      return moriAvailable;
+    }
+
+    async function sendToMori(id) {
+      try {
+        const item = await invoke('library_get', { id });
+        if (!item) { alert('Item not found.'); return; }
+        const preview = item.original.length > 100 ? item.original.slice(0, 100) + '...' : item.original;
+        const answer = item.answer.length > 100 ? item.answer.slice(0, 100) + '...' : item.answer;
+        const msg = 'Send to Mori?\n\nOriginal: ' + preview + '\n\nAnswer: ' + answer + '\n\nKind: ' + item.kind +
+          (item.note ? '\nNote: ' + item.note : '') +
+          (item.tags && item.tags.length ? '\nTags: ' + item.tags.join(', ') : '');
+        if (!confirm(msg)) return;
+        const transferId = await invoke('mori_send_item', { item_id: id });
+        alert('Sent to Mori.\nTransfer ID: ' + transferId);
+      } catch (e) {
+        alert('Error sending to Mori: ' + e);
       }
     }
 
