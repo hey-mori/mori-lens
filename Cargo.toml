@@ -40,3 +40,22 @@ missing_debug_implementations = "warn"
 
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "warn"
+
+# Release profile for distributable binaries.
+#
+# The tradeoff: a desktop product is downloaded once and run many times, so
+# compile time matters less than binary size and runtime speed. LTO and a
+# single codegen unit let the optimiser see across crate boundaries, which
+# shrinks the binary and speeds up the hot paths (overlay rendering, OCR
+# preprocessing, JSON parsing). Debuginfo at line-tables only keeps backtraces
+# useful without the full DWARF cost. Symbols are stripped from the final
+# binary; the line tables survive in a form that lets a crash report name
+# the function and source line.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+debug = 1
+incremental = false
+panic = "unwind"
