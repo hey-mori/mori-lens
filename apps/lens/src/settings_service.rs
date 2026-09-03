@@ -68,6 +68,12 @@ pub struct SettingsView {
 /// If `settings.toml` exists, load it. If only `settings.conf` exists,
 /// migrate it to TOML (keeping the old file as backup). Otherwise,
 /// create defaults.
+///
+/// # Recovery
+///
+/// A corrupt or future-version file is backed up to `settings.toml.bak`
+/// before defaults are written. A future-version file is also flagged
+/// read-only so this build does not silently downgrade it.
 pub fn load_or_migrate(data_dir: &std::path::Path) -> SettingsState {
     let toml_path = data_dir.join("settings.toml");
     let conf_path = data_dir.join("settings.conf");
@@ -84,6 +90,12 @@ pub fn load_or_migrate(data_dir: &std::path::Path) -> SettingsState {
             }
             Err(e) => {
                 eprintln!("settings  cannot load {toml_path:?}: {e}");
+                // Back up the corrupt or future-version file so the reader's
+                // own configuration is not lost when defaults are written.
+                let backup = toml_path.with_extension("toml.bak");
+                if std::fs::rename(&toml_path, &backup).is_ok() {
+                    eprintln!("settings  backed up to {backup:?}");
+                }
                 // Fall through to defaults.
             }
         }
