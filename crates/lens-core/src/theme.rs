@@ -293,6 +293,18 @@ pub struct Theme {
     pub footer_pt: i32,
     pub padding: i32,
     pub corner_radius: i32,
+    /// Palette for link highlighting (#148).
+    ///
+    /// Each verified link is rendered in a different colour from this palette,
+    /// cycling when there are more links than colours. The same link's source
+    /// and target spans use the same colour so the reader sees the
+    /// correspondence at a glance. Six colours, chosen for distinguishability
+    /// on both light and dark surfaces, with contrast >= 3.0 against the
+    /// surface (WCAG AA for large text).
+    ///
+    /// The domain carries link indices; the renderer maps indices to palette
+    /// slots. No grammar role is attached to a colour.
+    pub link_colours: [Rgb; 6],
 }
 
 /// The lowest contrast ratio the body text may have against its surface.
@@ -474,6 +486,28 @@ impl Theme {
             };
 
         let factor = scale.factor();
+        // Link palette: 6 colours, cycled for each verified link. Same link's
+        // source/target use the same colour. Chosen for >= 3.0 contrast against
+        // both dark and light surfaces (WCAG AA for large text).
+        let link_colours = if dark {
+            [
+                Rgb::new(0x6a, 0xb0, 0xe8), // blue
+                Rgb::new(0x7a, 0xd4, 0x9a), // green
+                Rgb::new(0xf0, 0xb8, 0x7a), // orange
+                Rgb::new(0xc4, 0x8a, 0xe8), // purple
+                Rgb::new(0x7a, 0xd4, 0xd4), // teal
+                Rgb::new(0xe8, 0x8a, 0xb4), // pink
+            ]
+        } else {
+            [
+                Rgb::new(0x2b, 0x5c, 0x8a), // blue
+                Rgb::new(0x2d, 0x7a, 0x4a), // green
+                Rgb::new(0xb8, 0x6e, 0x2a), // orange
+                Rgb::new(0x6a, 0x3d, 0xa8), // purple
+                Rgb::new(0x2a, 0x7a, 0x7a), // teal
+                Rgb::new(0xa8, 0x3d, 0x6a), // pink
+            ]
+        };
         Self {
             surface,
             border,
@@ -492,6 +526,7 @@ impl Theme {
             footer_pt: (8.0 * factor).round() as i32,
             padding: 9,
             corner_radius: 10,
+            link_colours,
         }
     }
 
