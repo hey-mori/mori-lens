@@ -21,6 +21,8 @@ lens-storage = { path = "../../crates/lens-storage" }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
