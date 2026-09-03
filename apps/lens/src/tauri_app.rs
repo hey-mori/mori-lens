@@ -38,6 +38,40 @@ pub struct DiagnosticsSnapshot {
 /// Shared diagnostics state, updated by the polling loop and read by Tauri commands.
 pub type SharedDiagnostics = Arc<Mutex<DiagnosticsSnapshot>>;
 
+/// Mori availability status for the webview.
+///
+/// `status` is one of: `"not-installed"`, `"no-capability-marker"`,
+/// `"version-mismatch"`, `"supported"`.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct MoriStatusView {
+    pub status: String,
+    pub negotiated_version: Option<u32>,
+}
+
+impl From<crate::mori_transfer::MoriStatus> for MoriStatusView {
+    fn from(status: crate::mori_transfer::MoriStatus) -> Self {
+        match status {
+            crate::mori_transfer::MoriStatus::NotInstalled => Self {
+                status: "not-installed".to_string(),
+                negotiated_version: None,
+            },
+            crate::mori_transfer::MoriStatus::NoCapabilityMarker => Self {
+                status: "no-capability-marker".to_string(),
+                negotiated_version: None,
+            },
+            crate::mori_transfer::MoriStatus::VersionMismatch { .. } => Self {
+                status: "version-mismatch".to_string(),
+                negotiated_version: None,
+            },
+            crate::mori_transfer::MoriStatus::Supported { negotiated_version } => Self {
+                status: "supported".to_string(),
+                negotiated_version: Some(negotiated_version),
+            },
+        }
+    }
+}
+
 /// A model entry for the webview.
 #[derive(Clone, Debug, Serialize)]
 pub struct ModelInfoView {
@@ -574,6 +608,11 @@ fn mori_is_available() -> bool {
 }
 
 #[tauri::command]
+fn mori_status() -> MoriStatusView {
+    MoriStatusView::from(crate::mori_transfer::check_mori_status())
+}
+
+#[tauri::command]
 fn mori_send_item(state: tauri::State<'_, SharedLibrary>, item_id: i64) -> Result<String, String> {
     let lib = state.lock().unwrap();
     let item = lib
@@ -634,6 +673,7 @@ pub fn build(
             history_promote,
             history_prune,
             mori_is_available,
+            mori_status,
             mori_send_item,
             crate::detail_view::detail_read,
             crate::detail_view::detail_copy,
