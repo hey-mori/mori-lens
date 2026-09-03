@@ -656,6 +656,7 @@ fn export_diagnostics(
         "settled_hovers": diag.settled_hovers,
         "refusals": diag.refusals,
         "ocr_mode": diag.ocr_mode,
+        "language": conf.current().language,
     });
 
     serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_owned())
@@ -747,6 +748,25 @@ pub fn build(
 ///
 /// This is the main thread's final act. It returns when the event loop
 /// exits, which happens when `AppHandle::exit` is called.
+///
+/// Closing the settings window hides it rather than exiting: the polling
+/// loop on its own thread decides when the app exits, and a user closing
+/// a settings window is not a user quitting the product.
 pub fn run(app: tauri::App) {
-    app.run(|_, _| {});
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::CloseRequested { api, .. },
+            ..
+        } = event
+        {
+            // A tray application does not exit when its window is closed.
+            // The polling loop calls `AppHandle::exit` when the user quits
+            // from the tray, and that is the only path to shutdown.
+            if let Some(window) = app_handle.get_webview_window(&label) {
+                let _ = window.hide();
+            }
+            api.prevent_close();
+        }
+    });
 }
