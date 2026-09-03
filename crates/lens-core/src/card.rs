@@ -93,6 +93,15 @@ pub enum CardBody {
         word_at: Option<(usize, usize)>,
         /// And where its counterpart sits in `translation`.
         counterpart_at: Option<(usize, usize)>,
+        /// Verified span pairs linking source to translation.
+        ///
+        /// Each link says "this part of the original corresponds to that part of
+        /// the translation". The renderer marks both spans with the same visual
+        /// identity (colour + underline) so the reader sees the correspondence
+        /// at a glance. Empty when the model produced no links, all links
+        /// failed verification, or the prompt variant does not request links.
+        /// An empty list is not an error: the card works identically without it.
+        links: Vec<crate::analyse::TextLink>,
         rows: Vec<(String, String)>,
     },
 }
@@ -293,6 +302,7 @@ impl Card {
                     .zip(analysis.counterpart.as_deref())
                     .and_then(|(text, span)| CardBody::mark_of(text, span)),
                 translation: analysis.translation.clone(),
+                links: analysis.links.clone(),
                 rows: body,
             },
             original,
@@ -1480,6 +1490,7 @@ mod copy_tests {
                     model: "qwen2.5-coder:7b".to_owned(),
                     latency_ms: 3670,
                     cached: false,
+                    links: vec![],
                 },
             ),
         );
