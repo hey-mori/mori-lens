@@ -50,6 +50,7 @@ pub fn reason_for(resolution: &Resolution) -> Option<&'static str> {
             AcquireError::ElementGone => "the window changed while it was being read",
             AcquireError::Stale => "the pointer moved first",
             AcquireError::Unavailable => "the accessibility layer is unreachable",
+            AcquireError::TooLong => "the text is longer than one sentence",
         }),
     }
 }
@@ -144,6 +145,7 @@ mod tests {
             AcquireError::ElementGone,
             AcquireError::Unavailable,
             AcquireError::Protected(ProtectedReason::Declared),
+            AcquireError::TooLong,
         ] {
             assert!(
                 reason_for(&Resolution::Failed(error)).is_some(),
