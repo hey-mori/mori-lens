@@ -25,7 +25,7 @@
 
 use std::time::Instant;
 
-use lens_core::analyse::{Analyser, DeepAnalysis, DeepRequest, Profile, DEEP_TIMEOUT};
+use lens_core::analyse::{Analyser, DeepAnalysis, DeepRequest, Profile, RawLink, DEEP_TIMEOUT};
 use lens_core::translate::TranslateError;
 
 use crate::{http, json, OllamaTranslator};
@@ -42,6 +42,9 @@ const DEEP_BUDGET: u32 = 512;
 /// One list, used to build the schema and asserted against the parser, because
 /// the failure when those disagree is silent: the model answers a key nobody
 /// reads and every field comes back empty.
+///
+/// "links" is an array of `{source, target}` substring pairs, not a string.
+/// It is handled separately in [`schema()`] and [`parse()`].
 const FIELDS: [&str; 5] = ["lemma", "part_of_speech", "sense", "structure", "note"];
 
 /// The JSON schema sent as `format`.
@@ -49,18 +52,28 @@ const FIELDS: [&str; 5] = ["lemma", "part_of_speech", "sense", "structure", "not
 /// Every field required, because "optional" to a model reads as "omit this one"
 /// and an analysis that omits the sense is the one the reader asked for. Empty
 /// strings are the way to say nothing, and the card drops them.
+///
+/// "links" is a required array of `{"source":"...","target":"..."}` objects.
+/// Each pair is a substring of the original and translated text that the
+/// reader can trace between. An empty array is valid when no pair can be
+/// formed with confidence.
 fn schema() -> String {
-    let properties = FIELDS
+    let string_props = FIELDS
         .iter()
         .map(|field| format!("\"{field}\":{{\"type\":\"string\"}}"))
         .collect::<Vec<_>>()
         .join(",");
-    let required = FIELDS
+    let link_props = "\"links\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\
+        \"properties\":{\"source\":{\"type\":\"string\"},\"target\":{\"type\":\"string\"}},\
+        \"required\":[\"source\",\"target\"]}}";
+    let all_props = format!("{string_props},{link_props}");
+    let string_keys = FIELDS
         .iter()
         .map(|field| format!("\"{field}\""))
         .collect::<Vec<_>>()
         .join(",");
-    format!("{{\"type\":\"object\",\"properties\":{{{properties}}},\"required\":[{required}]}}")
+    let required = format!("[{string_keys},\"links\"]");
+    format!("{{\"type\":\"object\",\"properties\":{{{all_props}}},\"required\":{required}}}")
 }
 
 /// The instructions, with the fence the material will arrive in.
@@ -114,6 +127,14 @@ fn system_prompt(request: &DeepRequest, fence: &str) -> String {
     }
 
     prompt.push_str("\nIn \"note\", give one idiom, register or false-friend worth knowing, or an empty string. Most sentences need no note and an empty string is the expected answer.");
+
+    prompt.push_str(
+        "\nIn \"links\", give an array of {\"source\": \"...\", \"target\": \"...\"} objects. \
+        Each pair is a substring from the original text and the corresponding substring from \
+        the translation that carries the same meaning. Use exact substrings only. Include \
+        between 2 and 8 pairs, focusing on the most meaningful correspondences. An empty \
+        array is valid when no confident pair can be formed.",
+    );
 
     // Last, and in the system prompt rather than after the material. The
     // position matters: a defensive line placed after the fenced text took an
@@ -207,7 +228,8 @@ impl Analyser for OllamaTranslator {
         // Filtered before it is judged empty, so an analysis whose every
         // explanation came back in the source's language degrades to
         // `Malformed` rather than to a card of English under Korean headings.
-        let analysis = parse(&answer, self.model.clone(), latency_ms as u64, &fence)
+        let (analysis, raw_links) = parse(&answer, self.model.clone(), latency_ms as u64, &fence);
+        let analysis = analysis
             .only_answerable(request.answerable())
             .only_what_is_written_in(&request.target_language)
             .without_restatements_of(&request.sentence);
@@ -218,7 +240,10 @@ impl Analyser for OllamaTranslator {
         if !analysis.says_anything() {
             return Err(TranslateError::Malformed);
         }
+        let source = &request.sentence;
+        let translation = request.translation.as_deref().unwrap_or_default();
         Ok(analysis
+            .with_verified_links(raw_links, source, translation)
             .with_counterpart(self.counterpart_of(request))
             .about(request.translation.clone(), request.word.clone()))
     }
@@ -360,7 +385,12 @@ impl OllamaTranslator {
 /// means the model ignored the schema, and the answer that survives is the part
 /// it did fill in. Refusing the whole thing because one key is absent would
 /// throw away four correct lines over a fifth.
-fn parse(answer: &str, model: String, latency_ms: u64, fence: &str) -> DeepAnalysis {
+fn parse(
+    answer: &str,
+    model: String,
+    latency_ms: u64,
+    fence: &str,
+) -> (DeepAnalysis, Vec<RawLink>) {
     let field = |key: &str| {
         // The frame comes off each field, for the reason the quick path takes
         // it off a translation: this prompt also says the material is fenced,
@@ -372,9 +402,17 @@ fn parse(answer: &str, model: String, latency_ms: u64, fence: &str) -> DeepAnaly
             fence,
         )
     };
-    DeepAnalysis {
-        // Neither of these is in this reply. The counterpart is a separate
-        // question asked twice, and the translation is the request's own.
+    // Links are parsed as parallel arrays of "source" and "target" values.
+    // Verification against the actual source/translation strings happens in
+    // the deep() method, where both are available.
+    let sources = json::string_values_of_key(answer, "source");
+    let targets = json::string_values_of_key(answer, "target");
+    let raw_links: Vec<RawLink> = sources
+        .into_iter()
+        .zip(targets)
+        .map(|(source, target)| RawLink { source, target })
+        .collect();
+    let analysis = DeepAnalysis {
         counterpart: None,
         translation: None,
         word: None,
@@ -386,7 +424,9 @@ fn parse(answer: &str, model: String, latency_ms: u64, fence: &str) -> DeepAnaly
         model,
         latency_ms,
         cached: false,
-    }
+        links: vec![],
+    };
+    (analysis, raw_links)
 }
 
 #[cfg(test)]
@@ -417,7 +457,7 @@ mod tests {
             .map(|field| format!("\"{field}\":\"{field}-value\""))
             .collect::<Vec<_>>()
             .join(",");
-        let analysis = parse(&format!("{{{filled}}}"), "m".to_owned(), 0, A_FENCE);
+        let (analysis, _raw_links) = parse(&format!("{{{filled}}}"), "m".to_owned(), 0, A_FENCE);
 
         let read = analysis.lines();
         assert_eq!(read.len(), FIELDS.len(), "{analysis:?}");
@@ -433,7 +473,7 @@ mod tests {
 
     #[test]
     fn a_missing_field_is_empty_rather_than_a_refusal() {
-        let analysis = parse(
+        let (analysis, _raw_links) = parse(
             r#"{"lemma":"rest","structure":"주어와 동사"}"#,
             "m".into(),
             0,
@@ -446,7 +486,8 @@ mod tests {
 
     #[test]
     fn an_answer_that_is_not_json_says_nothing_rather_than_panicking() {
-        let analysis = parse("I'm sorry, I can't help with that.", "m".into(), 0, A_FENCE);
+        let (analysis, _raw_links) =
+            parse("I'm sorry, I can't help with that.", "m".into(), 0, A_FENCE);
         assert!(!analysis.says_anything());
     }
 

@@ -315,6 +315,48 @@ pub struct DeepAnalysis {
     /// microseconds is a lie about the only number on the card a reader can
     /// check against their own experience of having waited.
     pub cached: bool,
+    /// Verified span pairs linking source constituents to translation constituents.
+    ///
+    /// Each link says "this part of the original corresponds to that part of the
+    /// translation". The model returns substring pairs; code verifies each one
+    /// by exact substring search and drops anything that cannot be proven.
+    ///
+    /// Empty when the model produced no links, all links failed verification, or
+    /// the prompt variant does not request links. An empty list is not an error:
+    /// the deep analysis card works identically without it.
+    pub links: Vec<TextLink>,
+}
+
+/// A verified correspondence between a span in the source and a span in the
+/// translation.
+///
+/// Both ranges are byte offsets into their respective strings. The model never
+/// sees byte offsets: it returns substrings, and code resolves them to spans
+/// only when the substring appears exactly once in its string. A substring that
+/// appears twice is ambiguous and dropped; one that appears nowhere is wrong
+/// and dropped. This is the verify-and-drop contract.
+///
+/// Colour is presentation, not identity. The domain carries link indices; the
+/// renderer assigns palette slots. No grammar role is attached to a link.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextLink {
+    /// Byte range in the source sentence: `(start, end)`.
+    pub source_range: (usize, usize),
+    /// Byte range in the translation: `(start, end)`.
+    pub target_range: (usize, usize),
+}
+
+/// A raw link as the model returned it, before verification.
+///
+/// The model returns substrings, not byte offsets. This struct carries them
+/// until code can verify that each substring appears exactly once in its
+/// string and convert to byte ranges.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawLink {
+    /// The substring the model claims appears in the source.
+    pub source: String,
+    /// The substring the model claims appears in the translation.
+    pub target: String,
 }
 
 impl DeepAnalysis {
@@ -539,6 +581,67 @@ impl DeepAnalysis {
         }
         self
     }
+
+    /// Attach verified links from raw model output.
+    ///
+    /// Each raw link is a substring pair the model claims appears in the source
+    /// and translation. A link survives only when both substrings appear exactly
+    /// once in their respective strings, which is the verify-and-drop contract:
+    /// ambiguous matches (a substring appearing twice) are dropped, missing
+    /// matches are dropped, empty substrings are dropped. The card never
+    /// colours a span it cannot prove.
+    ///
+    /// Valid links survive; invalid links disappear. A list where every link
+    /// failed verification is not an error: the card simply shows no links.
+    pub fn with_verified_links(
+        mut self,
+        raw: Vec<RawLink>,
+        source: &str,
+        translation: &str,
+    ) -> Self {
+        self.links = verify_links(&raw, source, translation);
+        self
+    }
+}
+
+/// Resolve raw substring pairs to verified byte-offset spans.
+///
+/// A link passes when both substrings are non-empty and each appears exactly
+/// once in its string. An ambiguous substring (appearing twice) is dropped
+/// rather than guessed, because marking the wrong span is worse than marking
+/// none. The function is pure and deterministic so the same model output on
+/// the same strings always produces the same links.
+pub fn verify_links(raw: &[RawLink], source: &str, translation: &str) -> Vec<TextLink> {
+    let mut verified = Vec::new();
+    for link in raw {
+        let src_needle = link.source.trim();
+        let tgt_needle = link.target.trim();
+        if src_needle.is_empty() || tgt_needle.is_empty() {
+            continue;
+        }
+        let Some(src_range) = unique_match(source, src_needle) else {
+            continue;
+        };
+        let Some(tgt_range) = unique_match(translation, tgt_needle) else {
+            continue;
+        };
+        verified.push(TextLink {
+            source_range: src_range,
+            target_range: tgt_range,
+        });
+    }
+    verified
+}
+
+/// Find `needle` in `haystack` and return its byte range, but only when it
+/// appears exactly once. Two occurrences is ambiguous and returns `None`.
+fn unique_match(haystack: &str, needle: &str) -> Option<(usize, usize)> {
+    let mut found = haystack.match_indices(needle);
+    let (start, _) = found.next()?;
+    if found.next().is_some() {
+        return None;
+    }
+    Some((start, start + needle.len()))
 }
 
 /// Explains a sentence that has already been translated.
@@ -705,6 +808,116 @@ mod tests {
     #[test]
     fn the_deep_budget_is_far_longer_than_a_hover_may_wait() {
         assert!(DEEP_TIMEOUT > crate::translate::QUICK_TIMEOUT * 2);
+    }
+
+    #[test]
+    fn verify_links_keeps_exact_substring_pairs() {
+        let raw = vec![RawLink {
+            source: "rests on".to_owned(),
+            target: "위에 멈춥니다".to_owned(),
+        }];
+        let links = verify_links(
+            &raw,
+            "The pointer rests on the sentence.",
+            "포인터가 문장 위에 멈춥니다.",
+        );
+        assert_eq!(links.len(), 1);
+        assert_eq!(
+            &"The pointer rests on the sentence."[links[0].source_range.0..links[0].source_range.1],
+            "rests on"
+        );
+        assert_eq!(
+            &"포인터가 문장 위에 멈춥니다."[links[0].target_range.0..links[0].target_range.1],
+            "위에 멈춥니다"
+        );
+    }
+
+    #[test]
+    fn verify_links_drops_empty_substrings() {
+        let raw = vec![RawLink {
+            source: "".to_owned(),
+            target: "비어 있었습니다".to_owned(),
+        }];
+        let links = verify_links(
+            &raw,
+            "The output file was empty.",
+            "출력 파일이 비어 있었습니다.",
+        );
+        assert!(links.is_empty());
+    }
+
+    #[test]
+    fn verify_links_drops_missing_substrings() {
+        let raw = vec![RawLink {
+            source: "not in the source".to_owned(),
+            target: "source에 없음".to_owned(),
+        }];
+        let links = verify_links(
+            &raw,
+            "The pointer rests on the sentence.",
+            "포인터가 문장 위에 멈춥니다.",
+        );
+        assert!(links.is_empty());
+    }
+
+    #[test]
+    fn verify_links_drops_ambiguous_substrings() {
+        // "s" appears many times in "The pointer rests on the sentence."
+        let raw = vec![RawLink {
+            source: "s".to_owned(),
+            target: "문장".to_owned(),
+        }];
+        let links = verify_links(
+            &raw,
+            "The pointer rests on the sentence.",
+            "포인터가 문장 위에 멈춥니다.",
+        );
+        assert!(
+            links.is_empty(),
+            "ambiguous substring appearing multiple times must be dropped"
+        );
+    }
+
+    #[test]
+    fn verify_links_keeps_valid_and_drops_invalid() {
+        let raw = vec![
+            RawLink {
+                source: "rests on".to_owned(),
+                target: "위에 멈춥니다".to_owned(),
+            },
+            RawLink {
+                source: "not present".to_owned(),
+                target: "여기에 없음".to_owned(),
+            },
+            RawLink {
+                source: "sentence".to_owned(),
+                target: "문장".to_owned(),
+            },
+        ];
+        let links = verify_links(
+            &raw,
+            "The pointer rests on the sentence.",
+            "포인터가 문장 위에 멈춥니다.",
+        );
+        assert_eq!(links.len(), 2);
+    }
+
+    #[test]
+    fn verify_links_handles_korean_source() {
+        let raw = vec![RawLink {
+            source: "포인터가".to_owned(),
+            target: "The pointer".to_owned(),
+        }];
+        let links = verify_links(
+            &raw,
+            "포인터가 문장 위에 멈춥니다.",
+            "The pointer rests on the sentence.",
+        );
+        assert_eq!(links.len(), 1);
+        assert_eq!(
+            &"포인터가 문장 위에 멈춥니다."[links[0].source_range.0..links[0].source_range.1],
+            "포인터가"
+        );
     }
 }
 
@@ -1079,6 +1292,7 @@ mod profile_tests {
             model: "test".to_owned(),
             latency_ms: 100,
             cached: false,
+            links: vec![],
         };
         let answerable = Answerable {
             the_word: false,
@@ -1108,6 +1322,7 @@ mod profile_tests {
             model: "test".to_owned(),
             latency_ms: 100,
             cached: false,
+            links: vec![],
         };
         let answerable = Answerable {
             the_word: true,
@@ -1135,6 +1350,7 @@ mod profile_tests {
             model: "test".to_owned(),
             latency_ms: 100,
             cached: false,
+            links: vec![],
         };
         let answerable = Answerable {
             the_word: true,
