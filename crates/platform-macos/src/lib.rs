@@ -17,6 +17,7 @@
 
 mod acquirer;
 pub mod capture;
+pub mod clipboard;
 pub mod coords;
 pub mod ffi;
 pub mod menubar;
