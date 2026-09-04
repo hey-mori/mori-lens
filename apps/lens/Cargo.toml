@@ -14,7 +14,6 @@ repository = "https://github.com/swarea/mori-lens"
 
 [dependencies]
 lens-core = { path = "../../crates/lens-core" }
-lens-platform-windows = { path = "../../crates/platform-windows" }
 lens-translate = { path = "../../crates/lens-translate" }
 lens-settings = { path = "../../crates/lens-settings" }
 lens-storage = { path = "../../crates/lens-storage" }
@@ -25,6 +24,7 @@ uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
 
 [target.'cfg(windows)'.dependencies]
+lens-platform-windows = { path = "../../crates/platform-windows" }
 windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Security",
@@ -34,6 +34,9 @@ windows = { version = "0.62", features = [
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",
 ] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+lens-platform-macos = { path = "../../crates/platform-macos" }
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
