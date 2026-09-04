@@ -16,11 +16,24 @@ use std::path::{Path, PathBuf};
 /// the content, then renames over the target. If the rename fails the
 /// temporary file is removed.
 ///
+/// Creates parent directories if they do not exist. This handles UNC
+/// paths, long paths, and paths with spaces identically: `PathBuf`
+/// already normalises them, and `create_dir_all` tolerates existing
+/// directories.
+///
 /// The caller is responsible for verifying that `content` is valid
 /// before calling this. The function writes bytes; it does not parse.
 pub fn atomic_write(path: &Path, content: &str) -> Result<(), AtomicWriteError> {
-    let _dir = path.parent().ok_or(AtomicWriteError::NoParentDir {
+    let dir = path.parent().ok_or(AtomicWriteError::NoParentDir {
         path: path.to_path_buf(),
+    })?;
+
+    // Create parent directories if missing. A first-run settings write
+    // to a fresh %APPDATA%/Mori Lens hits this path. UNC paths and long
+    // paths are handled by the OS; we only need the directory to exist.
+    fs::create_dir_all(dir).map_err(|e| AtomicWriteError::CreateDir {
+        path: dir.to_path_buf(),
+        source: e,
     })?;
 
     let temp_path = path.with_extension("toml.tmp");
@@ -76,6 +89,10 @@ pub enum AtomicWriteError {
     NoParentDir {
         path: PathBuf,
     },
+    CreateDir {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     Create {
         path: PathBuf,
         source: std::io::Error,
@@ -104,6 +121,9 @@ impl std::fmt::Display for AtomicWriteError {
                     path.display()
                 )
             }
+            Self::CreateDir { path, source } => {
+                write!(f, "cannot create directory {}: {source}", path.display())
+            }
             Self::Create { path, source } => {
                 write!(f, "cannot create {}: {source}", path.display())
             }
@@ -128,7 +148,8 @@ impl std::fmt::Display for AtomicWriteError {
 impl std::error::Error for AtomicWriteError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Create { source, .. }
+            Self::CreateDir { source, .. }
+            | Self::Create { source, .. }
             | Self::Write { source, .. }
             | Self::Rename { source, .. } => Some(source),
             _ => None,
@@ -192,6 +213,18 @@ mod tests {
             fs::read_to_string(&path).unwrap(),
             "[section]\nkey = \"value\"\n"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn atomic_write_creates_missing_parent_directories() {
+        let dir = temp_dir("nested");
+        // A path with multiple missing parent directories.
+        let path = dir.join("a").join("b").join("c").join("settings.toml");
+        assert!(!path.parent().unwrap().exists());
+        atomic_write(&path, "key = \"value\"\n").unwrap();
+        assert!(path.parent().unwrap().exists());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "key = \"value\"\n");
         let _ = fs::remove_dir_all(&dir);
     }
 }
