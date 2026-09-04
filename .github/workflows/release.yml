@@ -56,12 +56,28 @@ jobs:
         run: bash scripts/check.sh --full
 
       - name: Build installer
-        run: cargo tauri build
+        run: cargo tauri build --bundles nsis
+
+      - name: Generate SHA-256 manifest
+        shell: bash
+        run: |
+          cd apps/lens/target/release/bundle/nsis
+          sha256sum *.exe > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          cd -
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             apps/lens/target/release/bundle/nsis/*.exe
+            apps/lens/target/release/bundle/nsis/SHA256SUMS.txt
+          body: |
+            ## UNSIGNED DEVELOPMENT ARTIFACT
+
+            This build is **not code-signed**. Windows SmartScreen will show a
+            warning. Verify the SHA-256 hash before running.
+
+            See `SHA256SUMS.txt` attached to this release for checksums.
           generate_release_notes: true
           draft: true
