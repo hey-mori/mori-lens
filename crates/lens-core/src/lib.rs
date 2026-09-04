@@ -61,3 +61,5 @@ pub use text::{segment, SegmentedText, TextSpan};
 
 #[cfg(test)]
 mod contract_tests;
+#[cfg(test)]
+mod stress_tests;
