@@ -24,8 +24,8 @@ use lens_core::session::OcrMode;
 use lens_core::settings::{self, Problem, Settings};
 use lens_core::translate::{QuickRequest, Translator};
 use lens_platform_macos::{
-    clipboard, overlay, AxPermission, MacTextAcquirer, MenuBar, OcrTextAcquirer, Overlay,
-    SingleInstance,
+    clipboard, overlay, AxPermission, Lifecycle, MacTextAcquirer, MenuBar, OcrTextAcquirer,
+    Overlay, SingleInstance,
 };
 use lens_translate::OllamaTranslator;
 
@@ -209,7 +209,7 @@ pub fn main() -> std::process::ExitCode {
     println!("  ocr       {}", ocr_mode.as_str());
 
     // AX permission — not fatal. Degrade gracefully.
-    let ax_trusted = match AxPermission::check_with_prompt(true) {
+    let mut ax_trusted = match AxPermission::check_with_prompt(true) {
         AxPermission::Trusted => {
             println!("  ax        trusted");
             true
@@ -263,13 +263,19 @@ pub fn main() -> std::process::ExitCode {
     };
 
     // Acquirers.
-    let ax_acquirer = MacTextAcquirer::new();
+    let mut ax_acquirer = MacTextAcquirer::new();
     let ocr_acquirer = if screen_recording {
         Some(OcrTextAcquirer::new())
     } else {
         None
     };
     println!("  acquire   AX ready{}", if ocr_acquirer.is_some() { ", OCR ready" } else { "" });
+
+    // Lifecycle observer: sleep/wake, display changes.
+    let lifecycle = Lifecycle::start();
+    if lifecycle.is_some() {
+        println!("  lifecycle observing wake + display changes");
+    }
 
     // Hover machine.
     let dwell = Duration::from_millis(flags.dwell_ms.unwrap_or(settings.dwell_ms));
@@ -450,6 +456,25 @@ pub fn main() -> std::process::ExitCode {
                         }
                     }
                 }
+            }
+        }
+
+        // Lifecycle: wake / display change.
+        if let Some(ref lc) = lifecycle {
+            if lc.poll_wake() {
+                // After wake: refresh display topology and re-check AX permission.
+                ax_acquirer.refresh_displays();
+                ax_trusted = match AxPermission::check() {
+                    AxPermission::Trusted => true,
+                    AxPermission::NotTrusted => {
+                        println!("  ax        permission lost after wake");
+                        false
+                    }
+                };
+            }
+            if lc.poll_display_change() {
+                // Display configuration changed: refresh topology.
+                ax_acquirer.refresh_displays();
             }
         }
 
