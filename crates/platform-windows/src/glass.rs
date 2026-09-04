@@ -82,7 +82,7 @@ use windows::Win32::Graphics::Direct2D::Common::{
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1CreateFactory, ID2D1Factory, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_CAP_STYLE_FLAT,
-    D2D1_CAP_STYLE_ROUND, D2D1_DASH_STYLE_DASH, D2D1_DASH_STYLE_DASH_DOT,
+    D2D1_CAP_STYLE_ROUND, D2D1_DASH_STYLE_CUSTOM, D2D1_DASH_STYLE_DASH, D2D1_DASH_STYLE_DASH_DOT,
     D2D1_DASH_STYLE_DASH_DOT_DOT, D2D1_DASH_STYLE_DOT, D2D1_DASH_STYLE_SOLID,
     D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT, D2D1_RENDER_TARGET_PROPERTIES,
     D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE, D2D1_ROUNDED_RECT,
@@ -952,23 +952,25 @@ impl Glass {
             // Each link's source and target share both the same colour and the
             // same dash pattern.
             //
-            // Dash patterns per slot:
-            //   0: solid (blue)
-            //   1: dash (green)
-            //   2: dot (orange)
-            //   3: dash-dot (purple)
-            //   4: dash-dot-dot (teal)
-            //   5: solid (pink, fallback)
+            // Dash patterns per slot (all 6 distinct, no colour dependency):
+            //   0: solid          (blue)
+            //   1: dash           (green)
+            //   2: dot            (orange)
+            //   3: dash-dot       (purple)
+            //   4: dash-dot-dot   (teal)
+            //   5: long-dash-dot  (pink) - custom [6, 2, 1, 2]
             let underline_thickness = (2.0 * laid.scale).max(1.0);
-            let dash_styles = [
+            let builtin_styles = [
                 D2D1_DASH_STYLE_SOLID,
                 D2D1_DASH_STYLE_DASH,
                 D2D1_DASH_STYLE_DOT,
                 D2D1_DASH_STYLE_DASH_DOT,
                 D2D1_DASH_STYLE_DASH_DOT_DOT,
-                D2D1_DASH_STYLE_SOLID,
             ];
-            let stroke_styles: Vec<_> = dash_styles
+            // Custom dash array for slot 5: long dash, short gap, dot, short gap.
+            // Distinct from all built-in patterns.
+            let slot5_dash = [6.0f32, 2.0, 1.0, 2.0];
+            let stroke_styles: Vec<_> = builtin_styles
                 .iter()
                 .map(|&ds| {
                     let props = D2D1_STROKE_STYLE_PROPERTIES {
@@ -995,6 +997,16 @@ impl Glass {
                     // outer draw() call already holds the SAFETY invariant.
                     self.d2d.CreateStrokeStyle(&props, None)
                 })
+                .chain(std::iter::once({
+                    let props = D2D1_STROKE_STYLE_PROPERTIES {
+                        dashStyle: D2D1_DASH_STYLE_CUSTOM,
+                        ..Default::default()
+                    };
+                    // SAFETY: CreateStrokeStyle with a custom dash array. The
+                    // array is a valid sequence of positive floats. The outer
+                    // draw() call already holds the SAFETY invariant.
+                    self.d2d.CreateStrokeStyle(&props, Some(&slot5_dash))
+                }))
                 .collect();
             for link in &laid.link_underlines {
                 let rgb = theme.link_colours[link.colour_index % theme.link_colours.len()];
