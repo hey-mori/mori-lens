@@ -81,7 +81,7 @@ When two verified links overlap in source or target range, the longer one is kep
    - Link별 coloured underline (2px 두께, non-colour cue)
    - Source/target 같은 색으로 pair 추적 가능
 
-2. **Deterministic resolution** (fix/148-deterministic-resolution)
+2. **Deterministic resolution** (PR #256)
    - `first_match()` 제거, `unique_match()` 복원
    - `RawLink`에 `source_context`, `target_context` 필드 추가
    - JSON schema와 prompt에 context fields 추가
@@ -90,9 +90,16 @@ When two verified links overlap in source or target range, the longer one is kep
    - Overlap deduplication 구현
    - 5-run multi-run benchmark 프로토콜 구현
 
+3. **Accessible pair identity** (PR #257, fix PR pending)
+   - `FillRectangle` → `DrawLine` + `ID2D1StrokeStyle` 전환
+   - 6개 slot 모두 고유한 dash pattern 보유 (5 built-in + 1 custom)
+   - Slot 0~4: solid, dash, dot, dash-dot, dash-dot-dot
+   - Slot 5: custom long-dash-dot [6, 2, 1, 2] (built-in 5개로는 6번째 고유 패턴 불가)
+   - Source/target 동일 link_idx → 동일 colour + 동일 dash pattern
+   - `colour_index = link_idx % 6`, `dash_index = link_idx % 6`
+
 ## Remaining work
 
-- Per-slot dash patterns for accessible non-colour pair identity (Branch 2)
-- 5-run benchmark execution and results recording
+- 5-run benchmark 실행 결과 기록 (아래 섹션)
 - Subjective colour preference study
 - Colour-blind user testing
