@@ -522,6 +522,7 @@ impl MacTextAcquirer {
                 let role = self.get_role(win_ref.raw());
                 if role.as_deref() == Some("AXWindow") {
                     if let Some(title_val) = self.get_attribute(win_ref.raw(), ffi::ax_title()) {
+                        // SAFETY: title_val is a CFTypeRef from AXTitle attribute.
                         window_title = unsafe { utf::cf_string_to_string(title_val.as_string()) };
                     }
                     break;
@@ -530,6 +531,7 @@ impl MacTextAcquirer {
                     Some(v) => v,
                     None => break,
                 };
+                // SAFETY: parent_val.as_element() is a valid AXUIElementRef.
                 let next_ref = unsafe { AxElement::retain(parent_val.as_element()) };
                 drop(parent_val);
                 win_ref = match next_ref {

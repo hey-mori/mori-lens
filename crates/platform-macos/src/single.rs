@@ -65,6 +65,7 @@ impl SingleInstance {
         }
 
         // Write our PID to the lock file for diagnostics.
+        // SAFETY: getpid is a pure POSIX call with no side effects.
         let pid = unsafe { getpid() };
         let _ = fs::write(&path, format!("{pid}\n"));
 
