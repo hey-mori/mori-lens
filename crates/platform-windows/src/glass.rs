@@ -81,9 +81,12 @@ use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_RECT_F,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1CreateFactory, ID2D1Factory, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+    D2D1CreateFactory, ID2D1Factory, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_CAP_STYLE_FLAT,
+    D2D1_CAP_STYLE_ROUND, D2D1_DASH_STYLE_DASH, D2D1_DASH_STYLE_DASH_DOT,
+    D2D1_DASH_STYLE_DASH_DOT_DOT, D2D1_DASH_STYLE_DOT, D2D1_DASH_STYLE_SOLID,
     D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT, D2D1_RENDER_TARGET_PROPERTIES,
     D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE, D2D1_ROUNDED_RECT,
+    D2D1_STROKE_STYLE_PROPERTIES,
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteTextLayout, DWRITE_FACTORY_TYPE_SHARED,
@@ -224,6 +227,9 @@ struct LinkUnderline {
     height: f32,
     /// Index into `Theme::link_colours`.
     colour_index: usize,
+    /// Index into the dash pattern table. Gives each link slot a distinct
+    /// visual style so colour-blind readers can identify pairs.
+    dash_index: usize,
     /// The run's x offset within the card.
     run_x: f32,
     /// The run's y offset within the card.
@@ -239,6 +245,8 @@ struct PendingLink {
     range: (usize, usize),
     /// Index into `Theme::link_colours`.
     colour_index: usize,
+    /// Dash pattern index for accessible non-colour pair identity.
+    dash_index: usize,
     /// The run's index in the `runs` vector.
     run_index: usize,
     /// The text that contains the range. Needed for byte-to-UTF-16 conversion.
@@ -429,6 +437,7 @@ impl Glass {
                             pending_links.push(PendingLink {
                                 range: link.target_range,
                                 colour_index: link_idx % 6,
+                                dash_index: link_idx % 6,
                                 run_index: index,
                                 text: text.to_string(),
                             });
@@ -446,6 +455,7 @@ impl Glass {
                         pending_links.push(PendingLink {
                             range: link.source_range,
                             colour_index: link_idx % 6,
+                            dash_index: link_idx % 6,
                             run_index: index,
                             text: card.original.clone(),
                         });
@@ -623,6 +633,7 @@ impl Glass {
                     width: hit.width,
                     height: hit.height,
                     colour_index: pending.colour_index,
+                    dash_index: pending.dash_index,
                     run_x: run.x,
                     run_y: run.y,
                 });
@@ -936,32 +947,78 @@ impl Glass {
                 );
             }
 
-            // #148: coloured underlines for each link. Drawn as thin filled
-            // rectangles at the bottom of the text range, using the link
-            // palette from the theme. The monochrome SetUnderline from build()
-            // still draws underneath; the coloured line sits on top of it and
-            // is what the reader actually sees.
+            // #148: coloured underlines for each link, with a distinct dash
+            // pattern per slot so colour-blind readers can identify pairs.
+            // Each link's source and target share both the same colour and the
+            // same dash pattern.
             //
-            // A non-colour cue: the coloured line is 2px thick at 100% scale
-            // (clamped to 1px minimum), which is thicker than a default
-            // underline. A reader who cannot distinguish the palette colours
-            // still sees "thicker underline" versus "normal underline".
+            // Dash patterns per slot:
+            //   0: solid (blue)
+            //   1: dash (green)
+            //   2: dot (orange)
+            //   3: dash-dot (purple)
+            //   4: dash-dot-dot (teal)
+            //   5: solid (pink, fallback)
             let underline_thickness = (2.0 * laid.scale).max(1.0);
+            let dash_styles = [
+                D2D1_DASH_STYLE_SOLID,
+                D2D1_DASH_STYLE_DASH,
+                D2D1_DASH_STYLE_DOT,
+                D2D1_DASH_STYLE_DASH_DOT,
+                D2D1_DASH_STYLE_DASH_DOT_DOT,
+                D2D1_DASH_STYLE_SOLID,
+            ];
+            let stroke_styles: Vec<_> = dash_styles
+                .iter()
+                .map(|&ds| {
+                    let props = D2D1_STROKE_STYLE_PROPERTIES {
+                        startCap: if ds == D2D1_DASH_STYLE_DOT {
+                            D2D1_CAP_STYLE_ROUND
+                        } else {
+                            D2D1_CAP_STYLE_FLAT
+                        },
+                        endCap: if ds == D2D1_DASH_STYLE_DOT {
+                            D2D1_CAP_STYLE_ROUND
+                        } else {
+                            D2D1_CAP_STYLE_FLAT
+                        },
+                        dashCap: if ds == D2D1_DASH_STYLE_DOT {
+                            D2D1_CAP_STYLE_ROUND
+                        } else {
+                            D2D1_CAP_STYLE_FLAT
+                        },
+                        dashStyle: ds,
+                        ..Default::default()
+                    };
+                    // SAFETY: CreateStrokeStyle with a valid properties struct
+                    // and no custom dash array (using built-in styles). The
+                    // outer draw() call already holds the SAFETY invariant.
+                    self.d2d.CreateStrokeStyle(&props, None)
+                })
+                .collect();
             for link in &laid.link_underlines {
                 let rgb = theme.link_colours[link.colour_index % theme.link_colours.len()];
                 let Ok(brush) = target.CreateSolidColorBrush(&colour(rgb, 1.0), None) else {
                     continue;
                 };
+                let style_idx = link.dash_index % stroke_styles.len();
+                let Ok(ref style) = stroke_styles[style_idx] else {
+                    continue;
+                };
                 let x = margin + theme.padding as f32 * laid.scale + link.run_x + link.left;
-                let y = margin + link.run_y + link.top + link.height - underline_thickness;
-                target.FillRectangle(
-                    &D2D_RECT_F {
-                        left: x,
-                        top: y,
-                        right: x + link.width,
-                        bottom: y + underline_thickness,
+                let y = margin + link.run_y + link.top + link.height - underline_thickness / 2.0;
+                // SAFETY: DrawLine with a valid brush and stroke style. The
+                // line is drawn at the vertical centre of the underline box.
+                // The outer draw() call already holds the SAFETY invariant.
+                target.DrawLine(
+                    windows_numerics::Vector2 { X: x, Y: y },
+                    windows_numerics::Vector2 {
+                        X: x + link.width,
+                        Y: y,
                     },
                     &brush,
+                    underline_thickness,
+                    style,
                 );
             }
 
