@@ -7,73 +7,71 @@
 
 ## 성공 기준 (결과 보기 전에 결정)
 
-### Linkage metric
-- **Items with ≥1 verified link:** 최소 50% (13개 이상)
-- **Average verified links/item:** 최소 1.5
-- **Invalid links reach UI:** 0개 (verify-and-drop이 보장)
+### Linkage metric (multi-run protocol)
+- **Mean avg links/item over 5 runs:** >= 1.5
+- **At least 4/5 runs >= 1.4**
+- **Speculative links reaching UI:** 0 (resolver guarantees this)
+- **Malformed rate:** < 10%
+
+### Resolution categories tracked
+- **raw:** total proposed by model
+- **unique:** resolved by unique match (substring appears exactly once)
+- **context_resolved:** resolved via context disambiguation
+- **missing:** dropped (substring not found in text)
+- **ambiguous:** dropped (multiple matches, no usable context)
+- **overlap:** dropped (overlapped a longer link)
 
 ### M5 regression check
 - **Lemma accuracy:** 기존 대비 10% 이상 나빠지지 않으면 OK
 - **POS accuracy:** 기존 대비 10% 이상 나빠지지 않으면 OK
 - **Latency:** 추가 model call 없음 (기존 deep request에 links만 추가)
 
-### 철학
-- 완전한 word alignment가 목표가 아님
-- "invalid links cannot reach UI"가 가장 중요 (이미 보장됨)
-- "links appear often enough to be useful"는 50% coverage로 정의
-- 기존 Deep Analysis quality가 나빠지지 않으면 OK
+## Verification protocol
 
-## Prompt variant 비교 (2026-09-03 실행)
+### Deterministic resolver
 
-### Variant A: "between 2 and 8 pairs, focusing on the most meaningful correspondences"
-- Items with ≥1 link: 18/24 (75%)
-- Average links/item: 1.33
-- Coverage: 75%
-- Malformed: 1/25
+`resolve_with_category()` pure function:
+- 0 matches -> None (dropped as missing)
+- 1 match -> accept (counted as unique)
+- N matches with context narrowing to exactly 1 -> accept (counted as context_resolved)
+- N matches without disambiguating context -> None (dropped as ambiguous)
 
-### Variant B: "between 1 and 5 pairs, and only include pairs you are highly confident about"
-- Items with ≥1 link: 17/25 (68%)
-- Average links/item: 0.96
-- Coverage: 68%
-- Malformed: 0/25
+Context verification: the context string itself must appear exactly once in the text, and must contain exactly one occurrence of the needle within its byte range. If the context is also ambiguous, the link is dropped.
 
-### Variant C: "Cover as many constituents as possible with exact visible substrings" (현재)
-- Items with ≥1 link: 20/24 (83.3%) ✅
-- Average links/item: 1.38 ❌ (threshold 미달)
-- Coverage: 83.3% ✅
-- Malformed: 1/24
+### Context-qualified JSON schema
 
-### 판정 (2026-09-03)
-- **Variant C가 가장 좋음** (coverage 83.3%, items with links 83.3%)
-- **Average links/item이 1.5 threshold를 만족하지 못함** (1.38 < 1.5)
-- **#148은 OPEN으로 유지**
-- M5 regression은 acceptable (POS 94.7%, Lemma 42.1%)
+The model now returns `sourceContext` and `targetContext` alongside `source` and `target`. When a substring appears exactly once, the context is an empty string. When it appears multiple times, the context is a longer phrase that contains the substring and appears exactly once.
 
-## Verification algorithm 변경 (2026-09-04)
+### Overlap policy
 
-### 문제 분석
-- `unique_match()`가 substring을 정확히 한 번만 나타나도록 요구
-- "the", "model", "card" 등 여러 번 나타나는 단어는 링크가 드롭됨
-- 모델이 반환한 링크가 실제로는 유효한데도 드롭되는 경우 많음
+When two verified links overlap in source or target range, the longer one is kept. Equal-length overlaps keep the first (stable order from model output). This prevents the renderer from painting two coloured spans over the same text.
 
-### 해결책
-- `unique_match()`를 `first_match()`로 변경
-- 여러 번 나타나는 substring도 첫 번째 위치를 사용하여 링크 유지
-- "invalid links cannot reach UI"는 유지: substring이 텍스트에 존재하고 모델이 pairing했으므로 유효
+## Correctness invariant
 
-### 결과 (2026-09-04, 3회 실행)
-- Run 1: 1.56 avg, 88.0% coverage ✅
-- Run 2: 1.21 avg, 75.0% coverage
-- Run 3: 1.36 avg, 84.0% coverage
+**If Lens cannot prove the exact source occurrence and the exact target occurrence, the link must not reach the renderer.**
 
-모델 출력의 non-determinism으로 인해 결과가 변동하지만, 평균적으로 threshold에 가까워짐.
-특히 좋은 run에서는 1.5 threshold를 초과.
+- `first_match()` was removed. It arbitrarily assigned colour/link identity to an occurrence the model did not specify.
+- `unique_match()` is the default: a substring must appear exactly once.
+- `resolve_occurrence()` with context: when a substring appears multiple times, the model provides context to narrow to one.
+- When neither unique match nor context disambiguation succeeds, the link is dropped.
 
-## 현재 상태
+## Validation algorithm history
 
-**Prompt:** Variant C (maximal constituent coverage)
-**Verification:** first_match (unique_match에서 변경)
-**Status:** #148 OPEN (threshold에 가까워졌으나 모델 non-determinism으로 인해 변동)
+### Phase 1: unique_match (2026-09-03)
+- Average links/item: 1.38 (below 1.5 threshold)
+- Coverage: 83.3%
+- Problem: repeated words like "the", "model", "card" dropped too aggressively
+
+### Phase 2: first_match (2026-09-04, REJECTED)
+- Average links/item: ~1.38 (varies 1.2-1.6 due to model non-determinism)
+- Correctness violation: arbitrarily assigned occurrence identity
+- **This approach was reverted**
+
+### Phase 3: context-qualified protocol (2026-09-04, current)
+- Deterministic resolver with context disambiguation
+- 5-run benchmark with pre-committed thresholds
+- Resolution categories tracked for diagnostics
+- Overlap deduplication for renderer safety
 
 ## 완료된 작업
 
@@ -83,13 +81,18 @@
    - Link별 coloured underline (2px 두께, non-colour cue)
    - Source/target 같은 색으로 pair 추적 가능
 
-2. **Verification algorithm 개선**
-   - `unique_match()` → `first_match()` 변경
-   - 여러 번 나타나는 substring도 첫 번째 위치로 링크 유지
-   - 테스트 업데이트: `verify_links_keeps_ambiguous_substrings_at_first_occurrence`
+2. **Deterministic resolution** (fix/148-deterministic-resolution)
+   - `first_match()` 제거, `unique_match()` 복원
+   - `RawLink`에 `source_context`, `target_context` 필드 추가
+   - JSON schema와 prompt에 context fields 추가
+   - `resolve_with_category()` pure function 구현
+   - `LinkResolutionStats` 구조체로 resolution 카테고리 추적
+   - Overlap deduplication 구현
+   - 5-run multi-run benchmark 프로토콜 구현
 
-## Validation debt
+## Remaining work
 
+- Per-slot dash patterns for accessible non-colour pair identity (Branch 2)
+- 5-run benchmark execution and results recording
 - Subjective colour preference study
 - Colour-blind user testing
-- Context-qualified linkage (position hints in JSON schema) - 추후 고려

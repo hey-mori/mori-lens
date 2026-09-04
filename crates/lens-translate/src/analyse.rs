@@ -25,6 +25,8 @@
 
 use std::time::Instant;
 
+#[cfg(test)]
+use lens_core::analyse::{verify_links_with_stats, LinkResolutionStats};
 use lens_core::analyse::{Analyser, DeepAnalysis, DeepRequest, Profile, RawLink, DEEP_TIMEOUT};
 use lens_core::translate::TranslateError;
 
@@ -43,7 +45,7 @@ const DEEP_BUDGET: u32 = 512;
 /// the failure when those disagree is silent: the model answers a key nobody
 /// reads and every field comes back empty.
 ///
-/// "links" is an array of `{source, target}` substring pairs, not a string.
+/// "links" is an array of `{source, target, sourceContext, targetContext}` substring pairs, not a string.
 /// It is handled separately in [`schema()`] and [`parse()`].
 const FIELDS: [&str; 5] = ["lemma", "part_of_speech", "sense", "structure", "note"];
 
@@ -53,7 +55,7 @@ const FIELDS: [&str; 5] = ["lemma", "part_of_speech", "sense", "structure", "not
 /// and an analysis that omits the sense is the one the reader asked for. Empty
 /// strings are the way to say nothing, and the card drops them.
 ///
-/// "links" is a required array of `{"source":"...","target":"..."}` objects.
+/// "links" is a required array of `{"source":"...","target":"...","sourceContext":"...","targetContext":"..."}` objects.
 /// Each pair is a substring of the original and translated text that the
 /// reader can trace between. An empty array is valid when no pair can be
 /// formed with confidence.
@@ -65,8 +67,9 @@ fn schema() -> String {
         .join(",");
     let link_props = concat!(
         "\"links\":{\"type\":\"array\",\"items\":{\"type\":\"object\",",
-        "\"properties\":{\"source\":{\"type\":\"string\"},\"target\":{\"type\":\"string\"}},",
-        "\"required\":[\"source\",\"target\"]}}"
+        "\"properties\":{\"source\":{\"type\":\"string\"},\"target\":{\"type\":\"string\"},",
+        "\"sourceContext\":{\"type\":\"string\"},\"targetContext\":{\"type\":\"string\"}},",
+        "\"required\":[\"source\",\"target\",\"sourceContext\",\"targetContext\"]}}"
     );
     let all_props = format!("{string_props},{link_props}");
     let string_keys = FIELDS
@@ -131,7 +134,7 @@ fn system_prompt(request: &DeepRequest, fence: &str) -> String {
     prompt.push_str("\nIn \"note\", give one idiom, register or false-friend worth knowing, or an empty string. Most sentences need no note and an empty string is the expected answer.");
 
     prompt.push_str(
-        "\nIn \"links\", give an array of {\"source\": \"...\", \"target\": \"...\"} objects. Each pair is a substring from the original text and the corresponding substring from the translation that carries the same meaning. Use exact substrings only. Cover as many constituents as possible with exact visible substrings. An empty array is valid when no confident pair can be formed.",
+        "\nIn \"links\", give an array of {\"source\": \"...\", \"target\": \"...\", \"sourceContext\": \"...\", \"targetContext\": \"...\"} objects. Each pair is a substring from the original text and the corresponding substring from the translation that carries the same meaning. Use exact substrings only. Each substring must appear exactly once in its text. When a word or phrase appears more than once, set \"sourceContext\" and \"targetContext\" to a longer phrase from the same text that contains the substring and appears exactly once. When a substring already appears exactly once, use an empty string for its context. Cover as many constituents as possible with exact visible substrings. An empty array is valid when no confident pair can be formed.",
     );
 
     // Last, and in the system prompt rather than after the material. The
@@ -253,6 +256,47 @@ const COUNTERPART_SCHEMA: &str =
     "{\"type\":\"object\",\"properties\":{\"counterpart\":{\"type\":\"string\"}},\"required\":[\"counterpart\"]}";
 
 impl OllamaTranslator {
+    /// Like `deep()`, but also returns link resolution statistics.
+    ///
+    /// Used by the benchmark to track how many raw links were resolved by
+    /// unique match, context, or dropped.
+    #[cfg(test)]
+    pub(crate) fn deep_with_stats(
+        &self,
+        request: &DeepRequest,
+    ) -> Result<(DeepAnalysis, LinkResolutionStats), TranslateError> {
+        if !request.answerable().anything() {
+            return Err(TranslateError::NotWorthTranslating);
+        }
+        let (body, fence) = self.deep_body(request);
+        let started = Instant::now();
+        let response = http::post(&self.endpoint, "/api/generate", &body, DEEP_TIMEOUT)?;
+        let latency_ms = started.elapsed().as_millis();
+        if let Some(error) = self.error_in(&response) {
+            return Err(error);
+        }
+        let answer =
+            json::string_value_of_key(&response, "response").ok_or(TranslateError::Malformed)?;
+        let (analysis, raw_links) = parse(&answer, self.model.clone(), latency_ms as u64, &fence);
+        let analysis = analysis
+            .bounded()
+            .only_answerable(request.answerable())
+            .only_what_is_written_in(&request.target_language)
+            .without_restatements_of(&request.sentence);
+        if !analysis.says_anything() {
+            return Err(TranslateError::Malformed);
+        }
+        let source = &request.sentence;
+        let translation = request.translation.as_deref().unwrap_or_default();
+        let (links, stats) = verify_links_with_stats(&raw_links, source, translation);
+        let mut analysis = analysis;
+        analysis.links = links;
+        let analysis = analysis
+            .with_counterpart(self.counterpart_of(request))
+            .about(request.translation.clone(), request.word.clone());
+        Ok((analysis, stats))
+    }
+
     /// Which part of the translation carries the focused word, or nothing.
     ///
     /// **Asked twice, from opposite ends, and kept only where the two agree.**
@@ -401,15 +445,32 @@ fn parse(
             fence,
         )
     };
-    // Links are parsed as parallel arrays of "source" and "target" values.
-    // Verification against the actual source/translation strings happens in
-    // the deep() method, where both are available.
+    // Links are parsed as parallel arrays of "source", "target",
+    // "sourceContext", and "targetContext" values. Verification against the
+    // actual source/translation strings happens in the deep() method, where
+    // both are available.
     let sources = json::string_values_of_key(answer, "source");
     let targets = json::string_values_of_key(answer, "target");
+    let src_contexts = json::string_values_of_key(answer, "sourceContext");
+    let tgt_contexts = json::string_values_of_key(answer, "targetContext");
+    let to_opt = |s: &str| -> Option<String> {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_owned())
+        }
+    };
     let raw_links: Vec<RawLink> = sources
         .into_iter()
         .zip(targets)
-        .map(|(source, target)| RawLink { source, target })
+        .enumerate()
+        .map(|(i, (source, target))| RawLink {
+            source,
+            target,
+            source_context: src_contexts.get(i).and_then(|s| to_opt(s)),
+            target_context: tgt_contexts.get(i).and_then(|s| to_opt(s)),
+        })
         .collect();
     let analysis = DeepAnalysis {
         counterpart: None,
