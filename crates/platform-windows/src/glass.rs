@@ -88,8 +88,8 @@ use windows::Win32::Graphics::Direct2D::{
 use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteTextLayout, DWRITE_FACTORY_TYPE_SHARED,
     DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_NORMAL,
-    DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_LINE_SPACING_METHOD_UNIFORM, DWRITE_TEXT_METRICS,
-    DWRITE_TEXT_RANGE, DWRITE_WORD_WRAPPING_WRAP,
+    DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_HIT_TEST_METRICS, DWRITE_LINE_SPACING_METHOD_UNIFORM,
+    DWRITE_TEXT_METRICS, DWRITE_TEXT_RANGE, DWRITE_WORD_WRAPPING_WRAP,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{
@@ -194,10 +194,55 @@ pub struct Glass {
 /// its last line clipped.
 pub struct Laid {
     runs: Vec<Run>,
+    /// Per-link colour underline metrics, collected during build and consumed
+    /// by draw. Each entry is a single line of a link's target range in the
+    /// translation text (or source range in the original). Multi-line links
+    /// produce multiple entries. Coordinates are relative to the run they
+    /// belong to; the draw function adds the run's offset.
+    link_underlines: Vec<LinkUnderline>,
     /// Card size, without the shadow margin.
     pub width: i32,
     pub height: i32,
     scale: f32,
+}
+
+/// A single visual fragment of a link underline.
+///
+/// One `TextLink` in the analysis may span multiple wrapped lines, producing
+/// multiple `LinkUnderline` entries. Each stores the pixel position and width
+/// of the text range within its containing run, plus the palette index that
+/// picks the colour from `Theme::link_colours`.
+struct LinkUnderline {
+    /// Left offset within the run, in pixels.
+    left: f32,
+    /// Top offset within the run, in pixels.
+    top: f32,
+    /// Width of the text range, in pixels.
+    width: f32,
+    /// Height of the text range, in pixels. The underline is drawn at the
+    /// bottom of this box.
+    height: f32,
+    /// Index into `Theme::link_colours`.
+    colour_index: usize,
+    /// The run's x offset within the card.
+    run_x: f32,
+    /// The run's y offset within the card.
+    run_y: f32,
+}
+
+/// A pending link hit-test, collected before run positions are final.
+///
+/// Stored during the Analysis arm of the layout, then resolved after the
+/// positioning loop when `run.x` and `run.y` are known.
+struct PendingLink {
+    /// Byte range in the text: (start, end).
+    range: (usize, usize),
+    /// Index into `Theme::link_colours`.
+    colour_index: usize,
+    /// The run's index in the `runs` vector.
+    run_index: usize,
+    /// The text that contains the range. Needed for byte-to-UTF-16 conversion.
+    text: String,
 }
 
 struct Run {
@@ -293,6 +338,8 @@ impl Glass {
         // the width actually used, which for a short answer is a fraction of
         // what it was offered.
         let mut runs: Vec<Run> = Vec::new();
+        let mut link_underlines: Vec<LinkUnderline> = Vec::new();
+        let mut pending_links: Vec<PendingLink> = Vec::new();
         let make = |runs: &mut Vec<Run>,
                     text: &str,
                     points: i32,
@@ -373,21 +420,18 @@ impl Glass {
                         // SAFETY: marking a range of a layout this function
                         // owns and has not yet drawn.
                         unsafe { underline(&runs[index].layout, text, *counterpart_at) };
-                        // #148: underline each link's target span. Same style
-                        // as word_at/counterpart_at.
-                        //
-                        // LIMITATION: All links use the same underline style.
-                        // DirectWrite basic layout (IDWriteTextLayout) does not
-                        // support coloured underlines without custom rendering.
-                        // Multiple links are distinguished by position only.
-                        // Future: custom text renderer for per-link colours.
-                        for link in links {
-                            // SAFETY: marking a range of a layout this function
-                            // owns and has not yet drawn, same invariant as the
-                            // word_at/counterpart_at underline above.
-                            unsafe {
-                                underline(&runs[index].layout, text, Some(link.target_range))
-                            };
+                        // #148: record each link's target span for coloured
+                        // underline drawing in draw(). The coloured line
+                        // replaces the monochrome SetUnderline that was here
+                        // before; the thickness (2px at 100% scale) is the
+                        // non-colour cue.
+                        for (link_idx, link) in links.iter().enumerate() {
+                            pending_links.push(PendingLink {
+                                range: link.target_range,
+                                colour_index: link_idx % 6,
+                                run_index: index,
+                                text: text.to_string(),
+                            });
                         }
                         row += 1;
                     }
@@ -396,14 +440,15 @@ impl Glass {
                 if let Some(index) = original_run {
                     // SAFETY: as above.
                     unsafe { underline(&runs[index].layout, &card.original, *word_at) };
-                    // #148: underline each link's source span. Same limitation
-                    // as target spans: all links use the same underline style.
-                    for link in links {
-                        // SAFETY: same invariant as the word_at underline above;
-                        // marking a range of a layout this function owns.
-                        unsafe {
-                            underline(&runs[index].layout, &card.original, Some(link.source_range))
-                        };
+                    // #148: record each link's source span with the same colour
+                    // as its target, so a reader can trace the pair.
+                    for (link_idx, link) in links.iter().enumerate() {
+                        pending_links.push(PendingLink {
+                            range: link.source_range,
+                            colour_index: link_idx % 6,
+                            run_index: index,
+                            text: card.original.clone(),
+                        });
                     }
                 }
                 let first_row = row;
@@ -533,8 +578,60 @@ impl Glass {
             }
         }
 
+        // #148: resolve pending link hit-tests now that run positions are final.
+        // Each pending link becomes one or more LinkUnderlines (one per wrapped
+        // line of the text range). The hit-test metrics are relative to the
+        // layout origin; draw() combines them with the run's absolute offset.
+        // A failed hit-test drops the coloured underline for that link; the
+        // monochrome underline from SetUnderline still draws.
+        for pending in &pending_links {
+            let run = &runs[pending.run_index];
+            let (from, to) = pending.range;
+            let Some(head) = pending.text.get(..from) else {
+                continue;
+            };
+            let Some(span) = pending.text.get(from..to) else {
+                continue;
+            };
+            let position = head.encode_utf16().count() as u32;
+            let length = span.encode_utf16().count() as u32;
+            if length == 0 {
+                continue;
+            }
+            let mut hit_metrics = [DWRITE_HIT_TEST_METRICS::default(); 8];
+            let mut actual_count: u32 = 0;
+            // SAFETY: HitTestTextRange is a documented read-only query on a
+            // layout this function owns. The output buffer is stack-allocated
+            // and large enough for a reasonable number of wrapped lines.
+            let ok = unsafe {
+                run.layout.HitTestTextRange(
+                    position,
+                    length,
+                    0.0,
+                    0.0,
+                    Some(&mut hit_metrics),
+                    &mut actual_count,
+                )
+            };
+            if ok.is_err() {
+                continue;
+            }
+            for hit in &hit_metrics[..actual_count as usize] {
+                link_underlines.push(LinkUnderline {
+                    left: hit.left,
+                    top: hit.top,
+                    width: hit.width,
+                    height: hit.height,
+                    colour_index: pending.colour_index,
+                    run_x: run.x,
+                    run_y: run.y,
+                });
+            }
+        }
+
         Some(Laid {
             runs,
+            link_underlines,
             width: (inner + padding * 2.0).ceil() as i32,
             height: (y + padding).ceil() as i32,
             scale,
@@ -836,6 +933,35 @@ impl Glass {
                     &run.layout,
                     &brush,
                     windows::Win32::Graphics::Direct2D::D2D1_DRAW_TEXT_OPTIONS_NONE,
+                );
+            }
+
+            // #148: coloured underlines for each link. Drawn as thin filled
+            // rectangles at the bottom of the text range, using the link
+            // palette from the theme. The monochrome SetUnderline from build()
+            // still draws underneath; the coloured line sits on top of it and
+            // is what the reader actually sees.
+            //
+            // A non-colour cue: the coloured line is 2px thick at 100% scale
+            // (clamped to 1px minimum), which is thicker than a default
+            // underline. A reader who cannot distinguish the palette colours
+            // still sees "thicker underline" versus "normal underline".
+            let underline_thickness = (2.0 * laid.scale).max(1.0);
+            for link in &laid.link_underlines {
+                let rgb = theme.link_colours[link.colour_index % theme.link_colours.len()];
+                let Ok(brush) = target.CreateSolidColorBrush(&colour(rgb, 1.0), None) else {
+                    continue;
+                };
+                let x = margin + theme.padding as f32 * laid.scale + link.run_x + link.left;
+                let y = margin + link.run_y + link.top + link.height - underline_thickness;
+                target.FillRectangle(
+                    &D2D_RECT_F {
+                        left: x,
+                        top: y,
+                        right: x + link.width,
+                        bottom: y + underline_thickness,
+                    },
+                    &brush,
                 );
             }
 
