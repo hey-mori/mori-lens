@@ -17,6 +17,11 @@ fn main() {
             .flag("-fobjc-arc")
             .compile("lens_capture");
 
+        cc::Build::new()
+            .file("native/menubar.m")
+            .flag("-fobjc-arc")
+            .compile("lens_menubar");
+
         println!("cargo:rustc-link-lib=framework=ApplicationServices");
         println!("cargo:rustc-link-lib=framework=CoreGraphics");
         println!("cargo:rustc-link-lib=framework=AppKit");
