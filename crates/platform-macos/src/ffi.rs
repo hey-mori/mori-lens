@@ -63,6 +63,7 @@ pub type CFDataRef = *const __CFData;
 pub type CFTypeRef = *const c_void;
 pub type CFIndex = i64;
 pub type CFStringEncoding = u32;
+pub type CFNumberType = u32;
 pub type Boolean = u8;
 pub type CGError = i32;
 
@@ -134,6 +135,9 @@ pub const K_CG_ERROR_SUCCESS: CGError = 0;
 
 pub const K_CF_STRING_ENCODING_UTF8: CFStringEncoding = 0x08000100;
 pub const K_CF_STRING_ENCODING_ASCII: CFStringEncoding = 0x0100;
+
+/// CFNumber type for a 32-bit signed integer (pid_t).
+pub const K_CF_NUMBER_INT_TYPE: CFNumberType = 9;
 
 // ---------------------------------------------------------------------------
 // AX attribute name accessors
@@ -326,6 +330,13 @@ extern "C" {
         buffer: *mut c_char,
         buffer_size: CFIndex,
         encoding: CFStringEncoding,
+    ) -> Boolean;
+
+    // CFNumber: extract integer values from CFNumberRef (used for PIDs).
+    pub fn CFNumberGetValue(
+        number: *const c_void,
+        the_type: CFNumberType,
+        value_ptr: *mut c_void,
     ) -> Boolean;
 
     pub fn CFDataGetLength(the_data: CFDataRef) -> CFIndex;

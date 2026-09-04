@@ -443,6 +443,107 @@ impl MacTextAcquirer {
             Some(range)
         }
     }
+
+    /// Get the process name for a PID using `proc_name`.
+    fn process_name_for_pid(pid: i32) -> Option<String> {
+        let mut buf = [0u8; 256];
+        // SAFETY: proc_name writes up to buf.len() bytes into our stack buffer.
+        let len = unsafe {
+            ffi::proc_name(
+                pid,
+                buf.as_mut_ptr() as *mut std::os::raw::c_char,
+                buf.len() as i32,
+            )
+        };
+        if len <= 0 {
+            return None;
+        }
+        String::from_utf8(buf[..len as usize].to_vec()).ok()
+    }
+
+    /// Resolve the application identity (process name, window title) from
+    /// the element at the pointer. Walks up to the application element for
+    /// the PID, then uses `proc_name` for the process name.
+    fn resolve_app_identity(&self, element: ffi::AXUIElementRef) -> AppIdentity {
+        let mut process_name: Option<String> = None;
+        let mut window_title: Option<String> = None;
+
+        // Walk up to find the application element (role = "AXApplication").
+        // SAFETY: element is valid; CFRetain returns it.
+        let mut current_ref = match unsafe { AxElement::retain(element) } {
+            Some(r) => r,
+            None => return AppIdentity::default(),
+        };
+
+        for _ in 0..50 {
+            let role = self.get_role(current_ref.raw());
+
+            // Check for application role.
+            if role.as_deref() == Some("AXApplication") {
+                // Get the PID via the process identifier attribute.
+                if let Some(pid_val) =
+                    self.get_attribute(current_ref.raw(), ffi::ax_process_identifier())
+                {
+                    let mut pid: i32 = 0;
+                    // SAFETY: pid_val.raw() is a CFNumberRef from the AX API.
+                    // CFNumberGetValue writes an i32 to our stack variable.
+                    let ok = unsafe {
+                        ffi::CFNumberGetValue(
+                            pid_val.raw(),
+                            ffi::K_CF_NUMBER_INT_TYPE,
+                            &mut pid as *mut i32 as *mut std::os::raw::c_void,
+                        )
+                    };
+                    if ok != 0 && pid > 0 {
+                        process_name = Self::process_name_for_pid(pid);
+                    }
+                }
+                break;
+            }
+
+            // Walk up.
+            let parent_val = match self.get_attribute(current_ref.raw(), ffi::ax_parent()) {
+                Some(v) => v,
+                None => break,
+            };
+            // SAFETY: parent_raw is valid while parent_val is alive.
+            let next_ref = unsafe { AxElement::retain(parent_val.as_element()) };
+            drop(parent_val);
+            current_ref = match next_ref {
+                Some(r) => r,
+                None => break,
+            };
+        }
+
+        // Try to get the window title by walking up to the window element.
+        // SAFETY: element is valid; CFRetain returns it.
+        if let Some(mut win_ref) = unsafe { AxElement::retain(element) } {
+            for _ in 0..30 {
+                let role = self.get_role(win_ref.raw());
+                if role.as_deref() == Some("AXWindow") {
+                    if let Some(title_val) = self.get_attribute(win_ref.raw(), ffi::ax_title()) {
+                        window_title = unsafe { utf::cf_string_to_string(title_val.as_string()) };
+                    }
+                    break;
+                }
+                let parent_val = match self.get_attribute(win_ref.raw(), ffi::ax_parent()) {
+                    Some(v) => v,
+                    None => break,
+                };
+                let next_ref = unsafe { AxElement::retain(parent_val.as_element()) };
+                drop(parent_val);
+                win_ref = match next_ref {
+                    Some(r) => r,
+                    None => break,
+                };
+            }
+        }
+
+        AppIdentity {
+            process_name,
+            window_title,
+        }
+    }
 }
 
 impl TextAcquirer for MacTextAcquirer {
@@ -563,10 +664,7 @@ impl TextAcquirer for MacTextAcquirer {
         };
 
         // 9. Build the app identity.
-        let app = AppIdentity {
-            process_name: None,
-            window_title: None,
-        };
+        let app = self.resolve_app_identity(element.raw());
 
         // 10. Classify the expanded unit.
         let expanded_unit = segmented
