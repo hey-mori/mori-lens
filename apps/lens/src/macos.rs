@@ -4,12 +4,8 @@
 //!
 //! ```text
 //! pointer settles → AX acquisition → local translation → native card
+//!                                    → OCR fallback (if enabled) → card
 //! ```
-//!
-//! The hover state machine, segmentation, language routing, cache, and
-//! translation are all platform-neutral (lens-core). The platform-specific
-//! pieces are the pointer sampler, the text acquirer, the overlay, and the
-//! event loop.
 //!
 //! Included from `main.rs` behind `#[cfg(target_os = "macos")]`.
 
@@ -18,13 +14,17 @@ use std::time::{Duration, Instant};
 
 use lens_core::acquire::{AcquireContext, AcquireError, TextAcquirer};
 use lens_core::cache::{CacheKey, TranslationCache};
-use lens_core::card::Card;
+use lens_core::card::{Card, CardBody};
 use lens_core::geometry::ScreenPoint;
 use lens_core::hover::{HoverConfig, HoverEvent, HoverMachine, PointerSample};
 use lens_core::language::decide;
+use lens_core::policy::AppTier;
+use lens_core::session::OcrMode;
 use lens_core::settings::{self, Problem, Settings};
 use lens_core::translate::{QuickRequest, Translator};
-use lens_platform_macos::{overlay, AxPermission, MacTextAcquirer, MenuBar, Overlay, SingleInstance};
+use lens_platform_macos::{
+    overlay, AxPermission, MacTextAcquirer, MenuBar, OcrTextAcquirer, Overlay, SingleInstance,
+};
 use lens_translate::OllamaTranslator;
 
 const USAGE: &str = "lens · Mori Lens (macOS)
@@ -40,15 +40,13 @@ OPTIONS
     --endpoint <addr>   Where Ollama listens. Default 127.0.0.1:11434.
     --model <name>      Ollama model name.
     --dwell <ms>        How long the pointer must rest. Default 320.
-    --auto              Translate without holding a modifier.
+    --auto              Translate in every application (default = allow).
+    --ocr <mode>        off, manual, or automatic. Default manual.
     -V, --version       Print the version.
     -h, --help          This text.
 ";
 
-/// How often to sample the pointer position.
 const POINTER_POLL_MS: u64 = 25;
-
-/// How many translation cache entries to keep.
 const CACHE_ENTRIES: usize = 256;
 
 fn default_settings_path() -> std::path::PathBuf {
@@ -94,6 +92,7 @@ struct Flags {
     model: Option<String>,
     endpoint: Option<String>,
     dwell_ms: Option<u64>,
+    ocr: Option<String>,
 }
 
 fn parse_flags() -> Result<Flags, String> {
@@ -114,6 +113,7 @@ fn parse_flags() -> Result<Flags, String> {
             "--language" => flags.language = args.next(),
             "--model" => flags.model = args.next(),
             "--endpoint" => flags.endpoint = args.next(),
+            "--ocr" => flags.ocr = args.next(),
             "--dwell" => {
                 let ms = args
                     .next()
@@ -128,17 +128,28 @@ fn parse_flags() -> Result<Flags, String> {
     Ok(flags)
 }
 
-/// Get the current mouse position in Lens coordinates (physical pixels,
-/// top-left origin) using the native bridge.
+/// Get the current mouse position in physical screen pixels (top-left origin).
 fn mouse_position() -> ScreenPoint {
     let (x, y) = match overlay::mouse_position() {
         Some(pos) => pos,
         None => return ScreenPoint::new(0, 0),
     };
-    // x, y are in logical points (top-left origin). Convert to physical
-    // pixels using the display scale at that point.
     let scale = overlay::display_scale_at(x, y);
+    let scale = if scale > 0.0 { scale } else { 1.0 };
     ScreenPoint::new((x * scale).round() as i32, (y * scale).round() as i32)
+}
+
+/// Convert physical screen pixels to logical points for the overlay,
+/// using the display topology at the anchor position.
+fn physical_to_logical(point: ScreenPoint) -> (f64, f64, f64) {
+    let scale = overlay::display_scale_at(
+        point.x as f64,
+        point.y as f64,
+    );
+    let scale = if scale > 0.0 { scale } else { 1.0 };
+    let x = point.x as f64 / scale;
+    let y = point.y as f64 / scale;
+    (x, y, scale)
 }
 
 pub fn main() -> std::process::ExitCode {
@@ -150,7 +161,7 @@ pub fn main() -> std::process::ExitCode {
         }
     };
 
-    // Single instance: prevent two Lens processes from racing.
+    // Single instance.
     let _only_instance = match SingleInstance::claim() {
         Some(guard) => guard,
         None => {
@@ -162,9 +173,24 @@ pub fn main() -> std::process::ExitCode {
     // Settings.
     let path = flags.settings.unwrap_or_else(default_settings_path);
     let (settings, state, problems, first_run) = load_settings(&path);
-    let language = flags.language.unwrap_or(settings.language);
-    let endpoint = flags.endpoint.unwrap_or(settings.endpoint);
-    let model = flags.model.or(settings.model);
+    let language = flags.language.unwrap_or_else(|| settings.language.clone());
+    let endpoint = flags.endpoint.unwrap_or_else(|| settings.endpoint.clone());
+    let model = flags.model.or_else(|| settings.model.clone());
+
+    // Policy: --auto sets default tier to Allow.
+    // TODO: integrate policy into the hover loop for per-app deny/allow.
+    let mut _policy = settings.policy();
+    if flags.auto {
+        _policy.set_default(AppTier::Allow);
+    }
+
+    // OCR mode.
+    let ocr_mode = flags
+        .ocr
+        .as_deref()
+        .and_then(OcrMode::named)
+        .or_else(|| OcrMode::named(&settings.ocr))
+        .unwrap_or(OcrMode::Manual);
 
     println!("Mori Lens · macOS");
     if first_run {
@@ -176,16 +202,31 @@ pub fn main() -> std::process::ExitCode {
     }
     println!("  language  {language}");
     println!("  endpoint  {endpoint}");
+    println!("  ocr       {}", ocr_mode.as_str());
 
-    // AX permission.
-    match AxPermission::check_with_prompt(true) {
-        AxPermission::Trusted => println!("  ax        trusted"),
-        AxPermission::NotTrusted => {
-            println!("  ax        NOT TRUSTED");
-            println!("            open System Settings > Privacy & Security > Accessibility");
-            return std::process::ExitCode::from(1);
+    // AX permission — not fatal. Degrade gracefully.
+    let ax_trusted = match AxPermission::check_with_prompt(true) {
+        AxPermission::Trusted => {
+            println!("  ax        trusted");
+            true
         }
-    }
+        AxPermission::NotTrusted => {
+            println!("  ax        NOT TRUSTED (hover translation unavailable)");
+            println!("            open System Settings > Privacy & Security > Accessibility");
+            false
+        }
+    };
+
+    // Screen Recording permission — independent from AX.
+    let screen_recording = lens_platform_macos::capture::is_available();
+    println!(
+        "  screen    {}",
+        if screen_recording {
+            "available"
+        } else {
+            "NOT AVAILABLE (OCR unavailable)"
+        }
+    );
 
     // Translator.
     let mut translator = if let Some(ref m) = model {
@@ -205,21 +246,26 @@ pub fn main() -> std::process::ExitCode {
         }
     }
 
-    // Overlay.
+    // Overlay — not fatal.
     let overlay = match Overlay::start() {
         Some(o) => {
             println!("  overlay   ready");
-            o
+            Some(o)
         }
         None => {
-            println!("  overlay   FAILED to create");
-            return std::process::ExitCode::from(1);
+            println!("  overlay   FAILED (cards will not be shown)");
+            None
         }
     };
 
-    // Acquirer.
-    let acquirer = MacTextAcquirer::new();
-    println!("  acquire   MacTextAcquirer ready");
+    // Acquirers.
+    let ax_acquirer = MacTextAcquirer::new();
+    let ocr_acquirer = if screen_recording {
+        Some(OcrTextAcquirer::new())
+    } else {
+        None
+    };
+    println!("  acquire   AX ready{}", if ocr_acquirer.is_some() { ", OCR ready" } else { "" });
 
     // Hover machine.
     let dwell = Duration::from_millis(flags.dwell_ms.unwrap_or(settings.dwell_ms));
@@ -229,28 +275,29 @@ pub fn main() -> std::process::ExitCode {
     };
     let mut machine = HoverMachine::new(hover_config);
     let mut cache = TranslationCache::new(CACHE_ENTRIES);
-    // Menu bar.
+
+    // Menu bar — not fatal.
     let menubar = match MenuBar::create() {
         Some(mb) => {
             println!("  menubar   ready");
-            mb
+            Some(mb)
         }
         None => {
-            println!("  menubar   FAILED (non-fatal)");
-            // Continue without menu bar; Ctrl+C still works.
-            // We need a dummy that never fires. Use a lazy approach:
-            // just skip menu bar polling below.
-            // For now, return a placeholder by creating a minimal wrapper.
-            // Actually, we can't skip it - the product loop references it.
-            // Let's just exit.
-            return std::process::ExitCode::from(1);
+            println!("  menubar   unavailable (Ctrl+C to quit)");
+            None
         }
     };
 
     println!("  dwell     {}ms", dwell.as_millis());
-
     println!();
-    println!("  Lens is running. Rest the pointer on a sentence.");
+
+    if !ax_trusted && ocr_acquirer.is_none() {
+        println!("  No accessibility or screen recording permission.");
+        println!("  Lens cannot read any text. Grant permissions and restart.");
+        // Keep running so the menu bar is available for Quit.
+    } else {
+        println!("  Lens is running. Rest the pointer on a sentence.");
+    }
     println!("  Press Ctrl+C to quit.");
 
     // Product loop.
@@ -258,24 +305,28 @@ pub fn main() -> std::process::ExitCode {
     let start = Instant::now();
     let mut paused = false;
 
-    // Channel for Ctrl+C handling.
     let (tx, rx) = mpsc::channel::<()>();
     spawn_ctrlc_handler(tx);
 
     loop {
-        // Check for quit (Ctrl+C or menu bar).
-        if rx.try_recv().is_ok() || menubar.poll_quit() {
+        // Quit check.
+        if rx.try_recv().is_ok() {
             break;
         }
-
-        // Check for pause toggle from menu bar.
-        if menubar.poll_pause_toggle() {
-            paused = !paused;
-            if paused {
-                menubar.set_title("Lens ⏸");
-                overlay.hide();
-            } else {
-                menubar.set_title("Lens");
+        if let Some(ref mb) = menubar {
+            if mb.poll_quit() {
+                break;
+            }
+            if mb.poll_pause_toggle() {
+                paused = !paused;
+                if let Some(ref o) = overlay {
+                    if paused {
+                        o.hide();
+                    }
+                }
+                if let Some(ref mb) = menubar {
+                    mb.set_title(if paused { "Lens ⏸" } else { "Lens" });
+                }
             }
         }
 
@@ -284,81 +335,106 @@ pub fn main() -> std::process::ExitCode {
             continue;
         }
 
+        // Pointer sampling.
         let now = Instant::now();
         let point = mouse_position();
         let ts = now.duration_since(start);
-
         let sample = PointerSample::moved(point, ts);
         let event = machine.observe(sample);
 
         match event {
             Some(HoverEvent::Settled { generation, point }) => {
-                let ctx = AcquireContext::new(generation);
-                match acquirer.acquire(point, &ctx) {
-                    Ok(target) => {
-                        let sentence = target.segmented.sentence_text().to_owned();
-                        if sentence.is_empty() {
-                            overlay.hide();
+                // Try AX acquisition first (accessibility-first contract).
+                let acquire_result = if ax_trusted {
+                    let ctx = AcquireContext::new(generation);
+                    ax_acquirer.acquire(point, &ctx)
+                } else {
+                    Err(AcquireError::Unavailable)
+                };
+
+                // OCR fallback: only when AX failed and OCR is enabled.
+                let (target, _from_ocr) = match acquire_result {
+                    Ok(target) => (target, false),
+                    Err(e) if e.ocr_can_help() && ocr_mode != OcrMode::Off => {
+                        if let Some(ref ocr) = ocr_acquirer {
+                            let ctx = AcquireContext::new(generation);
+                            match ocr.acquire(point, &ctx) {
+                                Ok(target) => (target, true),
+                                Err(_) => {
+                                    if let Some(ref o) = overlay {
+                                        o.hide();
+                                    }
+                                    continue;
+                                }
+                            }
+                        } else {
+                            if let Some(ref o) = overlay {
+                                o.hide();
+                            }
+                            continue;
+                        }
+                    }
+                    Err(_) => {
+                        if let Some(ref o) = overlay {
+                            o.hide();
+                        }
+                        continue;
+                    }
+                };
+
+                let sentence = target.segmented.sentence_text().to_owned();
+                if sentence.is_empty() {
+                    if let Some(ref o) = overlay {
+                        o.hide();
+                    }
+                    continue;
+                }
+
+                // Language decision.
+                match decide(&sentence, &language) {
+                    lens_core::language::Decision::AlreadyInTarget => {
+                        let card = Card {
+                            original: sentence.clone(),
+                            body: CardBody::Problem(
+                                "already in your language".to_owned(),
+                            ),
+                            footer: String::new(),
+                        };
+                        show_card(&overlay, &card, &target);
+                    }
+                    _ => {
+                        let request = QuickRequest::new(&sentence, &language);
+                        let model_name = translator.model();
+                        let key = CacheKey::of(&request, model_name, 1);
+
+                        if let Some(cached) = cache.get(&key) {
+                            let card = Card::translated(&sentence, &cached);
+                            show_card(&overlay, &card, &target);
                             continue;
                         }
 
-                        // Language decision.
-                        match decide(&sentence, &language) {
-                            lens_core::language::Decision::AlreadyInTarget => {
-                                // Show a card saying the text is already readable.
+                        match translator.quick(&request) {
+                            Ok(translation) => {
+                                cache.insert(key, translation.clone());
+                                let card = Card::translated(&sentence, &translation);
+                                show_card(&overlay, &card, &target);
+                            }
+                            Err(e) => {
                                 let card = Card {
-                                    original: sentence.clone(),
-                                    body: lens_core::card::CardBody::Problem(
-                                        "already in your language · Ctrl+Alt+D to explain"
-                                            .to_owned(),
-                                    ),
+                                    original: sentence,
+                                    body: CardBody::Problem(e.user_message().to_owned()),
                                     footer: String::new(),
                                 };
                                 show_card(&overlay, &card, &target);
                             }
-                            _ => {
-                                // Check cache first.
-                                let request = QuickRequest::new(&sentence, &language);
-                                let model_name = translator.model();
-                                let key = CacheKey::of(&request, model_name, 1);
-                                if let Some(cached) = cache.get(&key) {
-                                    let card = Card::translated(&sentence, &cached);
-                                    show_card(&overlay, &card, &target);
-                                    continue;
-                                }
-
-                                // Translate.
-                                match translator.quick(&request) {
-                                    Ok(translation) => {
-                                        cache.insert(key, translation.clone());
-                                        let card = Card::translated(&sentence, &translation);
-                                        show_card(&overlay, &card, &target);
-                                    }
-                                    Err(e) => {
-                                        let card = Card {
-                                            original: sentence,
-                                            body: lens_core::card::CardBody::Problem(
-                                                e.user_message().to_owned(),
-                                            ),
-                                            footer: String::new(),
-                                        };
-                                        show_card(&overlay, &card, &target);
-                                    }
-                                }
-                            }
                         }
-                    }
-                    Err(AcquireError::Unavailable) => {
-                        eprintln!("  AX permission lost. Re-enable in System Settings.");
-                        break;
-                    }
-                    Err(_) => {
-                        overlay.hide();
                     }
                 }
             }
             Some(HoverEvent::Left { .. }) => {
-                overlay.hide();
+                if let Some(ref o) = overlay {
+                    o.hide();
+                }
             }
             None => {}
         }
@@ -370,37 +446,51 @@ pub fn main() -> std::process::ExitCode {
     std::process::ExitCode::SUCCESS
 }
 
-/// Show a card on the overlay at the position derived from the text target.
-fn show_card(overlay: &Overlay, card: &Card, target: &lens_core::acquire::TextTarget) {
+/// Show a card on the overlay using the tested coordinate helpers.
+fn show_card(overlay: &Option<Overlay>, card: &Card, target: &lens_core::acquire::TextTarget) {
+    let Some(overlay) = overlay else { return };
     let anchor = match target.anchor() {
         Some(a) => a,
         None => return,
     };
 
-    // Convert from physical pixels to logical points for the overlay.
-    let scale = overlay::display_scale_at(
-        anchor.x as f64 / 2.0,
-        anchor.bottom() as f64 / 2.0,
-    );
-    let scale = if scale > 0.0 { scale } else { 2.0 };
-
-    let x = anchor.x as f64 / scale;
-    let y = anchor.bottom() as f64 / scale + 4.0;
-    let width = (anchor.width as f64 / scale).max(200.0).min(600.0);
+    // Use the canonical coordinate conversion: physical pixels → logical
+    // points via the display scale at the anchor position.
+    let (x, y, _scale) = physical_to_logical(ScreenPoint::new(anchor.x, anchor.bottom() + 8));
+    let width = {
+        let (w, _, _) = physical_to_logical(ScreenPoint::new(anchor.width, 0));
+        w.max(200.0).min(600.0)
+    };
     let height = 80.0;
 
     let source = &card.original;
-    let translation = match &card.body {
-        lens_core::card::CardBody::Translation(t) => t.clone(),
-        lens_core::card::CardBody::Problem(p) => p.clone(),
-        lens_core::card::CardBody::Waiting(w) => w.clone(),
-        lens_core::card::CardBody::Analysis { .. } => "(analysis)".to_owned(),
-    };
+    let body_text = card_body_to_text(&card.body);
 
-    overlay.show_text(source, &translation, x, y, width, height);
+    overlay.show_text(source, &body_text, x, y, width, height);
 }
 
-/// Spawn a thread that sends on the channel when Ctrl+C is pressed.
+/// Convert a CardBody to displayable text for the overlay.
+fn card_body_to_text(body: &CardBody) -> String {
+    match body {
+        CardBody::Translation(t) => t.clone(),
+        CardBody::Problem(p) => p.clone(),
+        CardBody::Waiting(w) => w.clone(),
+        CardBody::Analysis {
+            translation, rows, ..
+        } => {
+            // Render analysis rows as text. If there's a translation, show
+            // it first, then the analysis rows.
+            let mut text = String::new();
+            if let Some(t) = translation {
+                text.push_str(t);
+                text.push('\n');
+            }
+            text.push_str(&CardBody::rows_as_text(rows));
+            text
+        }
+    }
+}
+
 fn spawn_ctrlc_handler(tx: mpsc::Sender<()>) {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -408,13 +498,11 @@ fn spawn_ctrlc_handler(tx: mpsc::Sender<()>) {
     let received = Arc::new(AtomicBool::new(false));
     let received_clone = received.clone();
 
-    // Install SIGINT handler via raw FFI (no libc crate dependency).
     extern "C" {
         fn signal(sig: i32, handler: extern "C" fn(i32)) -> usize;
     }
     const SIGINT: i32 = 2;
 
-    // Use a global to bridge the signal handler to our closure.
     static SIGNAL_RECEIVED: std::sync::OnceLock<Arc<AtomicBool>> = std::sync::OnceLock::new();
     let _ = SIGNAL_RECEIVED.set(received_clone);
 
