@@ -24,7 +24,7 @@ use lens_core::hover::{HoverConfig, HoverEvent, HoverMachine, PointerSample};
 use lens_core::language::decide;
 use lens_core::settings::{self, Problem, Settings};
 use lens_core::translate::{QuickRequest, Translator};
-use lens_platform_macos::{overlay, AxPermission, MacTextAcquirer, Overlay};
+use lens_platform_macos::{overlay, AxPermission, MacTextAcquirer, Overlay, SingleInstance};
 use lens_translate::OllamaTranslator;
 
 const USAGE: &str = "lens · Mori Lens (macOS)
@@ -147,6 +147,15 @@ pub fn main() -> std::process::ExitCode {
         Err(msg) => {
             eprintln!("{msg}\n\n{USAGE}");
             return std::process::ExitCode::from(2);
+        }
+    };
+
+    // Single instance: prevent two Lens processes from racing.
+    let _only_instance = match SingleInstance::claim() {
+        Some(guard) => guard,
+        None => {
+            eprintln!("Mori Lens is already running.");
+            return std::process::ExitCode::from(1);
         }
     };
 
