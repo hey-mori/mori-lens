@@ -100,6 +100,58 @@ When two verified links overlap in source or target range, the longer one is kep
 
 ## Remaining work
 
-- 5-run benchmark 실행 결과 기록 (아래 섹션)
 - Subjective colour preference study
 - Colour-blind user testing
+
+## 5-run benchmark 결과 (2026-09-04)
+
+**모델:** qwen2.5:7b (Ollama v0.30.7, 로컬)
+**Corpus:** 24 entries (A01~F03)
+**소요 시간:** ~1765초 (약 29분)
+
+### Per-run 결과
+
+| Run | Avg links/item | Coverage | Malformed |
+|-----|---------------|----------|-----------|
+| 1   | 0.96          | 70.8%    | 1 (E03)   |
+| 2   | 0.75          | 70.8%    | 1 (E03)   |
+| 3   | 0.83          | 66.7%    | 1 (E03)   |
+| 4   | 1.00          | 75.0%    | 1 (E03)   |
+| 5   | 1.04          | 79.2%    | 1 (C01)   |
+
+### Aggregate
+
+| Metric | Value | Gate | Status |
+|--------|-------|------|--------|
+| Mean avg links/item | 0.92 | >= 1.5 | **FAIL** |
+| Runs >= 1.4 | 0/5 | >= 4/5 | **FAIL** |
+| Median | 0.96 | - | - |
+| Min | 0.75 | - | - |
+| Max | 1.04 | - | - |
+| Malformed rate | 4.0% | < 10% | PASS |
+| Speculative to UI | 0 | = 0 | PASS |
+
+### Resolution categories (전체 5 runs 합계)
+
+| Category | Count |
+|----------|-------|
+| Raw proposed | 155 |
+| Unique match | 114 |
+| Context resolved | 0 |
+| Missing dropped | 40 |
+| Ambiguous dropped | 0 |
+| Overlap dropped | 4 |
+
+### 분석
+
+- **Context resolved = 0**: 모델이 context field에 유용한 값을 넣지 못함. 모델이 substring을 정확히 반환하면 unique match로 해결되고, 못 찾으면 missing으로 drop됨. Context disambiguation path가 실제로 작동한 적 없음.
+- **Missing dropped = 40**: 모델이 반환한 substring이 원문에서 실제로 존재하지 않는 경우가 가장 큰 손실 원인. 모델이 번역의 일부를 substring으로 반환하지만 원문의 해당 부분을 정확히 매칭하지 못함.
+- **E03 malformed**: 5 runs 중 4 runs에서 malformed. 이 entry는 모델이 JSON schema를 따르지 못하는 경우.
+- **Mean 0.92 vs gate 1.5**: 모델 quality가 threshold에 미달. Resolver는 올바르게 동작하고 있으며, speculative link를 drop하는 것이 correctness invariant를 유지함.
+
+### 결론
+
+**IMPLEMENTATION: COMPLETE** (resolver, schema, renderer, dash patterns 모두 정상 동작)
+**QUALITY GATE: OPEN** (모델 quality가 threshold 미달)
+
+Threshold는 낮추지 않음. 모델 개선(qwen2.5:7b → 더 큰 모델, prompt 개선, 또는 fine-tuning)이 필요.
