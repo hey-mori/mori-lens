@@ -647,10 +647,13 @@ impl DeepAnalysis {
 
 /// Resolve raw substring pairs to verified byte-offset spans.
 ///
-/// A link passes when both substrings are non-empty and each appears exactly
-/// once in its string. An ambiguous substring (appearing twice) is dropped
-/// rather than guessed, because marking the wrong span is worse than marking
-/// none. The function is pure and deterministic so the same model output on
+/// A link passes when both substrings are non-empty and each appears at least
+/// once in its string. When a substring appears more than once, the first
+/// occurrence is used. This is a deliberate relaxation from the earlier
+/// unique-match policy: a link for `"the"` that appears three times still
+/// carries useful information (the model believes this word corresponds to
+/// that word), and showing the first occurrence is a better hint than showing
+/// nothing. The function is pure and deterministic so the same model output on
 /// the same strings always produces the same links.
 pub fn verify_links(raw: &[RawLink], source: &str, translation: &str) -> Vec<TextLink> {
     let mut verified = Vec::new();
@@ -660,10 +663,10 @@ pub fn verify_links(raw: &[RawLink], source: &str, translation: &str) -> Vec<Tex
         if src_needle.is_empty() || tgt_needle.is_empty() {
             continue;
         }
-        let Some(src_range) = unique_match(source, src_needle) else {
+        let Some(src_range) = first_match(source, src_needle) else {
             continue;
         };
-        let Some(tgt_range) = unique_match(translation, tgt_needle) else {
+        let Some(tgt_range) = first_match(translation, tgt_needle) else {
             continue;
         };
         verified.push(TextLink {
@@ -674,14 +677,10 @@ pub fn verify_links(raw: &[RawLink], source: &str, translation: &str) -> Vec<Tex
     verified
 }
 
-/// Find `needle` in `haystack` and return its byte range, but only when it
-/// appears exactly once. Two occurrences is ambiguous and returns `None`.
-fn unique_match(haystack: &str, needle: &str) -> Option<(usize, usize)> {
-    let mut found = haystack.match_indices(needle);
-    let (start, _) = found.next()?;
-    if found.next().is_some() {
-        return None;
-    }
+/// Find `needle` in `haystack` and return the byte range of its first
+/// occurrence. Returns `None` when the needle is not present at all.
+fn first_match(haystack: &str, needle: &str) -> Option<(usize, usize)> {
+    let (start, _) = haystack.match_indices(needle).next()?;
     Some((start, start + needle.len()))
 }
 
@@ -902,8 +901,9 @@ mod tests {
     }
 
     #[test]
-    fn verify_links_drops_ambiguous_substrings() {
+    fn verify_links_keeps_ambiguous_substrings_at_first_occurrence() {
         // "s" appears many times in "The pointer rests on the sentence."
+        // With first-match, the link is kept and uses the first occurrence.
         let raw = vec![RawLink {
             source: "s".to_owned(),
             target: "문장".to_owned(),
@@ -913,9 +913,15 @@ mod tests {
             "The pointer rests on the sentence.",
             "포인터가 문장 위에 멈춥니다.",
         );
-        assert!(
-            links.is_empty(),
-            "ambiguous substring appearing multiple times must be dropped"
+        assert_eq!(
+            links.len(),
+            1,
+            "substring appearing multiple times uses first occurrence"
+        );
+        // "s" first appears at index 14 ("rests" contains "s" at position 14)
+        assert_eq!(
+            &"The pointer rests on the sentence."[links[0].source_range.0..links[0].source_range.1],
+            "s"
         );
     }
 
