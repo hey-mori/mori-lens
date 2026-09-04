@@ -26,6 +26,28 @@ extern "C" {
     fn lens_overlay_hide();
     fn lens_overlay_destroy();
     fn lens_overlay_is_visible() -> bool;
+    fn lens_mouse_position(x: *mut f64, y: *mut f64) -> bool;
+    fn lens_display_scale_at(x: f64, y: f64) -> f64;
+}
+
+/// Get the current mouse position in global screen points (top-left origin).
+pub fn mouse_position() -> Option<(f64, f64)> {
+    let mut x: f64 = 0.0;
+    let mut y: f64 = 0.0;
+    // SAFETY: lens_mouse_position writes to valid stack pointers.
+    let ok = unsafe { lens_mouse_position(&mut x, &mut y) };
+    if ok {
+        Some((x, y))
+    } else {
+        None
+    }
+}
+
+/// Get the backing scale factor for the display at the given point
+/// (top-left origin, logical points).
+pub fn display_scale_at(x: f64, y: f64) -> f64 {
+    // SAFETY: lens_display_scale_at is a pure query.
+    unsafe { lens_display_scale_at(x, y) }
 }
 
 /// The macOS overlay window.

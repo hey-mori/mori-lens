@@ -218,4 +218,102 @@ mod tests {
         assert_eq!(byte_offset_to_utf16_offset(text, 999), 5);
         assert_eq!(utf16_offset_to_byte_offset(text, 999), 5);
     }
+
+    // -- Property-style tests --
+
+    #[test]
+    fn utf16_byte_round_trip_at_every_char_boundary() {
+        // For every character boundary in a string, converting byte→utf16→byte
+        // must return the same boundary.
+        let texts = [
+            "Hello, world!",
+            "안녕하세요 세계",
+            "こんにちは世界",
+            "Hello 🌍 World 🎉",
+            "e\u{0301}galite\u{0301}",
+            "mixed 한글 Latin 日本語 emoji 🚀",
+            "",
+            "a",
+            "\u{10000}\u{10FFFF}",
+        ];
+        for text in texts {
+            let mut byte_offsets: Vec<usize> = text.char_indices().map(|(i, _)| i).collect();
+            byte_offsets.push(text.len());
+            for &byte_off in &byte_offsets {
+                let utf16_off = byte_offset_to_utf16_offset(text, byte_off);
+                let back = utf16_offset_to_byte_offset(text, utf16_off);
+                assert_eq!(
+                    back, byte_off,
+                    "round-trip failed for text={text:?} byte_off={byte_off} utf16_off={utf16_off}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cf_range_byte_range_is_always_within_bounds() {
+        let texts = [
+            "Hello",
+            "안녕하세요",
+            "🌍🎉🚀",
+            "mixed 한글 test",
+            "a\u{0301}b\u{0302}c\u{0303}",
+        ];
+        for text in texts {
+            for loc in 0..=(text.encode_utf16().count() as i64) {
+                for len in 0..=((text.encode_utf16().count() as i64) - loc) {
+                    let range = cf_range(loc, len);
+                    let (start, end) = cf_range_to_byte_range(text, range);
+                    assert!(
+                        start <= end,
+                        "start > end for text={text:?} range={range:?}"
+                    );
+                    assert!(
+                        end <= text.len(),
+                        "end past string length for text={text:?} range={range:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    // -- Stress tests --
+
+    #[test]
+    fn stress_utf16_conversion_large_string() {
+        // Build a string with 10,000 characters including CJK and emoji.
+        let text: String = (0..2000)
+            .map(|i| match i % 4 {
+                0 => 'A',
+                1 => '한',
+                2 => '日',
+                _ => '🌍',
+            })
+            .collect();
+        let utf16 = str_to_utf16(&text);
+        // Verify length: A=1utf16, 한=1utf16, 日=1utf16, 🌍=2utf16
+        let expected_utf16_len = 500 * (1 + 1 + 1 + 2);
+        assert_eq!(utf16.len(), expected_utf16_len);
+
+        // Round-trip at every char boundary (not every 100th byte, since
+        // fixed-step byte offsets can land inside multi-byte characters).
+        for (byte_off, _) in text.char_indices() {
+            let utf16_off = byte_offset_to_utf16_offset(&text, byte_off);
+            let back = utf16_offset_to_byte_offset(&text, utf16_off);
+            assert_eq!(back, byte_off, "round-trip failed at byte {byte_off}");
+        }
+    }
+
+    #[test]
+    fn stress_cf_range_conversion_repeated() {
+        let text = "The quick brown fox jumps over the lazy dog. 안녕하세요.";
+        // Run the conversion 10,000 times to check for leaks or inconsistencies.
+        for _ in 0..10_000 {
+            let range = cf_range(4, 10);
+            let (start, end) = cf_range_to_byte_range(text, range);
+            let back = byte_range_to_cf_range(text, start, end);
+            assert_eq!(back.location, 4);
+            assert_eq!(back.length, 10);
+        }
+    }
 }

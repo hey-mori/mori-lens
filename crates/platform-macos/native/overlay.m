@@ -214,3 +214,38 @@ void lens_overlay_destroy(void) {
 bool lens_overlay_is_visible(void) {
     return g_visible;
 }
+
+bool lens_mouse_position(double *x, double *y) {
+    if (!x || !y) return false;
+    @autoreleasepool {
+        NSPoint loc = [NSEvent mouseLocation];
+        // NSEvent mouseLocation is in screen coordinates (bottom-left origin,
+        // points). Convert to top-left origin.
+        NSScreen *screen = [NSScreen mainScreen];
+        if (!screen) return false;
+        CGFloat screenH = [screen frame].size.height;
+        *x = loc.x;
+        *y = screenH - loc.y;
+    }
+    return true;
+}
+
+double lens_display_scale_at(double x, double y) {
+    @autoreleasepool {
+        // Convert top-left origin point to AppKit bottom-left origin.
+        NSScreen *mainScreen = [NSScreen mainScreen];
+        if (!mainScreen) return 2.0;
+        CGFloat mainH = [mainScreen frame].size.height;
+        NSPoint appkitPoint = NSMakePoint(x, mainH - y);
+
+        // Find the screen containing this point.
+        for (NSScreen *screen in [NSScreen screens]) {
+            NSRect frame = [screen frame];
+            if (NSPointInRect(appkitPoint, frame)) {
+                return [screen backingScaleFactor];
+            }
+        }
+        // Fallback: return main screen scale.
+        return [mainScreen backingScaleFactor];
+    }
+}
