@@ -13,7 +13,8 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use lens_core::acquire::{AcquireContext, AcquireError, TextAcquirer};
-use lens_core::cache::{CacheKey, TranslationCache};
+use lens_core::analyse::{Analyser, DeepRequest, Profile};
+use lens_core::cache::{AnalysisCache, CacheKey, TranslationCache};
 use lens_core::card::{Card, CardBody};
 use lens_core::geometry::ScreenPoint;
 use lens_core::hover::{HoverConfig, HoverEvent, HoverMachine, PointerSample};
@@ -23,7 +24,8 @@ use lens_core::session::OcrMode;
 use lens_core::settings::{self, Problem, Settings};
 use lens_core::translate::{QuickRequest, Translator};
 use lens_platform_macos::{
-    overlay, AxPermission, MacTextAcquirer, MenuBar, OcrTextAcquirer, Overlay, SingleInstance,
+    clipboard, overlay, AxPermission, MacTextAcquirer, MenuBar, OcrTextAcquirer, Overlay,
+    SingleInstance,
 };
 use lens_translate::OllamaTranslator;
 
@@ -48,6 +50,8 @@ OPTIONS
 
 const POINTER_POLL_MS: u64 = 25;
 const CACHE_ENTRIES: usize = 256;
+const ANALYSIS_ENTRIES: usize = 32;
+const DEEP_PROMPT_VERSION: u32 = 1;
 
 fn default_settings_path() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
@@ -275,6 +279,8 @@ pub fn main() -> std::process::ExitCode {
     };
     let mut machine = HoverMachine::new(hover_config);
     let mut cache = TranslationCache::new(CACHE_ENTRIES);
+    let mut analysis_cache = AnalysisCache::new(ANALYSIS_ENTRIES);
+    let mut current_card: Option<(Card, String)> = None; // (card, sentence)
 
     // Menu bar — not fatal.
     let menubar = match MenuBar::create() {
@@ -333,6 +339,118 @@ pub fn main() -> std::process::ExitCode {
         if paused {
             std::thread::sleep(poll);
             continue;
+        }
+
+        // Menu bar actions (Deep, Copy, Save, OCR).
+        if let Some(ref mb) = menubar {
+            // Deep Analysis.
+            if mb.poll_deep() {
+                if let Some((ref card, ref sentence)) = current_card {
+                    let deep_req = DeepRequest {
+                        sentence: sentence.clone(),
+                        word: None,
+                        target_language: language.clone(),
+                        translation: match &card.body {
+                            CardBody::Translation(t) => Some(t.clone()),
+                            _ => None,
+                        },
+                        profile: Profile::default(),
+                    };
+                    let analysis_key = CacheKey::for_analysis(
+                        &deep_req,
+                        translator.model(),
+                        DEEP_PROMPT_VERSION,
+                    );
+                    if let Some(cached) = analysis_cache.get(&analysis_key) {
+                        let analysis_card = Card::analysed(sentence, &cached);
+                        show_card(&overlay, &analysis_card, &make_dummy_target(sentence));
+                    } else {
+                        match translator.deep(&deep_req) {
+                            Ok(analysis) => {
+                                analysis_cache.insert(analysis_key, analysis.clone());
+                                let analysis_card = Card::analysed(sentence, &analysis);
+                                show_card(&overlay, &analysis_card, &make_dummy_target(sentence));
+                            }
+                            Err(e) => {
+                                let err_card = Card {
+                                    original: sentence.clone(),
+                                    body: CardBody::Problem(format!("analysis failed: {}", e.user_message())),
+                                    footer: String::new(),
+                                };
+                                show_card(&overlay, &err_card, &make_dummy_target(sentence));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Copy.
+            if mb.poll_copy() {
+                if let Some((ref card, _)) = current_card {
+                    if let Some(text) = card.for_the_clipboard() {
+                        clipboard::put_text(&text);
+                    }
+                }
+            }
+
+            // Save.
+            if mb.poll_save() {
+                if let Some((ref card, ref sentence)) = current_card {
+                    let save_path = default_settings_path()
+                        .parent()
+                        .map(|p| p.join("saved.md"))
+                        .unwrap_or_else(|| std::path::PathBuf::from("saved.md"));
+                    let content = card.for_the_clipboard().unwrap_or_else(|| sentence.clone());
+                    let entry = format!("\n---\n\n{}\n", content);
+                    let _ = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&save_path)
+                        .and_then(|mut f| {
+                            use std::io::Write;
+                            f.write_all(entry.as_bytes())
+                        });
+                }
+            }
+
+            // Manual OCR.
+            if mb.poll_ocr() {
+                if let Some(ref ocr) = ocr_acquirer {
+                    if let Some(ref o) = overlay {
+                        o.hide();
+                    }
+                    let point = mouse_position();
+                    let gen = lens_core::hover::Generation(0);
+                    let ctx = AcquireContext::new(gen);
+                    match ocr.acquire(point, &ctx) {
+                        Ok(target) => {
+                            let sentence = target.segmented.sentence_text().to_owned();
+                            if !sentence.is_empty() {
+                                let request = QuickRequest::new(&sentence, &language);
+                                match translator.quick(&request) {
+                                    Ok(translation) => {
+                                        let card = Card::translated(&sentence, &translation);
+                                        show_card(&overlay, &card, &target);
+                                        current_card = Some((card, sentence));
+                                    }
+                                    Err(e) => {
+                                        let card = Card {
+                                            original: sentence.clone(),
+                                            body: CardBody::Problem(e.user_message().to_owned()),
+                                            footer: String::new(),
+                                        };
+                                        show_card(&overlay, &card, &target);
+                                        current_card = Some((card, sentence));
+                                    }
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            // OCR failed; overlay already hidden.
+                        }
+                    }
+                }
+            }
         }
 
         // Pointer sampling.
@@ -401,6 +519,7 @@ pub fn main() -> std::process::ExitCode {
                             footer: String::new(),
                         };
                         show_card(&overlay, &card, &target);
+                        current_card = Some((card, sentence));
                     }
                     _ => {
                         let request = QuickRequest::new(&sentence, &language);
@@ -410,6 +529,7 @@ pub fn main() -> std::process::ExitCode {
                         if let Some(cached) = cache.get(&key) {
                             let card = Card::translated(&sentence, &cached);
                             show_card(&overlay, &card, &target);
+                            current_card = Some((card, sentence));
                             continue;
                         }
 
@@ -418,14 +538,16 @@ pub fn main() -> std::process::ExitCode {
                                 cache.insert(key, translation.clone());
                                 let card = Card::translated(&sentence, &translation);
                                 show_card(&overlay, &card, &target);
+                                current_card = Some((card, sentence));
                             }
                             Err(e) => {
                                 let card = Card {
-                                    original: sentence,
+                                    original: sentence.clone(),
                                     body: CardBody::Problem(e.user_message().to_owned()),
                                     footer: String::new(),
                                 };
                                 show_card(&overlay, &card, &target);
+                                current_card = Some((card, sentence));
                             }
                         }
                     }
@@ -444,6 +566,19 @@ pub fn main() -> std::process::ExitCode {
 
     println!("\n  Lens stopped.");
     std::process::ExitCode::SUCCESS
+}
+
+/// Build a minimal TextTarget for card display when the original target
+/// is not available (e.g. Deep Analysis on a cached card).
+fn make_dummy_target(sentence: &str) -> lens_core::acquire::TextTarget {
+    lens_core::acquire::TextTarget {
+        app: Default::default(),
+        source: lens_core::acquire::AcquisitionSource::Accessibility,
+        provider: Default::default(),
+        segmented: lens_core::text::segment(sentence, 0),
+        word_bounds: vec![],
+        context_bounds: vec![],
+    }
 }
 
 /// Show a card on the overlay using the tested coordinate helpers.

@@ -22,6 +22,11 @@ fn main() {
             .flag("-fobjc-arc")
             .compile("lens_menubar");
 
+        cc::Build::new()
+            .file("native/clipboard.m")
+            .flag("-fobjc-arc")
+            .compile("lens_clipboard");
+
         println!("cargo:rustc-link-lib=framework=ApplicationServices");
         println!("cargo:rustc-link-lib=framework=CoreGraphics");
         println!("cargo:rustc-link-lib=framework=AppKit");

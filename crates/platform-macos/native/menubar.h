@@ -7,21 +7,17 @@
 extern "C" {
 #endif
 
-/// Create the menu bar item. Returns true on success.
 bool lens_menubar_create(void);
-
-/// Destroy the menu bar item.
 void lens_menubar_destroy(void);
-
-/// Update the menu bar title (e.g. "Lens" or "Lens (paused)").
 void lens_menubar_set_title(const char *title);
 
-/// Returns whether the user has toggled pause via the menu.
-/// Clears the flag after reading (edge-triggered).
+/// Edge-triggered polls. Each returns true once per user action, then resets.
 bool lens_menubar_poll_pause_toggle(void);
-
-/// Returns whether the user has requested quit.
 bool lens_menubar_poll_quit(void);
+bool lens_menubar_poll_deep(void);
+bool lens_menubar_poll_copy(void);
+bool lens_menubar_poll_save(void);
+bool lens_menubar_poll_ocr(void);
 
 #ifdef __cplusplus
 }
