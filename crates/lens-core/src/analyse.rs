@@ -351,12 +351,24 @@ pub struct TextLink {
 /// The model returns substrings, not byte offsets. This struct carries them
 /// until code can verify that each substring appears exactly once in its
 /// string and convert to byte ranges.
+///
+/// When a substring appears more than once, the model may supply optional
+/// context strings that narrow the match to exactly one occurrence. The
+/// context must itself be an exact substring that appears only once. A link
+/// whose substrings cannot be resolved to unique positions is dropped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawLink {
     /// The substring the model claims appears in the source.
     pub source: String,
     /// The substring the model claims appears in the translation.
     pub target: String,
+    /// Optional surrounding text from the source that helps disambiguate
+    /// which occurrence of `source` the model means. Must be an exact
+    /// substring of the source text that contains `source` and appears
+    /// exactly once in it.
+    pub source_context: Option<String>,
+    /// Same for the translation side.
+    pub target_context: Option<String>,
 }
 
 impl DeepAnalysis {
@@ -645,43 +657,179 @@ impl DeepAnalysis {
     }
 }
 
-/// Resolve raw substring pairs to verified byte-offset spans.
+/// Statistics about how each raw link was resolved.
 ///
-/// A link passes when both substrings are non-empty and each appears at least
-/// once in its string. When a substring appears more than once, the first
-/// occurrence is used. This is a deliberate relaxation from the earlier
-/// unique-match policy: a link for `"the"` that appears three times still
-/// carries useful information (the model believes this word corresponds to
-/// that word), and showing the first occurrence is a better hint than showing
-/// nothing. The function is pure and deterministic so the same model output on
-/// the same strings always produces the same links.
-pub fn verify_links(raw: &[RawLink], source: &str, translation: &str) -> Vec<TextLink> {
+/// Produced alongside verified links for benchmarking and diagnostics. Each
+/// raw link ends up in exactly one category.
+#[derive(Debug, Default, Clone)]
+pub struct LinkResolutionStats {
+    /// Total raw links proposed by the model.
+    pub raw: usize,
+    /// Resolved because each substring appeared exactly once.
+    pub unique: usize,
+    /// Resolved because context narrowed an ambiguous substring to one match.
+    pub context_resolved: usize,
+    /// Dropped because a substring appeared zero times.
+    pub missing: usize,
+    /// Dropped because a substring appeared multiple times and context was
+    /// absent, empty, or also ambiguous.
+    pub ambiguous: usize,
+    /// Dropped because it overlapped a longer link in source or target range.
+    pub overlap: usize,
+}
+
+/// Resolve raw substring pairs to verified byte-offset spans with statistics.
+///
+/// Same resolution rules as [`verify_links`], but also counts how each raw
+/// link was resolved or dropped. Used for benchmarking.
+pub fn verify_links_with_stats(
+    raw: &[RawLink],
+    source: &str,
+    translation: &str,
+) -> (Vec<TextLink>, LinkResolutionStats) {
     let mut verified = Vec::new();
+    let mut stats = LinkResolutionStats {
+        raw: raw.len(),
+        ..Default::default()
+    };
+
     for link in raw {
         let src_needle = link.source.trim();
         let tgt_needle = link.target.trim();
         if src_needle.is_empty() || tgt_needle.is_empty() {
             continue;
         }
-        let Some(src_range) = first_match(source, src_needle) else {
-            continue;
-        };
-        let Some(tgt_range) = first_match(translation, tgt_needle) else {
-            continue;
-        };
-        verified.push(TextLink {
-            source_range: src_range,
-            target_range: tgt_range,
-        });
+        let src_ctx = link.source_context.as_deref().map(str::trim);
+        let tgt_ctx = link.target_context.as_deref().map(str::trim);
+        let src_result = resolve_with_category(source, src_needle, src_ctx);
+        let tgt_result = resolve_with_category(translation, tgt_needle, tgt_ctx);
+        match (src_result, tgt_result) {
+            (Some((sr, src_kind)), Some((tr, _))) => {
+                verified.push(TextLink {
+                    source_range: sr,
+                    target_range: tr,
+                });
+                if src_kind == ResolveKind::Context {
+                    stats.context_resolved += 1;
+                } else {
+                    stats.unique += 1;
+                }
+            }
+            (None, _) | (_, None) => {
+                let src_missing =
+                    src_result.is_none() && source.match_indices(src_needle).count() == 0;
+                let tgt_missing =
+                    tgt_result.is_none() && translation.match_indices(tgt_needle).count() == 0;
+                if src_missing || tgt_missing {
+                    stats.missing += 1;
+                } else {
+                    stats.ambiguous += 1;
+                }
+            }
+        }
     }
-    verified
+    let before_dedup = verified.len();
+    let deduped = deduplicate_overlaps(verified);
+    stats.overlap = before_dedup - deduped.len();
+    (deduped, stats)
 }
 
-/// Find `needle` in `haystack` and return the byte range of its first
-/// occurrence. Returns `None` when the needle is not present at all.
-fn first_match(haystack: &str, needle: &str) -> Option<(usize, usize)> {
-    let (start, _) = haystack.match_indices(needle).next()?;
-    Some((start, start + needle.len()))
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResolveKind {
+    Unique,
+    Context,
+}
+
+fn resolve_with_category(
+    text: &str,
+    substring: &str,
+    context: Option<&str>,
+) -> Option<((usize, usize), ResolveKind)> {
+    let occurrences: Vec<(usize, usize)> = text
+        .match_indices(substring)
+        .map(|(start, _)| (start, start + substring.len()))
+        .collect();
+    match occurrences.len() {
+        0 => None,
+        1 => Some((occurrences[0], ResolveKind::Unique)),
+        _ => {
+            let ctx = context.filter(|c| !c.is_empty())?;
+            let ctx_range = unique_match(text, ctx)?;
+            let within: Vec<_> = occurrences
+                .iter()
+                .filter(|&&(start, end)| start >= ctx_range.0 && end <= ctx_range.1)
+                .collect();
+            if within.len() == 1 {
+                Some((*within[0], ResolveKind::Context))
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Resolve raw substring pairs to verified byte-offset spans.
+///
+/// A link passes only when both substrings are non-empty and each can be
+/// resolved to a unique byte range in its string. The resolver accepts a
+/// substring that appears exactly once without context. When a substring
+/// appears multiple times, the optional context field must narrow it to
+/// exactly one occurrence; otherwise the link is dropped.
+///
+/// This is the verify-and-drop contract: ambiguous matches that cannot be
+/// disambiguated are dropped, missing matches are dropped, empty substrings
+/// are dropped. The card never colours a span it cannot prove.
+///
+/// The function is pure and deterministic so the same model output on the
+/// same strings always produces the same links.
+pub fn verify_links(raw: &[RawLink], source: &str, translation: &str) -> Vec<TextLink> {
+    verify_links_with_stats(raw, source, translation).0
+}
+
+/// Remove links that overlap in source or target range.
+///
+/// When two links share bytes in either the source or the target, only the
+/// longer one is kept. Equal-length overlaps keep the first (stable order
+/// from model output). This prevents the renderer from painting two coloured
+/// spans over the same text.
+fn deduplicate_overlaps(links: Vec<TextLink>) -> Vec<TextLink> {
+    let mut indexed: Vec<(usize, &TextLink)> = links.iter().enumerate().collect();
+    indexed.sort_by(|a, b| {
+        let a_len = link_total_len(a.1);
+        let b_len = link_total_len(b.1);
+        b_len.cmp(&a_len).then(a.0.cmp(&b.0))
+    });
+    let mut accepted: Vec<&TextLink> = Vec::with_capacity(links.len());
+    for &(_, candidate) in &indexed {
+        let dominated = accepted.iter().any(|existing| {
+            let src_overlap = candidate.source_range.0 < existing.source_range.1
+                && candidate.source_range.1 > existing.source_range.0;
+            let tgt_overlap = candidate.target_range.0 < existing.target_range.1
+                && candidate.target_range.1 > existing.target_range.0;
+            src_overlap || tgt_overlap
+        });
+        if !dominated {
+            accepted.push(candidate);
+        }
+    }
+    accepted.into_iter().cloned().collect()
+}
+
+fn link_total_len(link: &TextLink) -> usize {
+    (link.source_range.1 - link.source_range.0) + (link.target_range.1 - link.target_range.0)
+}
+
+/// Find `needle` in `haystack` and return its byte range only when it appears
+/// exactly once. Returns `None` when the needle is absent or ambiguous.
+fn unique_match(haystack: &str, needle: &str) -> Option<(usize, usize)> {
+    let mut found = None;
+    for (start, _) in haystack.match_indices(needle) {
+        if found.is_some() {
+            return None;
+        }
+        found = Some((start, start + needle.len()));
+    }
+    found
 }
 
 /// Explains a sentence that has already been translated.
@@ -855,6 +1003,8 @@ mod tests {
         let raw = vec![RawLink {
             source: "rests on".to_owned(),
             target: "위에 멈춥니다".to_owned(),
+            source_context: None,
+            target_context: None,
         }];
         let links = verify_links(
             &raw,
@@ -877,6 +1027,8 @@ mod tests {
         let raw = vec![RawLink {
             source: "".to_owned(),
             target: "비어 있었습니다".to_owned(),
+            source_context: None,
+            target_context: None,
         }];
         let links = verify_links(
             &raw,
@@ -891,6 +1043,8 @@ mod tests {
         let raw = vec![RawLink {
             source: "not in the source".to_owned(),
             target: "source에 없음".to_owned(),
+            source_context: None,
+            target_context: None,
         }];
         let links = verify_links(
             &raw,
@@ -901,28 +1055,75 @@ mod tests {
     }
 
     #[test]
-    fn verify_links_keeps_ambiguous_substrings_at_first_occurrence() {
-        // "s" appears many times in "The pointer rests on the sentence."
-        // With first-match, the link is kept and uses the first occurrence.
+    fn verify_links_drops_ambiguous_substrings_without_context() {
         let raw = vec![RawLink {
             source: "s".to_owned(),
             target: "문장".to_owned(),
+            source_context: None,
+            target_context: None,
         }];
         let links = verify_links(
             &raw,
             "The pointer rests on the sentence.",
             "포인터가 문장 위에 멈춥니다.",
         );
-        assert_eq!(
-            links.len(),
-            1,
-            "substring appearing multiple times uses first occurrence"
+        assert!(
+            links.is_empty(),
+            "substring appearing multiple times is dropped without context"
         );
-        // "s" first appears at index 14 ("rests" contains "s" at position 14)
-        assert_eq!(
-            &"The pointer rests on the sentence."[links[0].source_range.0..links[0].source_range.1],
-            "s"
+    }
+
+    #[test]
+    fn verify_links_resolves_ambiguous_with_context() {
+        // "card" appears three times in the source; context narrows to one.
+        // "표시됩니다" appears once in the target.
+        let raw = vec![RawLink {
+            source: "card".to_owned(),
+            target: "표시됩니다".to_owned(),
+            source_context: Some("the card appears".to_owned()),
+            target_context: None,
+        }];
+        let links = verify_links(
+            &raw,
+            "The card shows a card that the card appears on.",
+            "카드가 표시됩니다.",
         );
+        assert_eq!(links.len(), 1);
+        assert_eq!(
+            &"The card shows a card that the card appears on."
+                [links[0].source_range.0..links[0].source_range.1],
+            "card"
+        );
+    }
+
+    #[test]
+    fn verify_links_drops_when_context_is_also_ambiguous() {
+        // "rest" appears twice; "rest rest" also appears twice, so context
+        // cannot narrow to one occurrence.
+        let raw = vec![RawLink {
+            source: "rest".to_owned(),
+            target: "멈춥니다".to_owned(),
+            source_context: Some("rest rest".to_owned()),
+            target_context: None,
+        }];
+        let links = verify_links(&raw, "A rest and rest end.", "포인터가 문장 위에 멈춥니다.");
+        assert!(
+            links.is_empty(),
+            "context that itself is ambiguous does not help"
+        );
+    }
+
+    #[test]
+    fn verify_links_drops_when_context_not_found() {
+        // "rest" appears twice; the context is not in the text.
+        let raw = vec![RawLink {
+            source: "rest".to_owned(),
+            target: "멈춥니다".to_owned(),
+            source_context: Some("not in the text at all".to_owned()),
+            target_context: None,
+        }];
+        let links = verify_links(&raw, "A rest and rest end.", "포인터가 문장 위에 멈춥니다.");
+        assert!(links.is_empty(), "context not found in text does not help");
     }
 
     #[test]
@@ -931,14 +1132,20 @@ mod tests {
             RawLink {
                 source: "rests on".to_owned(),
                 target: "위에 멈춥니다".to_owned(),
+                source_context: None,
+                target_context: None,
             },
             RawLink {
                 source: "not present".to_owned(),
                 target: "여기에 없음".to_owned(),
+                source_context: None,
+                target_context: None,
             },
             RawLink {
                 source: "sentence".to_owned(),
                 target: "문장".to_owned(),
+                source_context: None,
+                target_context: None,
             },
         ];
         let links = verify_links(
@@ -954,6 +1161,8 @@ mod tests {
         let raw = vec![RawLink {
             source: "포인터가".to_owned(),
             target: "The pointer".to_owned(),
+            source_context: None,
+            target_context: None,
         }];
         let links = verify_links(
             &raw,
@@ -964,6 +1173,36 @@ mod tests {
         assert_eq!(
             &"포인터가 문장 위에 멈춥니다."[links[0].source_range.0..links[0].source_range.1],
             "포인터가"
+        );
+    }
+
+    #[test]
+    fn verify_links_drops_overlapping_shorter_link() {
+        // "rests" and "rests on" both match unique ranges, but "rests" is
+        // contained within "rests on" in the source. The longer one wins.
+        let raw = vec![
+            RawLink {
+                source: "rests".to_owned(),
+                target: "멈춥니다".to_owned(),
+                source_context: None,
+                target_context: None,
+            },
+            RawLink {
+                source: "rests on".to_owned(),
+                target: "위에 멈춥니다".to_owned(),
+                source_context: None,
+                target_context: None,
+            },
+        ];
+        let links = verify_links(
+            &raw,
+            "The pointer rests on the sentence.",
+            "포인터가 문장 위에 멈춥니다.",
+        );
+        assert_eq!(links.len(), 1);
+        assert_eq!(
+            &"The pointer rests on the sentence."[links[0].source_range.0..links[0].source_range.1],
+            "rests on"
         );
     }
 }
