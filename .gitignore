@@ -6,6 +6,7 @@ dist/
 .env.*
 !.env.example
 .claude/
+.qwen/
 *.log
 # Probe output is a local measurement artifact, not a repository record. A run
 # worth keeping is transcribed into docs/compatibility/ by hand.
