@@ -22,6 +22,7 @@ pub mod ffi;
 pub mod ocr_acquire;
 pub mod overlay;
 pub mod permission;
+pub mod single;
 pub mod utf;
 pub mod vision_ocr;
 
@@ -29,6 +30,7 @@ pub use acquirer::MacTextAcquirer;
 pub use ocr_acquire::OcrTextAcquirer;
 pub use overlay::Overlay;
 pub use permission::AxPermission;
+pub use single::SingleInstance;
 pub use vision_ocr::{
     is_available as vision_is_available, recognize as vision_recognize, VisionOcrResult,
 };
