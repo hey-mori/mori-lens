@@ -72,7 +72,7 @@ impl Tally {
     /// Refusals, commonest first.
     pub fn refusals(&self) -> Vec<(&'static str, u32)> {
         let mut sorted = self.refused.clone();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.sort_by_key(|b| std::cmp::Reverse(b.1));
         sorted
     }
 
