@@ -20,6 +20,7 @@ pub mod capture;
 pub mod clipboard;
 pub mod coords;
 pub mod ffi;
+pub mod lifecycle;
 pub mod menubar;
 pub mod ocr_acquire;
 pub mod overlay;
@@ -29,6 +30,7 @@ pub mod utf;
 pub mod vision_ocr;
 
 pub use acquirer::MacTextAcquirer;
+pub use lifecycle::Lifecycle;
 pub use menubar::MenuBar;
 pub use ocr_acquire::OcrTextAcquirer;
 pub use overlay::Overlay;
