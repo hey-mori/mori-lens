@@ -29,8 +29,10 @@ git push origin v0.1.0
 The tag triggers the release workflow. The workflow:
 - Verifies version consistency across all three files.
 - Runs `scripts/check.sh --full`.
-- Builds the NSIS installer with `cargo tauri build`.
-- Creates a draft GitHub Release with the installer attached.
+- Builds the NSIS installer with `cargo tauri build --bundles nsis`.
+- Generates `SHA256SUMS.txt` with the SHA-256 hash of the installer.
+- Creates a draft GitHub Release with the installer and hash manifest
+  attached. The release body marks the artifact as unsigned.
 
 The release is created as a draft. Open it, read the auto-generated
 notes, and publish when satisfied.
@@ -98,6 +100,7 @@ The installer does not:
 ## After publishing
 
 1. Verify the installer downloads and installs on a clean machine.
-2. Verify the SHA-256 checksum matches the one in the release notes.
+2. Verify the SHA-256 checksum matches the `SHA256SUMS.txt` attached to
+   the release.
 3. Update `docs/compatibility/windows-app-matrix.md` with the build
    date and version if any probe runs were done.
