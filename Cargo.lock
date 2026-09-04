@@ -173,6 +173,7 @@ dependencies = [
 name = "lens-platform-macos"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "lens-core",
 ]
 
