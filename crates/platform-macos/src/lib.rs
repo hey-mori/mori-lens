@@ -16,14 +16,17 @@
 #![cfg(target_os = "macos")]
 
 mod acquirer;
+pub mod capture;
 pub mod coords;
 pub mod ffi;
+pub mod ocr_acquire;
 pub mod overlay;
 pub mod permission;
 pub mod utf;
 pub mod vision_ocr;
 
 pub use acquirer::MacTextAcquirer;
+pub use ocr_acquire::OcrTextAcquirer;
 pub use overlay::Overlay;
 pub use permission::AxPermission;
 pub use vision_ocr::{

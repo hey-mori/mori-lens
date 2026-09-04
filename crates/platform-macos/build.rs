@@ -12,11 +12,18 @@ fn main() {
             .flag("-fobjc-arc")
             .compile("lens_vision_ocr");
 
+        cc::Build::new()
+            .file("native/capture.m")
+            .flag("-fobjc-arc")
+            .compile("lens_capture");
+
         println!("cargo:rustc-link-lib=framework=ApplicationServices");
         println!("cargo:rustc-link-lib=framework=CoreGraphics");
         println!("cargo:rustc-link-lib=framework=AppKit");
         println!("cargo:rustc-link-lib=framework=CoreText");
         println!("cargo:rustc-link-lib=framework=QuartzCore");
         println!("cargo:rustc-link-lib=framework=Vision");
+        println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");
+        println!("cargo:rustc-link-lib=framework=CoreVideo");
     }
 }
