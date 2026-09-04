@@ -260,10 +260,12 @@ impl MacTextAcquirer {
             }
         }
 
-        // Walk up parents looking for text.
-        let mut current_raw = element;
+        // Walk up parents looking for text. We retain each parent as we visit
+        // it so the element stays alive even after the AxOwnedValue is dropped.
+        // SAFETY: element is a valid AXUIElementRef; CFRetain returns it.
+        let mut current_ref = unsafe { AxElement::retain(element)? };
         for _ in 0..30 {
-            let parent_val = self.get_attribute(current_raw, ffi::ax_parent())?;
+            let parent_val = self.get_attribute(current_ref.raw(), ffi::ax_parent())?;
             let parent_raw = parent_val.as_element();
             if let Some(text) = self.get_string_value(parent_raw) {
                 if !text.is_empty() {
@@ -271,8 +273,11 @@ impl MacTextAcquirer {
                     return unsafe { AxElement::retain(parent_raw) }.map(|e| (e, text));
                 }
             }
-            current_raw = parent_raw;
-            std::mem::forget(parent_val);
+            // Retain the parent before parent_val drops and releases its ref.
+            // SAFETY: parent_raw is valid while parent_val is alive.
+            let next_ref = unsafe { AxElement::retain(parent_raw) };
+            drop(parent_val);
+            current_ref = next_ref?;
         }
         None
     }
@@ -298,9 +303,14 @@ impl MacTextAcquirer {
         }
 
         // Walk up a few levels to check for secure text field container.
-        let mut current_raw = element;
+        // Same retain-per-visit pattern as find_text_element to avoid leaks.
+        // SAFETY: element is valid; CFRetain returns it.
+        let mut current_ref = match unsafe { AxElement::retain(element) } {
+            Some(r) => r,
+            None => return false,
+        };
         for _ in 0..5 {
-            let parent_val = match self.get_attribute(current_raw, ffi::ax_parent()) {
+            let parent_val = match self.get_attribute(current_ref.raw(), ffi::ax_parent()) {
                 Some(v) => v,
                 None => return false,
             };
@@ -316,8 +326,13 @@ impl MacTextAcquirer {
                 }
             }
 
-            current_raw = parent_raw;
-            std::mem::forget(parent_val);
+            // SAFETY: parent_raw is valid while parent_val is alive.
+            let next_ref = unsafe { AxElement::retain(parent_raw) };
+            drop(parent_val);
+            current_ref = match next_ref {
+                Some(r) => r,
+                None => return false,
+            };
         }
 
         false
@@ -515,8 +530,14 @@ impl TextAcquirer for MacTextAcquirer {
         }
 
         // 7. Segment the text around the focus point.
+        // Truncate to the maximum allowed length, stopping at a char boundary
+        // to avoid splitting a multi-byte character (CJK, emoji, etc.).
         let truncated = if full_text.len() > MAX_TEXT_CHARS {
-            &full_text[..MAX_TEXT_CHARS]
+            let mut end = MAX_TEXT_CHARS;
+            while end > 0 && !full_text.is_char_boundary(end) {
+                end -= 1;
+            }
+            &full_text[..end]
         } else {
             &full_text
         };

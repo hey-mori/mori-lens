@@ -99,10 +99,10 @@ pub fn recognize(pixels: &[u8], width: i32, height: i32, stride: i32) -> Option<
         }
     }
 
-    // Free the C result.
-    // SAFETY: raw was returned by lens_vision_recognize and has not been
-    // freed yet.
+    // Free the C result. raw was returned by lens_vision_recognize and has
+    // not been freed yet.
     let mut raw_mut = raw;
+    // SAFETY: raw_mut owns the C result from lens_vision_recognize.
     unsafe { lens_ocr_result_free(&mut raw_mut) };
 
     Some(VisionOcrResult { text, words })

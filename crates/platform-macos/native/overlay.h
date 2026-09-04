@@ -28,6 +28,14 @@ void lens_overlay_destroy(void);
 /// Returns whether the overlay is currently visible.
 bool lens_overlay_is_visible(void);
 
+/// Get the current mouse position in global screen points (top-left origin).
+/// Returns true on success, writing to *x and *y.
+bool lens_mouse_position(double *x, double *y);
+
+/// Get the backing scale factor for the display containing the given point.
+/// Returns 2.0 on Retina, 1.0 on standard, or the actual value if available.
+double lens_display_scale_at(double x, double y);
+
 #ifdef __cplusplus
 }
 #endif

@@ -99,9 +99,28 @@ impl DisplayTopology {
 
     /// Find the scale factor for the display containing a Lens physical pixel
     /// point.
+    ///
+    /// Iterates through displays and converts each display's logical-point
+    /// bounds to physical pixels using that display's own scale factor, then
+    /// checks containment. This avoids the circular dependency of needing the
+    /// scale to convert the point but needing the point to find the scale.
     pub fn scale_at_screen_point(&self, point: ScreenPoint) -> f64 {
-        let cg = screen_point_to_cg(point, 1.0);
-        self.scale_at_point(cg)
+        for display in &self.displays {
+            let b = &display.bounds_points;
+            let s = display.scale;
+            // Convert display bounds from logical points to physical pixels.
+            let px_left = (b.origin.x * s).round() as i32;
+            let px_top = (b.origin.y * s).round() as i32;
+            let px_right = ((b.origin.x + b.size.width) * s).round() as i32;
+            let px_bottom = ((b.origin.y + b.size.height) * s).round() as i32;
+            if point.x >= px_left && point.x < px_right && point.y >= px_top && point.y < px_bottom
+            {
+                return s;
+            }
+        }
+        // Fallback: if the point is not on any known display, use 2.0 as a
+        // safe Retina default.
+        2.0
     }
 }
 
@@ -291,5 +310,91 @@ mod tests {
         };
         // Falls back to 2.0 (Retina default).
         assert!((topo.scale_at_point(p) - 2.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn scale_at_screen_point_finds_correct_display_in_mixed_scale_topology() {
+        // Primary: Retina 1440x900 logical = 2880x1800 physical.
+        // External: 1x 1920x1080 logical = 1920x1080 physical, to the right.
+        let topo = DisplayTopology {
+            displays: vec![
+                DisplayInfo {
+                    id: 1,
+                    bounds_points: ffi::CGRect {
+                        origin: ffi::CGPoint { x: 0.0, y: 0.0 },
+                        size: ffi::CGSize {
+                            width: 1440.0,
+                            height: 900.0,
+                        },
+                    },
+                    scale: 2.0,
+                    is_main: true,
+                },
+                DisplayInfo {
+                    id: 2,
+                    bounds_points: ffi::CGRect {
+                        origin: ffi::CGPoint { x: 1440.0, y: 0.0 },
+                        size: ffi::CGSize {
+                            width: 1920.0,
+                            height: 1080.0,
+                        },
+                    },
+                    scale: 1.0,
+                    is_main: false,
+                },
+            ],
+        };
+
+        // Physical pixel on the Retina display (middle of primary).
+        let on_retina = ScreenPoint::new(1440, 900);
+        assert!(
+            (topo.scale_at_screen_point(on_retina) - 2.0).abs() < 0.001,
+            "center of Retina display should resolve to scale 2.0"
+        );
+
+        // Physical pixel on the external 1x display.
+        // External starts at logical x=1440, which is physical x=2880.
+        let on_external = ScreenPoint::new(3000, 500);
+        assert!(
+            (topo.scale_at_screen_point(on_external) - 1.0).abs() < 0.001,
+            "point on external 1x display should resolve to scale 1.0"
+        );
+
+        // Physical pixel near the boundary of the Retina display.
+        // Right edge of primary at physical x=2879 (last pixel).
+        let near_edge = ScreenPoint::new(2879, 100);
+        assert!(
+            (topo.scale_at_screen_point(near_edge) - 2.0).abs() < 0.001,
+            "last physical pixel on Retina should still be scale 2.0"
+        );
+
+        // First physical pixel on the external display.
+        let first_external = ScreenPoint::new(2880, 100);
+        assert!(
+            (topo.scale_at_screen_point(first_external) - 1.0).abs() < 0.001,
+            "first physical pixel on external should be scale 1.0"
+        );
+    }
+
+    #[test]
+    fn scale_at_screen_point_negative_display_physical_pixels() {
+        // A monitor to the left: logical -1920..0, physical at 1x = -1920..0.
+        let topo = DisplayTopology {
+            displays: vec![DisplayInfo {
+                id: 1,
+                bounds_points: ffi::CGRect {
+                    origin: ffi::CGPoint { x: -1920.0, y: 0.0 },
+                    size: ffi::CGSize {
+                        width: 1920.0,
+                        height: 1080.0,
+                    },
+                },
+                scale: 1.0,
+                is_main: false,
+            }],
+        };
+
+        let p = ScreenPoint::new(-500, 300);
+        assert!((topo.scale_at_screen_point(p) - 1.0).abs() < 0.001);
     }
 }
