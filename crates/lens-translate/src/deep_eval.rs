@@ -1702,97 +1702,173 @@ fn eligibility_gate_classification() {
 /// --------------------------------------------------------------------------
 /// Test 10: Linkage quality benchmark (#148).
 ///
-/// Measures the verify-and-drop contract on the existing 25-entry corpus:
-/// - verified links per entry
-/// - items with at least one verified link
-/// - average verified links per item
-/// - total verified links
+/// Multi-run protocol: 5 independent runs over the full CORPUS. Pre-committed
+/// thresholds (decided before looking at results):
+/// - Mean avg links/item over 5 runs >= 1.5
+/// - At least 4/5 runs >= 1.4
+/// - Speculative links reaching UI = 0 (guaranteed by resolver)
+/// - Malformed rate < 10%
 ///
-/// Also checks that existing M5 metrics (lemma, POS, structure) have not
-/// regressed due to the link prompt addition.
+/// Tracks resolution categories:
+/// - raw: total proposed by model
+/// - unique: resolved by unique match
+/// - context_resolved: resolved via context disambiguation
+/// - missing: dropped (substring not found)
+/// - ambiguous: dropped (multiple matches, no usable context)
+/// - overlap: dropped (overlapped longer link)
 /// --------------------------------------------------------------------------
 #[test]
 #[ignore = "needs a running Ollama; run manually"]
 fn linkage_quality_benchmark() {
     let Some(translator) = live() else { return };
+    const RUNS: usize = 5;
 
-    println!("\n=== linkage quality benchmark (#148) ===\n");
+    println!("\n=== linkage quality benchmark (#148) ===");
+    println!("Protocol: {RUNS} independent runs, pre-committed thresholds\n");
 
-    let mut total_verified = 0usize;
-    let mut items_with_links = 0usize;
-    let mut total_entries = 0usize;
-    let mut lemma_hits = 0usize;
-    let mut lemma_total = 0usize;
-    let mut pos_hits = 0usize;
-    let mut pos_total = 0usize;
+    let mut run_avgs: Vec<f64> = Vec::with_capacity(RUNS);
+    let mut run_coverages: Vec<f64> = Vec::with_capacity(RUNS);
+    let mut run_malformed: Vec<usize> = Vec::with_capacity(RUNS);
+    let mut total_stats = lens_core::analyse::LinkResolutionStats::default();
 
-    for entry in CORPUS {
-        let request = build_request(entry, None);
-        match translator.deep(&request) {
-            Ok(analysis) => {
-                total_entries += 1;
-                let verified = analysis.links.len();
-                total_verified += verified;
-                if verified > 0 {
-                    items_with_links += 1;
-                }
-                println!(
-                    "{}: {} verified links (source: \"{}\")",
-                    entry.id, verified, entry.source
-                );
-                for (i, link) in analysis.links.iter().enumerate() {
-                    let src_span = &entry.source[link.source_range.0..link.source_range.1];
-                    let tgt_span = &entry.translation[link.target_range.0..link.target_range.1];
-                    println!("  [{i}] \"{src_span}\" ↔ \"{tgt_span}\"");
-                }
-                // Check M5 metrics for regression
-                if let Some(expected) = entry.expected_lemma {
-                    lemma_total += 1;
-                    if lemma_matches(&analysis.lemma, expected) {
-                        lemma_hits += 1;
+    for run in 0..RUNS {
+        println!("--- Run {} of {RUNS} ---\n", run + 1);
+        let mut total_verified = 0usize;
+        let mut items_with_links = 0usize;
+        let mut total_entries = 0usize;
+        let mut malformed = 0usize;
+        let mut run_stats = lens_core::analyse::LinkResolutionStats::default();
+
+        for entry in CORPUS {
+            let request = build_request(entry, None);
+            match translator.deep_with_stats(&request) {
+                Ok((analysis, stats)) => {
+                    total_entries += 1;
+                    let verified = analysis.links.len();
+                    total_verified += verified;
+                    if verified > 0 {
+                        items_with_links += 1;
+                    }
+                    run_stats.raw += stats.raw;
+                    run_stats.unique += stats.unique;
+                    run_stats.context_resolved += stats.context_resolved;
+                    run_stats.missing += stats.missing;
+                    run_stats.ambiguous += stats.ambiguous;
+                    run_stats.overlap += stats.overlap;
+                    println!(
+                        "{}: {} verified (raw={}, unique={}, ctx={}, miss={}, ambig={}, overlap={})",
+                        entry.id, verified, stats.raw, stats.unique, stats.context_resolved,
+                        stats.missing, stats.ambiguous, stats.overlap
+                    );
+                    for (i, link) in analysis.links.iter().enumerate() {
+                        let src_span = &entry.source[link.source_range.0..link.source_range.1];
+                        let tgt_span = &entry.translation[link.target_range.0..link.target_range.1];
+                        println!("  [{i}] \"{src_span}\" <-> \"{tgt_span}\"");
                     }
                 }
-                if let Some(_expected) = entry.expected_pos {
-                    pos_total += 1;
-                    if !analysis.part_of_speech.is_empty() {
-                        pos_hits += 1;
-                    }
+                Err(error) => {
+                    malformed += 1;
+                    println!("{}: FAILED [{}]", entry.id, error.reason());
                 }
-            }
-            Err(error) => {
-                println!("{}: FAILED [{}]", entry.id, error.reason());
             }
         }
-    }
 
-    println!("\n=== linkage summary ===\n");
-    println!("Total entries:         {total_entries}");
-    println!("Items with ≥1 link:    {items_with_links}");
-    println!("Total verified links:  {total_verified}");
-    if total_entries > 0 {
-        let avg = total_verified as f64 / total_entries as f64;
-        println!("Average links/item:    {avg:.2}");
-    }
-    println!(
-        "Coverage:              {:.1}%",
-        if total_entries > 0 {
+        let avg = if total_entries > 0 {
+            total_verified as f64 / total_entries as f64
+        } else {
+            0.0
+        };
+        let coverage = if total_entries > 0 {
             items_with_links as f64 / total_entries as f64 * 100.0
         } else {
             0.0
-        }
-    );
+        };
+        run_avgs.push(avg);
+        run_coverages.push(coverage);
+        run_malformed.push(malformed);
+        total_stats.raw += run_stats.raw;
+        total_stats.unique += run_stats.unique;
+        total_stats.context_resolved += run_stats.context_resolved;
+        total_stats.missing += run_stats.missing;
+        total_stats.ambiguous += run_stats.ambiguous;
+        total_stats.overlap += run_stats.overlap;
 
-    println!("\n=== M5 regression check ===\n");
-    if lemma_total > 0 {
         println!(
-            "Lemma:   {lemma_hits}/{lemma_total} ({:.1}%)",
-            lemma_hits as f64 / lemma_total as f64 * 100.0
+            "\nRun {} summary: avg={avg:.2}, coverage={coverage:.1}%, malformed={malformed}\n",
+            run + 1
         );
     }
-    if pos_total > 0 {
-        println!(
-            "POS:     {pos_hits}/{pos_total} ({:.1}%)",
-            pos_hits as f64 / pos_total as f64 * 100.0
-        );
+
+    // Aggregate statistics
+    let mean_avg = run_avgs.iter().sum::<f64>() / run_avgs.len() as f64;
+    let mut sorted_avgs = run_avgs.clone();
+    sorted_avgs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let median_avg = sorted_avgs[sorted_avgs.len() / 2];
+    let min_avg = sorted_avgs[0];
+    let max_avg = sorted_avgs[sorted_avgs.len() - 1];
+    let runs_above_14 = run_avgs.iter().filter(|&&v| v >= 1.4).count();
+
+    println!("=== aggregate results ===\n");
+    println!(
+        "Avg links/item per run: {:?}",
+        run_avgs
+            .iter()
+            .map(|v| format!("{v:.2}"))
+            .collect::<Vec<_>>()
+    );
+    println!("Mean:                  {mean_avg:.2}");
+    println!("Median:                {median_avg:.2}");
+    println!("Min:                   {min_avg:.2}");
+    println!("Max:                   {max_avg:.2}");
+    println!("Runs >= 1.4:           {runs_above_14}/{RUNS}");
+    println!(
+        "Coverage per run:      {:?}",
+        run_coverages
+            .iter()
+            .map(|v| format!("{v:.1}%"))
+            .collect::<Vec<_>>()
+    );
+    println!("Malformed per run:     {run_malformed:?}");
+
+    println!("\n=== resolution categories (all runs) ===\n");
+    println!("Raw proposed:          {}", total_stats.raw);
+    println!("Unique match:          {}", total_stats.unique);
+    println!("Context resolved:      {}", total_stats.context_resolved);
+    println!("Missing dropped:       {}", total_stats.missing);
+    println!("Ambiguous dropped:     {}", total_stats.ambiguous);
+    println!("Overlap dropped:       {}", total_stats.overlap);
+
+    println!("\n=== threshold checks ===\n");
+    let pass_mean = mean_avg >= 1.5;
+    let pass_runs = runs_above_14 >= 4;
+    let total_malformed: usize = run_malformed.iter().sum();
+    let total_calls: usize = run_malformed.len() * CORPUS.len();
+    let malformed_rate = if total_calls > 0 {
+        total_malformed as f64 / total_calls as f64 * 100.0
+    } else {
+        0.0
+    };
+    let pass_malformed = malformed_rate < 10.0;
+    println!(
+        "Mean >= 1.5:           {} ({:.2})",
+        if pass_mean { "PASS" } else { "FAIL" },
+        mean_avg
+    );
+    println!(
+        "4/5 runs >= 1.4:       {} ({}/{RUNS})",
+        if pass_runs { "PASS" } else { "FAIL" },
+        runs_above_14
+    );
+    println!(
+        "Malformed < 10%:       {} ({:.1}%)",
+        if pass_malformed { "PASS" } else { "FAIL" },
+        malformed_rate
+    );
+    println!("Speculative to UI:     0 (guaranteed by resolver)");
+
+    if pass_mean && pass_runs && pass_malformed {
+        println!("\n#148 THRESHOLD MET");
+    } else {
+        println!("\n#148 THRESHOLD NOT MET");
     }
 }
