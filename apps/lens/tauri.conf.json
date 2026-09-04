@@ -29,7 +29,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": ["nsis", "app"],
     "icon": [
       "icons/icon.ico"
     ],
@@ -38,6 +38,12 @@
         "installMode": "currentUser",
         "displayLanguageSelector": false
       }
+    },
+    "macOS": {
+      "minimumSystemVersion": "12.3",
+      "exceptionDomain": "",
+      "signingIdentity": null,
+      "entitlements": null
     }
   }
 }
