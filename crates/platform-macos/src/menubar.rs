@@ -1,7 +1,7 @@
 //! macOS menu bar integration.
 //!
-//! Provides an `NSStatusItem` in the menu bar with Pause/Resume and Quit.
-//! The product loop polls for pause toggle and quit requests.
+//! Provides an `NSStatusItem` with Pause, Deep Analysis, Copy, Save,
+//! Manual OCR, and Quit actions. The product loop polls for each action.
 
 use std::ffi::CString;
 
@@ -11,6 +11,10 @@ extern "C" {
     fn lens_menubar_set_title(title: *const std::os::raw::c_char);
     fn lens_menubar_poll_pause_toggle() -> bool;
     fn lens_menubar_poll_quit() -> bool;
+    fn lens_menubar_poll_deep() -> bool;
+    fn lens_menubar_poll_copy() -> bool;
+    fn lens_menubar_poll_save() -> bool;
+    fn lens_menubar_poll_ocr() -> bool;
 }
 
 /// The macOS menu bar item.
@@ -19,9 +23,8 @@ pub struct MenuBar {
 }
 
 impl MenuBar {
-    /// Create the menu bar item.
     pub fn create() -> Option<Self> {
-        // SAFETY: lens_menubar_create creates an NSStatusItem.
+        // SAFETY: lens_menubar_create creates an NSStatusItem on the main thread.
         let ok = unsafe { lens_menubar_create() };
         if ok {
             Some(Self { _private: () })
@@ -30,24 +33,42 @@ impl MenuBar {
         }
     }
 
-    /// Set the menu bar title.
     pub fn set_title(&self, title: &str) {
         let c = CString::new(title).unwrap_or_default();
-        // SAFETY: lens_menubar_set_title takes a C string.
+        // SAFETY: lens_menubar_set_title takes a valid C string.
         unsafe { lens_menubar_set_title(c.as_ptr()) };
     }
 
-    /// Poll for a pause toggle from the user. Returns true if the user
-    /// clicked Pause/Resume since the last poll. Edge-triggered.
+    /// Edge-triggered: returns true once per Pause/Resume click.
     pub fn poll_pause_toggle(&self) -> bool {
-        // SAFETY: lens_menubar_poll_pause_toggle is a pure query.
+        // SAFETY: pure atomic read.
         unsafe { lens_menubar_poll_pause_toggle() }
     }
 
-    /// Poll for a quit request. Returns true if the user clicked Quit.
     pub fn poll_quit(&self) -> bool {
-        // SAFETY: lens_menubar_poll_quit is a pure query.
+        // SAFETY: pure atomic read.
         unsafe { lens_menubar_poll_quit() }
+    }
+
+    /// Edge-triggered: returns true once per Deep Analysis click.
+    pub fn poll_deep(&self) -> bool {
+        // SAFETY: pure atomic read.
+        unsafe { lens_menubar_poll_deep() }
+    }
+
+    pub fn poll_copy(&self) -> bool {
+        // SAFETY: pure atomic read.
+        unsafe { lens_menubar_poll_copy() }
+    }
+
+    pub fn poll_save(&self) -> bool {
+        // SAFETY: pure atomic read.
+        unsafe { lens_menubar_poll_save() }
+    }
+
+    pub fn poll_ocr(&self) -> bool {
+        // SAFETY: pure atomic read.
+        unsafe { lens_menubar_poll_ocr() }
     }
 }
 
