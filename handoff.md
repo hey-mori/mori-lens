@@ -1,6 +1,6 @@
 # Mori Lens — Session Handoff
 
-Last updated: 2026-09-05
+Last updated: 2026-09-06
 
 ## Current Goal
 
@@ -18,17 +18,19 @@ Windows implementation is complete and stable. macOS is the active workstream.
 - NSIS installer, signed release pipeline
 
 **macOS (this session's work):**
-- Accessibility acquisition production-wired (`MacTextAcquirer` → `TextAcquirer` trait)
-- Vision OCR production-wired (`OcrTextAcquirer` → `TextAcquirer` trait)
-- Passive native overlay production-wired (NSPanel, transparent, click-through)
+- Accessibility acquisition production-wired (`MacTextAcquirer`)
+- Vision OCR production-wired (`OcrTextAcquirer`)
+- Passive native overlay (NSPanel, transparent, click-through)
 - Real global commands via CGEventTap (Cmd+Opt+L/D/C/S/O/Q)
+- **AppKit thread-safe**: all UI mutations dispatched to main queue via `dispatch_async`
+- **Async translation**: Quick/Deep/OCR run on dedicated thread, product loop non-blocking
+- **Stale-safe**: generation-based result filtering, real anchor preserved through async pipeline
 - Tauri event loop owns main thread; product loop on worker thread
-- Save uses canonical `SharedLibrary` (same DB as Tauri Library commands)
+- Save uses canonical `SharedLibrary` (same DB as Tauri Library)
 - Settings/Library surfaces accessible via menu bar (Cmd+, / Cmd+Opt+L)
-- **Policy enforcement connected**: `process_name_at()` → `policy.allows()` before acquisition
+- Policy enforcement: `process_name_at()` → `policy.allows()` before acquisition
 - Lifecycle resilience (sleep/wake, display change)
 - Single instance guard (flock)
-- Shared modules (tauri_app, library_service, settings_service, detail_view, keeping, mori_transfer) in main.rs
 
 **Shared/core:**
 - `lens-core` platform-neutral (ADR-0003 invariant held)
@@ -37,9 +39,10 @@ Windows implementation is complete and stable. macOS is the active workstream.
 
 ## This Session
 
-- Connected `AppPolicy` to macOS hover loop: `process_name_at()` does lightweight AX metadata lookup (no text read), policy check blocks both AX and OCR for denied apps
-- `policy.deny_self("lens")` prevents reading Lens's own windows
-- Matches Windows `HoverSession` policy semantics
+- **AppKit thread safety fixed**: All NSPanel/NSStatusItem mutations now use `dispatch_async(dispatch_get_main_queue())`. Atomic visibility flags for thread-safe reads. String data copied before async dispatch to prevent use-after-free.
+- **Async translation runtime**: Translation jobs (Quick/Deep/OCR) dispatched to dedicated worker thread via mpsc channel. Product loop stays responsive during long Ollama calls. Shared `Arc<Mutex<TranslationCache>>` between product loop and translation thread.
+- **Anchor preservation**: `TransJob`/`TransResult` carry `ScreenRect` anchor through async pipeline. `show_card_at()` renders at original target position. `make_dummy_target()` removed.
+- **Stale generation checking**: All async results carry generation token. Results with stale generation are silently discarded.
 
 ## Agent Assessment
 
@@ -53,95 +56,84 @@ M7 PRODUCTION INTEGRATION:       COMPLETE
 M7 REAL-WORLD EVIDENCE:          PENDING
 
 MACOS PRODUCT PARITY:            COMPLETE
-  (event loop, global hotkeys, commands, save, lifecycle, policy enforcement)
+  (async runtime, thread-safe UI, stale-safe results, policy enforcement,
+   global hotkeys, Save/Library integration, lifecycle resilience)
 
 TAURI APPLICATION SHELL:         INTEGRATED
   (shared modules, Settings/Library surfaces accessible, Save uses same DB)
 
 POLICY ENFORCEMENT:              CONNECTED
-  (process_name_at → policy.allows → blocks AX + OCR for denied apps)
+APPKIT THREAD CORRECTNESS:       RESOLVED (dispatch_async to main queue)
+ASYNC RUNTIME:                   RESOLVED (dedicated translation thread)
+STALE RESULT CORRECTNESS:        RESOLVED (generation check + anchor preservation)
 
-SETTINGS/LIBRARY/DETAIL:         ACCESSIBLE
-  (menu bar opens Tauri webview windows)
+SCSTREAM LIFETIME:               PARTIAL
+  (5s timeout with semaphore; late callback after timeout not fault-tested)
 
-ASYNC/STALE CORRECTNESS:         PARTIAL
-  (HoverEvent::Left clears current_card; monotonic generation for manual OCR;
-   Deep/Quick stale response tests not yet written;
-   translator.quick/deep are synchronous — block worker during Ollama call)
+CGEVENTTAP LIFETIME/RECOVERY:    PARTIAL
+  (no re-enable on timeout-disable; ring buffer overflow drops oldest)
 
-APPKIT THREAD CORRECTNESS:       UNRESOLVED RISK
-  (native components created on main thread, moved to worker thread;
-   AppKit API calls from worker thread have not been validated;
-   lens_process_appkit_events() may be redundant with Tauri event loop)
-
-PACKAGING CONFIG:                COMPLETE
-PACKAGE ARTIFACT:                NOT BUILT LOCALLY (LOCAL TOOLING BLOCKER)
-
-CROSS-PLATFORM CI CONFIG:        COMPLETE
-CI EXECUTION EVIDENCE:           NOT VERIFIED
+PACKAGING ARTIFACT:              NOT BUILT LOCALLY (LOCAL TOOLING BLOCKER)
+CROSS-PLATFORM CI:               CONFIGURED, NOT VERIFIED
 ```
 
 ## Architecture / Key Decisions
 
-- `lens-core` remains platform-neutral. No `#[cfg(windows)]` or `#[cfg(target_os)]` in core.
-- Shared modules declared in main.rs, used by both win.rs and macos.rs.
-- AX attribute names created at runtime via `CFStringCreateWithCString`. Do not reintroduce extern statics.
-- Screen capture uses ScreenCaptureKit `SCStream`. `CGDisplayCreateImage`/`CGWindowListCreateImage` are obsoleted on macOS 15+.
-- Accessibility-first OCR: AX always tried first; OCR fallback only when `ocr_can_help()` and `OcrMode != Off`.
-- Policy check BEFORE content acquisition: `process_name_at()` → `policy.allows()` → skip if denied.
-- Tauri owns main thread (AppKit event loop). Product loop on worker thread.
-- Global hotkeys via CGEventTap — uses existing AX permission.
+- `lens-core` remains platform-neutral.
+- Shared modules (tauri_app, library_service, settings_service, detail_view, keeping, mori_transfer) in main.rs.
+- AX attribute names created at runtime via `CFStringCreateWithCString`.
+- Screen capture uses ScreenCaptureKit `SCStream` (CGDisplayCreateImage obsoleted on macOS 15+).
+- Accessibility-first OCR: AX first; OCR fallback only when `ocr_can_help()` and `OcrMode != Off`.
+- Policy check BEFORE content acquisition: `process_name_at()` → `policy.allows()`.
+- Tauri owns main thread. Product loop on worker thread.
+- All AppKit UI mutations use `dispatch_async(dispatch_get_main_queue())`.
+- Translation runs on dedicated thread. Results delivered via mpsc channel with generation tokens.
+- Global hotkeys via CGEventTap (uses existing AX permission).
 - Memory-only privacy: no screenshot/OCR image written to disk.
-- Non-fatal degradation: permission/overlay/menubar failures don't exit the process.
 
 ## Production Call Paths
 
-**Hover → Translation (with policy):**
+**Hover → Translation (async, thread-safe):**
 ```
 Tauri event loop (main thread)
   ← product_loop (worker thread)
-    → process_appkit_events() [may be redundant with Tauri]
+    → dispatch_async UI mutations to main queue
     → hotkey::poll() + menubar.poll_*() → ProductCommand queue
     → HoverMachine::observe()
-    → process_name_at(point) [metadata only, no text read]
-    → policy.allows(process_name) [deny → skip AX + OCR]
-    → MacTextAcquirer::acquire() [AX path]
+    → process_name_at(point) → policy.allows()
+    → MacTextAcquirer::acquire() [AX]
     → OcrTextAcquirer::acquire() [OCR fallback]
-    → decide() → translator.quick()
-    → Card::translated() → overlay.show_text()
+    → job_tx.send(TransJob::Quick{anchor, generation})
+    → result_rx.try_recv() → generation check → show_card_at(anchor)
 ```
 
-**Save:**
+**Translation thread:**
 ```
-ProductCommand::Save → SharedLibrary::lock() → Library::insert(&Item)
+job_rx.recv() → translator.quick()/deep() → result_tx.send(TransResult{anchor, generation})
 ```
 
-**Open Settings/Library:**
-```
-ProductCommand::OpenSettings/OpenLibrary → tauri_handle.show_window()
-```
+**Save:** `ProductCommand::Save → SharedLibrary::lock() → Library::insert(&Item)`
 
 ## Important Files
 
 ```
-apps/lens/src/macos.rs          macOS product loop, command dispatch, policy check
-apps/lens/src/win.rs            Windows product loop (reference for contract)
+apps/lens/src/macos.rs          macOS product loop, async translation, command dispatch
 apps/lens/src/main.rs           Shared module declarations + platform dispatch
 apps/lens/src/tauri_app.rs      Platform-neutral Tauri shell
 crates/platform-macos/src/acquirer.rs   MacTextAcquirer + process_name_at
 crates/platform-macos/src/hotkey.rs     ProductCommand enum (8 variants)
-crates/platform-macos/src/overlay.rs    NSPanel overlay wrapper
-crates/platform-macos/src/menubar.rs    NSStatusItem wrapper
-crates/platform-macos/native/capture.m  ScreenCaptureKit SCStream
+crates/platform-macos/native/overlay.m  NSPanel + dispatch_async UI mutations
+crates/platform-macos/native/menubar.m  NSStatusItem + dispatch_async
 crates/platform-macos/native/hotkey.m   CGEventTap callback
-crates/lens-core/src/session.rs         HoverSession (Windows policy reference)
-crates/lens-core/src/policy.rs          AppPolicy, AppTier
+crates/platform-macos/native/capture.m  ScreenCaptureKit SCStream
 crates/lens-storage/src/lib.rs          Canonical Library API
 ```
 
 ## Latest Implementation Changes
 
-- PR #273 — Policy enforcement: `process_name_at()` + `policy.allows()` before acquisition
+- PR #274 — AppKit main-thread dispatch (dispatch_async for all UI mutations)
+- PR #275 — Async translation runtime (dedicated thread, channel-based, non-blocking)
+- PR #276 — Anchor preservation (real anchor through async pipeline, make_dummy_target removed)
 
 ## Automated Evidence
 
@@ -157,39 +149,33 @@ CI execution:                NOT VERIFIED
 
 ## Known Implementation Gaps
 
-1. **Async runtime** — `translator.quick()`/`translator.deep()` are synchronous, blocking the worker thread during Ollama calls. Quit/Pause/Settings unresponsive during long Deep calls.
-2. **Stale generation tests** — Quick/Deep/OCR stale response rejection not covered by automated tests.
-3. **`make_dummy_target()` in Deep path** — Deep Analysis renders at a dummy anchor instead of the original target anchor.
-4. **AppKit thread safety** — Native components (overlay, menubar) moved to worker thread. AppKit API calls from non-main thread not validated.
-5. **`lens_process_appkit_events()` redundancy** — May be unnecessary now that Tauri owns the event loop.
-6. **No `.icns` icon** — placeholder `icon.png` only. (ASSET BLOCKER)
+1. **SCStream timeout fault testing** — 5s semaphore timeout not fault-tested. Late callback after timeout could access freed state.
+2. **CGEventTap recovery** — No re-enable logic if macOS disables tap due to timeout.
+3. **No `.icns` icon** — placeholder `icon.png` only. (ASSET BLOCKER)
 
 ## Known Risks
 
-- **Worker thread AppKit calls**: NSPanel `orderFront:`/`orderOut:`, NSStatusItem `button.title` called from worker thread. AppKit documentation requires main thread. May work in practice but is undefined behavior.
-- **SCStream timeout**: 5s semaphore wait for stop completion. Late callback after timeout could access freed delegate. Not fault-tested.
-- **CGEventTap timeout disable**: macOS may disable the event tap if the callback takes too long. No re-enable logic implemented.
-- **Deep blocks worker**: During a 4-5s Ollama deep call, the entire product loop is frozen. No commands processed, no pointer tracking.
+- SCStream: if stop completion never arrives, 5s timeout returns but delegate/stream may still receive callbacks. ARC should prevent UAF but this is not verified.
+- CGEventTap: if macOS disables the tap (timeout), hotkeys silently stop working until app restart.
+- Translation thread: if Ollama hangs indefinitely, the translation thread blocks forever. No timeout on translator.quick()/deep() calls.
 
 ## Review Targets
 
-- Verify AppKit API calls from worker thread are safe or add main-thread dispatch.
-- Verify `lens_process_appkit_events()` is still needed with Tauri event loop.
-- Verify stale Deep/Quick/OCR results cannot render after generation changes.
-- Verify `process_name_at()` + `policy.allows()` correctly blocks all content acquisition for denied apps.
-- Verify SCStream late callback after timeout cannot cause UAF.
+- Verify SCStream late completion after timeout cannot access freed delegate/state.
+- Verify CGEventTap disable/re-enable lifecycle is handled or documented.
+- Verify translation thread handles Ollama timeout gracefully.
+- Verify all AppKit calls from worker thread go through dispatch_async.
+- Verify Settings changes propagate to product runtime (shared state divergence check).
 
 ## Real-world Validation Debt
 
-- Safari/VS Code/KakaoTalk AX acquisition success rate
-- Overlay visual quality (Retina, dark mode, multi-monitor)
-- OCR accuracy (small text, dark themes, code editors)
-- Permission onboarding UX
-- Sleep/wake, display hot-plug
+- Safari/VS Code/KakaoTalk AX acquisition
+- Overlay visual quality, OCR accuracy
+- Permission onboarding, sleep/wake, display hot-plug
 - Global hotkey with other apps in foreground
-- Deep Analysis result quality
-- Settings/Library Tauri webview interaction on macOS
-- AppKit thread safety in practice
+- Settings/Library Tauri webview interaction
+- AppKit thread safety in practice (dispatch_async correctness)
+- Translation thread behavior during Ollama hang/timeout
 
 ## External / Tooling / Credential Debt
 
@@ -200,17 +186,17 @@ CI execution:                NOT VERIFIED
 
 ## Next Session — Start Here
 
-1. **AppKit thread correctness**: Audit all native FFI calls from worker thread. If AppKit requires main thread, add `dispatch_async(dispatch_get_main_queue(), ...)` wrappers in the Objective-C bridge or create a UiCommand channel from worker → main.
-2. **Async runtime**: Move `translator.quick()`/`translator.deep()` to background tasks so the product loop remains responsive. Use bounded executor (not unbounded thread spawn).
-3. **Stale generation tests**: Write synthetic tests for Quick/Deep/OCR stale response rejection.
-4. **Remove `make_dummy_target()`**: Deep Analysis should render at the original target anchor.
-5. **Evaluate `lens_process_appkit_events()`**: If Tauri drains AppKit events, remove the redundant manual drain.
+1. SCStream lifetime hardening: add fault test for timeout + late callback. Verify ARC prevents UAF. Consider self-owned callback context.
+2. CGEventTap recovery: detect `kCGEventTapDisabledByTimeout` and re-enable. Add event storm stress test.
+3. Translation timeout: add bounded timeout to translator.quick()/deep() calls so translation thread can recover from hung Ollama.
+4. Settings propagation audit: verify macOS runtime picks up settings changes from Tauri Settings window.
+5. Run `scripts/check.sh --full`, PR, merge, then update handoff.
 
 ## Git State
 
 ```
 branch:  main
-HEAD:    d5384c5
+HEAD:    02bc1f4
 status:  clean
 open PR: none
 ```
