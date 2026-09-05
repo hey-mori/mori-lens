@@ -706,9 +706,7 @@ fn execute_save(card: &Card, sentence: &str, shared_library: &SharedLibrary) {
         model: None,
         note: None,
         tags: None,
-        review_state: None,
-        next_review_at: None,
-        review_count: None,
+        review_status: lens_storage::ReviewStatus::Later,
     };
     let lib = shared_library.lock().unwrap();
     match lib.library().insert(&item) {
