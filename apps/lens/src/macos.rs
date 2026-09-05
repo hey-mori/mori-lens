@@ -320,13 +320,67 @@ fn product_loop(
     ocr_mode: OcrMode,
     policy: AppPolicy,
 ) {
-    // Translator.
+    // Translation job types for async dispatch.
+    enum TransJob {
+        Quick { request: QuickRequest, sentence: String, generation: u64, key: CacheKey },
+        Deep { sentence: String, translation: Option<String>, generation: u64 },
+    }
+    enum TransResult {
+        Quick { sentence: String, result: Result<lens_core::translate::QuickTranslation, String>, generation: u64, key: CacheKey },
+        Deep { sentence: String, result: Result<lens_core::analyse::DeepAnalysis, String>, generation: u64 },
+    }
+
+    let (job_tx, job_rx): (std::sync::mpsc::Sender<TransJob>, std::sync::mpsc::Receiver<TransJob>) = mpsc::channel();
+    let (result_tx, result_rx): (std::sync::mpsc::Sender<TransResult>, std::sync::mpsc::Receiver<TransResult>) = mpsc::channel();
+
+    // Shared cache between product loop and translation thread.
+    let cache: Arc<Mutex<TranslationCache>> = Arc::new(Mutex::new(TranslationCache::new(CACHE_ENTRIES)));
+    let mut analysis_cache = AnalysisCache::new(ANALYSIS_ENTRIES);
+
+    // Translation thread: owns the translator, processes jobs.
     let mut translator = if let Some(ref m) = model {
         OllamaTranslator::new(&endpoint, m)
     } else {
         OllamaTranslator::choosing(&endpoint)
     };
     let _ = translator.resolve_model();
+
+    let trans_cache = cache.clone();
+    std::thread::spawn(move || {
+        while let Ok(job) = job_rx.recv() {
+            match job {
+                TransJob::Quick { request, sentence, generation, key } => {
+                    let result = translator.quick(&request);
+                    if let Ok(ref t) = result {
+                        if let Ok(mut c) = trans_cache.lock() {
+                            c.insert(key.clone(), t.clone());
+                        }
+                    }
+                    let _ = result_tx.send(TransResult::Quick {
+                        sentence,
+                        result: result.map_err(|e| e.user_message().to_owned()),
+                        generation,
+                        key,
+                    });
+                }
+                TransJob::Deep { sentence, translation, generation } => {
+                    let deep_req = lens_core::analyse::DeepRequest {
+                        sentence: sentence.clone(),
+                        word: None,
+                        target_language: String::new(),
+                        translation,
+                        profile: lens_core::analyse::Profile::default(),
+                    };
+                    let result = translator.deep(&deep_req);
+                    let _ = result_tx.send(TransResult::Deep {
+                        sentence,
+                        result: result.map_err(|e| e.user_message().to_owned()),
+                        generation,
+                    });
+                }
+            }
+        }
+    });
 
     // Hover machine.
     let dwell = Duration::from_millis(dwell_ms);
@@ -335,8 +389,6 @@ fn product_loop(
         ..HoverConfig::default()
     };
     let mut machine = HoverMachine::new(hover_config);
-    let mut cache = TranslationCache::new(CACHE_ENTRIES);
-    let mut analysis_cache = AnalysisCache::new(ANALYSIS_ENTRIES);
     let mut current_card: Option<(Card, String)> = None;
     let mut current_generation: u64 = 0;
     let mut paused = false;
@@ -350,6 +402,63 @@ fn product_loop(
     let start = Instant::now();
 
     loop {
+        // Receive translation results (non-blocking).
+        while let Ok(result) = result_rx.try_recv() {
+            match result {
+                TransResult::Quick { sentence, result, generation, key } => {
+                    // Stale check: discard if generation has changed.
+                    if generation != current_generation { continue; }
+                    match result {
+                        Ok(translation) => {
+                            let card = Card::translated(&sentence, &translation);
+                            show_card(&overlay, &card, &make_dummy_target(&sentence));
+                            current_card = Some((card, sentence));
+                        }
+                        Err(msg) => {
+                            let card = Card {
+                                original: sentence.clone(),
+                                body: CardBody::Problem(msg),
+                                footer: String::new(),
+                            };
+                            show_card(&overlay, &card, &make_dummy_target(&sentence));
+                            current_card = Some((card, sentence));
+                        }
+                    }
+                }
+                TransResult::Deep { sentence, result, generation } => {
+                    if generation != current_generation { continue; }
+                    match result {
+                        Ok(analysis) => {
+                            analysis_cache.insert(
+                                CacheKey::for_analysis(
+                                    &lens_core::analyse::DeepRequest {
+                                        sentence: sentence.clone(), word: None,
+                                        target_language: language.clone(),
+                                        translation: None,
+                                        profile: lens_core::analyse::Profile::default(),
+                                    },
+                                    "", DEEP_PROMPT_VERSION,
+                                ),
+                                analysis.clone(),
+                            );
+                            let card = Card::analysed(&sentence, &analysis);
+                            show_card(&overlay, &card, &make_dummy_target(&sentence));
+                            current_card = Some((card, sentence));
+                        }
+                        Err(msg) => {
+                            let card = Card {
+                                original: sentence.clone(),
+                                body: CardBody::Problem(format!("analysis failed: {}", msg)),
+                                footer: String::new(),
+                            };
+                            show_card(&overlay, &card, &make_dummy_target(&sentence));
+                            current_card = Some((card, sentence));
+                        }
+                    }
+                }
+            }
+        }
+
         // Drain commands from menu bar and global hotkeys.
         let mut pending_commands: Vec<ProductCommand> = Vec::new();
 
@@ -386,7 +495,14 @@ fn product_loop(
                     }
                 }
                 ProductCommand::Deep => {
-                    execute_deep(&mut translator, &current_card, &language, &overlay, &mut analysis_cache);
+                    if let Some((_, ref sentence)) = current_card {
+                        current_generation += 1;
+                        let _ = job_tx.send(TransJob::Deep {
+                            sentence: sentence.clone(),
+                            translation: None,
+                            generation: current_generation,
+                        });
+                    }
                 }
                 ProductCommand::Copy => {
                     if let Some((ref card, _)) = current_card {
@@ -412,22 +528,19 @@ fn product_loop(
                                 let sentence = target.segmented.sentence_text().to_owned();
                                 if !sentence.is_empty() {
                                     let request = QuickRequest::new(&sentence, &language);
-                                    match translator.quick(&request) {
-                                        Ok(translation) => {
-                                            let card = Card::translated(&sentence, &translation);
-                                            show_card(&overlay, &card, &target);
-                                            current_card = Some((card, sentence));
-                                        }
-                                        Err(e) => {
-                                            let card = Card {
-                                                original: sentence.clone(),
-                                                body: CardBody::Problem(e.user_message().to_owned()),
-                                                footer: String::new(),
-                                            };
-                                            show_card(&overlay, &card, &target);
-                                            current_card = Some((card, sentence));
-                                        }
-                                    }
+                                    let key = CacheKey::of(&request, "", 1);
+                                    current_generation += 1;
+                                    let _ = job_tx.send(TransJob::Quick {
+                                        request,
+                                        sentence: sentence.clone(),
+                                        generation: current_generation,
+                                        key,
+                                    });
+                                    current_card = Some((Card {
+                                        original: sentence.clone(),
+                                        body: CardBody::Waiting("reading...".to_owned()),
+                                        footer: String::new(),
+                                    }, sentence));
                                 }
                             }
                             Err(_) => {}
@@ -538,33 +651,38 @@ fn product_loop(
                     }
                     _ => {
                         let request = QuickRequest::new(&sentence, &language);
-                        let model_name = translator.model();
-                        let key = CacheKey::of(&request, model_name, 1);
+                        let key = {
+                            let c = cache.lock().unwrap();
+                            // Check shared cache first.
+                            // We need model name for the key — get it from the request.
+                            CacheKey::of(&request, "", 1)
+                        };
 
-                        if let Some(cached) = cache.get(&key) {
-                            let card = Card::translated(&sentence, &cached);
-                            show_card(&overlay, &card, &target);
-                            current_card = Some((card, sentence));
-                            continue;
-                        }
-
-                        match translator.quick(&request) {
-                            Ok(translation) => {
-                                cache.insert(key, translation.clone());
-                                let card = Card::translated(&sentence, &translation);
+                        // Check cache (lock briefly).
+                        {
+                            let mut c = cache.lock().unwrap();
+                            if let Some(cached) = c.get(&key) {
+                                let card = Card::translated(&sentence, &cached);
                                 show_card(&overlay, &card, &target);
                                 current_card = Some((card, sentence));
-                            }
-                            Err(e) => {
-                                let card = Card {
-                                    original: sentence.clone(),
-                                    body: CardBody::Problem(e.user_message().to_owned()),
-                                    footer: String::new(),
-                                };
-                                show_card(&overlay, &card, &target);
-                                current_card = Some((card, sentence));
+                                continue;
                             }
                         }
+
+                        // Dispatch async translation job.
+                        current_generation += 1;
+                        let _ = job_tx.send(TransJob::Quick {
+                            request,
+                            sentence: sentence.clone(),
+                            generation: current_generation,
+                            key,
+                        });
+                        // Store target for when result arrives.
+                        current_card = Some((Card {
+                            original: sentence.clone(),
+                            body: CardBody::Waiting("translating...".to_owned()),
+                            footer: String::new(),
+                        }, sentence));
                     }
                 }
             }
@@ -589,48 +707,6 @@ fn make_dummy_target(sentence: &str) -> lens_core::acquire::TextTarget {
         segmented: lens_core::text::segment(sentence, 0),
         word_bounds: vec![],
         context_bounds: vec![],
-    }
-}
-
-fn execute_deep(
-    translator: &mut OllamaTranslator,
-    current_card: &Option<(Card, String)>,
-    language: &str,
-    overlay: &Option<Overlay>,
-    analysis_cache: &mut AnalysisCache,
-) {
-    if let Some((ref card, ref sentence)) = current_card {
-        let deep_req = DeepRequest {
-            sentence: sentence.clone(),
-            word: None,
-            target_language: language.to_owned(),
-            translation: match &card.body {
-                CardBody::Translation(t) => Some(t.clone()),
-                _ => None,
-            },
-            profile: Profile::default(),
-        };
-        let analysis_key = CacheKey::for_analysis(&deep_req, translator.model(), DEEP_PROMPT_VERSION);
-        if let Some(cached) = analysis_cache.get(&analysis_key) {
-            let analysis_card = Card::analysed(sentence, &cached);
-            show_card(overlay, &analysis_card, &make_dummy_target(sentence));
-            return;
-        }
-        match translator.deep(&deep_req) {
-            Ok(analysis) => {
-                analysis_cache.insert(analysis_key, analysis.clone());
-                let analysis_card = Card::analysed(sentence, &analysis);
-                show_card(overlay, &analysis_card, &make_dummy_target(sentence));
-            }
-            Err(e) => {
-                let err_card = Card {
-                    original: sentence.clone(),
-                    body: CardBody::Problem(format!("analysis failed: {}", e.user_message())),
-                    footer: String::new(),
-                };
-                show_card(overlay, &err_card, &make_dummy_target(sentence));
-            }
-        }
     }
 }
 
