@@ -146,10 +146,10 @@ fn mouse_position() -> ScreenPoint {
 /// Convert physical screen pixels to logical points for the overlay,
 /// using the display topology at the anchor position.
 fn physical_to_logical(point: ScreenPoint) -> (f64, f64, f64) {
-    let scale = overlay::display_scale_at(
-        point.x as f64,
-        point.y as f64,
-    );
+    // Use physical pixel coordinates for display lookup — this correctly
+    // handles mixed-scale multi-monitor setups where logical point (x,y)
+    // might fall on a different display than physical pixel (x,y).
+    let scale = overlay::display_scale_at_physical(point.x as f64, point.y as f64);
     let scale = if scale > 0.0 { scale } else { 1.0 };
     let x = point.x as f64 / scale;
     let y = point.y as f64 / scale;
