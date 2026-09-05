@@ -1,7 +1,7 @@
 // Mori Lens · macOS menu bar integration.
 //
 // Provides an NSStatusItem with: Pause, Deep Analysis, Copy, Save,
-// Manual OCR, Quit.
+// Manual OCR, Open Settings, Open Library, Quit.
 
 #import "menubar.h"
 #import <AppKit/AppKit.h>
@@ -14,6 +14,8 @@ static atomic_bool g_deepRequested = false;
 static atomic_bool g_copyRequested = false;
 static atomic_bool g_saveRequested = false;
 static atomic_bool g_ocrRequested = false;
+static atomic_bool g_openSettingsRequested = false;
+static atomic_bool g_openLibraryRequested = false;
 static bool g_paused = false;
 
 @interface LensMenuDelegate : NSObject
@@ -41,6 +43,14 @@ static bool g_paused = false;
 
 - (void)requestOcr:(id)sender {
     atomic_store(&g_ocrRequested, true);
+}
+
+- (void)requestOpenSettings:(id)sender {
+    atomic_store(&g_openSettingsRequested, true);
+}
+
+- (void)requestOpenLibrary:(id)sender {
+    atomic_store(&g_openLibraryRequested, true);
 }
 
 - (void)quit:(id)sender {
@@ -97,6 +107,18 @@ bool lens_menubar_create(void) {
 
         [menu addItem:[NSMenuItem separatorItem]];
 
+        NSMenuItem *settingsItem = [[NSMenuItem alloc] initWithTitle:@"Open Settings" action:@selector(requestOpenSettings:) keyEquivalent:@","];
+        [settingsItem setTarget:g_delegate];
+        [settingsItem setKeyEquivalentModifierMask:NSEventModifierFlagCommand];
+        [menu addItem:settingsItem];
+
+        NSMenuItem *libraryItem = [[NSMenuItem alloc] initWithTitle:@"Open Library" action:@selector(requestOpenLibrary:) keyEquivalent:@"l"];
+        [libraryItem setTarget:g_delegate];
+        [libraryItem setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagOption];
+        [menu addItem:libraryItem];
+
+        [menu addItem:[NSMenuItem separatorItem]];
+
         NSMenuItem *quitItem = [[NSMenuItem alloc] initWithTitle:@"Quit Mori Lens" action:@selector(quit:) keyEquivalent:@"q"];
         [quitItem setTarget:g_delegate];
         [menu addItem:quitItem];
@@ -146,4 +168,12 @@ bool lens_menubar_poll_save(void) {
 
 bool lens_menubar_poll_ocr(void) {
     return atomic_exchange(&g_ocrRequested, false);
+}
+
+bool lens_menubar_poll_open_settings(void) {
+    return atomic_exchange(&g_openSettingsRequested, false);
+}
+
+bool lens_menubar_poll_open_library(void) {
+    return atomic_exchange(&g_openLibraryRequested, false);
 }
