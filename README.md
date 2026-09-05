@@ -46,8 +46,8 @@ What ships:
 - `Ctrl+Alt+D` for grammar, structure, and vocabulary explanation.
 - `Ctrl+Alt+C` and `Ctrl+Alt+S` to copy or save the card.
 
-What does not exist yet: macOS and saved vocabulary review. Sequenced
-in [docs/roadmap.md](docs/roadmap.md).
+What does not exist yet: real-world validation on macOS with outside
+readers. Sequenced in [docs/roadmap.md](docs/roadmap.md).
 
 The authoritative list, capability by capability, is in
 [`docs/mori-lens-project-goal.md`](docs/mori-lens-project-goal.md).
@@ -86,8 +86,7 @@ dependency in either direction.
 - Core: Rust, platform-neutral, no OS types in the domain crates
 - Windows: `windows-rs`, UI Automation, Win32, Direct2D and DirectWrite
   for the card
-- macOS (later): a small Swift bridge over Accessibility, AppKit,
-  ScreenCaptureKit, Vision
+- macOS: Accessibility, AppKit, ScreenCaptureKit, Vision
 - Local inference: Ollama over `127.0.0.1`, never bundled, spoken to
   over hand-written HTTP with no client dependency
 - Storage: `settings.toml` (versioned, round-trip TOML via `lens-settings`);
