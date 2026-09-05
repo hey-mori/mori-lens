@@ -18,6 +18,8 @@ bool lens_menubar_poll_deep(void);
 bool lens_menubar_poll_copy(void);
 bool lens_menubar_poll_save(void);
 bool lens_menubar_poll_ocr(void);
+bool lens_menubar_poll_open_settings(void);
+bool lens_menubar_poll_open_library(void);
 
 #ifdef __cplusplus
 }
