@@ -251,9 +251,7 @@ mod tests {
             model: None,
             note: Some("a note".to_string()),
             tags: Some(vec!["cargo".to_string(), "build".to_string()]),
-            review_state: None,
-            next_review_at: None,
-            review_count: None,
+            review_status: lens_storage::ReviewStatus::Later,
         }
     }
 
