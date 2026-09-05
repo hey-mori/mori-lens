@@ -6,15 +6,17 @@
 // - Sits above normal windows (statusBar level)
 // - Has per-pixel alpha transparency
 //
-// This is compiled by the cc crate in build.rs and linked into the
-// platform-macos crate.
+// Thread safety: All AppKit UI mutations are dispatched to the main queue.
+// The product loop runs on a worker thread; this bridge ensures NSPanel
+// operations always execute on the main thread where AppKit requires them.
 
 #import "overlay.h"
 #import <AppKit/AppKit.h>
 #import <CoreText/CoreText.h>
+#import <stdatomic.h>
 
 static NSPanel *g_panel = nil;
-static bool g_visible = false;
+static atomic_bool g_visible = false;
 
 // Rounded-rect path for the card background.
 static CGPathRef make_rounded_rect(CGRect rect, CGFloat radius) {
@@ -24,6 +26,7 @@ static CGPathRef make_rounded_rect(CGRect rect, CGFloat radius) {
 }
 
 bool lens_overlay_create(void) {
+    // Must be called on main thread (called during setup before worker starts).
     if (g_panel) return true;
 
     @autoreleasepool {
@@ -52,7 +55,6 @@ bool lens_overlay_create(void) {
         [g_panel setBecomesKeyOnlyIfNeeded:YES];
         [g_panel setFloatingPanel:YES];
     }
-
     return true;
 }
 
@@ -64,163 +66,166 @@ bool lens_overlay_show(const char *source_text,
         if (!lens_overlay_create()) return false;
     }
 
-    @autoreleasepool {
-        // Position: macOS screen coordinates, bottom-left origin.
-        // The caller passes top-left origin points; we must flip Y.
-        NSScreen *screen = [NSScreen mainScreen];
-        CGFloat screenH = [screen frame].size.height;
-        NSRect frame = NSMakeRect(x, screenH - y - height, width, height);
-        [g_panel setFrame:frame display:NO];
+    // Copy strings for the async block (block captures them).
+    NSString *src = source_text ? [NSString stringWithUTF8String:source_text] : nil;
+    NSString *trans = translation_text ? [NSString stringWithUTF8String:translation_text] : nil;
 
-        // Build the content view with custom drawing.
-        NSView *contentView = [g_panel contentView];
-        CGFloat w = frame.size.width;
-        CGFloat h = frame.size.height;
+    // Retain for the async block.
+    [src retain];
+    [trans retain];
 
-        // Use a layer-backed view for drawing.
-        CALayer *layer = [CALayer layer];
-        layer.frame = CGRectMake(0, 0, w, h);
-        layer.cornerRadius = 8.0;
-        layer.backgroundColor = [[NSColor colorWithCalibratedWhite:0.12 alpha:0.94] CGColor];
-        layer.masksToBounds = YES;
-        [contentView setWantsLayer:YES];
-        [contentView setLayer:layer];
+    // Dispatch all AppKit UI mutations to the main queue.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @autoreleasepool {
+            NSScreen *screen = [NSScreen mainScreen];
+            if (!screen || !g_panel) {
+                [src release];
+                [trans release];
+                return;
+            }
 
-        // Draw text using a CGContext.
-        // We create an image-backed context, draw into it, then set it as
-        // the layer contents.
-        CGFloat scale = [screen backingScaleFactor];
-        int pxW = (int)(w * scale);
-        int pxH = (int)(h * scale);
+            CGFloat screenH = [screen frame].size.height;
+            NSRect frame = NSMakeRect(x, screenH - y - height, width, height);
+            [g_panel setFrame:frame display:NO];
 
-        if (pxW <= 0 || pxH <= 0) return false;
+            NSView *contentView = [g_panel contentView];
+            CGFloat w = frame.size.width;
+            CGFloat h = frame.size.height;
 
-        CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-        CGContextRef ctx = CGBitmapContextCreate(
-            NULL, pxW, pxH, 8, pxW * 4,
-            cs, (CGBitmapInfo)kCGImageAlphaPremultipliedFirst);
-        CGColorSpaceRelease(cs);
+            CALayer *layer = [CALayer layer];
+            layer.frame = CGRectMake(0, 0, w, h);
+            layer.cornerRadius = 8.0;
+            layer.backgroundColor = [[NSColor colorWithCalibratedWhite:0.12 alpha:0.94] CGColor];
+            layer.masksToBounds = YES;
+            [contentView setWantsLayer:YES];
+            [contentView setLayer:layer];
 
-        if (!ctx) return false;
+            CGFloat scale = [screen backingScaleFactor];
+            int pxW = (int)(w * scale);
+            int pxH = (int)(h * scale);
 
-        CGContextScaleCTM(ctx, scale, scale);
+            if (pxW <= 0 || pxH <= 0) {
+                [src release];
+                [trans release];
+                return;
+            }
 
-        // Background with rounded corners.
-        CGRect bgRect = CGRectMake(0, 0, w, h);
-        CGPathRef clipPath = make_rounded_rect(bgRect, 8.0);
-        CGContextAddPath(ctx, clipPath);
-        CGContextClip(ctx);
-        CGPathRelease(clipPath);
+            CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+            CGContextRef ctx = CGBitmapContextCreate(
+                NULL, pxW, pxH, 8, pxW * 4,
+                cs, (CGBitmapInfo)kCGImageAlphaPremultipliedFirst);
+            CGColorSpaceRelease(cs);
 
-        // Fill background.
-        CGContextSetFillColorWithColor(ctx,
-            [[NSColor colorWithCalibratedWhite:0.12 alpha:0.94] CGColor]);
-        CGContextFillRect(ctx, bgRect);
+            if (!ctx) {
+                [src release];
+                [trans release];
+                return;
+            }
 
-        // Draw text using CoreText.
-        CGFloat pad = 12.0;
-        CGFloat textY = h - pad;
+            CGContextScaleCTM(ctx, scale, scale);
 
-        // Source text (lighter, smaller).
-        if (source_text) {
-            NSString *src = [NSString stringWithUTF8String:source_text];
-            CTFontRef srcFont = CTFontCreateWithName(
-                CFSTR("LucidaGrande"), 11.0, NULL);
-            NSDictionary *srcAttrs = @{
-                (id)kCTFontAttributeName: (__bridge id)srcFont,
-                (id)kCTForegroundColorAttributeName:
-                    (id)[[NSColor colorWithCalibratedWhite:0.7 alpha:1.0] CGColor],
-            };
-            NSAttributedString *srcStr =
-                [[NSAttributedString alloc] initWithString:src
-                                               attributes:srcAttrs];
-            CTLineRef srcLine = CTLineCreateWithAttributedString(
-                (__bridge CFAttributedStringRef)srcStr);
+            CGRect bgRect = CGRectMake(0, 0, w, h);
+            CGPathRef clipPath = make_rounded_rect(bgRect, 8.0);
+            CGContextAddPath(ctx, clipPath);
+            CGContextClip(ctx);
+            CGPathRelease(clipPath);
 
-            CGContextSetTextPosition(ctx, pad, textY - 14);
-            CTLineDraw(srcLine, ctx);
+            CGContextSetFillColorWithColor(ctx,
+                [[NSColor colorWithCalibratedWhite:0.12 alpha:0.94] CGColor]);
+            CGContextFillRect(ctx, bgRect);
 
-            CFRelease(srcLine);
-            CFRelease(srcFont);
-            textY -= 28;
+            CGFloat pad = 12.0;
+            CGFloat textY = h - pad;
+
+            if (src) {
+                CTFontRef srcFont = CTFontCreateWithName(CFSTR("LucidaGrande"), 11.0, NULL);
+                NSDictionary *srcAttrs = @{
+                    (id)kCTFontAttributeName: (__bridge id)srcFont,
+                    (id)kCTForegroundColorAttributeName:
+                        (id)[[NSColor colorWithCalibratedWhite:0.7 alpha:1.0] CGColor],
+                };
+                NSAttributedString *srcStr =
+                    [[NSAttributedString alloc] initWithString:src attributes:srcAttrs];
+                CTLineRef srcLine = CTLineCreateWithAttributedString(
+                    (__bridge CFAttributedStringRef)srcStr);
+                CGContextSetTextPosition(ctx, pad, textY - 14);
+                CTLineDraw(srcLine, ctx);
+                CFRelease(srcLine);
+                CFRelease(srcFont);
+                textY -= 28;
+            }
+
+            if (trans) {
+                CTFontRef transFont = CTFontCreateWithName(CFSTR("LucidaGrande"), 13.0, NULL);
+                NSDictionary *transAttrs = @{
+                    (id)kCTFontAttributeName: (__bridge id)transFont,
+                    (id)kCTForegroundColorAttributeName: (id)[[NSColor whiteColor] CGColor],
+                };
+                NSAttributedString *transStr =
+                    [[NSAttributedString alloc] initWithString:trans attributes:transAttrs];
+                CTFramesetterRef setter =
+                    CTFramesetterCreateWithAttributedString(
+                        (__bridge CFAttributedStringRef)transStr);
+                CGRect textRect = CGRectMake(pad, pad, w - 2 * pad, textY - pad);
+                CGPathRef textPath = CGPathCreateWithRect(textRect, NULL);
+                CTFrameRef ctFrame =
+                    CTFramesetterCreateFrame(setter, CFRangeMake(0, 0), textPath, NULL);
+                CTFrameDraw(ctFrame, ctx);
+                CFRelease(ctFrame);
+                CFRelease(textPath);
+                CFRelease(setter);
+                CFRelease(transFont);
+            }
+
+            CGImageRef img = CGBitmapContextCreateImage(ctx);
+            layer.contents = (__bridge id)img;
+            layer.contentsScale = scale;
+            CGImageRelease(img);
+            CGContextRelease(ctx);
+
+            [g_panel orderFront:nil];
+            atomic_store(&g_visible, true);
         }
+        [src release];
+        [trans release];
+    });
 
-        // Translation text (brighter, larger).
-        if (translation_text) {
-            NSString *trans = [NSString stringWithUTF8String:translation_text];
-            CTFontRef transFont = CTFontCreateWithName(
-                CFSTR("LucidaGrande"), 13.0, NULL);
-            NSDictionary *transAttrs = @{
-                (id)kCTFontAttributeName: (__bridge id)transFont,
-                (id)kCTForegroundColorAttributeName:
-                    (id)[[NSColor whiteColor] CGColor],
-            };
-            NSAttributedString *transStr =
-                [[NSAttributedString alloc] initWithString:trans
-                                               attributes:transAttrs];
-
-            // Word-wrap: use a CTFramesetter for the translation.
-            CTFramesetterRef setter =
-                CTFramesetterCreateWithAttributedString(
-                    (__bridge CFAttributedStringRef)transStr);
-            CGRect textRect = CGRectMake(pad, pad, w - 2 * pad, textY - pad);
-            CGPathRef textPath = CGPathCreateWithRect(textRect, NULL);
-            CTFrameRef frame =
-                CTFramesetterCreateFrame(setter, CFRangeMake(0, 0),
-                                         textPath, NULL);
-
-            CTFrameDraw(frame, ctx);
-
-            CFRelease(frame);
-            CFRelease(textPath);
-            CFRelease(setter);
-            CFRelease(transFont);
-        }
-
-        // Create image from context and set as layer contents.
-        CGImageRef img = CGBitmapContextCreateImage(ctx);
-        layer.contents = (__bridge id)img;
-        layer.contentsScale = scale;
-
-        CGImageRelease(img);
-        CGContextRelease(ctx);
-
-        [g_panel orderFront:nil];
-        g_visible = true;
-    }
-
+    // Optimistically set visible — the async block will confirm.
+    atomic_store(&g_visible, true);
     return true;
 }
 
 void lens_overlay_hide(void) {
-    if (g_panel) {
+    atomic_store(&g_visible, false);
+    dispatch_async(dispatch_get_main_queue(), ^{
         @autoreleasepool {
-            [g_panel orderOut:nil];
+            if (g_panel) {
+                [g_panel orderOut:nil];
+            }
         }
-        g_visible = false;
-    }
+    });
 }
 
 void lens_overlay_destroy(void) {
-    if (g_panel) {
+    atomic_store(&g_visible, false);
+    dispatch_async(dispatch_get_main_queue(), ^{
         @autoreleasepool {
-            [g_panel close];
-            g_panel = nil;
+            if (g_panel) {
+                [g_panel close];
+                g_panel = nil;
+            }
         }
-        g_visible = false;
-    }
+    });
 }
 
 bool lens_overlay_is_visible(void) {
-    return g_visible;
+    return atomic_load(&g_visible);
 }
 
 bool lens_mouse_position(double *x, double *y) {
     if (!x || !y) return false;
     @autoreleasepool {
         NSPoint loc = [NSEvent mouseLocation];
-        // NSEvent mouseLocation is in screen coordinates (bottom-left origin,
-        // points). Convert to top-left origin.
         NSScreen *screen = [NSScreen mainScreen];
         if (!screen) return false;
         CGFloat screenH = [screen frame].size.height;
@@ -232,20 +237,16 @@ bool lens_mouse_position(double *x, double *y) {
 
 double lens_display_scale_at(double x, double y) {
     @autoreleasepool {
-        // Convert top-left origin point to AppKit bottom-left origin.
         NSScreen *mainScreen = [NSScreen mainScreen];
         if (!mainScreen) return 1.0;
         CGFloat mainH = [mainScreen frame].size.height;
         NSPoint appkitPoint = NSMakePoint(x, mainH - y);
-
-        // Find the screen containing this point.
         for (NSScreen *screen in [NSScreen screens]) {
             NSRect frame = [screen frame];
             if (NSPointInRect(appkitPoint, frame)) {
                 return [screen backingScaleFactor];
             }
         }
-        // Fallback: return main screen scale.
         return [mainScreen backingScaleFactor];
     }
 }
@@ -254,14 +255,9 @@ double lens_display_scale_at_physical(double px, double py) {
     @autoreleasepool {
         NSScreen *mainScreen = [NSScreen mainScreen];
         if (!mainScreen) return 1.0;
-
-        // Iterate through all screens. For each screen, convert its logical
-        // bounds to physical pixels using that screen's own scale factor,
-        // then check if the physical point falls within.
         for (NSScreen *screen in [NSScreen screens]) {
             CGFloat scale = [screen backingScaleFactor];
             NSRect frame = [screen frame];
-            // Convert frame to physical pixels.
             double physLeft = frame.origin.x * scale;
             double physTop = frame.origin.y * scale;
             double physRight = (frame.origin.x + frame.size.width) * scale;
@@ -270,21 +266,13 @@ double lens_display_scale_at_physical(double px, double py) {
                 return scale;
             }
         }
-        // Fallback: return main screen scale.
         return [mainScreen backingScaleFactor];
     }
 }
 
 void lens_process_appkit_events(void) {
     @autoreleasepool {
-        // Drain the NSRunLoop for AppKit UI events (menu actions, panel
-        // rendering, window server communication).
         [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
                                  beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.001]];
-
-        // Drain the main dispatch queue for notification blocks (lifecycle
-        // observers, async completions). dispatch_main_q doesn't have a
-        // direct "drain" API, but running the NSRunLoop processes blocks
-        // dispatched to the main queue via dispatch_async.
     }
 }
