@@ -234,7 +234,7 @@ double lens_display_scale_at(double x, double y) {
     @autoreleasepool {
         // Convert top-left origin point to AppKit bottom-left origin.
         NSScreen *mainScreen = [NSScreen mainScreen];
-        if (!mainScreen) return 2.0;
+        if (!mainScreen) return 1.0;
         CGFloat mainH = [mainScreen frame].size.height;
         NSPoint appkitPoint = NSMakePoint(x, mainH - y);
 
@@ -243,6 +243,31 @@ double lens_display_scale_at(double x, double y) {
             NSRect frame = [screen frame];
             if (NSPointInRect(appkitPoint, frame)) {
                 return [screen backingScaleFactor];
+            }
+        }
+        // Fallback: return main screen scale.
+        return [mainScreen backingScaleFactor];
+    }
+}
+
+double lens_display_scale_at_physical(double px, double py) {
+    @autoreleasepool {
+        NSScreen *mainScreen = [NSScreen mainScreen];
+        if (!mainScreen) return 1.0;
+
+        // Iterate through all screens. For each screen, convert its logical
+        // bounds to physical pixels using that screen's own scale factor,
+        // then check if the physical point falls within.
+        for (NSScreen *screen in [NSScreen screens]) {
+            CGFloat scale = [screen backingScaleFactor];
+            NSRect frame = [screen frame];
+            // Convert frame to physical pixels.
+            double physLeft = frame.origin.x * scale;
+            double physTop = frame.origin.y * scale;
+            double physRight = (frame.origin.x + frame.size.width) * scale;
+            double physBottom = (frame.origin.y + frame.size.height) * scale;
+            if (px >= physLeft && px < physRight && py >= physTop && py < physBottom) {
+                return scale;
             }
         }
         // Fallback: return main screen scale.
