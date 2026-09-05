@@ -233,10 +233,11 @@ about a service split names its own: *until there is a UI to protect*.
   2026-08-13; updated 2026-09-02.* `library.db` (SQLite) is the
   structured source of truth
   ([ADR-0013](decisions/ADR-0013-the-local-library.md)). CRUD, search,
-  tags, notes, review list with spaced repetition, Markdown and JSON
-  export, `secure_wipe`, and `saved.md` import are built and wired into
-  the running product. `saved.md` survives as the human-readable export.
-  The translation cache is still memory and still dies with the process.
+  tags, notes, manual review (Later/Known/Archive, Issue #141),
+  Markdown and JSON export, `secure_wipe`, and `saved.md` import are
+  built and wired into the running product. `saved.md` survives as the
+  human-readable export. The translation cache is still memory and
+  still dies with the process.
 - **No settings UI.** *Written when the probe was the only binary;
   corrected 2026-08-13; updated 2026-08-28.* The product reads
   `%APPDATA%\Mori Lens\settings.toml` on launch. A versioned TOML
