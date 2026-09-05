@@ -20,6 +20,7 @@ pub mod capture;
 pub mod clipboard;
 pub mod coords;
 pub mod ffi;
+pub mod hotkey;
 pub mod lifecycle;
 pub mod menubar;
 pub mod ocr_acquire;
@@ -30,6 +31,7 @@ pub mod utf;
 pub mod vision_ocr;
 
 pub use acquirer::MacTextAcquirer;
+pub use hotkey::{install as hotkey_install, poll as hotkey_poll, ProductCommand};
 pub use lifecycle::Lifecycle;
 pub use menubar::MenuBar;
 pub use ocr_acquire::OcrTextAcquirer;

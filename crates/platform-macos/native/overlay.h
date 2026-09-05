@@ -42,6 +42,14 @@ double lens_display_scale_at(double x, double y);
 /// select the wrong display.
 double lens_display_scale_at_physical(double px, double py);
 
+/// Process pending AppKit events on the current thread.
+///
+/// Must be called regularly from the main thread (e.g. every 25ms) when a
+/// polling loop owns the main thread. Drains both the NSRunLoop (AppKit UI
+/// events: menu actions, panel rendering) and the main dispatch queue
+/// (notification blocks from NSWorkspace lifecycle observers).
+void lens_process_appkit_events(void);
+
 #ifdef __cplusplus
 }
 #endif
