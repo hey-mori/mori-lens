@@ -22,6 +22,7 @@ use lens_core::card::{Card, CardBody};
 use lens_core::geometry::ScreenPoint;
 use lens_core::hover::{HoverConfig, HoverEvent, HoverMachine, PointerSample};
 use lens_core::language::decide;
+use lens_core::policy::AppPolicy;
 use lens_core::session::OcrMode;
 use lens_core::translate::{QuickRequest, Translator};
 use lens_platform_macos::{
@@ -237,8 +238,9 @@ pub fn main() -> std::process::ExitCode {
     };
 
     // Read current settings for the product loop.
-    let (language, endpoint, model, dwell_ms, ocr_mode) = {
+    let (language, endpoint, model, dwell_ms, ocr_mode, policy) = {
         let s = shared_settings.lock().unwrap().current().clone();
+        let p = s.policy();
         let lang = flags.language.unwrap_or(s.language);
         let ep = flags.endpoint.unwrap_or(s.endpoint);
         let m = flags.model.or(s.model);
@@ -249,8 +251,10 @@ pub fn main() -> std::process::ExitCode {
             .and_then(OcrMode::named)
             .or_else(|| OcrMode::named(&s.ocr))
             .unwrap_or(OcrMode::Manual);
-        (lang, ep, m, d, o)
+        (lang, ep, m, d, o, p)
     };
+    let mut policy = policy;
+    policy.deny_self("lens");
 
     println!("  dwell     {}ms", dwell_ms);
     println!();
@@ -282,6 +286,7 @@ pub fn main() -> std::process::ExitCode {
             model,
             dwell_ms,
             ocr_mode,
+            policy,
         );
         // Tell Tauri to exit when the product loop is done.
         // (We can't call this from inside the loop because we need to
@@ -313,6 +318,7 @@ fn product_loop(
     model: Option<String>,
     dwell_ms: u64,
     ocr_mode: OcrMode,
+    policy: AppPolicy,
 ) {
     // Translator.
     let mut translator = if let Some(ref m) = model {
@@ -472,6 +478,15 @@ fn product_loop(
 
         match event {
             Some(HoverEvent::Settled { generation, point }) => {
+                // Policy check: get process name BEFORE any content acquisition.
+                // This is a lightweight metadata lookup — no text is read.
+                let process_name = ax_acquirer.process_name_at(point);
+                if !policy.allows(process_name.as_deref(), false) {
+                    // Denied by policy: skip both AX and OCR.
+                    if let Some(ref o) = overlay { o.hide(); }
+                    continue;
+                }
+
                 // AX acquisition first.
                 let acquire_result = if ax_trusted {
                     let ctx = AcquireContext::new(generation);
