@@ -33,8 +33,14 @@ bool lens_overlay_is_visible(void);
 bool lens_mouse_position(double *x, double *y);
 
 /// Get the backing scale factor for the display containing the given point.
-/// Returns 2.0 on Retina, 1.0 on standard, or the actual value if available.
+/// The point is in logical screen points (top-left origin).
 double lens_display_scale_at(double x, double y);
+
+/// Get the backing scale factor for the display containing the given point.
+/// The point is in PHYSICAL screen pixels (top-left origin). This correctly
+/// handles mixed-scale multi-monitor setups where using logical points would
+/// select the wrong display.
+double lens_display_scale_at_physical(double px, double py);
 
 #ifdef __cplusplus
 }
