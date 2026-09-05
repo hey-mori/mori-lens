@@ -101,9 +101,7 @@ pub struct LibraryItemView {
     pub target_language: Option<String>,
     pub model: Option<String>,
     pub note: Option<String>,
-    pub review_state: Option<String>,
-    pub next_review_at: Option<i64>,
-    pub review_count: Option<i64>,
+    pub review_status: String,
 }
 
 /// A page of library items for the webview.
@@ -128,9 +126,7 @@ impl From<&lens_storage::Item> for LibraryItemView {
             target_language: item.target_language.clone(),
             model: item.model.clone(),
             note: item.note.clone(),
-            review_state: item.review_state.clone(),
-            next_review_at: item.next_review_at,
-            review_count: item.review_count,
+            review_status: item.review_status.as_str().to_owned(),
         }
     }
 }
@@ -266,15 +262,20 @@ fn library_filter(
     app: Option<String>,
     source_language: Option<String>,
     target_language: Option<String>,
+    review_status: Option<String>,
     offset: i64,
 ) -> Result<LibraryPageView, String> {
     use lens_storage::Filter;
     let lib = state.lock().unwrap();
+    let status = review_status
+        .as_deref()
+        .and_then(|s| s.parse::<lens_storage::ReviewStatus>().ok());
     let filter = Filter {
         kind,
         app,
         source_language,
         target_language,
+        review_status: status,
     };
     let page = lib
         .library()
@@ -466,15 +467,14 @@ fn library_review_list(
     offset: Option<i64>,
 ) -> Result<LibraryPageView, String> {
     let lib = state.lock().unwrap();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
     let page = lib
         .library()
-        .list_due(now, offset.unwrap_or(0))
+        .list_by_status(lens_storage::ReviewStatus::Later, offset.unwrap_or(0))
         .map_err(|e| format!("{e}"))?;
-    let total = lib.library().count_due(now).unwrap_or(0);
+    let total = lib
+        .library()
+        .count_by_status(lens_storage::ReviewStatus::Later)
+        .unwrap_or(0);
     Ok(LibraryPageView {
         items: page.items.iter().map(LibraryItemView::from).collect(),
         has_more: page.has_more,
@@ -485,26 +485,22 @@ fn library_review_list(
 #[tauri::command]
 fn library_review_count(state: tauri::State<'_, SharedLibrary>) -> Result<i64, String> {
     let lib = state.lock().unwrap();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    lib.library().count_due(now).map_err(|e| format!("{e}"))
+    lib.library()
+        .count_by_status(lens_storage::ReviewStatus::Later)
+        .map_err(|e| format!("{e}"))
 }
 
 #[tauri::command]
-fn library_record_review(
+fn library_set_review_status(
     state: tauri::State<'_, SharedLibrary>,
     id: i64,
-    success: bool,
+    status: String,
 ) -> Result<bool, String> {
+    let review_status = status.parse::<lens_storage::ReviewStatus>()
+        .map_err(|_| format!("invalid review status: {status}"))?;
     let lib = state.lock().unwrap();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
     lib.library()
-        .record_review(id, success, now)
+        .set_review_status(id, review_status)
         .map_err(|e| format!("{e}"))
 }
 
@@ -705,7 +701,7 @@ pub fn build(
             recent_list,
             library_review_list,
             library_review_count,
-            library_record_review,
+            library_set_review_status,
             history_list,
             history_count,
             history_delete,
