@@ -162,9 +162,7 @@ fn write_to_library(md_path: &Path, entry: &Entry, at: SystemTime) -> Option<i64
         model: entry.model.clone(),
         note: None,
         tags: None,
-        review_state: None,
-        next_review_at: None,
-        review_count: None,
+        review_status: lens_storage::ReviewStatus::Later,
     };
     lib.insert(&item).ok()
 }
