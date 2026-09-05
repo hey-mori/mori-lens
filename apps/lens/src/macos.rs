@@ -19,7 +19,7 @@ use lens_core::acquire::{AcquireContext, AcquireError, TextAcquirer};
 use lens_core::analyse::{Analyser, DeepRequest, Profile};
 use lens_core::cache::{AnalysisCache, CacheKey, TranslationCache};
 use lens_core::card::{Card, CardBody};
-use lens_core::geometry::ScreenPoint;
+use lens_core::geometry::{ScreenPoint, ScreenRect};
 use lens_core::hover::{HoverConfig, HoverEvent, HoverMachine, PointerSample};
 use lens_core::language::decide;
 use lens_core::policy::AppPolicy;
@@ -322,12 +322,12 @@ fn product_loop(
 ) {
     // Translation job types for async dispatch.
     enum TransJob {
-        Quick { request: QuickRequest, sentence: String, generation: u64, key: CacheKey },
-        Deep { sentence: String, translation: Option<String>, generation: u64 },
+        Quick { request: QuickRequest, sentence: String, generation: u64, key: CacheKey, anchor: ScreenRect },
+        Deep { sentence: String, translation: Option<String>, generation: u64, anchor: ScreenRect },
     }
     enum TransResult {
-        Quick { sentence: String, result: Result<lens_core::translate::QuickTranslation, String>, generation: u64, key: CacheKey },
-        Deep { sentence: String, result: Result<lens_core::analyse::DeepAnalysis, String>, generation: u64 },
+        Quick { sentence: String, result: Result<lens_core::translate::QuickTranslation, String>, generation: u64, key: CacheKey, anchor: ScreenRect },
+        Deep { sentence: String, result: Result<lens_core::analyse::DeepAnalysis, String>, generation: u64, anchor: ScreenRect },
     }
 
     let (job_tx, job_rx): (std::sync::mpsc::Sender<TransJob>, std::sync::mpsc::Receiver<TransJob>) = mpsc::channel();
@@ -349,7 +349,7 @@ fn product_loop(
     std::thread::spawn(move || {
         while let Ok(job) = job_rx.recv() {
             match job {
-                TransJob::Quick { request, sentence, generation, key } => {
+                TransJob::Quick { request, sentence, generation, key, anchor } => {
                     let result = translator.quick(&request);
                     if let Ok(ref t) = result {
                         if let Ok(mut c) = trans_cache.lock() {
@@ -357,25 +357,19 @@ fn product_loop(
                         }
                     }
                     let _ = result_tx.send(TransResult::Quick {
-                        sentence,
-                        result: result.map_err(|e| e.user_message().to_owned()),
-                        generation,
-                        key,
+                        sentence, result: result.map_err(|e| e.user_message().to_owned()),
+                        generation, key, anchor,
                     });
                 }
-                TransJob::Deep { sentence, translation, generation } => {
+                TransJob::Deep { sentence, translation, generation, anchor } => {
                     let deep_req = lens_core::analyse::DeepRequest {
-                        sentence: sentence.clone(),
-                        word: None,
-                        target_language: String::new(),
-                        translation,
-                        profile: lens_core::analyse::Profile::default(),
+                        sentence: sentence.clone(), word: None, target_language: String::new(),
+                        translation, profile: lens_core::analyse::Profile::default(),
                     };
                     let result = translator.deep(&deep_req);
                     let _ = result_tx.send(TransResult::Deep {
-                        sentence,
-                        result: result.map_err(|e| e.user_message().to_owned()),
-                        generation,
+                        sentence, result: result.map_err(|e| e.user_message().to_owned()),
+                        generation, anchor,
                     });
                 }
             }
@@ -390,6 +384,7 @@ fn product_loop(
     };
     let mut machine = HoverMachine::new(hover_config);
     let mut current_card: Option<(Card, String)> = None;
+    let mut current_anchor = ScreenRect::new(0, 0, 0, 0);
     let mut current_generation: u64 = 0;
     let mut paused = false;
     let mut quit_requested = false;
@@ -405,53 +400,32 @@ fn product_loop(
         // Receive translation results (non-blocking).
         while let Ok(result) = result_rx.try_recv() {
             match result {
-                TransResult::Quick { sentence, result, generation, key } => {
-                    // Stale check: discard if generation has changed.
+                TransResult::Quick { sentence, result, generation, key: _, anchor } => {
                     if generation != current_generation { continue; }
                     match result {
                         Ok(translation) => {
                             let card = Card::translated(&sentence, &translation);
-                            show_card(&overlay, &card, &make_dummy_target(&sentence));
+                            show_card_at(&overlay, &card, &anchor);
                             current_card = Some((card, sentence));
                         }
                         Err(msg) => {
-                            let card = Card {
-                                original: sentence.clone(),
-                                body: CardBody::Problem(msg),
-                                footer: String::new(),
-                            };
-                            show_card(&overlay, &card, &make_dummy_target(&sentence));
+                            let card = Card { original: sentence.clone(), body: CardBody::Problem(msg), footer: String::new() };
+                            show_card_at(&overlay, &card, &anchor);
                             current_card = Some((card, sentence));
                         }
                     }
                 }
-                TransResult::Deep { sentence, result, generation } => {
+                TransResult::Deep { sentence, result, generation, anchor } => {
                     if generation != current_generation { continue; }
                     match result {
                         Ok(analysis) => {
-                            analysis_cache.insert(
-                                CacheKey::for_analysis(
-                                    &lens_core::analyse::DeepRequest {
-                                        sentence: sentence.clone(), word: None,
-                                        target_language: language.clone(),
-                                        translation: None,
-                                        profile: lens_core::analyse::Profile::default(),
-                                    },
-                                    "", DEEP_PROMPT_VERSION,
-                                ),
-                                analysis.clone(),
-                            );
                             let card = Card::analysed(&sentence, &analysis);
-                            show_card(&overlay, &card, &make_dummy_target(&sentence));
+                            show_card_at(&overlay, &card, &anchor);
                             current_card = Some((card, sentence));
                         }
                         Err(msg) => {
-                            let card = Card {
-                                original: sentence.clone(),
-                                body: CardBody::Problem(format!("analysis failed: {}", msg)),
-                                footer: String::new(),
-                            };
-                            show_card(&overlay, &card, &make_dummy_target(&sentence));
+                            let card = Card { original: sentence.clone(), body: CardBody::Problem(format!("analysis failed: {}", msg)), footer: String::new() };
+                            show_card_at(&overlay, &card, &anchor);
                             current_card = Some((card, sentence));
                         }
                     }
@@ -498,9 +472,8 @@ fn product_loop(
                     if let Some((_, ref sentence)) = current_card {
                         current_generation += 1;
                         let _ = job_tx.send(TransJob::Deep {
-                            sentence: sentence.clone(),
-                            translation: None,
-                            generation: current_generation,
+                            sentence: sentence.clone(), translation: None,
+                            generation: current_generation, anchor: current_anchor,
                         });
                     }
                 }
@@ -530,11 +503,11 @@ fn product_loop(
                                     let request = QuickRequest::new(&sentence, &language);
                                     let key = CacheKey::of(&request, "", 1);
                                     current_generation += 1;
+                                    if let Some(a) = target.anchor() { current_anchor = a; }
                                     let _ = job_tx.send(TransJob::Quick {
-                                        request,
-                                        sentence: sentence.clone(),
-                                        generation: current_generation,
-                                        key,
+                                        request, sentence: sentence.clone(),
+                                        generation: current_generation, key,
+                                        anchor: current_anchor,
                                     });
                                     current_card = Some((Card {
                                         original: sentence.clone(),
@@ -671,11 +644,11 @@ fn product_loop(
 
                         // Dispatch async translation job.
                         current_generation += 1;
+                        if let Some(a) = target.anchor() { current_anchor = a; }
                         let _ = job_tx.send(TransJob::Quick {
-                            request,
-                            sentence: sentence.clone(),
-                            generation: current_generation,
-                            key,
+                            request, sentence: sentence.clone(),
+                            generation: current_generation, key,
+                            anchor: current_anchor,
                         });
                         // Store target for when result arrives.
                         current_card = Some((Card {
@@ -698,17 +671,6 @@ fn product_loop(
 }
 
 // -- Helper functions -------------------------------------------------------
-
-fn make_dummy_target(sentence: &str) -> lens_core::acquire::TextTarget {
-    lens_core::acquire::TextTarget {
-        app: Default::default(),
-        source: lens_core::acquire::AcquisitionSource::Accessibility,
-        provider: Default::default(),
-        segmented: lens_core::text::segment(sentence, 0),
-        word_bounds: vec![],
-        context_bounds: vec![],
-    }
-}
 
 /// Save using the canonical Library API (same as Windows).
 fn execute_save(card: &Card, sentence: &str, shared_library: &SharedLibrary) {
@@ -756,20 +718,22 @@ fn execute_save(card: &Card, sentence: &str, shared_library: &SharedLibrary) {
 }
 
 fn show_card(overlay: &Option<Overlay>, card: &Card, target: &lens_core::acquire::TextTarget) {
-    let Some(overlay) = overlay else { return };
     let anchor = match target.anchor() {
         Some(a) => a,
         None => return,
     };
+    show_card_at(overlay, card, &anchor);
+}
+
+fn show_card_at(overlay: &Option<Overlay>, card: &Card, anchor: &ScreenRect) {
+    let Some(overlay) = overlay else { return };
     let (x, y, _scale) = physical_to_logical(ScreenPoint::new(anchor.x, anchor.bottom() + 8));
     let width = {
         let (w, _, _) = physical_to_logical(ScreenPoint::new(anchor.width, 0));
         w.max(200.0).min(600.0)
     };
     let height = 80.0;
-    let source = &card.original;
-    let body_text = card_body_to_text(&card.body);
-    overlay.show_text(source, &body_text, x, y, width, height);
+    overlay.show_text(&card.original, &card_body_to_text(&card.body), x, y, width, height);
 }
 
 fn card_body_to_text(body: &CardBody) -> String {
