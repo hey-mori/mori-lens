@@ -5,7 +5,7 @@ Last updated: 2026-09-06
 ## Current Goal
 
 macOS native implementation for Mori Lens cross-platform desktop product.
-M6 (Accessibility acquisition), M7 (overlay + OCR), and production parity are the focus.
+Manual Review v1 contract (Issue #141) is implemented and merged.
 Windows implementation is complete and stable. macOS is the active workstream.
 
 ## Current Product State
@@ -17,7 +17,7 @@ Windows implementation is complete and stable. macOS is the active workstream.
 - Policy enforcement via HoverSession (per-app deny/allow)
 - NSIS installer, signed release pipeline
 
-**macOS (this session's work):**
+**macOS (active workstream):**
 - Accessibility acquisition production-wired (`MacTextAcquirer`)
 - Vision OCR production-wired (`OcrTextAcquirer`)
 - Passive native overlay (NSPanel, transparent, click-through)
@@ -34,19 +34,44 @@ Windows implementation is complete and stable. macOS is the active workstream.
 
 **Shared/core:**
 - `lens-core` platform-neutral (ADR-0003 invariant held)
-- `lens-storage::Library` is canonical save target (SQLite)
+- `lens-storage::Library` is canonical save target (SQLite, ADR-0013)
 - Cross-platform CI configured (manual trigger)
 
 ## This Session
 
-- **AppKit thread safety fixed**: All NSPanel/NSStatusItem mutations now use `dispatch_async(dispatch_get_main_queue())`. Atomic visibility flags for thread-safe reads. String data copied before async dispatch to prevent use-after-free.
-- **Async translation runtime**: Translation jobs (Quick/Deep/OCR) dispatched to dedicated worker thread via mpsc channel. Product loop stays responsive during long Ollama calls. Shared `Arc<Mutex<TranslationCache>>` between product loop and translation thread.
-- **Anchor preservation**: `TransJob`/`TransResult` carry `ScreenRect` anchor through async pipeline. `show_card_at()` renders at original target position. `make_dummy_target()` removed.
-- **Stale generation checking**: All async results carry generation token. Results with stale generation are silently discarded.
+- **Manual Review v1 contract implemented (PR #277, merged)**: Replaced automatic spaced-repetition scheduling (new/learning/mastered, 1d/3d/7d/14d/30d intervals, next_review_at, record_review) with owner-approved manual lifecycle: Later / Known / Archive.
+  - Migration 7: legacy SRS data mapped deterministically (mastered→Known, new/learning→Later), unknown states preserved in legacy_review_state, SRS columns dropped
+  - Storage API: set_review_status, list_by_status, count_by_status, Filter gains review_status
+  - Tauri: library_record_review(success:bool) replaced by library_set_review_status(status), fail-closed on invalid input
+  - Web UI: Review surface rewritten with Known/Still Later/Archive buttons + inline note, Library status filter, no SRS wording
+  - 73 lens-storage tests, 643 total workspace tests pass
 
 ## Agent Assessment
 
 ```
+MANUAL REVIEW CONTRACT:      COMPLETE
+  (Later/Known/Archive lifecycle, no scheduling, no notifications,
+   reversible transitions, note/status independence, migration 7)
+
+AUTOMATIC SRS IN PRODUCTION: REMOVED
+  (REVIEW_INTERVALS, record_review, list_due, count_due, next_review_at,
+   review_count all removed from production paths)
+
+LEGACY DATA MIGRATION:       COMPLETE
+  (mastered→Known, new/learning→Later, unknown→preserved, atomic, idempotent)
+
+JSONL COMPATIBILITY:         COMPLETE
+  (v1 import with serde default Later, roundtrip preserves status/note/tags)
+
+REVIEW UI:                   COMPLETE
+  (manual queue, one item at a time, Known/Later/Archive actions, inline note)
+
+SECURE WIPE REGRESSION:      PASS
+  (all data including review statuses removed by secure_wipe)
+
+ISSUE #141:                  CLOSED (evidence comment added)
+ISSUE #159:                  ALL 12 CHILD ISSUES CLOSED
+
 M6 NATIVE IMPLEMENTATION:        COMPLETE
 M6 PRODUCTION INTEGRATION:       COMPLETE
 M6 REAL-WORLD EVIDENCE:          PENDING
@@ -90,6 +115,9 @@ CROSS-PLATFORM CI:               CONFIGURED, NOT VERIFIED
 - Translation runs on dedicated thread. Results delivered via mpsc channel with generation tokens.
 - Global hotkeys via CGEventTap (uses existing AX permission).
 - Memory-only privacy: no screenshot/OCR image written to disk.
+- **Manual Review (Issue #141)**: Later / Known / Archive lifecycle. No automatic scheduling. No notifications. Reader opens Review manually. Note is independent annotation.
+- **Library storage**: SQLite (`library.db`) is canonical source of truth (ADR-0013). `saved.md` is human-readable export/compatibility survivor.
+- **History**: Three tiers (ADR-0014) — SessionRecent, SavedLibrary, PersistentHistory.
 
 ## Production Call Paths
 
@@ -112,25 +140,29 @@ Tauri event loop (main thread)
 job_rx.recv() → translator.quick()/deep() → result_tx.send(TransResult{anchor, generation})
 ```
 
-**Save:** `ProductCommand::Save → SharedLibrary::lock() → Library::insert(&Item)`
+**Save:** `ProductCommand::Save → SharedLibrary::lock() → Library::insert(&Item)` (review_status: Later)
+
+**Review:** `library_review_list → list_by_status(Later)` → UI shows one item → user picks Known/Later/Archive → `library_set_review_status`
 
 ## Important Files
 
 ```
 apps/lens/src/macos.rs          macOS product loop, async translation, command dispatch
 apps/lens/src/main.rs           Shared module declarations + platform dispatch
-apps/lens/src/tauri_app.rs      Platform-neutral Tauri shell
+apps/lens/src/tauri_app.rs      Platform-neutral Tauri shell (manual review commands)
+apps/lens/web/index.html        Library/Review UI (manual review surface)
 crates/platform-macos/src/acquirer.rs   MacTextAcquirer + process_name_at
 crates/platform-macos/src/hotkey.rs     ProductCommand enum (8 variants)
 crates/platform-macos/native/overlay.m  NSPanel + dispatch_async UI mutations
 crates/platform-macos/native/menubar.m  NSStatusItem + dispatch_async
 crates/platform-macos/native/hotkey.m   CGEventTap callback
 crates/platform-macos/native/capture.m  ScreenCaptureKit SCStream
-crates/lens-storage/src/lib.rs          Canonical Library API
+crates/lens-storage/src/lib.rs          Canonical Library API (manual review, migration 7)
 ```
 
 ## Latest Implementation Changes
 
+- PR #277 — Manual Review v1 contract (Later/Known/Archive, migration 7, SRS removed)
 - PR #274 — AppKit main-thread dispatch (dispatch_async for all UI mutations)
 - PR #275 — Async translation runtime (dedicated thread, channel-based, non-blocking)
 - PR #276 — Anchor preservation (real anchor through async pipeline, make_dummy_target removed)
@@ -139,9 +171,13 @@ crates/lens-storage/src/lib.rs          Canonical Library API
 
 ```
 scripts/check.sh --full:     PASS
-workspace tests:             PASS
+workspace tests:             PASS (643 tests)
+lens-storage tests:          PASS (73 tests including manual review)
 platform-macos tests:        PASS (31 tests)
 macOS debug binary build:    PASS
+Tauri app cargo check:       PASS
+cargo fmt --check:           CLEAN
+cargo clippy -D warnings:    CLEAN
 .app bundle local build:     NOT BUILT (LOCAL TOOLING BLOCKER)
 CI config:                   STATICALLY AUDITED
 CI execution:                NOT VERIFIED
@@ -196,7 +232,7 @@ CI execution:                NOT VERIFIED
 
 ```
 branch:  main
-HEAD:    d572622 (Merge PR #276 — anchor preservation)
+HEAD:    7975a88 (Merge PR #277 — manual review contract)
 status:  clean
 open PR: none
 ```
