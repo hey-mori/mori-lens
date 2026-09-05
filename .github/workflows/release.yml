@@ -1,8 +1,11 @@
 # Release workflow.
 #
-# Builds the NSIS installer when a version tag is pushed, then creates a
-# GitHub Release with the installer attached. The tag must match the version
-# in Cargo.toml and tauri.conf.json.
+# Builds platform-specific artifacts when a version tag is pushed:
+#   - Windows: NSIS installer (.exe)
+#   - macOS: .app bundle (zipped, unsigned)
+# Then creates a GitHub Release with all artifacts + SHA-256 manifests.
+#
+# The tag must match the version in Cargo.toml and tauri.conf.json.
 #
 # CODE SIGNING: not configured. The Windows certificate must be imported as
 # GitHub secrets (WINDOWS_CERTIFICATE, WINDOWS_CERTIFICATE_PASSWORD) before
@@ -96,20 +99,40 @@ jobs:
       - name: Build .app bundle
         run: cargo tauri build --bundles app
 
+      - name: Verify .app exists
+        shell: bash
+        run: |
+          APP_DIR=$(find apps/lens/target/release/bundle/macos -maxdepth 1 -name "*.app" -type d | head -1)
+          if [ -z "$APP_DIR" ]; then
+            echo "ERROR: .app bundle not found in apps/lens/target/release/bundle/macos/"
+            exit 1
+          fi
+          echo "Found: $APP_DIR"
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
+
+      - name: Create zip artifact
+        shell: bash
+        run: |
+          APP_NAME=$(basename "$APP_DIR")
+          VERSION="${GITHUB_REF_NAME#v}"
+          ZIP_NAME="Mori-Lens-${VERSION}-macos-arm64.app.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" "$ZIP_NAME"
+          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+          ls -la "$ZIP_NAME"
+
       - name: Generate SHA-256 manifest
         shell: bash
         run: |
-          cd apps/lens/target/release/bundle/macos
-          shasum -a 256 *.app > SHA256SUMS.txt || echo "no .app found" > SHA256SUMS.txt
+          shasum -a 256 "$ZIP_NAME" > SHA256SUMS.txt
           cat SHA256SUMS.txt
-          cd -
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: macos-app
           path: |
-            apps/lens/target/release/bundle/macos/
+            ${{ env.ZIP_NAME }}
+            SHA256SUMS.txt
 
   release:
     name: Create GitHub Release
@@ -134,8 +157,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/windows/**/*
-            artifacts/macos/**/*
+            artifacts/windows/*.exe
+            artifacts/windows/SHA256SUMS.txt
+            artifacts/macos/*.zip
+            artifacts/macos/SHA256SUMS.txt
           body: |
             ## UNSIGNED DEVELOPMENT ARTIFACTS
 
