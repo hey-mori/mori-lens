@@ -27,6 +27,7 @@ use lens_platform_macos::{
     clipboard, hotkey, overlay, AxPermission, Lifecycle, MacTextAcquirer, MenuBar, OcrTextAcquirer,
     Overlay, ProductCommand, SingleInstance,
 };
+use lens_storage::{Item, Library};
 use lens_translate::OllamaTranslator;
 
 const USAGE: &str = "lens · Mori Lens (macOS)
@@ -631,22 +632,77 @@ fn execute_deep(
     }
 }
 
-/// Execute Save: append the current card content to saved.md.
+/// Execute Save: insert the current card into the canonical Library database.
 fn execute_save(card: &Card, sentence: &str) {
-    let save_path = default_settings_path()
+    let db_path = default_settings_path()
         .parent()
-        .map(|p| p.join("saved.md"))
-        .unwrap_or_else(|| std::path::PathBuf::from("saved.md"));
-    let content = card.for_the_clipboard().unwrap_or_else(|| sentence.to_owned());
-    let entry = format!("\n---\n\n{}\n", content);
-    let _ = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&save_path)
-        .and_then(|mut f| {
-            use std::io::Write;
-            f.write_all(entry.as_bytes())
-        });
+        .map(|p| p.join("library.db"))
+        .unwrap_or_else(|| std::path::PathBuf::from("library.db"));
+
+    // Ensure parent directory exists.
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let library = match Library::open(&db_path) {
+        Ok(lib) => lib,
+        Err(e) => {
+            eprintln!("  save      library open failed: {e}");
+            return;
+        }
+    };
+
+    let answer = match &card.body {
+        CardBody::Translation(t) => t.clone(),
+        CardBody::Analysis { translation, rows, .. } => {
+            let mut text = String::new();
+            if let Some(t) = translation {
+                text.push_str(t);
+                text.push('\n');
+            }
+            text.push_str(&CardBody::rows_as_text(rows));
+            text
+        }
+        CardBody::Problem(p) => p.clone(),
+        CardBody::Waiting(w) => w.clone(),
+    };
+
+    let kind = match &card.body {
+        CardBody::Analysis { .. } => "analysis",
+        _ => "translation",
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let item = Item {
+        id: 0,
+        original: sentence.to_owned(),
+        answer,
+        caveat: None,
+        app: None,
+        created_at: now,
+        kind: kind.to_owned(),
+        source_language: None,
+        target_language: None,
+        model: None,
+        note: None,
+        tags: None,
+        review_state: None,
+        next_review_at: None,
+        review_count: None,
+    };
+
+    match library.insert(&item) {
+        Ok(id) => {
+            eprintln!("  save      saved as library item #{id}");
+        }
+        Err(e) => {
+            eprintln!("  save      library insert failed: {e}");
+        }
+    }
 }
 
 /// Show a card on the overlay using the tested coordinate helpers.
