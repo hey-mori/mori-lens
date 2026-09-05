@@ -32,20 +32,14 @@ use lens_platform_windows::{
 use lens_translate::OllamaTranslator;
 
 mod console;
-mod detail_view;
 mod hover_worker;
-mod keeping;
 mod lesson;
-mod library_service;
 mod lifecycle;
 mod manual_ocr;
-mod mori_transfer;
 mod pause;
 mod pointer;
 mod refresh;
-mod settings_service;
 mod silence;
-mod tauri_app;
 
 /// What the worker is asked to do.
 ///

@@ -1,6 +1,8 @@
 //! macOS product entry point.
 //!
-//! The full product loop on macOS:
+//! Architecture mirrors Windows:
+//! - Main thread: shared state → native components → Tauri build → spawn worker → Tauri run
+//! - Worker thread: product loop (pointer, hover, acquisition, translation, overlay)
 //!
 //! ```text
 //! pointer settles → AX acquisition → local translation → native card
@@ -10,6 +12,7 @@
 //! Included from `main.rs` behind `#[cfg(target_os = "macos")]`.
 
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use lens_core::acquire::{AcquireContext, AcquireError, TextAcquirer};
@@ -19,16 +22,18 @@ use lens_core::card::{Card, CardBody};
 use lens_core::geometry::ScreenPoint;
 use lens_core::hover::{HoverConfig, HoverEvent, HoverMachine, PointerSample};
 use lens_core::language::decide;
-use lens_core::policy::AppTier;
 use lens_core::session::OcrMode;
-use lens_core::settings::{self, Problem, Settings};
 use lens_core::translate::{QuickRequest, Translator};
 use lens_platform_macos::{
     clipboard, hotkey, overlay, AxPermission, Lifecycle, MacTextAcquirer, MenuBar, OcrTextAcquirer,
     Overlay, ProductCommand, SingleInstance,
 };
-use lens_storage::{Item, Library};
 use lens_translate::OllamaTranslator;
+
+use crate::detail_view::{self, SharedSavePath};
+use crate::library_service::{self, SharedLibrary};
+use crate::settings_service::{self, SharedSettings};
+use crate::tauri_app::{self, AppHandle, SharedDiagnostics, SharedRecent};
 
 const USAGE: &str = "lens · Mori Lens (macOS)
 
@@ -53,41 +58,6 @@ const POINTER_POLL_MS: u64 = 25;
 const CACHE_ENTRIES: usize = 256;
 const ANALYSIS_ENTRIES: usize = 32;
 const DEEP_PROMPT_VERSION: u32 = 1;
-
-fn default_settings_path() -> std::path::PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    std::path::PathBuf::from(home)
-        .join("Library")
-        .join("Application Support")
-        .join("Mori Lens")
-        .join("settings.conf")
-}
-
-fn load_settings(path: &std::path::Path) -> (Settings, &'static str, Vec<Problem>, bool) {
-    match std::fs::read_to_string(path) {
-        Ok(text) => {
-            let (settings, problems) = Settings::parse(&text);
-            (settings, "read", problems, false)
-        }
-        Err(_) => {
-            let wrote = path
-                .parent()
-                .map(|p| std::fs::create_dir_all(p).is_ok())
-                .unwrap_or(false)
-                && std::fs::write(path, settings::TEMPLATE).is_ok();
-            (
-                Settings::default(),
-                if wrote {
-                    "written with the defaults, edit it and restart"
-                } else {
-                    "not readable and not writable, so this run is the defaults"
-                },
-                Vec::new(),
-                wrote,
-            )
-        }
-    }
-}
 
 #[derive(Default)]
 struct Flags {
@@ -139,17 +109,13 @@ fn mouse_position() -> ScreenPoint {
         Some(pos) => pos,
         None => return ScreenPoint::new(0, 0),
     };
-    let scale = overlay::display_scale_at(x, y);
+    let scale = overlay::display_scale_at_physical(x, y);
     let scale = if scale > 0.0 { scale } else { 1.0 };
     ScreenPoint::new((x * scale).round() as i32, (y * scale).round() as i32)
 }
 
-/// Convert physical screen pixels to logical points for the overlay,
-/// using the display topology at the anchor position.
+/// Convert physical screen pixels to logical points for the overlay.
 fn physical_to_logical(point: ScreenPoint) -> (f64, f64, f64) {
-    // Use physical pixel coordinates for display lookup — this correctly
-    // handles mixed-scale multi-monitor setups where logical point (x,y)
-    // might fall on a different display than physical pixel (x,y).
     let scale = overlay::display_scale_at_physical(point.x as f64, point.y as f64);
     let scale = if scale > 0.0 { scale } else { 1.0 };
     let x = point.x as f64 / scale;
@@ -175,41 +141,57 @@ pub fn main() -> std::process::ExitCode {
         }
     };
 
-    // Settings.
-    let path = flags.settings.unwrap_or_else(default_settings_path);
-    let (settings, state, problems, first_run) = load_settings(&path);
-    let language = flags.language.unwrap_or_else(|| settings.language.clone());
-    let endpoint = flags.endpoint.unwrap_or_else(|| settings.endpoint.clone());
-    let model = flags.model.or_else(|| settings.model.clone());
+    // Data directory: ~/Library/Application Support/Mori Lens
+    let data_dir = {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+        std::path::PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("Mori Lens")
+    };
+    let _ = std::fs::create_dir_all(&data_dir);
 
-    // Policy: --auto sets default tier to Allow.
-    // TODO: integrate policy into the hover loop for per-app deny/allow.
-    let mut _policy = settings.policy();
-    if flags.auto {
-        _policy.set_default(AppTier::Allow);
+    // Shared settings (via settings_service — same as Windows).
+    let shared_settings: SharedSettings = Arc::new(Mutex::new(
+        settings_service::load_or_migrate(&data_dir),
+    ));
+
+    // Shared library (via library_service — same as Windows).
+    let shared_library: SharedLibrary = Arc::new(Mutex::new(library_service::open(&data_dir)));
+    println!("  library   {:?}", shared_library.lock().unwrap().path());
+
+    // Shared detail, recent.
+    let (shared_detail, explain_flag) = detail_view::new_shared();
+    let shared_save_path: SharedSavePath = Arc::new(data_dir.join("saved.md"));
+    let shared_recent: SharedRecent = Arc::new(Mutex::new(lens_core::recent::SessionRecent::new()));
+
+    // Build Tauri app (must happen on main thread before spawning worker).
+    let (tauri_handle, shared_diagnostics, tauri_app) = match tauri_app::build(
+        shared_settings.clone(),
+        shared_library.clone(),
+        shared_detail.clone(),
+        shared_recent.clone(),
+        explain_flag.clone(),
+        shared_save_path,
+    ) {
+        Ok(triple) => triple,
+        Err(error) => {
+            eprintln!("Tauri initialization failed: {error}");
+            return std::process::ExitCode::from(1);
+        }
+    };
+    println!("  tauri     running");
+
+    // Print startup banner.
+    {
+        let settings = shared_settings.lock().unwrap().current().clone();
+        println!("Mori Lens · macOS");
+        println!("  settings  {:?}", data_dir);
+        println!("  language  {}", settings.language);
+        println!("  endpoint  {}", settings.endpoint);
     }
 
-    // OCR mode.
-    let ocr_mode = flags
-        .ocr
-        .as_deref()
-        .and_then(OcrMode::named)
-        .or_else(|| OcrMode::named(&settings.ocr))
-        .unwrap_or(OcrMode::Manual);
-
-    println!("Mori Lens · macOS");
-    if first_run {
-        println!("  first     this is the first run");
-    }
-    println!("  settings  {} · {}", path.display(), state);
-    for problem in &problems {
-        println!("            line {}: {}", problem.line, problem.message);
-    }
-    println!("  language  {language}");
-    println!("  endpoint  {endpoint}");
-    println!("  ocr       {}", ocr_mode.as_str());
-
-    // AX permission — not fatal. Degrade gracefully.
+    // AX permission — not fatal.
     let mut ax_trusted = match AxPermission::check_with_prompt(true) {
         AxPermission::Trusted => {
             println!("  ax        trusted");
@@ -217,69 +199,131 @@ pub fn main() -> std::process::ExitCode {
         }
         AxPermission::NotTrusted => {
             println!("  ax        NOT TRUSTED (hover translation unavailable)");
-            println!("            open System Settings > Privacy & Security > Accessibility");
             false
         }
     };
 
-    // Screen Recording permission — independent from AX.
+    // Screen Recording — independent.
     let screen_recording = lens_platform_macos::capture::is_available();
     println!(
         "  screen    {}",
-        if screen_recording {
-            "available"
-        } else {
-            "NOT AVAILABLE (OCR unavailable)"
-        }
+        if screen_recording { "available" } else { "NOT AVAILABLE" }
     );
 
+    // Native components (created on main thread, moved to worker).
+    let overlay = Overlay::start();
+    if overlay.is_some() {
+        println!("  overlay   ready");
+    }
+    let menubar = MenuBar::create();
+    if menubar.is_some() {
+        println!("  menubar   ready");
+    }
+    let hotkeys_available = if ax_trusted { hotkey::install() } else { false };
+    if hotkeys_available {
+        println!("  hotkeys   Cmd+Opt+L/D/C/S/O/Q registered");
+    }
+    let lifecycle = Lifecycle::start();
+    if lifecycle.is_some() {
+        println!("  lifecycle observing wake + display changes");
+    }
+
+    // Acquirers.
+    let ax_acquirer = MacTextAcquirer::new();
+    let ocr_acquirer = if screen_recording {
+        Some(OcrTextAcquirer::new())
+    } else {
+        None
+    };
+
+    // Read current settings for the product loop.
+    let (language, endpoint, model, dwell_ms, ocr_mode) = {
+        let s = shared_settings.lock().unwrap().current().clone();
+        let lang = flags.language.unwrap_or(s.language);
+        let ep = flags.endpoint.unwrap_or(s.endpoint);
+        let m = flags.model.or(s.model);
+        let d = flags.dwell_ms.unwrap_or(s.dwell_ms);
+        let o = flags
+            .ocr
+            .as_deref()
+            .and_then(OcrMode::named)
+            .or_else(|| OcrMode::named(&s.ocr))
+            .unwrap_or(OcrMode::Manual);
+        (lang, ep, m, d, o)
+    };
+
+    println!("  dwell     {}ms", dwell_ms);
+    println!();
+    println!("  Lens is running. Rest the pointer on a sentence.");
+    println!("  Press Ctrl+C or Cmd+Opt+Q to quit.");
+
+    // Spawn product loop on worker thread.
+    let loop_tauri = tauri_handle.clone();
+    let loop_diagnostics = shared_diagnostics.clone();
+    let loop_settings = shared_settings.clone();
+    let loop_library = shared_library.clone();
+
+    std::thread::spawn(move || {
+        product_loop(
+            loop_tauri,
+            loop_diagnostics,
+            loop_settings,
+            loop_library,
+            overlay,
+            menubar,
+            lifecycle,
+            ax_acquirer,
+            ocr_acquirer,
+            ax_trusted,
+            screen_recording,
+            hotkeys_available,
+            language,
+            endpoint,
+            model,
+            dwell_ms,
+            ocr_mode,
+        );
+        // Tell Tauri to exit when the product loop is done.
+        // (We can't call this from inside the loop because we need to
+        // consume the handle.)
+    });
+
+    // Run Tauri on main thread. This blocks until the event loop exits.
+    tauri_app::run(tauri_app);
+
+    std::process::ExitCode::SUCCESS
+}
+
+/// The product loop. Runs on a worker thread.
+fn product_loop(
+    tauri_handle: AppHandle,
+    _shared_diagnostics: SharedDiagnostics,
+    _shared_settings: SharedSettings,
+    shared_library: SharedLibrary,
+    overlay: Option<Overlay>,
+    menubar: Option<MenuBar>,
+    lifecycle: Option<Lifecycle>,
+    mut ax_acquirer: MacTextAcquirer,
+    ocr_acquirer: Option<OcrTextAcquirer>,
+    mut ax_trusted: bool,
+    _screen_recording: bool,
+    hotkeys_available: bool,
+    language: String,
+    endpoint: String,
+    model: Option<String>,
+    dwell_ms: u64,
+    ocr_mode: OcrMode,
+) {
     // Translator.
     let mut translator = if let Some(ref m) = model {
         OllamaTranslator::new(&endpoint, m)
     } else {
         OllamaTranslator::choosing(&endpoint)
     };
-    match translator.resolve_model() {
-        Ok(m) => println!("  model     {m}"),
-        Err(e) => {
-            println!(
-                "  model     {} · {}",
-                e.user_message(),
-                e.remedy()
-                    .unwrap_or_else(|| "install Ollama and pull a model".to_owned())
-            );
-        }
-    }
-
-    // Overlay — not fatal.
-    let overlay = match Overlay::start() {
-        Some(o) => {
-            println!("  overlay   ready");
-            Some(o)
-        }
-        None => {
-            println!("  overlay   FAILED (cards will not be shown)");
-            None
-        }
-    };
-
-    // Acquirers.
-    let mut ax_acquirer = MacTextAcquirer::new();
-    let ocr_acquirer = if screen_recording {
-        Some(OcrTextAcquirer::new())
-    } else {
-        None
-    };
-    println!("  acquire   AX ready{}", if ocr_acquirer.is_some() { ", OCR ready" } else { "" });
-
-    // Lifecycle observer: sleep/wake, display changes.
-    let lifecycle = Lifecycle::start();
-    if lifecycle.is_some() {
-        println!("  lifecycle observing wake + display changes");
-    }
+    let _ = translator.resolve_model();
 
     // Hover machine.
-    let dwell = Duration::from_millis(flags.dwell_ms.unwrap_or(settings.dwell_ms));
+    let dwell = Duration::from_millis(dwell_ms);
     let hover_config = HoverConfig {
         dwell,
         ..HoverConfig::default()
@@ -287,63 +331,22 @@ pub fn main() -> std::process::ExitCode {
     let mut machine = HoverMachine::new(hover_config);
     let mut cache = TranslationCache::new(CACHE_ENTRIES);
     let mut analysis_cache = AnalysisCache::new(ANALYSIS_ENTRIES);
-    let mut current_card: Option<(Card, String)> = None; // (card, sentence)
-    let mut current_generation: u64 = 0; // monotonic counter for stale protection
-
-    // Menu bar — not fatal.
-    let menubar = match MenuBar::create() {
-        Some(mb) => {
-            println!("  menubar   ready");
-            Some(mb)
-        }
-        None => {
-            println!("  menubar   unavailable (Ctrl+C to quit)");
-            None
-        }
-    };
-
-    // Global hotkeys — requires AX permission (already requested).
-    let hotkeys_available = if ax_trusted {
-        hotkey::install()
-    } else {
-        false
-    };
-    if hotkeys_available {
-        println!("  hotkeys   Cmd+Opt+L/D/C/S/O/Q registered");
-    }
-
-    println!("  dwell     {}ms", dwell.as_millis());
-    println!();
-
-    if !ax_trusted && ocr_acquirer.is_none() {
-        println!("  No accessibility or screen recording permission.");
-        println!("  Lens cannot read any text. Grant permissions and restart.");
-        // Keep running so the menu bar is available for Quit.
-    } else {
-        println!("  Lens is running. Rest the pointer on a sentence.");
-    }
-    println!("  Press Ctrl+C to quit.");
-
-    // Product loop.
-    let poll = Duration::from_millis(POINTER_POLL_MS);
-    let start = Instant::now();
+    let mut current_card: Option<(Card, String)> = None;
+    let mut current_generation: u64 = 0;
     let mut paused = false;
     let mut quit_requested = false;
 
+    // Ctrl+C handler.
     let (tx, rx) = mpsc::channel::<()>();
     spawn_ctrlc_handler(tx);
 
-    loop {
-        // Process AppKit events (menu actions, lifecycle notifications,
-        // overlay rendering). Must be called every iteration to keep the
-        // native UI responsive while the polling loop owns the main thread.
-        overlay::process_appkit_events();
+    let poll = Duration::from_millis(POINTER_POLL_MS);
+    let start = Instant::now();
 
-        // Drain commands from both menu bar and global hotkeys into a
-        // unified dispatch.
+    loop {
+        // Drain commands from menu bar and global hotkeys.
         let mut pending_commands: Vec<ProductCommand> = Vec::new();
 
-        // Menu bar commands.
         if let Some(ref mb) = menubar {
             if mb.poll_quit() { pending_commands.push(ProductCommand::Quit); }
             if mb.poll_pause_toggle() { pending_commands.push(ProductCommand::PauseToggle); }
@@ -353,19 +356,18 @@ pub fn main() -> std::process::ExitCode {
             if mb.poll_ocr() { pending_commands.push(ProductCommand::ManualOcr); }
         }
 
-        // Global hotkey commands.
-        loop {
-            let cmd = hotkey::poll();
-            if cmd == ProductCommand::None { break; }
-            pending_commands.push(cmd);
+        if hotkeys_available {
+            loop {
+                let cmd = hotkey::poll();
+                if cmd == ProductCommand::None { break; }
+                pending_commands.push(cmd);
+            }
         }
 
-        // Dispatch all pending commands.
+        // Dispatch commands.
         for cmd in pending_commands {
             match cmd {
-                ProductCommand::Quit => {
-                    quit_requested = true;
-                }
+                ProductCommand::Quit => { quit_requested = true; }
                 ProductCommand::PauseToggle => {
                     paused = !paused;
                     if let Some(ref o) = overlay {
@@ -387,7 +389,7 @@ pub fn main() -> std::process::ExitCode {
                 }
                 ProductCommand::Save => {
                     if let Some((ref card, ref sentence)) = current_card {
-                        execute_save(card, sentence);
+                        execute_save(card, sentence, &shared_library);
                     }
                 }
                 ProductCommand::ManualOcr => {
@@ -428,8 +430,11 @@ pub fn main() -> std::process::ExitCode {
             }
         }
 
-        // Check quit from commands or Ctrl+C.
-        if quit_requested || rx.try_recv().is_ok() { break; }
+        // Check quit.
+        if quit_requested || rx.try_recv().is_ok() {
+            tauri_handle.exit();
+            break;
+        }
 
         if paused {
             std::thread::sleep(poll);
@@ -439,18 +444,13 @@ pub fn main() -> std::process::ExitCode {
         // Lifecycle: wake / display change.
         if let Some(ref lc) = lifecycle {
             if lc.poll_wake() {
-                // After wake: refresh display topology and re-check AX permission.
                 ax_acquirer.refresh_displays();
                 ax_trusted = match AxPermission::check() {
                     AxPermission::Trusted => true,
-                    AxPermission::NotTrusted => {
-                        println!("  ax        permission lost after wake");
-                        false
-                    }
+                    AxPermission::NotTrusted => false,
                 };
             }
             if lc.poll_display_change() {
-                // Display configuration changed: refresh topology.
                 ax_acquirer.refresh_displays();
             }
         }
@@ -464,7 +464,7 @@ pub fn main() -> std::process::ExitCode {
 
         match event {
             Some(HoverEvent::Settled { generation, point }) => {
-                // Try AX acquisition first (accessibility-first contract).
+                // AX acquisition first.
                 let acquire_result = if ax_trusted {
                     let ctx = AcquireContext::new(generation);
                     ax_acquirer.acquire(point, &ctx)
@@ -472,7 +472,7 @@ pub fn main() -> std::process::ExitCode {
                     Err(AcquireError::Unavailable)
                 };
 
-                // OCR fallback: only when AX failed and OCR is enabled.
+                // OCR fallback.
                 let (target, _from_ocr) = match acquire_result {
                     Ok(target) => (target, false),
                     Err(e) if e.ocr_can_help() && ocr_mode != OcrMode::Off => {
@@ -481,43 +481,33 @@ pub fn main() -> std::process::ExitCode {
                             match ocr.acquire(point, &ctx) {
                                 Ok(target) => (target, true),
                                 Err(_) => {
-                                    if let Some(ref o) = overlay {
-                                        o.hide();
-                                    }
+                                    if let Some(ref o) = overlay { o.hide(); }
                                     continue;
                                 }
                             }
                         } else {
-                            if let Some(ref o) = overlay {
-                                o.hide();
-                            }
+                            if let Some(ref o) = overlay { o.hide(); }
                             continue;
                         }
                     }
                     Err(_) => {
-                        if let Some(ref o) = overlay {
-                            o.hide();
-                        }
+                        if let Some(ref o) = overlay { o.hide(); }
                         continue;
                     }
                 };
 
                 let sentence = target.segmented.sentence_text().to_owned();
                 if sentence.is_empty() {
-                    if let Some(ref o) = overlay {
-                        o.hide();
-                    }
+                    if let Some(ref o) = overlay { o.hide(); }
                     continue;
                 }
 
-                // Language decision.
+                // Language decision + translation.
                 match decide(&sentence, &language) {
                     lens_core::language::Decision::AlreadyInTarget => {
                         let card = Card {
                             original: sentence.clone(),
-                            body: CardBody::Problem(
-                                "already in your language".to_owned(),
-                            ),
+                            body: CardBody::Problem("already in your language".to_owned()),
                             footer: String::new(),
                         };
                         show_card(&overlay, &card, &target);
@@ -556,10 +546,7 @@ pub fn main() -> std::process::ExitCode {
                 }
             }
             Some(HoverEvent::Left { .. }) => {
-                if let Some(ref o) = overlay {
-                    o.hide();
-                }
-                // Clear current card to prevent stale Deep/Copy/Save on old content.
+                if let Some(ref o) = overlay { o.hide(); }
                 current_card = None;
             }
             None => {}
@@ -567,13 +554,10 @@ pub fn main() -> std::process::ExitCode {
 
         std::thread::sleep(poll);
     }
-
-    println!("\n  Lens stopped.");
-    std::process::ExitCode::SUCCESS
 }
 
-/// Build a minimal TextTarget for card display when the original target
-/// is not available (e.g. Deep Analysis on a cached card).
+// -- Helper functions -------------------------------------------------------
+
 fn make_dummy_target(sentence: &str) -> lens_core::acquire::TextTarget {
     lens_core::acquire::TextTarget {
         app: Default::default(),
@@ -585,7 +569,6 @@ fn make_dummy_target(sentence: &str) -> lens_core::acquire::TextTarget {
     }
 }
 
-/// Execute Deep Analysis on the current card's sentence.
 fn execute_deep(
     translator: &mut OllamaTranslator,
     current_card: &Option<(Card, String)>,
@@ -604,11 +587,7 @@ fn execute_deep(
             },
             profile: Profile::default(),
         };
-        let analysis_key = CacheKey::for_analysis(
-            &deep_req,
-            translator.model(),
-            DEEP_PROMPT_VERSION,
-        );
+        let analysis_key = CacheKey::for_analysis(&deep_req, translator.model(), DEEP_PROMPT_VERSION);
         if let Some(cached) = analysis_cache.get(&analysis_key) {
             let analysis_card = Card::analysed(sentence, &cached);
             show_card(overlay, &analysis_card, &make_dummy_target(sentence));
@@ -632,52 +611,28 @@ fn execute_deep(
     }
 }
 
-/// Execute Save: insert the current card into the canonical Library database.
-fn execute_save(card: &Card, sentence: &str) {
-    let db_path = default_settings_path()
-        .parent()
-        .map(|p| p.join("library.db"))
-        .unwrap_or_else(|| std::path::PathBuf::from("library.db"));
-
-    // Ensure parent directory exists.
-    if let Some(parent) = db_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-
-    let library = match Library::open(&db_path) {
-        Ok(lib) => lib,
-        Err(e) => {
-            eprintln!("  save      library open failed: {e}");
-            return;
-        }
-    };
-
+/// Save using the canonical Library API (same as Windows).
+fn execute_save(card: &Card, sentence: &str, shared_library: &SharedLibrary) {
     let answer = match &card.body {
         CardBody::Translation(t) => t.clone(),
         CardBody::Analysis { translation, rows, .. } => {
             let mut text = String::new();
-            if let Some(t) = translation {
-                text.push_str(t);
-                text.push('\n');
-            }
+            if let Some(t) = translation { text.push_str(t); text.push('\n'); }
             text.push_str(&CardBody::rows_as_text(rows));
             text
         }
         CardBody::Problem(p) => p.clone(),
         CardBody::Waiting(w) => w.clone(),
     };
-
     let kind = match &card.body {
         CardBody::Analysis { .. } => "analysis",
         _ => "translation",
     };
-
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-
-    let item = Item {
+    let item = lens_storage::Item {
         id: 0,
         original: sentence.to_owned(),
         answer,
@@ -694,56 +649,38 @@ fn execute_save(card: &Card, sentence: &str) {
         next_review_at: None,
         review_count: None,
     };
-
-    match library.insert(&item) {
-        Ok(id) => {
-            eprintln!("  save      saved as library item #{id}");
-        }
-        Err(e) => {
-            eprintln!("  save      library insert failed: {e}");
-        }
+    let lib = shared_library.lock().unwrap();
+    match lib.library().insert(&item) {
+        Ok(id) => eprintln!("  save      saved as library item #{id}"),
+        Err(e) => eprintln!("  save      library insert failed: {e}"),
     }
 }
 
-/// Show a card on the overlay using the tested coordinate helpers.
 fn show_card(overlay: &Option<Overlay>, card: &Card, target: &lens_core::acquire::TextTarget) {
     let Some(overlay) = overlay else { return };
     let anchor = match target.anchor() {
         Some(a) => a,
         None => return,
     };
-
-    // Use the canonical coordinate conversion: physical pixels → logical
-    // points via the display scale at the anchor position.
     let (x, y, _scale) = physical_to_logical(ScreenPoint::new(anchor.x, anchor.bottom() + 8));
     let width = {
         let (w, _, _) = physical_to_logical(ScreenPoint::new(anchor.width, 0));
         w.max(200.0).min(600.0)
     };
     let height = 80.0;
-
     let source = &card.original;
     let body_text = card_body_to_text(&card.body);
-
     overlay.show_text(source, &body_text, x, y, width, height);
 }
 
-/// Convert a CardBody to displayable text for the overlay.
 fn card_body_to_text(body: &CardBody) -> String {
     match body {
         CardBody::Translation(t) => t.clone(),
         CardBody::Problem(p) => p.clone(),
         CardBody::Waiting(w) => w.clone(),
-        CardBody::Analysis {
-            translation, rows, ..
-        } => {
-            // Render analysis rows as text. If there's a translation, show
-            // it first, then the analysis rows.
+        CardBody::Analysis { translation, rows, .. } => {
             let mut text = String::new();
-            if let Some(t) = translation {
-                text.push_str(t);
-                text.push('\n');
-            }
+            if let Some(t) = translation { text.push_str(t); text.push('\n'); }
             text.push_str(&CardBody::rows_as_text(rows));
             text
         }
@@ -752,8 +689,6 @@ fn card_body_to_text(body: &CardBody) -> String {
 
 fn spawn_ctrlc_handler(tx: mpsc::Sender<()>) {
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
-
     let received = Arc::new(AtomicBool::new(false));
     let received_clone = received.clone();
 
@@ -771,8 +706,7 @@ fn spawn_ctrlc_handler(tx: mpsc::Sender<()>) {
         }
     }
 
-    // SAFETY: signal() is a standard POSIX call. Our handler only sets an
-    // AtomicBool, which is async-signal-safe.
+    // SAFETY: signal() is a standard POSIX call.
     unsafe { signal(SIGINT, sigint_handler) };
 
     std::thread::spawn(move || {
