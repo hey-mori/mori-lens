@@ -24,8 +24,8 @@ use lens_core::session::OcrMode;
 use lens_core::settings::{self, Problem, Settings};
 use lens_core::translate::{QuickRequest, Translator};
 use lens_platform_macos::{
-    clipboard, overlay, AxPermission, Lifecycle, MacTextAcquirer, MenuBar, OcrTextAcquirer,
-    Overlay, SingleInstance,
+    clipboard, hotkey, overlay, AxPermission, Lifecycle, MacTextAcquirer, MenuBar, OcrTextAcquirer,
+    Overlay, ProductCommand, SingleInstance,
 };
 use lens_translate::OllamaTranslator;
 
@@ -300,6 +300,16 @@ pub fn main() -> std::process::ExitCode {
         }
     };
 
+    // Global hotkeys — requires AX permission (already requested).
+    let hotkeys_available = if ax_trusted {
+        hotkey::install()
+    } else {
+        false
+    };
+    if hotkeys_available {
+        println!("  hotkeys   Cmd+Opt+L/D/C/S/O/Q registered");
+    }
+
     println!("  dwell     {}ms", dwell.as_millis());
     println!();
 
@@ -316,147 +326,111 @@ pub fn main() -> std::process::ExitCode {
     let poll = Duration::from_millis(POINTER_POLL_MS);
     let start = Instant::now();
     let mut paused = false;
+    let mut quit_requested = false;
 
     let (tx, rx) = mpsc::channel::<()>();
     spawn_ctrlc_handler(tx);
 
     loop {
-        // Quit check.
-        if rx.try_recv().is_ok() {
-            break;
-        }
+        // Process AppKit events (menu actions, lifecycle notifications,
+        // overlay rendering). Must be called every iteration to keep the
+        // native UI responsive while the polling loop owns the main thread.
+        overlay::process_appkit_events();
+
+        // Drain commands from both menu bar and global hotkeys into a
+        // unified dispatch.
+        let mut pending_commands: Vec<ProductCommand> = Vec::new();
+
+        // Menu bar commands.
         if let Some(ref mb) = menubar {
-            if mb.poll_quit() {
-                break;
-            }
-            if mb.poll_pause_toggle() {
-                paused = !paused;
-                if let Some(ref o) = overlay {
-                    if paused {
-                        o.hide();
+            if mb.poll_quit() { pending_commands.push(ProductCommand::Quit); }
+            if mb.poll_pause_toggle() { pending_commands.push(ProductCommand::PauseToggle); }
+            if mb.poll_deep() { pending_commands.push(ProductCommand::Deep); }
+            if mb.poll_copy() { pending_commands.push(ProductCommand::Copy); }
+            if mb.poll_save() { pending_commands.push(ProductCommand::Save); }
+            if mb.poll_ocr() { pending_commands.push(ProductCommand::ManualOcr); }
+        }
+
+        // Global hotkey commands.
+        loop {
+            let cmd = hotkey::poll();
+            if cmd == ProductCommand::None { break; }
+            pending_commands.push(cmd);
+        }
+
+        // Dispatch all pending commands.
+        for cmd in pending_commands {
+            match cmd {
+                ProductCommand::Quit => {
+                    quit_requested = true;
+                }
+                ProductCommand::PauseToggle => {
+                    paused = !paused;
+                    if let Some(ref o) = overlay {
+                        if paused { o.hide(); }
+                    }
+                    if let Some(ref mb) = menubar {
+                        mb.set_title(if paused { "Lens ⏸" } else { "Lens" });
                     }
                 }
-                if let Some(ref mb) = menubar {
-                    mb.set_title(if paused { "Lens ⏸" } else { "Lens" });
+                ProductCommand::Deep => {
+                    execute_deep(&mut translator, &current_card, &language, &overlay, &mut analysis_cache);
                 }
+                ProductCommand::Copy => {
+                    if let Some((ref card, _)) = current_card {
+                        if let Some(text) = card.for_the_clipboard() {
+                            clipboard::put_text(&text);
+                        }
+                    }
+                }
+                ProductCommand::Save => {
+                    if let Some((ref card, ref sentence)) = current_card {
+                        execute_save(card, sentence);
+                    }
+                }
+                ProductCommand::ManualOcr => {
+                    if let Some(ref ocr) = ocr_acquirer {
+                        if let Some(ref o) = overlay { o.hide(); }
+                        let point = mouse_position();
+                        let gen = lens_core::hover::Generation(0);
+                        let ctx = AcquireContext::new(gen);
+                        match ocr.acquire(point, &ctx) {
+                            Ok(target) => {
+                                let sentence = target.segmented.sentence_text().to_owned();
+                                if !sentence.is_empty() {
+                                    let request = QuickRequest::new(&sentence, &language);
+                                    match translator.quick(&request) {
+                                        Ok(translation) => {
+                                            let card = Card::translated(&sentence, &translation);
+                                            show_card(&overlay, &card, &target);
+                                            current_card = Some((card, sentence));
+                                        }
+                                        Err(e) => {
+                                            let card = Card {
+                                                original: sentence.clone(),
+                                                body: CardBody::Problem(e.user_message().to_owned()),
+                                                footer: String::new(),
+                                            };
+                                            show_card(&overlay, &card, &target);
+                                            current_card = Some((card, sentence));
+                                        }
+                                    }
+                                }
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                }
+                ProductCommand::None => {}
             }
         }
+
+        // Check quit from commands or Ctrl+C.
+        if quit_requested || rx.try_recv().is_ok() { break; }
 
         if paused {
             std::thread::sleep(poll);
             continue;
-        }
-
-        // Menu bar actions (Deep, Copy, Save, OCR).
-        if let Some(ref mb) = menubar {
-            // Deep Analysis.
-            if mb.poll_deep() {
-                if let Some((ref card, ref sentence)) = current_card {
-                    let deep_req = DeepRequest {
-                        sentence: sentence.clone(),
-                        word: None,
-                        target_language: language.clone(),
-                        translation: match &card.body {
-                            CardBody::Translation(t) => Some(t.clone()),
-                            _ => None,
-                        },
-                        profile: Profile::default(),
-                    };
-                    let analysis_key = CacheKey::for_analysis(
-                        &deep_req,
-                        translator.model(),
-                        DEEP_PROMPT_VERSION,
-                    );
-                    if let Some(cached) = analysis_cache.get(&analysis_key) {
-                        let analysis_card = Card::analysed(sentence, &cached);
-                        show_card(&overlay, &analysis_card, &make_dummy_target(sentence));
-                    } else {
-                        match translator.deep(&deep_req) {
-                            Ok(analysis) => {
-                                analysis_cache.insert(analysis_key, analysis.clone());
-                                let analysis_card = Card::analysed(sentence, &analysis);
-                                show_card(&overlay, &analysis_card, &make_dummy_target(sentence));
-                            }
-                            Err(e) => {
-                                let err_card = Card {
-                                    original: sentence.clone(),
-                                    body: CardBody::Problem(format!("analysis failed: {}", e.user_message())),
-                                    footer: String::new(),
-                                };
-                                show_card(&overlay, &err_card, &make_dummy_target(sentence));
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Copy.
-            if mb.poll_copy() {
-                if let Some((ref card, _)) = current_card {
-                    if let Some(text) = card.for_the_clipboard() {
-                        clipboard::put_text(&text);
-                    }
-                }
-            }
-
-            // Save.
-            if mb.poll_save() {
-                if let Some((ref card, ref sentence)) = current_card {
-                    let save_path = default_settings_path()
-                        .parent()
-                        .map(|p| p.join("saved.md"))
-                        .unwrap_or_else(|| std::path::PathBuf::from("saved.md"));
-                    let content = card.for_the_clipboard().unwrap_or_else(|| sentence.clone());
-                    let entry = format!("\n---\n\n{}\n", content);
-                    let _ = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&save_path)
-                        .and_then(|mut f| {
-                            use std::io::Write;
-                            f.write_all(entry.as_bytes())
-                        });
-                }
-            }
-
-            // Manual OCR.
-            if mb.poll_ocr() {
-                if let Some(ref ocr) = ocr_acquirer {
-                    if let Some(ref o) = overlay {
-                        o.hide();
-                    }
-                    let point = mouse_position();
-                    let gen = lens_core::hover::Generation(0);
-                    let ctx = AcquireContext::new(gen);
-                    match ocr.acquire(point, &ctx) {
-                        Ok(target) => {
-                            let sentence = target.segmented.sentence_text().to_owned();
-                            if !sentence.is_empty() {
-                                let request = QuickRequest::new(&sentence, &language);
-                                match translator.quick(&request) {
-                                    Ok(translation) => {
-                                        let card = Card::translated(&sentence, &translation);
-                                        show_card(&overlay, &card, &target);
-                                        current_card = Some((card, sentence));
-                                    }
-                                    Err(e) => {
-                                        let card = Card {
-                                            original: sentence.clone(),
-                                            body: CardBody::Problem(e.user_message().to_owned()),
-                                            footer: String::new(),
-                                        };
-                                        show_card(&overlay, &card, &target);
-                                        current_card = Some((card, sentence));
-                                    }
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            // OCR failed; overlay already hidden.
-                        }
-                    }
-                }
-            }
         }
 
         // Lifecycle: wake / display change.
@@ -604,6 +578,71 @@ fn make_dummy_target(sentence: &str) -> lens_core::acquire::TextTarget {
         word_bounds: vec![],
         context_bounds: vec![],
     }
+}
+
+/// Execute Deep Analysis on the current card's sentence.
+fn execute_deep(
+    translator: &mut OllamaTranslator,
+    current_card: &Option<(Card, String)>,
+    language: &str,
+    overlay: &Option<Overlay>,
+    analysis_cache: &mut AnalysisCache,
+) {
+    if let Some((ref card, ref sentence)) = current_card {
+        let deep_req = DeepRequest {
+            sentence: sentence.clone(),
+            word: None,
+            target_language: language.to_owned(),
+            translation: match &card.body {
+                CardBody::Translation(t) => Some(t.clone()),
+                _ => None,
+            },
+            profile: Profile::default(),
+        };
+        let analysis_key = CacheKey::for_analysis(
+            &deep_req,
+            translator.model(),
+            DEEP_PROMPT_VERSION,
+        );
+        if let Some(cached) = analysis_cache.get(&analysis_key) {
+            let analysis_card = Card::analysed(sentence, &cached);
+            show_card(overlay, &analysis_card, &make_dummy_target(sentence));
+            return;
+        }
+        match translator.deep(&deep_req) {
+            Ok(analysis) => {
+                analysis_cache.insert(analysis_key, analysis.clone());
+                let analysis_card = Card::analysed(sentence, &analysis);
+                show_card(overlay, &analysis_card, &make_dummy_target(sentence));
+            }
+            Err(e) => {
+                let err_card = Card {
+                    original: sentence.clone(),
+                    body: CardBody::Problem(format!("analysis failed: {}", e.user_message())),
+                    footer: String::new(),
+                };
+                show_card(overlay, &err_card, &make_dummy_target(sentence));
+            }
+        }
+    }
+}
+
+/// Execute Save: append the current card content to saved.md.
+fn execute_save(card: &Card, sentence: &str) {
+    let save_path = default_settings_path()
+        .parent()
+        .map(|p| p.join("saved.md"))
+        .unwrap_or_else(|| std::path::PathBuf::from("saved.md"));
+    let content = card.for_the_clipboard().unwrap_or_else(|| sentence.to_owned());
+    let entry = format!("\n---\n\n{}\n", content);
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&save_path)
+        .and_then(|mut f| {
+            use std::io::Write;
+            f.write_all(entry.as_bytes())
+        });
 }
 
 /// Show a card on the overlay using the tested coordinate helpers.

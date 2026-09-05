@@ -274,3 +274,17 @@ double lens_display_scale_at_physical(double px, double py) {
         return [mainScreen backingScaleFactor];
     }
 }
+
+void lens_process_appkit_events(void) {
+    @autoreleasepool {
+        // Drain the NSRunLoop for AppKit UI events (menu actions, panel
+        // rendering, window server communication).
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
+                                 beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.001]];
+
+        // Drain the main dispatch queue for notification blocks (lifecycle
+        // observers, async completions). dispatch_main_q doesn't have a
+        // direct "drain" API, but running the NSRunLoop processes blocks
+        // dispatched to the main queue via dispatch_async.
+    }
+}

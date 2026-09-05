@@ -29,6 +29,7 @@ extern "C" {
     fn lens_mouse_position(x: *mut f64, y: *mut f64) -> bool;
     fn lens_display_scale_at(x: f64, y: f64) -> f64;
     fn lens_display_scale_at_physical(px: f64, py: f64) -> f64;
+    fn lens_process_appkit_events();
 }
 
 /// Get the current mouse position in global screen points (top-left origin).
@@ -58,6 +59,17 @@ pub fn display_scale_at(x: f64, y: f64) -> f64 {
 pub fn display_scale_at_physical(px: f64, py: f64) -> f64 {
     // SAFETY: lens_display_scale_at_physical is a pure query.
     unsafe { lens_display_scale_at_physical(px, py) }
+}
+
+/// Process pending AppKit events on the current thread.
+///
+/// Must be called regularly from the main thread when a polling loop owns
+/// the main thread. Drains the NSRunLoop for menu actions, panel rendering,
+/// and notification blocks from lifecycle observers.
+pub fn process_appkit_events() {
+    // SAFETY: lens_process_appkit_events drains the current thread's run
+    // loop. Must be called from the main thread.
+    unsafe { lens_process_appkit_events() };
 }
 
 /// The macOS overlay window.

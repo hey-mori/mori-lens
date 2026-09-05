@@ -32,6 +32,11 @@ fn main() {
             .flag("-fobjc-arc")
             .compile("lens_lifecycle");
 
+        cc::Build::new()
+            .file("native/hotkey.m")
+            .flag("-fobjc-arc")
+            .compile("lens_hotkey");
+
         println!("cargo:rustc-link-lib=framework=ApplicationServices");
         println!("cargo:rustc-link-lib=framework=CoreGraphics");
         println!("cargo:rustc-link-lib=framework=AppKit");
@@ -40,5 +45,6 @@ fn main() {
         println!("cargo:rustc-link-lib=framework=Vision");
         println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");
         println!("cargo:rustc-link-lib=framework=CoreVideo");
+        println!("cargo:rustc-link-lib=framework=Carbon");
     }
 }
