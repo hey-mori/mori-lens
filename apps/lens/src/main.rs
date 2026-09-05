@@ -1,15 +1,23 @@
 //! Mori Lens. Rest the pointer on a sentence; read it in your language.
 //!
-//! Cross-platform entry point. The platform-specific product loop lives in
-//! `win.rs` (Windows) and `macos.rs` (macOS). Each is compiled only on its
-//! own platform; the other is invisible to the compiler.
+//! Cross-platform entry point. Platform-neutral modules (Tauri shell,
+//! library, settings, detail, keeping, Mori transfer) are declared here
+//! and shared by both Windows and macOS platform consumers.
 
-// Windows: the full product loop, in win.rs.
+// -- Platform-neutral shared modules --
+mod detail_view;
+mod keeping;
+mod library_service;
+mod mori_transfer;
+mod settings_service;
+mod tauri_app;
+
+// -- Windows: the full product loop, in win.rs. --
 #[cfg(windows)]
 #[path = "win.rs"]
 mod win;
 
-// macOS: M6 acquisition wired in; overlay and OCR arrive in M7.
+// -- macOS: native product loop with Tauri shell. --
 #[cfg(target_os = "macos")]
 #[path = "macos.rs"]
 mod macos;

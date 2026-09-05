@@ -45,6 +45,7 @@ fn main() {
         println!("cargo:rustc-link-lib=framework=Vision");
         println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");
         println!("cargo:rustc-link-lib=framework=CoreVideo");
+        println!("cargo:rustc-link-lib=framework=CoreMedia");
         println!("cargo:rustc-link-lib=framework=Carbon");
     }
 }
