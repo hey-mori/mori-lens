@@ -129,21 +129,29 @@ bool lens_menubar_create(void) {
 }
 
 void lens_menubar_destroy(void) {
-    @autoreleasepool {
-        if (g_statusItem) {
-            [[NSStatusBar systemStatusBar] removeStatusItem:g_statusItem];
-            g_statusItem = nil;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @autoreleasepool {
+            if (g_statusItem) {
+                [[NSStatusBar systemStatusBar] removeStatusItem:g_statusItem];
+                g_statusItem = nil;
+            }
+            g_delegate = nil;
         }
-        g_delegate = nil;
-    }
+    });
 }
 
 void lens_menubar_set_title(const char *title) {
-    @autoreleasepool {
-        if (g_statusItem && title) {
-            g_statusItem.button.title = [NSString stringWithUTF8String:title];
+    if (!title) return;
+    // Copy the string for the async block.
+    char *title_copy = strdup(title);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @autoreleasepool {
+            if (g_statusItem && title_copy) {
+                g_statusItem.button.title = [NSString stringWithUTF8String:title_copy];
+            }
         }
-    }
+        free(title_copy);
+    });
 }
 
 bool lens_menubar_poll_pause_toggle(void) {
