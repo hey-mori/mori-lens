@@ -196,7 +196,7 @@ CI execution:                NOT VERIFIED
 
 ```
 branch:  main
-HEAD:    02bc1f4
+HEAD:    d572622 (Merge PR #276 — anchor preservation)
 status:  clean
 open PR: none
 ```
