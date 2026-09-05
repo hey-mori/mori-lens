@@ -461,6 +461,74 @@ impl MacTextAcquirer {
         String::from_utf8(buf[..len as usize].to_vec()).ok()
     }
 
+    /// Get the process name at a screen point without reading any text.
+    ///
+    /// This is a lightweight metadata lookup: it finds the AX element at the
+    /// point, walks up to the application element, and extracts the PID.
+    /// No text content is read. This is used for policy checking before
+    /// acquisition.
+    pub fn process_name_at(&self, point: ScreenPoint) -> Option<String> {
+        // Check permission.
+        if AxPermission::check() != AxPermission::Trusted {
+            return None;
+        }
+
+        let scale = self.topology.scale_at_screen_point(point);
+        let cg_point = coords::screen_point_to_cg(point, scale);
+
+        // SAFETY: AXUIElementCreateSystemWide always returns a valid element.
+        let system_wide = unsafe { AxElement::adopt(ffi::AXUIElementCreateSystemWide())? };
+
+        let mut element_at_point: ffi::AXUIElementRef = std::ptr::null_mut();
+        // SAFETY: system_wide is valid. Out-pointer is valid.
+        let err = unsafe {
+            ffi::AXUIElementCopyElementAtPosition(
+                system_wide.raw(),
+                cg_point.x as f32,
+                cg_point.y as f32,
+                &mut element_at_point,
+            )
+        };
+        if err != ffi::K_AX_ERROR_SUCCESS || element_at_point.is_null() {
+            return None;
+        }
+
+        // SAFETY: On success, element_at_point is a retained AXUIElementRef.
+        let element = unsafe { AxElement::adopt(element_at_point)? };
+
+        // Walk up to find the application element.
+        // SAFETY: element is valid; CFRetain returns it.
+        let mut current_ref = unsafe { AxElement::retain(element.raw())? };
+        for _ in 0..50 {
+            let role = self.get_role(current_ref.raw());
+            if role.as_deref() == Some("AXApplication") {
+                if let Some(pid_val) =
+                    self.get_attribute(current_ref.raw(), ffi::ax_process_identifier())
+                {
+                    let mut pid: i32 = 0;
+                    // SAFETY: pid_val.raw() is a CFNumberRef.
+                    let ok = unsafe {
+                        ffi::CFNumberGetValue(
+                            pid_val.raw(),
+                            ffi::K_CF_NUMBER_INT_TYPE,
+                            &mut pid as *mut i32 as *mut std::os::raw::c_void,
+                        )
+                    };
+                    if ok != 0 && pid > 0 {
+                        return Self::process_name_for_pid(pid);
+                    }
+                }
+                break;
+            }
+            let parent_val = self.get_attribute(current_ref.raw(), ffi::ax_parent())?;
+            // SAFETY: parent_val.as_element() is valid while parent_val is alive.
+            let next_ref = unsafe { AxElement::retain(parent_val.as_element()) };
+            drop(parent_val);
+            current_ref = next_ref?;
+        }
+        None
+    }
+
     /// Resolve the application identity (process name, window title) from
     /// the element at the pointer. Walks up to the application element for
     /// the PID, then uses `proc_name` for the process name.
