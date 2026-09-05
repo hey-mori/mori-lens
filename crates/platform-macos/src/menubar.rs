@@ -15,6 +15,8 @@ extern "C" {
     fn lens_menubar_poll_copy() -> bool;
     fn lens_menubar_poll_save() -> bool;
     fn lens_menubar_poll_ocr() -> bool;
+    fn lens_menubar_poll_open_settings() -> bool;
+    fn lens_menubar_poll_open_library() -> bool;
 }
 
 /// The macOS menu bar item.
@@ -69,6 +71,18 @@ impl MenuBar {
     pub fn poll_ocr(&self) -> bool {
         // SAFETY: pure atomic read.
         unsafe { lens_menubar_poll_ocr() }
+    }
+
+    /// Edge-triggered: returns true once per Open Settings click.
+    pub fn poll_open_settings(&self) -> bool {
+        // SAFETY: pure atomic read.
+        unsafe { lens_menubar_poll_open_settings() }
+    }
+
+    /// Edge-triggered: returns true once per Open Library click.
+    pub fn poll_open_library(&self) -> bool {
+        // SAFETY: pure atomic read.
+        unsafe { lens_menubar_poll_open_library() }
     }
 }
 
