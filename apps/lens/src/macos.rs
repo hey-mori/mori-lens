@@ -354,6 +354,8 @@ fn product_loop(
             if mb.poll_copy() { pending_commands.push(ProductCommand::Copy); }
             if mb.poll_save() { pending_commands.push(ProductCommand::Save); }
             if mb.poll_ocr() { pending_commands.push(ProductCommand::ManualOcr); }
+            if mb.poll_open_settings() { pending_commands.push(ProductCommand::OpenSettings); }
+            if mb.poll_open_library() { pending_commands.push(ProductCommand::OpenLibrary); }
         }
 
         if hotkeys_available {
@@ -425,6 +427,12 @@ fn product_loop(
                             Err(_) => {}
                         }
                     }
+                }
+                ProductCommand::OpenSettings => {
+                    tauri_handle.show_window();
+                }
+                ProductCommand::OpenLibrary => {
+                    tauri_handle.show_window();
                 }
                 ProductCommand::None => {}
             }

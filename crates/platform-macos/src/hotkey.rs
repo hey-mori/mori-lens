@@ -19,6 +19,8 @@ pub enum ProductCommand {
     Save = 4,
     ManualOcr = 5,
     Quit = 6,
+    OpenSettings = 7,
+    OpenLibrary = 8,
 }
 
 impl From<c_int> for ProductCommand {
@@ -30,6 +32,8 @@ impl From<c_int> for ProductCommand {
             4 => Self::Save,
             5 => Self::ManualOcr,
             6 => Self::Quit,
+            7 => Self::OpenSettings,
+            8 => Self::OpenLibrary,
             _ => Self::None,
         }
     }
