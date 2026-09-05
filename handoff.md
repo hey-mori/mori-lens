@@ -21,11 +21,12 @@ Windows implementation is complete and stable. macOS is the active workstream.
 - Vision OCR production-wired (`OcrTextAcquirer` → `TextAcquirer` trait)
 - Passive native overlay production-wired (NSPanel, transparent, click-through)
 - Real global commands via CGEventTap (Cmd+Opt+L/D/C/S/O/Q)
-- AppKit event loop drained each iteration (NSRunLoop)
-- Save uses canonical `Library::insert` (same storage as Windows)
+- AppKit event loop: Tauri owns main thread, product loop on worker thread
+- Save uses canonical `SharedLibrary` (same DB as Tauri Library commands)
+- Settings/Library surfaces accessible via menu bar (Cmd+, / Cmd+Opt+L)
 - Lifecycle resilience (sleep/wake, display change)
 - Single instance guard (flock)
-- **Tauri Settings/Library/Detail UI NOT connected** — macOS runs as native CLI loop
+- Shared modules (tauri_app, library_service, settings_service, detail_view, keeping, mori_transfer) moved to main.rs for cross-platform use
 
 **Shared/core:**
 - `lens-core` platform-neutral (ADR-0003 invariant held)
@@ -34,17 +35,13 @@ Windows implementation is complete and stable. macOS is the active workstream.
 
 ## This Session
 
-- Built `crates/platform-macos/` from scratch: 10 Rust modules + 7 Objective-C bridges
-- Split `apps/lens` into `win.rs` + `macos.rs` behind cfg gates
-- Discovered and fixed: `CGWindowListCreateImage` and `CGDisplayCreateImage` are obsoleted on macOS 15+; replaced with ScreenCaptureKit `SCStream`
-- Discovered and fixed: `physical_to_logical()` passed physical pixels to a function expecting logical points — wrong scale at mixed-scale multi-monitor boundaries
-- Discovered and fixed: SCStream capture delegate could be deallocated while async stop callback was in flight — added semaphore wait
-- Discovered and fixed: `mem::forget` in parent-chain walks leaked CFTypeRefs — replaced with retain-per-visit pattern
-- Replaced direct `saved.md` append with canonical `Library::open` + `Library::insert`
-- Replaced `Generation(0)` in manual OCR with monotonic counter; `HoverEvent::Left` now clears `current_card`
-- Added `lens_process_appkit_events()` to drain NSRunLoop — menu actions and lifecycle notifications now work
-- Added CGEventTap global hotkeys — real global, not just menu key equivalents
-- Fixed release workflow: `.app` is a directory (can't hash directly) — now zips via `ditto`, hashes the zip, hard-fails if `.app` missing
+- Integrated macOS into Tauri application shell: shared modules moved from win.rs to main.rs, macOS product loop runs on worker thread while Tauri event loop runs on main thread (matching Windows architecture)
+- macOS now uses `settings_service::load_or_migrate()` and `library_service::open()` — same canonical path as Windows
+- Added Open Settings (Cmd+,) and Open Library (Cmd+Opt+L) to menu bar, routing through `AppHandle.show_window()` (Tauri webview)
+- Save now uses `SharedLibrary` (same DB as Tauri Library commands) instead of direct file append
+- Added CoreMedia framework to build.rs for SCStream capture
+- Placeholder icon.png created for Tauri macOS build
+- detail_view clipboard call made cross-platform (cfg-gated)
 
 ## Agent Assessment
 
@@ -58,8 +55,18 @@ M7 REAL-WORLD EVIDENCE:          PENDING
 MACOS PRODUCT PARITY:            COMPLETE
   (event loop, global hotkeys, commands, save, lifecycle, stale protection)
 
-MACOS APPLICATION SHELL:         INCOMPLETE
-  (Tauri Settings/Library/Detail UI not connected)
+TAURI APPLICATION SHELL:         INTEGRATED
+  (shared modules, Settings/Library surfaces accessible, Save uses same DB)
+
+SETTINGS/LIBRARY/DETAIL:         ACCESSIBLE
+  (menu bar opens Tauri webview windows; full UI interaction not yet validated)
+
+POLICY ENFORCEMENT:              NOT CONNECTED
+  (_policy variable exists but not consulted in hover loop)
+
+ASYNC/STALE CORRECTNESS:         PARTIAL
+  (HoverEvent::Left clears current_card; monotonic generation for manual OCR;
+   Deep/Quick stale response tests not yet written)
 
 PACKAGING CONFIG:                COMPLETE
 PACKAGE ARTIFACT:                NOT BUILT LOCALLY (LOCAL TOOLING BLOCKER)
@@ -71,10 +78,11 @@ CI EXECUTION EVIDENCE:           NOT VERIFIED
 ## Architecture / Key Decisions
 
 - `lens-core` remains platform-neutral. No `#[cfg(windows)]` or `#[cfg(target_os)]` in core.
+- Shared modules (tauri_app, library_service, settings_service, detail_view, keeping, mori_transfer) declared in main.rs, used by both win.rs and macos.rs.
 - AX attribute names created at runtime via `CFStringCreateWithCString` — linker doesn't export `kAX*Attribute` symbols on all macOS versions. Do not reintroduce extern statics for these.
 - Screen capture uses ScreenCaptureKit `SCStream`. Do not reintroduce `CGDisplayCreateImage` or `CGWindowListCreateImage` — obsoleted on macOS 15+.
 - Accessibility-first OCR: AX always tried first; OCR fallback only when `ocr_can_help()` and `OcrMode != Off`. Never silently auto-OCR.
-- All AppKit operations (NSPanel, NSStatusItem, NSMenu) on main thread. `lens_process_appkit_events()` called every 25ms iteration.
+- Tauri owns main thread (AppKit event loop). Product loop on worker thread. Native components (overlay, menubar, hotkeys) created on main thread, moved to worker.
 - Global hotkeys via CGEventTap — uses existing AX permission, no additional permission needed.
 - Memory-only privacy: no screenshot/OCR image written to disk.
 - Non-fatal degradation: AX permission, Screen Recording, overlay, menu bar failures don't exit the process.
@@ -83,71 +91,60 @@ CI EXECUTION EVIDENCE:           NOT VERIFIED
 
 **Hover → Translation:**
 ```
-overlay::process_appkit_events()
-→ hotkey::poll() + menubar.poll_*() → ProductCommand queue
-→ HoverMachine::observe()
-→ MacTextAcquirer::acquire() [AX path]
-→ OcrTextAcquirer::acquire() [OCR fallback if ocr_can_help]
-→ decide() → language routing
-→ translator.quick()
-→ Card::translated()
-→ overlay.show_text()
-```
-
-**Deep Analysis:**
-```
-ProductCommand::Deep
-→ execute_deep()
-→ translator.deep()
-→ AnalysisCache check
-→ Card::analysed()
-→ overlay.show_text()
+Tauri event loop (main thread)
+  ← product_loop (worker thread)
+    → hotkey::poll() + menubar.poll_*() → ProductCommand queue
+    → HoverMachine::observe()
+    → MacTextAcquirer::acquire() [AX path]
+    → OcrTextAcquirer::acquire() [OCR fallback if ocr_can_help]
+    → decide() → language routing
+    → translator.quick()
+    → Card::translated()
+    → overlay.show_text()
 ```
 
 **Save:**
 ```
 ProductCommand::Save
 → execute_save()
-→ Library::open("library.db")
+→ SharedLibrary::lock()
 → Library::insert(&Item{original, answer, kind, ...})
+→ same DB as Tauri library_list/library_search commands
 ```
 
-**Manual OCR:**
+**Open Settings/Library:**
 ```
-ProductCommand::ManualOcr
-→ overlay.hide()
-→ OcrTextAcquirer.acquire()
-→ translator.quick()
-→ Card::translated()
-→ overlay.show_text()
+ProductCommand::OpenSettings / OpenLibrary
+→ tauri_handle.show_window()
+→ Tauri webview window shown (main thread)
 ```
 
 ## Important Files
 
 ```
+apps/lens/src/main.rs
+  Shared module declarations + platform dispatch.
+
 apps/lens/src/macos.rs
-  macOS product loop, command dispatch, all action handlers.
+  macOS product loop (worker thread), command dispatch, action handlers.
 
 apps/lens/src/win.rs
-  Windows product loop (3300+ lines, reference for contract).
+  Windows product loop (worker thread, reference for contract).
 
-crates/platform-macos/src/acquirer.rs
-  MacTextAcquirer — AX text acquisition chain.
-
-crates/platform-macos/src/ocr_acquire.rs
-  OcrTextAcquirer — screen capture + Vision OCR.
+apps/lens/src/tauri_app.rs
+  Platform-neutral Tauri shell: commands, shared state, build/run.
 
 crates/platform-macos/src/hotkey.rs
-  Global hotkey bridge + ProductCommand enum.
+  Global hotkey bridge + ProductCommand enum (8 variants).
 
-crates/platform-macos/src/overlay.rs
-  NSPanel overlay wrapper.
+crates/platform-macos/src/menubar.rs
+  NSStatusItem wrapper with 8 poll methods.
+
+crates/platform-macos/native/menubar.m
+  Menu bar implementation with Cmd+, and Cmd+Opt+L shortcuts.
 
 crates/platform-macos/native/capture.m
   ScreenCaptureKit SCStream — ownership boundary.
-
-crates/platform-macos/native/hotkey.m
-  CGEventTap callback — lock-free ring buffer.
 
 crates/lens-storage/src/lib.rs
   Canonical Library API (Item, Library::open/insert/search).
@@ -155,10 +152,8 @@ crates/lens-storage/src/lib.rs
 
 ## Latest Implementation Changes
 
-- PR #268 — AppKit event loop drain, CGEventTap global hotkeys, unified ProductCommand dispatch
-- PR #269 — Release workflow: zip .app, hard failure on missing artifact, proper SHA-256
-- PR #270 — Stale generation: monotonic counter for manual OCR, HoverEvent::Left clears current_card
-- Direct — Save → canonical Library API (`Library::insert` instead of `saved.md` append)
+- PR #271 — Tauri app shell integration: shared modules to main.rs, macOS uses settings_service/library_service, product loop on worker thread
+- PR #272 — Open Settings/Library menu bar commands via AppHandle.show_window()
 
 ## Automated Evidence
 
@@ -175,22 +170,23 @@ CI execution:                NOT VERIFIED
 
 ## Known Implementation Gaps
 
-1. **Tauri app shell not integrated on macOS** — Settings/Library/Detail UI surfaces are Windows-only. macOS runs as native CLI loop. `lens-storage::Library` is accessible directly (Save uses it), but no UI.
-2. **Policy enforcement not connected** — `_policy` variable set up but not consulted in hover loop for per-app deny/allow.
-3. **No `.icns` icon** — only `icons/icon.ico` exists. macOS bundle uses default icon. (ASSET BLOCKER)
+1. **Policy enforcement not connected** — `_policy` variable set up but not consulted in hover loop for per-app deny/allow.
+2. **Stale generation tests missing** — Quick/Deep/OCR stale response rejection not yet covered by automated tests.
+3. **No `.icns` icon** — only placeholder `icon.png` exists. macOS bundle uses default icon. (ASSET BLOCKER)
 
 ## Known Risks
 
-- SCStream bridge waits for stop completion via semaphore, but timeout behavior (5s) has not been fault-tested. If the stream hangs, capture blocks for 5s then returns failure.
-- `current_card` is cleared on `HoverEvent::Left` but Deep Analysis is synchronous — a slow `translator.deep()` call could complete after the user has moved away. The result would show at the old anchor via `make_dummy_target()`.
-- All AppKit calls happen on the Rust main thread, which is correct. But if the product loop ever moves to a background thread, every AppKit call would need `dispatch_async(dispatch_get_mainQueue(), ...)`.
+- SCStream bridge waits for stop completion via semaphore, but timeout behavior (5s) has not been fault-tested.
+- `current_card` is cleared on `HoverEvent::Left` but Deep Analysis is synchronous — a slow `translator.deep()` call could complete after the user has moved away.
+- All AppKit calls happen on the Rust main thread via Tauri, which is correct. But native components (overlay, menubar) are moved to the worker thread — their FFI calls may need main-thread dispatch if AppKit requires it.
 
 ## Review Targets
 
-- Is macOS Save truly using the same Library source of truth as Windows? Verify `library.db` path resolution matches.
-- Are menu bar + global hotkey commands routed through exactly one dispatcher? Verify no duplicate handling.
-- Does `lens_process_appkit_events()` actually process lifecycle notification blocks? The lifecycle bridge uses `dispatch_async` to main queue — verify NSRunLoop drains it.
-- Is "M7 complete" supported by production wiring rather than module existence? Trace OCR call from menu click to card display.
+- Verify Tauri really owns the AppKit event loop after the shell refactor. Does `lens_process_appkit_events()` still need to be called?
+- Verify Save and Library UI resolve the exact same database path.
+- Verify stale Deep/Quick/OCR results cannot render after generation changes.
+- Verify policy denial happens before AX/OCR content acquisition (currently NOT enforced).
+- Verify native component FFI calls from worker thread are safe (NSPanel show/hide from non-main thread).
 
 ## Real-world Validation Debt
 
@@ -202,6 +198,7 @@ CI execution:                NOT VERIFIED
 - Physical display hot-plug behavior
 - Global hotkey actual behavior with other apps in foreground
 - Deep Analysis result quality
+- Settings/Library Tauri webview actual interaction on macOS
 
 ## External / Tooling / Credential Debt
 
@@ -212,17 +209,17 @@ CI execution:                NOT VERIFIED
 
 ## Next Session — Start Here
 
-1. Read `apps/lens/src/macos.rs` (product loop) and `apps/lens/src/win.rs` (Windows reference) to understand the Tauri integration gap.
-2. Wire macOS product loop into Tauri setup hook so Settings/Library/Detail surfaces work on macOS. The `tauri_app.rs` module is platform-neutral — investigate what's needed.
-3. Connect `_policy` to the hover loop for per-app deny/allow (currently a TODO in `macos.rs`).
-4. Add stale Quick/Deep/OCR generation tests — synthetic tests verifying old responses are discarded.
-5. Run `scripts/check.sh --full`, PR, merge, then continue to FFI/unsafe audit.
+1. Connect `_policy` to the hover loop for per-app deny/allow. Trace Windows `win.rs` policy usage and replicate the same semantics in `macos.rs`.
+2. Add stale Quick/Deep/OCR generation tests — synthetic tests verifying old responses are discarded when pointer moves.
+3. Audit whether `lens_process_appkit_events()` is still needed now that Tauri owns the event loop. If Tauri drains AppKit events, remove the manual drain.
+4. Verify native component FFI calls from worker thread are safe. If NSPanel/NSStatusItem require main thread, add `dispatch_async` wrappers.
+5. Run `scripts/check.sh --full`, PR, merge, then continue to FFI deep audit.
 
 ## Git State
 
 ```
 branch:  main
-HEAD:    a456a3d
+HEAD:    43dfce2
 status:  clean
 open PR: none
 ```
