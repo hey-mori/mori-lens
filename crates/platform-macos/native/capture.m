@@ -143,7 +143,14 @@ bool lens_capture_screen(double x, double y,
             [NSThread sleepForTimeInterval:0.05];
         }
 
-        [stream stopCaptureWithCompletionHandler:nil];
+        // Stop the stream and wait for completion to ensure the delegate
+        // is not deallocated while callbacks are still in flight.
+        dispatch_semaphore_t sema3 = dispatch_semaphore_create(0);
+        [stream stopCaptureWithCompletionHandler:^(NSError * _Nullable error) {
+            (void)error;
+            dispatch_semaphore_signal(sema3);
+        }];
+        dispatch_semaphore_wait(sema3, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
 
         if (!delegate.pixelData) return false;
 
