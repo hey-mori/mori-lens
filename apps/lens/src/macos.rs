@@ -287,6 +287,7 @@ pub fn main() -> std::process::ExitCode {
     let mut cache = TranslationCache::new(CACHE_ENTRIES);
     let mut analysis_cache = AnalysisCache::new(ANALYSIS_ENTRIES);
     let mut current_card: Option<(Card, String)> = None; // (card, sentence)
+    let mut current_generation: u64 = 0; // monotonic counter for stale protection
 
     // Menu bar — not fatal.
     let menubar = match MenuBar::create() {
@@ -392,7 +393,8 @@ pub fn main() -> std::process::ExitCode {
                     if let Some(ref ocr) = ocr_acquirer {
                         if let Some(ref o) = overlay { o.hide(); }
                         let point = mouse_position();
-                        let gen = lens_core::hover::Generation(0);
+                        current_generation += 1;
+                        let gen = lens_core::hover::Generation(current_generation);
                         let ctx = AcquireContext::new(gen);
                         match ocr.acquire(point, &ctx) {
                             Ok(target) => {
@@ -556,6 +558,8 @@ pub fn main() -> std::process::ExitCode {
                 if let Some(ref o) = overlay {
                     o.hide();
                 }
+                // Clear current card to prevent stale Deep/Copy/Save on old content.
+                current_card = None;
             }
             None => {}
         }
