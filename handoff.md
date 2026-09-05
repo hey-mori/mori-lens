@@ -4,142 +4,235 @@ Last updated: 2026-09-05
 
 ## Current Goal
 
-macOS native implementation for Mori Lens cross-platform desktop product. M6 (Accessibility acquisition), M7 (overlay + OCR), and production parity are the focus.
+macOS native implementation for Mori Lens cross-platform desktop product.
+M6 (Accessibility acquisition), M7 (overlay + OCR), and production parity are the focus.
+Windows implementation is complete and stable. macOS is the active workstream.
 
-## Completed
+## Current Product State
 
-### M6 — macOS Accessibility Acquisition
-- `crates/platform-macos/` crate: FFI bindings (AX/CG), `MacTextAcquirer` implementing `TextAcquirer` trait
-- Permission (`AxPermission`), coordinate conversion (per-display Retina/multi-monitor), UTF-8/UTF-16/CFRange helpers
-- 31 unit tests including property-based and stress tests
+**Windows (stable, production):**
+- Full product loop: hover → UIA acquisition → translation → native overlay
+- Deep Analysis, Copy, Save, Manual OCR, Pause/Resume via global hotkeys
+- Tauri Settings/Library/Detail surfaces
+- NSIS installer, signed release pipeline
 
-### M7 — macOS Native Overlay + OCR
-- NSPanel overlay (transparent, click-through, non-activating) via Objective-C bridge
-- Vision framework OCR (`VNRecognizeTextRequest`) via native bridge
-- ScreenCaptureKit `SCStream` capture (macOS 15+ only path; `CGWindowListCreateImage`/`CGDisplayCreateImage` obsoleted)
-- `OcrTextAcquirer` implementing `TextAcquirer` for OCR fallback path
+**macOS (this session's work):**
+- Accessibility acquisition production-wired (`MacTextAcquirer` → `TextAcquirer` trait)
+- Vision OCR production-wired (`OcrTextAcquirer` → `TextAcquirer` trait)
+- Passive native overlay production-wired (NSPanel, transparent, click-through)
+- Real global commands via CGEventTap (Cmd+Opt+L/D/C/S/O/Q)
+- AppKit event loop drained each iteration (NSRunLoop)
+- Save uses canonical `Library::insert` (same storage as Windows)
+- Lifecycle resilience (sleep/wake, display change)
+- Single instance guard (flock)
+- **Tauri Settings/Library/Detail UI NOT connected** — macOS runs as native CLI loop
 
-### Production Parity
-- **Event loop**: `lens_process_appkit_events()` drains NSRunLoop each 25ms iteration — keeps AppKit responsive
-- **Global hotkeys**: CGEventTap-based Cmd+Opt+L/D/C/S/O/Q (real global, not just menu key equivalents)
-- **Unified command dispatch**: `ProductCommand` enum, menu bar + global hotkeys feed same dispatch
-- **Product commands**: Deep Analysis, Copy (NSPasteboard), Save (canonical `Library::insert`), Manual OCR, Pause/Resume, Quit
-- **Stale generation**: monotonic `current_generation` counter, `HoverEvent::Left` clears `current_card`
-- **Lifecycle**: NSWorkspace wake/display-change notifications → topology refresh + AX re-check
-- **Single instance**: `flock()` on `~/Library/Application Support/Mori Lens/.lock`
-- **AppIdentity**: process name from AX tree via `CFNumberGetValue` + `proc_name`, window title from `AXTitle`
-- **Coordinate correctness**: `display_scale_at_physical()` for mixed-scale multi-monitor display lookup
-- **Save → Library API**: `Library::open("library.db")` + `Library::insert(&Item)` — matches Windows `library_service.rs`
+**Shared/core:**
+- `lens-core` platform-neutral (ADR-0003 invariant held)
+- `lens-storage::Library` is canonical save target (SQLite)
+- Cross-platform CI configured (manual trigger)
 
-### Packaging + CI
-- `tauri.conf.json`: macOS `"app"` bundle target, `minimumSystemVersion: "12.3"`
-- `ci.yml`: `verify-macos` job on `macos-latest` running `scripts/check.sh --full`
-- `release.yml`: `build-windows` + `build-macos` + `release` 3-job structure
-- macOS artifact: `.app` → `ditto` zip → SHA-256 → GitHub Release (hard failure if .app missing)
+## This Session
 
-### App Shell Split
-- `apps/lens/src/main.rs`: thin dispatcher (25 lines)
-- `apps/lens/src/win.rs`: Windows product loop (3300+ lines, unchanged)
-- `apps/lens/src/macos.rs`: macOS product loop with full command dispatch
+- Built `crates/platform-macos/` from scratch: 10 Rust modules + 7 Objective-C bridges
+- Split `apps/lens` into `win.rs` + `macos.rs` behind cfg gates
+- Discovered and fixed: `CGWindowListCreateImage` and `CGDisplayCreateImage` are obsoleted on macOS 15+; replaced with ScreenCaptureKit `SCStream`
+- Discovered and fixed: `physical_to_logical()` passed physical pixels to a function expecting logical points — wrong scale at mixed-scale multi-monitor boundaries
+- Discovered and fixed: SCStream capture delegate could be deallocated while async stop callback was in flight — added semaphore wait
+- Discovered and fixed: `mem::forget` in parent-chain walks leaked CFTypeRefs — replaced with retain-per-visit pattern
+- Replaced direct `saved.md` append with canonical `Library::open` + `Library::insert`
+- Replaced `Generation(0)` in manual OCR with monotonic counter; `HoverEvent::Left` now clears `current_card`
+- Added `lens_process_appkit_events()` to drain NSRunLoop — menu actions and lifecycle notifications now work
+- Added CGEventTap global hotkeys — real global, not just menu key equivalents
+- Fixed release workflow: `.app` is a directory (can't hash directly) — now zips via `ditto`, hashes the zip, hard-fails if `.app` missing
 
-## Key Design Decisions
-
-1. **lens-core remains platform-neutral** — zero `#[cfg(windows)]` or `#[cfg(target_os)]` in core
-2. **AX attribute names created at runtime** via `CFStringCreateWithCString` — linker doesn't export `kAX*Attribute` symbols on all macOS versions
-3. **Accessibility-first OCR contract** — AX always tried first; OCR fallback only when `ocr_can_help()` and `OcrMode != Off`
-4. **Memory-only privacy** — no screenshot/OCR image written to disk
-5. **Non-fatal degradation** — AX permission, Screen Recording, overlay, menu bar failures don't exit the process
-6. **CGEventTap for global hotkeys** — uses existing AX permission, no additional permission needed
-7. **SCStream for capture** — only available path on macOS 15+; older CG APIs obsoleted
-
-## Changed Files (This Session)
+## Agent Assessment
 
 ```
-crates/platform-macos/
-├── Cargo.toml                    # cc build-dep added
-├── build.rs                      # compiles 6 Objective-C bridges
-├── native/
-│   ├── overlay.h/m               # NSPanel, mouse position, display scale, event drain
-│   ├── vision_ocr.m              # VNRecognizeTextRequest
-│   ├── capture.m                 # SCStream single-frame capture
-│   ├── menubar.h/m               # NSStatusItem with 7 menu items
-│   ├── clipboard.h/m             # NSPasteboard
-│   ├── lifecycle.h/m             # NSWorkspace wake/display notifications
-│   └── hotkey.h/m                # CGEventTap global hotkeys
-└── src/
-    ├── lib.rs                    # module exports
-    ├── ffi.rs                    # AX/CG FFI + runtime CFString attrs
-    ├── acquirer.rs               # MacTextAcquirer (TextAcquirer impl)
-    ├── overlay.rs                # Overlay RAII wrapper
-    ├── vision_ocr.rs             # Vision OCR Rust wrapper
-    ├── capture.rs                # Screen capture Rust wrapper
-    ├── menubar.rs                # MenuBar RAII wrapper
-    ├── clipboard.rs              # Clipboard Rust wrapper
-    ├── lifecycle.rs              # Lifecycle observer
-    ├── hotkey.rs                 # Global hotkey + ProductCommand
-    ├── coords.rs                 # DisplayTopology, coordinate conversion
-    ├── utf.rs                    # UTF-8/UTF-16/CFRange helpers
-    ├── permission.rs             # AxPermission typed state
-    ├── ocr_acquire.rs            # OcrTextAcquirer (TextAcquirer impl)
-    └── single.rs                 # flock-based single instance
+M6 NATIVE IMPLEMENTATION:        COMPLETE
+M6 REAL-WORLD EVIDENCE:          PENDING
 
-apps/lens/src/
-├── main.rs                       # cross-platform dispatcher
-├── win.rs                        # Windows product loop (unchanged)
-└── macos.rs                      # macOS product loop (full implementation)
+M7 NATIVE IMPLEMENTATION:        COMPLETE
+M7 REAL-WORLD EVIDENCE:          PENDING
 
-.github/workflows/
-├── ci.yml                        # + verify-macos job
-└── release.yml                   # + build-macos job, zip artifact
+MACOS PRODUCT PARITY:            COMPLETE
+  (event loop, global hotkeys, commands, save, lifecycle, stale protection)
 
-.gitignore                        # + .qwen/
+MACOS APPLICATION SHELL:         INCOMPLETE
+  (Tauri Settings/Library/Detail UI not connected)
+
+PACKAGING CONFIG:                COMPLETE
+PACKAGE ARTIFACT:                NOT BUILT LOCALLY (LOCAL TOOLING BLOCKER)
+
+CROSS-PLATFORM CI CONFIG:        COMPLETE
+CI EXECUTION EVIDENCE:           NOT VERIFIED
 ```
 
-## Test Results
+## Architecture / Key Decisions
 
-- `scripts/check.sh --full`: **PASS** (fmt, clippy -D warnings, test, version consistency)
-- Workspace tests: 479 (core) + 31 (macos) + 17 (windows) + 67 (settings) + 94 (translate) = **all green**
-- macOS binary: builds and runs (`./target/debug/lens --version` → `Mori Lens 0.1.0 · macOS`)
+- `lens-core` remains platform-neutral. No `#[cfg(windows)]` or `#[cfg(target_os)]` in core.
+- AX attribute names created at runtime via `CFStringCreateWithCString` — linker doesn't export `kAX*Attribute` symbols on all macOS versions. Do not reintroduce extern statics for these.
+- Screen capture uses ScreenCaptureKit `SCStream`. Do not reintroduce `CGDisplayCreateImage` or `CGWindowListCreateImage` — obsoleted on macOS 15+.
+- Accessibility-first OCR: AX always tried first; OCR fallback only when `ocr_can_help()` and `OcrMode != Off`. Never silently auto-OCR.
+- All AppKit operations (NSPanel, NSStatusItem, NSMenu) on main thread. `lens_process_appkit_events()` called every 25ms iteration.
+- Global hotkeys via CGEventTap — uses existing AX permission, no additional permission needed.
+- Memory-only privacy: no screenshot/OCR image written to disk.
+- Non-fatal degradation: AX permission, Screen Recording, overlay, menu bar failures don't exit the process.
 
-## Known Issues / Risks
+## Production Call Paths
 
-1. **Tauri app shell not integrated on macOS** — Settings/Library/Detail UI surfaces are Windows-only via Tauri. macOS runs as native CLI loop. Library DB is accessible directly (Save uses it), but no UI.
+**Hover → Translation:**
+```
+overlay::process_appkit_events()
+→ hotkey::poll() + menubar.poll_*() → ProductCommand queue
+→ HoverMachine::observe()
+→ MacTextAcquirer::acquire() [AX path]
+→ OcrTextAcquirer::acquire() [OCR fallback if ocr_can_help]
+→ decide() → language routing
+→ translator.quick()
+→ Card::translated()
+→ overlay.show_text()
+```
+
+**Deep Analysis:**
+```
+ProductCommand::Deep
+→ execute_deep()
+→ translator.deep()
+→ AnalysisCache check
+→ Card::analysed()
+→ overlay.show_text()
+```
+
+**Save:**
+```
+ProductCommand::Save
+→ execute_save()
+→ Library::open("library.db")
+→ Library::insert(&Item{original, answer, kind, ...})
+```
+
+**Manual OCR:**
+```
+ProductCommand::ManualOcr
+→ overlay.hide()
+→ OcrTextAcquirer.acquire()
+→ translator.quick()
+→ Card::translated()
+→ overlay.show_text()
+```
+
+## Important Files
+
+```
+apps/lens/src/macos.rs
+  macOS product loop, command dispatch, all action handlers.
+
+apps/lens/src/win.rs
+  Windows product loop (3300+ lines, reference for contract).
+
+crates/platform-macos/src/acquirer.rs
+  MacTextAcquirer — AX text acquisition chain.
+
+crates/platform-macos/src/ocr_acquire.rs
+  OcrTextAcquirer — screen capture + Vision OCR.
+
+crates/platform-macos/src/hotkey.rs
+  Global hotkey bridge + ProductCommand enum.
+
+crates/platform-macos/src/overlay.rs
+  NSPanel overlay wrapper.
+
+crates/platform-macos/native/capture.m
+  ScreenCaptureKit SCStream — ownership boundary.
+
+crates/platform-macos/native/hotkey.m
+  CGEventTap callback — lock-free ring buffer.
+
+crates/lens-storage/src/lib.rs
+  Canonical Library API (Item, Library::open/insert/search).
+```
+
+## Latest Implementation Changes
+
+- PR #268 — AppKit event loop drain, CGEventTap global hotkeys, unified ProductCommand dispatch
+- PR #269 — Release workflow: zip .app, hard failure on missing artifact, proper SHA-256
+- PR #270 — Stale generation: monotonic counter for manual OCR, HoverEvent::Left clears current_card
+- Direct — Save → canonical Library API (`Library::insert` instead of `saved.md` append)
+
+## Automated Evidence
+
+```
+scripts/check.sh --full:     PASS
+workspace tests:             PASS
+platform-macos tests:        PASS (31 tests)
+macOS debug binary build:    PASS
+macOS binary --version:      PASS (Mori Lens 0.1.0 · macOS)
+.app bundle local build:     NOT BUILT (LOCAL TOOLING BLOCKER — cargo-tauri not installed)
+CI config:                   STATICALLY AUDITED
+CI execution:                NOT VERIFIED
+```
+
+## Known Implementation Gaps
+
+1. **Tauri app shell not integrated on macOS** — Settings/Library/Detail UI surfaces are Windows-only. macOS runs as native CLI loop. `lens-storage::Library` is accessible directly (Save uses it), but no UI.
 2. **Policy enforcement not connected** — `_policy` variable set up but not consulted in hover loop for per-app deny/allow.
-3. **`cargo-tauri` not installed locally** — `.app` bundle can't be built locally. CI workflow installs it. TOOLING BLOCKER.
-4. **No `.icns` icon** — only `icons/icon.ico` exists. macOS bundle uses default icon. ICON BLOCKER.
-5. **No code signing** — unsigned development artifacts. Apple Developer ID needed for production.
+3. **No `.icns` icon** — only `icons/icon.ico` exists. macOS bundle uses default icon. (ASSET BLOCKER)
 
-## Incomplete Work
+## Known Risks
 
-| Item | Priority | Notes |
-|------|----------|-------|
-| Tauri Settings/Library/Detail on macOS | High | Requires Tauri setup hook integration |
-| Policy enforcement in hover loop | Medium | `_policy` TODO in macos.rs |
-| macOS `.app` local build verification | Medium | Needs `cargo install tauri-cli` |
-| Stress tests for command storm / long Ollama | Medium | Synthetic tests for native wrappers |
-| FFI unsafe audit (full) | Low | All blocks have SAFETY comments; deeper review pending |
+- SCStream bridge waits for stop completion via semaphore, but timeout behavior (5s) has not been fault-tested. If the stream hangs, capture blocks for 5s then returns failure.
+- `current_card` is cleared on `HoverEvent::Left` but Deep Analysis is synchronous — a slow `translator.deep()` call could complete after the user has moved away. The result would show at the old anchor via `make_dummy_target()`.
+- All AppKit calls happen on the Rust main thread, which is correct. But if the product loop ever moves to a background thread, every AppKit call would need `dispatch_async(dispatch_get_mainQueue(), ...)`.
 
-## Next Session — First Tasks
+## Review Targets
 
-1. **Tauri app shell integration** — Wire macOS product loop into Tauri setup hook so Settings/Library/Detail surfaces work. This is the biggest remaining gap.
-2. **Policy enforcement** — Connect `_policy` to the hover loop for per-app deny/allow.
-3. **Local `.app` build** — Install `cargo-tauri` and verify the bundle builds correctly.
+- Is macOS Save truly using the same Library source of truth as Windows? Verify `library.db` path resolution matches.
+- Are menu bar + global hotkey commands routed through exactly one dispatcher? Verify no duplicate handling.
+- Does `lens_process_appkit_events()` actually process lifecycle notification blocks? The lifecycle bridge uses `dispatch_async` to main queue — verify NSRunLoop drains it.
+- Is "M7 complete" supported by production wiring rather than module existence? Trace OCR call from menu click to card display.
+
+## Real-world Validation Debt
+
+- Safari/VS Code/KakaoTalk AX acquisition success rate
+- Overlay visual quality (Retina, dark mode, multi-monitor)
+- OCR accuracy (small text, dark themes, code editors)
+- Screen Recording / Accessibility permission onboarding UX
+- Sleep/wake actual behavior (lid close/open)
+- Physical display hot-plug behavior
+- Global hotkey actual behavior with other apps in foreground
+- Deep Analysis result quality
+
+## External / Tooling / Credential Debt
+
+- Apple Developer ID (code signing) — EXTERNAL CREDENTIAL BLOCKER
+- Notarization service — EXTERNAL CREDENTIAL BLOCKER
+- `.icns` icon source asset — ASSET BLOCKER
+- `cargo-tauri` CLI (local `.app` build) — LOCAL TOOLING BLOCKER (CI installs it)
+
+## Next Session — Start Here
+
+1. Read `apps/lens/src/macos.rs` (product loop) and `apps/lens/src/win.rs` (Windows reference) to understand the Tauri integration gap.
+2. Wire macOS product loop into Tauri setup hook so Settings/Library/Detail surfaces work on macOS. The `tauri_app.rs` module is platform-neutral — investigate what's needed.
+3. Connect `_policy` to the hover loop for per-app deny/allow (currently a TODO in `macos.rs`).
+4. Add stale Quick/Deep/OCR generation tests — synthetic tests verifying old responses are discarded.
+5. Run `scripts/check.sh --full`, PR, merge, then continue to FFI/unsafe audit.
 
 ## Git State
 
 ```
-Branch: main (clean)
-Latest commit: c5bd0ff — fix: Save uses canonical Library API
-Total PRs this session: #260-#270 (11 PRs merged) + 1 direct commit
-Remote: origin → github.com/swarea/mori-lens
+branch:  main
+HEAD:    a456a3d
+status:  clean
+open PR: none
 ```
 
-## Repository Conventions
+## Constraints
 
-- Commit format: `<type>: <imperative summary>` + bullet-list body
-- All changes via branch → PR → merge (except 1 accidental direct push)
-- `scripts/check.sh --full` must pass before commit
-- No `#![cfg(windows)]` at crate level in shared code
-- `lens-core` must remain platform-neutral (ADR-0003)
-- macOS native code in Objective-C bridges compiled by `cc` crate
-- All unsafe blocks require SAFETY comments (clippy -D warnings)
+- Agent investigation stays inside `PROJECT_ROOT/**`. Do not inspect `~/.qwen`, `~/Library`, other repos, personal files, credentials.
+- `lens-core` remains platform-neutral (ADR-0003).
+- Human validation does not block implementation. Mark as VALIDATION DEBT.
+- Do not install external tools (`brew install`, `cargo install`) without explicit permission.
+- Work in coherent branch → PR → merge units. No direct main pushes.
+- macOS native code uses Objective-C bridges compiled by `cc` crate.
+- All unsafe blocks require SAFETY comments (clippy `-D warnings`).
