@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 #
-# The single verification gate.
+# The verification gate, in two tiers:
+#
+#   scripts/check.sh          fast repository gate (workspace fmt/clippy/test)
+#   scripts/check.sh --full   product-quality gate:
+#                               workspace fmt/clippy/test
+#                               apps/lens fmt/clippy/check/test
+#                               clean native rebuild (lens-platform-macos)
+#                               release build of hover-probe
+#                               privacy static gates
+#                               version consistency
 #
 # Local runs and CI both call this script, so there is exactly one definition of
 # "verified" and the two cannot drift. CI must never re-list these commands in
 # YAML; it runs `scripts/check.sh --full`.
-#
-#   scripts/check.sh          fmt, clippy, tests
-#   scripts/check.sh --full   the above plus a release build of the probe
 #
 # What this script CANNOT check, stated so a green run is not over-read: the
 # platform adapters call UI Automation, which needs a live desktop with a
@@ -46,9 +52,25 @@ fi
 # file appearing can only fail after one has. This fails on the way to write
 # one, which is the half that can be enforced rather than observed.
 step "no file API in the capture path"
-if git ls-files 'crates/platform-windows/src/capture.rs' 'crates/platform-windows/src/ocr_acquire.rs' | xargs grep -nE 'fs::|File::|CreateFile|WriteFile|BitmapEncoder|SaveToStream'; then
+if git ls-files \
+    'crates/platform-windows/src/capture.rs' \
+    'crates/platform-windows/src/ocr_acquire.rs' \
+    'crates/platform-macos/src/capture.rs' \
+    'crates/platform-macos/src/ocr_acquire.rs' \
+    'crates/platform-macos/src/vision_ocr.rs' \
+  | xargs grep -nE 'fs::|File::|CreateFile|WriteFile|BitmapEncoder|SaveToStream'; then
   printf '\nthe capture path must not touch a file. See docs/privacy-model.md\n'
   printf 'and the module comment at the top of capture.rs.\n'
+  exit 1
+fi
+
+# Also check native Objective-C capture/OCR sources for persistence APIs.
+step "no file API in native capture/OCR path"
+if git ls-files \
+    'crates/platform-macos/native/capture.m' \
+    'crates/platform-macos/native/vision_ocr.m' \
+  | xargs grep -nE 'fopen|fwrite|writeToFile|writeToURL|NSFileHandle|CGImageDestination|NSData\s+write'; then
+  printf '\nthe native capture/OCR path must not write to disk. See docs/privacy-model.md\n'
   exit 1
 fi
 
@@ -89,6 +111,28 @@ fi
 if [[ "$FULL" == "1" ]]; then
   step "cargo build --release -p hover-probe"
   cargo build --release -p hover-probe
+
+  # The actual product binary (apps/lens) is not a workspace member (Tauri
+  # dependency). Verify it compiles, passes lint, and its tests pass.
+  # This catches errors that the workspace gate misses.
+  step "product binary: cargo fmt apps/lens"
+  cargo fmt --manifest-path apps/lens/Cargo.toml -- --check
+
+  step "product binary: cargo clippy apps/lens"
+  cargo clippy --manifest-path apps/lens/Cargo.toml --all-targets -- -D warnings
+
+  step "product binary: cargo check apps/lens"
+  cargo check --manifest-path apps/lens/Cargo.toml
+
+  step "product binary: cargo test apps/lens"
+  cargo test --manifest-path apps/lens/Cargo.toml
+
+  # Force a clean native rebuild of the platform-macos crate to verify that
+  # native .m sources actually compile (cached artifacts can hide errors).
+  step "clean native rebuild: lens-platform-macos"
+  cargo clean -p lens-platform-macos
+  cargo check -p lens-platform-macos
+  cargo test -p lens-platform-macos
 fi
 
 printf '\nverified\n'
