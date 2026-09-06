@@ -235,23 +235,19 @@ mod tests {
 
     #[test]
     fn the_file_lands_beside_the_settings() {
-        let settings =
-            PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\Mori Lens\\settings.conf");
-        assert_eq!(
-            path_beside(&settings),
-            PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\Mori Lens\\saved.md"),
-        );
+        // Use a platform-agnostic path to verify path_beside works correctly.
+        let settings = PathBuf::from("/fake/dir/settings.conf");
+        let result = path_beside(&settings);
+        assert_eq!(result.file_name().unwrap(), "saved.md");
+        assert_eq!(result.parent().unwrap(), settings.parent().unwrap());
     }
 
     #[test]
     fn the_database_lands_beside_the_settings() {
-        let settings =
-            PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\Mori Lens\\settings.conf");
+        let settings = PathBuf::from("/fake/dir/settings.conf");
         let db = settings.parent().map(|p| p.join("library.db")).unwrap();
-        assert_eq!(
-            db,
-            PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\Mori Lens\\library.db"),
-        );
+        assert_eq!(db.file_name().unwrap(), "library.db");
+        assert_eq!(db.parent().unwrap(), settings.parent().unwrap());
     }
 
     #[test]
