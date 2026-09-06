@@ -11,9 +11,10 @@
 //   - Single producer (CGEventTap callback on main thread run loop).
 //   - Single consumer (Rust product loop on worker thread).
 //   - Only the producer writes head. Only the consumer writes tail.
-//   - On overflow, the oldest command is evicted (both head and tail
-//     advance together in the producer). The evicted slot is then
-//     overwritten with the new command.
+//   - True SPSC: no shared mutable state between producer and consumer.
+//   - On overflow, the newest command is dropped (not the oldest).
+//   - Critical commands (Quit, Pause) use separate atomic flags that
+//     bypass the ring buffer, guaranteeing delivery even under storm.
 //   - If macOS disables the tap (timeout), the callback re-enables it.
 
 #import "hotkey.h"
@@ -22,25 +23,40 @@
 #import <stdatomic.h>
 
 // Ring buffer for pending commands (power-of-2 size for fast modulo).
+// True SPSC: only the producer writes head, only the consumer writes tail.
+// On overflow, the NEWEST command is dropped (not the oldest), preserving
+// the SPSC invariant. Critical commands (Quit, Pause) use separate atomic
+// flags that bypass the ring buffer entirely, guaranteeing delivery.
 #define CMD_QUEUE_SIZE 64
 static atomic_int g_cmdQueue[CMD_QUEUE_SIZE];
 static atomic_int g_cmdHead = 0;  // write position (producer only)
 static atomic_int g_cmdTail = 0;  // read position (consumer only)
 
+// Critical command flags — bypass the ring buffer.
+// Set by the producer (callback), cleared by the consumer (poll).
+static atomic_bool g_quitFlag = false;
+static atomic_bool g_pauseFlag = false;
+
 static void enqueue_command(LensCommand cmd) {
+    // Critical commands use dedicated flags — never dropped.
+    if (cmd == LENS_CMD_QUIT) {
+        atomic_store(&g_quitFlag, true);
+        return;
+    }
+    if (cmd == LENS_CMD_PAUSE_TOGGLE) {
+        atomic_store(&g_pauseFlag, true);
+        return;
+    }
+
     int head = atomic_load(&g_cmdHead);
     int tail = atomic_load(&g_cmdTail);
     int next_head = (head + 1) % CMD_QUEUE_SIZE;
 
     if (next_head == tail) {
-        // Queue full — evict the oldest entry so critical commands
-        // like Quit are not lost behind a storm of Deep requests.
-        // Both head and tail advance together; only the producer
-        // touches these in this branch.
-        int new_tail = (tail + 1) % CMD_QUEUE_SIZE;
-        atomic_store(&g_cmdQueue[head], (int)cmd);
-        atomic_store(&g_cmdHead, (head + 1) % CMD_QUEUE_SIZE);
-        atomic_store(&g_cmdTail, new_tail);
+        // Queue full — drop the NEWEST command (the one we're trying to
+        // enqueue). This preserves the SPSC invariant: only the producer
+        // writes head, only the consumer writes tail. The oldest unconsumed
+        // command remains in the queue.
         return;
     }
 
@@ -150,6 +166,16 @@ void lens_hotkey_remove(void) {
 }
 
 LensCommand lens_hotkey_poll(void) {
+    // Critical commands have priority — check flags first.
+    if (atomic_load(&g_quitFlag)) {
+        atomic_store(&g_quitFlag, false);
+        return LENS_CMD_QUIT;
+    }
+    if (atomic_load(&g_pauseFlag)) {
+        atomic_store(&g_pauseFlag, false);
+        return LENS_CMD_PAUSE_TOGGLE;
+    }
+
     int tail = atomic_load(&g_cmdTail);
     int head = atomic_load(&g_cmdHead);
     if (tail == head) return LENS_CMD_NONE;
