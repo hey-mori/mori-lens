@@ -42,9 +42,9 @@ def make_png(width: int, height: int, filepath: str) -> None:
 def main() -> None:
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    # Tauri icon (32x32 minimum for bundling)
+    # Tauri icon (1024x1024 for macOS .app bundling — Tauri needs large PNG)
     icon_path = os.path.join(project_root, "apps", "lens", "icons", "icon.png")
-    make_png(32, 32, icon_path)
+    make_png(1024, 1024, icon_path)
     print(f"Generated: {icon_path}")
 
     # MSIX Store assets (50x50 each)
