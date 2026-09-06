@@ -3,13 +3,6 @@
 //! The whole product loop on Windows: pointer, acquisition, translation,
 //! overlay, tray, hotkeys. Included from `main.rs` behind `#[cfg(windows)]`.
 
-// No console window. A tray application that opens a black terminal you must
-// leave open is not a tray application, and that terminal was the most
-// unfinished thing about this product. `console::attach_to_launcher` takes the
-// launching terminal's console back when there is one, so running it from a
-// shell still prints and double-clicking it does not open anything.
-#![windows_subsystem = "windows"]
-
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -19,11 +12,11 @@ use lens_core::card::Card;
 use lens_core::geometry::{ScreenPoint, ScreenRect};
 use lens_core::hover::{Generation, HoverConfig};
 
-use crate::detail_view::{self, SharedSavePath};
+use crate::detail_view;
 use crate::keeping;
-use crate::library_service::{self, SharedLibrary};
-use crate::settings_service::{self, SharedSettings};
-use crate::tauri_app::{self, AppHandle, SharedDiagnostics, SharedRecent};
+use crate::library_service;
+use crate::settings_service;
+use crate::tauri_app;
 use lens_core::icon::Glyph;
 use lens_core::language::{decide, Decision};
 use lens_core::policy::{AppPolicy, AppTier};
@@ -2441,7 +2434,7 @@ fn show_card(
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
-        let app_name = pointer::position().and_then(|p| pointer::process_name_at(p));
+        let app_name = pointer::position().and_then(pointer::process_name_at);
         let answer_text = match &card.body {
             lens_core::card::CardBody::Translation(t) => t.clone(),
             lens_core::card::CardBody::Analysis { translation, .. } => {
@@ -3364,7 +3357,7 @@ mod history_privacy_tests {
             "Overhead:                    {} ns/call",
             on_per_call - off_per_call
         );
-        println!("");
+        println!();
         println!("Assessment:");
         if on_per_call < 100_000 {
             println!("  < 100µs per call → negligible, safe to keep synchronous");

@@ -4,6 +4,10 @@
 //! library, settings, detail, keeping, Mori transfer) are declared here
 //! and shared by both Windows and macOS platform consumers.
 
+// No console window on Windows. A tray application that opens a black terminal
+// you must leave open is not a tray application.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 // Some items are architecturally defined for cross-platform parity
 // but not yet wired into every product path. Kept for future use.
 #![allow(dead_code)]
