@@ -65,11 +65,11 @@
 
   <Capabilities>
     <!--
-      Mori Lens requires Accessibility (UI Automation) to read text
-      from other applications. This is a restricted capability.
-      The Store review process validates the privacy justification.
+      Mori Lens is a full-trust desktop application. It uses standard Win32
+      file APIs and does not need broadFileSystemAccess (which is for UWP
+      app container sandbox escape). runFullTrust is the only capability
+      needed for a desktop app packaged as MSIX.
     -->
     <rescap:Capability Name="runFullTrust" />
-    <uap:Capability Name="broadFileSystemAccess" />
   </Capabilities>
 </Package>
