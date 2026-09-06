@@ -303,7 +303,7 @@ pub fn main() -> std::process::ExitCode {
 fn product_loop(
     tauri_handle: AppHandle,
     _shared_diagnostics: SharedDiagnostics,
-    _shared_settings: SharedSettings,
+    shared_settings: SharedSettings,
     shared_library: SharedLibrary,
     overlay: Option<Overlay>,
     menubar: Option<MenuBar>,
@@ -313,12 +313,12 @@ fn product_loop(
     mut ax_trusted: bool,
     _screen_recording: bool,
     hotkeys_available: bool,
-    language: String,
-    endpoint: String,
-    model: Option<String>,
-    dwell_ms: u64,
-    ocr_mode: OcrMode,
-    policy: AppPolicy,
+    mut language: String,
+    mut endpoint: String,
+    mut model: Option<String>,
+    mut dwell_ms: u64,
+    mut ocr_mode: OcrMode,
+    mut policy: AppPolicy,
 ) {
     // Translation job types for async dispatch.
     enum QuickJob {
@@ -335,6 +335,9 @@ fn product_loop(
     let (quick_tx, quick_rx): (std::sync::mpsc::Sender<QuickJob>, std::sync::mpsc::Receiver<QuickJob>) = mpsc::channel();
     let (deep_tx, deep_rx): (std::sync::mpsc::Sender<DeepJob>, std::sync::mpsc::Receiver<DeepJob>) = mpsc::channel();
     let (result_tx, result_rx): (std::sync::mpsc::Sender<TransResult>, std::sync::mpsc::Receiver<TransResult>) = mpsc::channel();
+    // Config update channels: (endpoint, model) sent when settings change.
+    let (quick_config_tx, quick_config_rx) = mpsc::channel::<(String, Option<String>)>();
+    let (deep_config_tx, deep_config_rx) = mpsc::channel::<(String, Option<String>)>();
 
     // Shared cache between product loop and translation threads.
     let cache: Arc<Mutex<TranslationCache>> = Arc::new(Mutex::new(TranslationCache::new(CACHE_ENTRIES)));
@@ -354,8 +357,15 @@ fn product_loop(
         let mut translator = quick_translator;
         let _ = translator.resolve_model();
         while let Ok(job) = quick_rx.recv() {
+            // Check for config updates (non-blocking).
+            while let Ok((ep, m)) = quick_config_rx.try_recv() {
+                translator = match m {
+                    Some(ref model) => OllamaTranslator::new(&ep, model),
+                    None => OllamaTranslator::choosing(&ep),
+                };
+                let _ = translator.resolve_model();
+            }
             // Drain pending Quick jobs — keep only the latest.
-            // Older requests are stale (user has moved on).
             let mut current = job;
             loop {
                 match quick_rx.try_recv() {
@@ -392,6 +402,14 @@ fn product_loop(
         let mut translator = deep_translator;
         let _ = translator.resolve_model();
         while let Ok(job) = deep_rx.recv() {
+            // Check for config updates (non-blocking).
+            while let Ok((ep, m)) = deep_config_rx.try_recv() {
+                translator = match m {
+                    Some(ref model) => OllamaTranslator::new(&ep, model),
+                    None => OllamaTranslator::choosing(&ep),
+                };
+                let _ = translator.resolve_model();
+            }
             match job {
                 DeepJob::Deep { sentence, translation, generation, anchor } => {
                     let deep_req = lens_core::analyse::DeepRequest {
@@ -584,6 +602,47 @@ fn product_loop(
             }
             if lc.poll_display_change() {
                 ax_acquirer.refresh_displays();
+            }
+        }
+
+        // Live settings: detect changes from Settings UI.
+        // The actual variables (language, endpoint, model, etc.) are mutable
+        // and updated directly so the next iteration uses the new values.
+        {
+            let s = shared_settings.lock().unwrap().current().clone();
+            let new_lang = s.language.clone();
+            let new_ep = s.endpoint.clone();
+            let new_model = s.model.clone();
+            let new_dwell = s.dwell_ms;
+            let new_ocr = OcrMode::named(&s.ocr).unwrap_or(OcrMode::Manual);
+            let new_policy = { let mut p = s.policy(); p.deny_self("lens"); p };
+
+            // Endpoint/model change → rebuild translators on both lanes.
+            if new_ep != endpoint || new_model != model {
+                let _ = quick_config_tx.send((new_ep.clone(), new_model.clone()));
+                let _ = deep_config_tx.send((new_ep.clone(), new_model.clone()));
+                endpoint = new_ep;
+                model = new_model;
+            }
+            // Language change → affects translation target for new requests.
+            if new_lang != language {
+                language = new_lang;
+            }
+            // Dwell change → rebuild hover config.
+            if new_dwell != dwell_ms {
+                dwell_ms = new_dwell;
+                machine = HoverMachine::new(HoverConfig {
+                    dwell: Duration::from_millis(dwell_ms),
+                    ..HoverConfig::default()
+                });
+            }
+            // OCR mode change → affects whether OCR fallback runs.
+            if new_ocr != ocr_mode {
+                ocr_mode = new_ocr;
+            }
+            // Policy change → Allow→Deny must take effect before next acquisition.
+            if new_policy != policy {
+                policy = new_policy;
             }
         }
 
