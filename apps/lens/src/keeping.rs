@@ -163,8 +163,6 @@ fn write_to_library(md_path: &Path, entry: &Entry, at: SystemTime) -> Option<i64
         note: None,
         tags: None,
         review_state: None,
-        next_review_at: None,
-        review_count: None,
     };
     lib.insert(&item).ok()
 }

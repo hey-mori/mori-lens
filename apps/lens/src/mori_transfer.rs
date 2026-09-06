@@ -222,8 +222,7 @@ pub fn send_to_mori(item: &Item) -> Result<String, TransferError> {
     let connectors = mori_connectors_dir().ok_or(TransferError::MoriNotInstalled)?;
     let lens_dir = connectors.join("lens");
     if !lens_dir.exists() {
-        std::fs::create_dir_all(&lens_dir)
-            .map_err(|e| TransferError::IoError(e.to_string()))?;
+        std::fs::create_dir_all(&lens_dir).map_err(|e| TransferError::IoError(e.to_string()))?;
     }
     let payload = payload_from_item(item);
     let json = serde_json::to_string_pretty(&payload)
@@ -252,8 +251,6 @@ mod tests {
             note: Some("a note".to_string()),
             tags: Some(vec!["cargo".to_string(), "build".to_string()]),
             review_state: None,
-            next_review_at: None,
-            review_count: None,
         }
     }
 
@@ -449,10 +446,7 @@ mod tests {
 
     #[test]
     fn no_capability_file_is_unavailable() {
-        assert_eq!(
-            status_from_capability(None),
-            MoriStatus::NoCapabilityMarker
-        );
+        assert_eq!(status_from_capability(None), MoriStatus::NoCapabilityMarker);
     }
 
     // ─── Send-time recheck tests ─────────────────────────────────────
