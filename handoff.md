@@ -37,9 +37,11 @@ Windows implementation is complete and stable. macOS implementation is complete.
 
 ## This Session
 
-- **PR #303** — docs: fix stale macOS claims in project-goal.md (planned → built, unverified)
+- **PR #303** — docs: fix stale macOS claims in project-goal.md
 - **PR #304** — docs: add M6/M7/M8 gate status tables to roadmap
 - **PR #305** — feat: Windows MSIX packaging infrastructure (ADR-0017)
+- **PR #306** — docs: fix settings.conf → settings.toml, README milestone
+- **PR #307** — fix: macOS graceful degradation without AX permission (no more SIGTRAP)
 
 ## Completion Matrix
 
@@ -134,9 +136,9 @@ CI run 34027544715:               PASS (both platforms)
 
 ## Known Runtime Issues
 
-- Binary crashes with SIGTRAP when AX APIs called without Accessibility permission (expected macOS behavior)
 - Lock file permission bug (`--w-------` → fixed to `-rw-------`)
 - Ollama not available locally (Quick/Deep translation BLOCKED)
+- macOS binary starts gracefully without AX permission (SIGTRAP fixed in PR #307)
 
 ## Validation Procedure
 
