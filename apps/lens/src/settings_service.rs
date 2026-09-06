@@ -260,9 +260,8 @@ mod tests {
 
     fn temp_dir() -> std::path::PathBuf {
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "lens-settings-test-{}-{}", std::process::id(), id
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("lens-settings-test-{}-{}", std::process::id(), id));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -368,7 +367,10 @@ mod tests {
         view.default_tier = "bogus".into();
         state.apply(view).unwrap();
         // Invalid tier falls back to the Settings default.
-        assert_eq!(state.current().default_tier, Settings::default().default_tier);
+        assert_eq!(
+            state.current().default_tier,
+            Settings::default().default_tier
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -387,9 +389,12 @@ mod tests {
         let read_back = state.view();
         assert_eq!(read_back.language, "Spanish");
         assert_eq!(read_back.hover_scope, "word");
-        assert_eq!(read_back.history, true);
+        assert!(read_back.history);
         assert_eq!(read_back.history_days, 90);
-        assert_eq!(read_back.applications, vec![("Safari".into(), "deny".into())]);
+        assert_eq!(
+            read_back.applications,
+            vec![("Safari".into(), "deny".into())]
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

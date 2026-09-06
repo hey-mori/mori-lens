@@ -107,8 +107,14 @@ if [[ "$FULL" == "1" ]]; then
   cargo build --release -p hover-probe
 
   # The actual product binary (apps/lens) is not a workspace member (Tauri
-  # dependency). Verify it compiles and its tests pass. This catches errors
-  # that the workspace gate misses (e.g. AppPolicy missing PartialEq).
+  # dependency). Verify it compiles, passes lint, and its tests pass.
+  # This catches errors that the workspace gate misses.
+  step "product binary: cargo fmt apps/lens"
+  cargo fmt --manifest-path apps/lens/Cargo.toml -- --check
+
+  step "product binary: cargo clippy apps/lens"
+  cargo clippy --manifest-path apps/lens/Cargo.toml --all-targets -- -D warnings
+
   step "product binary: cargo check apps/lens"
   cargo check --manifest-path apps/lens/Cargo.toml
 
