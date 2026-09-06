@@ -747,7 +747,9 @@ fn main() -> std::process::ExitCode {
         // the same fact on the card, and a warm that succeeded costs nothing.
         match warm_translator.prewarm() {
             Ok(elapsed) => println!("engine warm after {}ms", elapsed.as_millis()),
-            Err(_) => eprintln!("engine    Ollama did not respond; the first hover will say so on the card"),
+            Err(_) => eprintln!(
+                "engine    Ollama did not respond; the first hover will say so on the card"
+            ),
         }
         // **Set on failure too.** An absent Ollama answers a hover with a card
         // naming ollama.com, not with a wait, so a flag left false would leave
@@ -1183,7 +1185,10 @@ fn main() -> std::process::ExitCode {
             let lib = shared_library.lock().unwrap();
             if let Ok(pruned) = lib.library().history_prune(now, retention_secs) {
                 if pruned > 0 {
-                    println!("  history   pruned {pruned} entries older than {} days", current.history_days);
+                    println!(
+                        "  history   pruned {pruned} entries older than {} days",
+                        current.history_days
+                    );
                 }
             }
         }
@@ -3216,7 +3221,12 @@ mod history_privacy_tests {
             "history OFF must prevent writes even without app name"
         );
         assert!(
-            !should_record_history(false, &["code.exe".to_owned()], Some("Code.exe"), "translation"),
+            !should_record_history(
+                false,
+                &["code.exe".to_owned()],
+                Some("Code.exe"),
+                "translation"
+            ),
             "history OFF takes precedence over exclusion list"
         );
     }
@@ -3271,13 +3281,38 @@ mod history_privacy_tests {
         let excluded = vec!["keepass".to_owned()];
 
         // Case-insensitive
-        assert!(!should_record_history(true, &excluded, Some("KeePassXC.exe"), "answer"));
-        assert!(!should_record_history(true, &excluded, Some("keepassxc.exe"), "answer"));
-        assert!(!should_record_history(true, &excluded, Some("KEEPASSXC.EXE"), "answer"));
+        assert!(!should_record_history(
+            true,
+            &excluded,
+            Some("KeePassXC.exe"),
+            "answer"
+        ));
+        assert!(!should_record_history(
+            true,
+            &excluded,
+            Some("keepassxc.exe"),
+            "answer"
+        ));
+        assert!(!should_record_history(
+            true,
+            &excluded,
+            Some("KEEPASSXC.EXE"),
+            "answer"
+        ));
 
         // Substring
-        assert!(!should_record_history(true, &excluded, Some("KeePassXC.exe"), "answer"));
-        assert!(!should_record_history(true, &excluded, Some("MyKeePassApp.exe"), "answer"));
+        assert!(!should_record_history(
+            true,
+            &excluded,
+            Some("KeePassXC.exe"),
+            "answer"
+        ));
+        assert!(!should_record_history(
+            true,
+            &excluded,
+            Some("MyKeePassApp.exe"),
+            "answer"
+        ));
 
         // Whitespace is NOT trimmed (documented behavior)
         // let excluded_with_space = vec![" keepass".to_owned()];
@@ -3334,9 +3369,18 @@ mod history_privacy_tests {
 
         println!("\n=== History Latency Benchmark ===");
         println!("Iterations: {}", iterations);
-        println!("History OFF (decision only): {:?} total, {} ns/call", off_duration, off_per_call);
-        println!("History ON (with INSERT):    {:?} total, {} ns/call", on_duration, on_per_call);
-        println!("Overhead:                    {} ns/call", on_per_call - off_per_call);
+        println!(
+            "History OFF (decision only): {:?} total, {} ns/call",
+            off_duration, off_per_call
+        );
+        println!(
+            "History ON (with INSERT):    {:?} total, {} ns/call",
+            on_duration, on_per_call
+        );
+        println!(
+            "Overhead:                    {} ns/call",
+            on_per_call - off_per_call
+        );
         println!("");
         println!("Assessment:");
         if on_per_call < 100_000 {

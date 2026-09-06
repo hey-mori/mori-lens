@@ -144,6 +144,13 @@
         <select id="lib-filter-target" onchange="applyFilters()" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
           <option value="">All</option>
         </select>
+        <label style="font-size:12px;color:#666">State:</label>
+        <select id="lib-filter-state" onchange="applyFilters()" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
+          <option value="">All</option>
+          <option value="later">Later</option>
+          <option value="known">Known</option>
+          <option value="archive">Archive</option>
+        </select>
         <button class="btn" onclick="clearFilters()" style="padding:4px 12px;font-size:12px">Clear filters</button>
       </div>
       <div id="lib-list"><p class="loading">Loading...</p></div>
@@ -152,6 +159,7 @@
     <!-- Review -->
     <div class="section" id="section-review">
       <h1>Review</h1>
+      <p style="color:#888;font-size:12px;margin-bottom:16px">Items marked for later review. Categorise each as Known or Archive.</p>
       <div id="review-summary" style="margin-bottom:16px"></div>
       <div id="review-list"><p class="loading">Loading...</p></div>
       <div id="review-card" style="display:none;margin-top:16px;padding:20px;background:rgba(0,0,0,0.02);border-radius:8px;max-width:500px">
@@ -159,8 +167,9 @@
         <div id="review-answer" style="color:#555;margin-bottom:16px;padding:12px;background:rgba(0,0,0,0.03);border-radius:4px;display:none"></div>
         <div style="display:flex;gap:8px">
           <button class="btn" onclick="showReviewAnswer()" id="review-show-btn" style="padding:8px 16px">Show answer</button>
-          <button class="btn" onclick="reviewItem(true)" id="review-got-it-btn" style="padding:8px 16px;display:none;background:#2e7d32;color:white;border-color:#2e7d32">Got it</button>
-          <button class="btn" onclick="reviewItem(false)" id="review-learn-btn" style="padding:8px 16px;display:none;background:#c62828;color:white;border-color:#c62828">Still learning</button>
+          <button class="btn" onclick="setReviewState('known')" id="review-known-btn" style="padding:8px 16px;display:none;background:#2e7d32;color:white;border-color:#2e7d32">Known</button>
+          <button class="btn" onclick="setReviewState('later')" id="review-later-btn" style="padding:8px 16px;display:none;background:#f57c00;color:white;border-color:#f57c00">Keep Later</button>
+          <button class="btn" onclick="setReviewState('archive')" id="review-archive-btn" style="padding:8px 16px;display:none;background:#616161;color:white;border-color:#616161">Archive</button>
         </div>
       </div>
     </div>
@@ -606,17 +615,18 @@
     // Library functions
     let libraryOffset = 0;
     let libraryQuery = '';
-    let libraryFilters = { kind: null, app: null, source_language: null, target_language: null };
+    let libraryFilters = { kind: null, app: null, source_language: null, target_language: null, review_state: null };
 
     async function loadLibrary() {
       libraryOffset = 0;
       libraryQuery = '';
-      libraryFilters = { kind: null, app: null, source_language: null, target_language: null };
+      libraryFilters = { kind: null, app: null, source_language: null, target_language: null, review_state: null };
       document.getElementById('lib-search').value = '';
       document.getElementById('lib-filter-kind').value = '';
       document.getElementById('lib-filter-app').value = '';
       document.getElementById('lib-filter-source').value = '';
       document.getElementById('lib-filter-target').value = '';
+      document.getElementById('lib-filter-state').value = '';
       await Promise.all([loadFilterOptions(), fetchLibraryPage()]);
     }
 
@@ -655,17 +665,19 @@
       const app = document.getElementById('lib-filter-app').value || null;
       const source_language = document.getElementById('lib-filter-source').value || null;
       const target_language = document.getElementById('lib-filter-target').value || null;
-      libraryFilters = { kind, app, source_language, target_language };
+      const review_state = document.getElementById('lib-filter-state').value || null;
+      libraryFilters = { kind, app, source_language, target_language, review_state };
       libraryOffset = 0;
       fetchLibraryPage();
     }
 
     function clearFilters() {
-      libraryFilters = { kind: null, app: null, source_language: null, target_language: null };
+      libraryFilters = { kind: null, app: null, source_language: null, target_language: null, review_state: null };
       document.getElementById('lib-filter-kind').value = '';
       document.getElementById('lib-filter-app').value = '';
       document.getElementById('lib-filter-source').value = '';
       document.getElementById('lib-filter-target').value = '';
+      document.getElementById('lib-filter-state').value = '';
       libraryOffset = 0;
       fetchLibraryPage();
     }
@@ -773,7 +785,7 @@
       const countEl = document.getElementById('lib-count');
       try {
         let page;
-        const hasFilters = libraryFilters.kind || libraryFilters.app || libraryFilters.source_language || libraryFilters.target_language;
+        const hasFilters = libraryFilters.kind || libraryFilters.app || libraryFilters.source_language || libraryFilters.target_language || libraryFilters.review_state;
         if (libraryQuery) {
           page = await invoke('library_search', { query: libraryQuery, offset: libraryOffset });
         } else if (hasFilters) {
@@ -782,6 +794,7 @@
             app: libraryFilters.app,
             source_language: libraryFilters.source_language,
             target_language: libraryFilters.target_language,
+            review_state: libraryFilters.review_state,
             offset: libraryOffset
           });
         } else {
@@ -797,10 +810,11 @@
         for (const item of page.items) {
           const date = new Date(item.created_at * 1000).toLocaleDateString();
           const kind = item.kind === 'analysis' ? 'analysis' : 'translation';
-          const review = item.review_state || 'new';
-          const reviewBadge = review === 'mastered' ? '<span style="color:#2e7d32;font-size:11px" title="Mastered"> ✓</span>'
-            : review === 'learning' ? '<span style="color:#f57c00;font-size:11px" title="Learning"> ◐</span>'
-            : '<span style="color:#888;font-size:11px" title="New"> ○</span>';
+          const review = item.review_state || 'later';
+          const reviewBadge = review === 'known' ? '<span style="color:#2e7d32;font-size:11px" title="Known"> ✓</span>'
+            : review === 'later' ? '<span style="color:#f57c00;font-size:11px" title="Later"> ◐</span>'
+            : review === 'archive' ? '<span style="color:#888;font-size:11px" title="Archive"> ▣</span>'
+            : '<span style="color:#888;font-size:11px" title="Unknown"> ○</span>';
           const preview = item.original.length > 60 ? item.original.slice(0, 60) + '...' : item.original;
           html += '<tr style="cursor:pointer" onclick="showLibraryItem(' + item.id + ')">';
           html += '<td style="width:60%;color:#333">' + escapeHtml(preview) + '</td>';
@@ -998,16 +1012,16 @@
       const list = document.getElementById('review-list');
       const summary = document.getElementById('review-summary');
       try {
-        const count = await window.__TAURI__.invoke('library_review_count');
-        summary.innerHTML = `<span style="font-size:24px;font-weight:600">${count}</span> <span style="color:#888;font-size:12px">items due for review</span>`;
+        const count = await window.__TAURI__.invoke('library_later_count');
+        summary.innerHTML = `<span style="font-size:24px;font-weight:600">${count}</span> <span style="color:#888;font-size:12px">items for later review</span>`;
 
         if (count === 0) {
-          list.innerHTML = '<p style="color:#888;padding:20px 0">No items due for review. Saved items will appear here when their review date arrives.</p>';
+          list.innerHTML = '<p style="color:#888;padding:20px 0">No items for later review. Save items to see them here.</p>';
           document.getElementById('review-card').style.display = 'none';
           return;
         }
 
-        const page = await window.__TAURI__.invoke('library_review_list', { offset: 0 });
+        const page = await window.__TAURI__.invoke('library_later_list', { offset: 0 });
         reviewItems = page.items;
         currentReviewIndex = 0;
         list.innerHTML = '';
@@ -1021,7 +1035,7 @@
       const card = document.getElementById('review-card');
       if (currentReviewIndex >= reviewItems.length) {
         card.style.display = 'none';
-        document.getElementById('review-list').innerHTML = '<p style="color:#2e7d32;padding:20px 0">All caught up! No more items to review right now.</p>';
+        document.getElementById('review-list').innerHTML = '<p style="color:#2e7d32;padding:20px 0">All done! No more items to review.</p>';
         return;
       }
       const item = reviewItems[currentReviewIndex];
@@ -1030,29 +1044,31 @@
       document.getElementById('review-answer').textContent = item.answer;
       document.getElementById('review-answer').style.display = 'none';
       document.getElementById('review-show-btn').style.display = '';
-      document.getElementById('review-got-it-btn').style.display = 'none';
-      document.getElementById('review-learn-btn').style.display = 'none';
+      document.getElementById('review-known-btn').style.display = 'none';
+      document.getElementById('review-later-btn').style.display = 'none';
+      document.getElementById('review-archive-btn').style.display = 'none';
       document.getElementById('review-list').innerHTML = `<p style="color:#888;font-size:12px">Item ${currentReviewIndex + 1} of ${reviewItems.length}</p>`;
     }
 
     function showReviewAnswer() {
       document.getElementById('review-answer').style.display = 'block';
       document.getElementById('review-show-btn').style.display = 'none';
-      document.getElementById('review-got-it-btn').style.display = '';
-      document.getElementById('review-learn-btn').style.display = '';
+      document.getElementById('review-known-btn').style.display = '';
+      document.getElementById('review-later-btn').style.display = '';
+      document.getElementById('review-archive-btn').style.display = '';
     }
 
-    async function reviewItem(success) {
+    async function setReviewState(newState) {
       const item = reviewItems[currentReviewIndex];
       try {
-        await window.__TAURI__.invoke('library_record_review', { id: item.id, success: success });
+        await window.__TAURI__.invoke('library_set_review_state', { id: item.id, state_: newState });
         currentReviewIndex++;
         showReviewCard();
         // Update the summary count.
-        const count = await window.__TAURI__.invoke('library_review_count');
-        document.getElementById('review-summary').innerHTML = `<span style="font-size:24px;font-weight:600">${count}</span> <span style="color:#888;font-size:12px">items due for review</span>`;
+        const count = await window.__TAURI__.invoke('library_later_count');
+        document.getElementById('review-summary').innerHTML = `<span style="font-size:24px;font-weight:600">${count}</span> <span style="color:#888;font-size:12px">items for later review</span>`;
       } catch (e) {
-        alert('Failed to record review: ' + e);
+        alert('Failed to update review state: ' + e);
       }
     }
 
