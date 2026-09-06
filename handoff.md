@@ -6,7 +6,7 @@ Last updated: 2026-09-06
 
 macOS native implementation for Mori Lens cross-platform desktop product.
 Windows implementation is complete and stable. macOS implementation is complete.
-**All repository-local implementation work is complete. Remaining work is validation, external accounts, human gates, or quality research.**
+**All repository-local implementation work is complete. Distribution infrastructure implemented. Remaining work is CI execution completion, validation, external accounts, human gates, or quality research.**
 
 ## Current Product State
 
@@ -29,6 +29,22 @@ Windows implementation is complete and stable. macOS implementation is complete.
 - Correct capture: pointer-based display selection, BGRA canonical
 - Overlay exclusion via CGWindowID, shutdown cleanup, diagnostics wired
 - Settings hot-path: generation counter, policy enforcement
+- Graceful degradation without AX permission (no SIGTRAP)
+
+**Mori integration (built, unverified):**
+- Process boundary with capability discovery (`.capability.json`)
+- Version negotiation, explicit user action to send items
+- No shared DB, no shared package, no hidden sync (ADR-0018)
+- `mori_transfer` module with `TransferPayload`, `MoriStatus`, `send_to_mori`
+- Tauri commands: `mori_status`, `mori_send_item`
+
+**Distribution infrastructure:**
+- Package-smoke CI workflow (`.github/workflows/package-smoke.yml`)
+- Windows: NSIS (via `cargo tauri build`) + MSIX (via `scripts/package-msix.ps1`)
+- macOS: .app bundle (via `cargo tauri build`)
+- Smoke asset generation (`scripts/generate-smoke-assets.py`)
+- MSIX verification (`scripts/verify-msix.ps1`)
+- MSIX manifest: `runFullTrust` only (no unnecessary `broadFileSystemAccess`)
 
 **Verification gate (`scripts/check.sh --full`):**
 - Workspace fmt + clippy + test
@@ -41,7 +57,10 @@ Windows implementation is complete and stable. macOS implementation is complete.
 - **PR #304** — docs: add M6/M7/M8 gate status tables to roadmap
 - **PR #305** — feat: Windows MSIX packaging infrastructure (ADR-0017)
 - **PR #306** — docs: fix settings.conf → settings.toml, README milestone
-- **PR #307** — fix: macOS graceful degradation without AX permission (no more SIGTRAP)
+- **PR #307** — fix: macOS graceful degradation without AX permission
+- **PR #308** — fix: canonical doc contradictions + MSIX manifest cleanup
+- **PR #309** — ci: package-smoke workflow for NSIS + MSIX + macOS .app
+- **PR #310** — fix: package-smoke RGBA icon generation
 
 ## Completion Matrix
 
@@ -55,63 +74,56 @@ M5 Deep analysis        SHIPPED         CLOSED     CLOSED    OPEN*     N/A
 M6 macOS acquire        COMPLETE        CLOSED     BLOCKED   PENDING   N/A
 M7 macOS overlay/OCR    COMPLETE        CLOSED     BLOCKED   PENDING   N/A
 M8 Library/Review       COMPLETE        CLOSED     N/A       N/A       N/A
-Mori boundary           PLANNED         N/A        N/A       N/A       N/A
+Mori boundary           BUILT           CLOSED     N/A       PENDING   N/A
 Windows NSIS release    SHIPPED         CLOSED     N/A       N/A       UNSIGNED
-Windows MSIX release    INFRASTRUCTURE  CLOSED     N/A       N/A       BLOCKED†
-macOS raw binary        BUILT           CLOSED     N/A       N/A       UNSIGNED
-macOS .app bundle       BLOCKED‡       N/A        N/A       N/A       BLOCKED‡
+Windows MSIX release    INFRASTRUCTURE  CLOSED     PENDING   N/A       BLOCKED†
+macOS .app bundle       INFRASTRUCTURE  CLOSED     PENDING   N/A       UNSIGNED
+macOS notarization      BLOCKED‡       N/A        N/A       N/A       BLOCKED‡
 First-user onboarding   NOT TESTED      N/A        N/A       PENDING   N/A
 Return/re-entry         NOT TESTED      N/A        N/A       PENDING   N/A
 
 * M5 explanation quality: model-quality research, gate open (P1 lemma 63%)
 † Store developer account required (external)
-‡ cargo-tauri not installed (tooling blocker)
+‡ cargo-tauri not installed locally; CI execution in progress
 ```
 
 ## Agent Assessment
 
 ```
-REMAINING CODE IMPLEMENTATION:    NONE
+REMAINING REPOSITORY IMPLEMENTATION:  NONE
   (all repository-local implementation work is complete)
 
-REMAINING ROADMAP GATES:
-  M1 correct-word human judgement     HUMAN VALIDATION
-  M2 exclusive fullscreen             HUMAN/HARDWARE VALIDATION
-  M4 scanned PDF/image-text           HUMAN VALIDATION
-  M4 VS Code/KakaoTalk OCR            HUMAN VALIDATION
-  M5 explanation quality              QUALITY RESEARCH (model-dependent)
-  M6 macOS compatibility matrix       HUMAN VALIDATION (needs AX permission)
-  M7 macOS overlay/OCR real-world     HUMAN VALIDATION (needs Screen Recording)
-  M8 gate                             CLOSED (automated evidence sufficient)
+REMAINING PACKAGING IMPLEMENTATION:   NONE
+  (MSIX infrastructure, package-smoke CI, smoke assets all implemented)
 
-REMAINING QUALITY GATES:
+REMAINING QUALITY RESEARCH:
   #148 colour linkage                 QUALITY GATE OPEN (threshold not met)
   M5 explanations right               QUALITY RESEARCH OPEN (model-dependent)
 
-REMAINING PRODUCT GATES:
+REMAINING HUMAN PRODUCT GATES:
   First-user installs unaided         HUMAN PRODUCT GATE
   Keeps running for a week            HUMAN PRODUCT GATE
   Can state what it is for            HUMAN PRODUCT GATE
 
-REMAINING PLATFORM VALIDATION:
-  macOS AX/OCR/overlay/hotkeys        BLOCKED BY PERMISSIONS
-  macOS sleep/wake/hot-plug           BLOCKED BY HARDWARE
-  Windows VS Code/KakaoTalk           BLOCKED BY ENVIRONMENT
+REMAINING MACOS VALIDATION:           BLOCKED BY PERMISSIONS
+  AX/OCR/overlay/hotkeys              Requires Accessibility + Screen Recording
+  sleep/wake/hot-plug                 Requires physical hardware
+
+REMAINING WINDOWS VALIDATION:         BLOCKED BY ENVIRONMENT
+  VS Code/KakaoTalk real-app          Requires Windows machine
 
 REMAINING DISTRIBUTION WORK:
-  MSIX packaging infrastructure       IMPLEMENTED (this session)
   Store submission                    BLOCKED (developer account)
-  macOS .app bundle                   BLOCKED (cargo-tauri not installed)
   Code signing (Windows direct)       BLOCKED (OV certificate)
   Code signing (macOS)                BLOCKED (Developer ID)
   Notarization                        BLOCKED (Apple account)
-  Real icon assets                    ASSET BLOCKER
+  Real icon/design assets             ASSET BLOCKER
+  Package-smoke CI completion         IN PROGRESS (slow CI, cargo install tauri-cli)
 
 REMAINING EXTERNAL BLOCKERS:
   Store developer account             CREDENTIAL BLOCKER
   Apple Developer ID                  CREDENTIAL BLOCKER
   OV code-signing certificate         CREDENTIAL BLOCKER
-  cargo-tauri CLI                     TOOLING BLOCKER
   Ollama + model (Quick/Deep test)    SERVICE BLOCKER
 
 REMAINING OWNER DECISIONS:
@@ -123,7 +135,7 @@ REMAINING OWNER DECISIONS:
 ## Automated Evidence
 
 ```
-scripts/check.sh --full:          PASS (2026-09-06)
+scripts/check.sh --full:          PASS (2026-09-06, local)
 workspace fmt/clippy/tests:       PASS (665+ tests)
 product fmt/clippy/check/test:    PASS
 clean native rebuild:             PASS
@@ -132,6 +144,27 @@ lens-translate tests:             PASS (8 HTTP fault tests)
 lens-storage tests:               PASS (73 tests, full M8 lifecycle)
 privacy static gate:              CLEAN
 CI run 34027544715:               PASS (both platforms)
+Package-smoke workflow:           CREATED (execution in progress)
+```
+
+## Canonical Doc Truth (verified this session)
+
+```
+project-goal.md:
+  macOS acquisition:        "built, unverified" (was "planned") ✓
+  macOS overlay/OCR:        "built, unverified" (was "planned") ✓
+  Mori integration:         "built, unverified" (was "planned") ✓
+  OCR contract:             "default manual, auto opt-in" (was "manual only") ✓
+  Settings file:            settings.toml (was settings.conf) ✓
+  Distribution:             MSIX infrastructure implemented ✓
+
+roadmap.md:
+  M6 gate status table:     Added ✓
+  M7 gate status table:     Added ✓
+  M8 gate status table:     Added (CLOSED by automated tests) ✓
+
+privacy-model.md:           settings.toml references fixed ✓
+README.md:                  M8+ milestone, settings.toml ✓
 ```
 
 ## Known Runtime Issues
@@ -139,6 +172,7 @@ CI run 34027544715:               PASS (both platforms)
 - Lock file permission bug (`--w-------` → fixed to `-rw-------`)
 - Ollama not available locally (Quick/Deep translation BLOCKED)
 - macOS binary starts gracefully without AX permission (SIGTRAP fixed in PR #307)
+- Package-smoke CI slow (cargo install tauri-cli takes 30-50 min on CI)
 
 ## Validation Procedure
 
@@ -148,11 +182,9 @@ When permissions are granted, run:
 bash scripts/validate-macos.sh
 ```
 
-This script handles: permission check → Safari fixture → binary start → evidence recording → visual checkpoints → cleanup.
-
 ## Controlled Fixture
 
-`docs/fixtures/validation-surface.html` contains deterministic test content: English, Korean, Japanese, mixed language, repeated words, Unicode/emoji.
+`docs/fixtures/validation-surface.html` — English, Korean, Japanese, mixed, repeated, Unicode/emoji.
 
 ## Open Issues
 
@@ -163,20 +195,20 @@ This script handles: permission check → Safari fixture → binary start → ev
 #14   VS Code                         WINDOWS VALIDATION (area:platform-windows)
 ```
 
-Note: #14 and #34 are Windows-specific (UIA control types, platform-windows label).
-
 ## Next Session — Start Here
 
-1. Grant Accessibility + Screen Recording permissions
-2. (Optional) Start Ollama with a model
-3. Run `bash scripts/validate-macos.sh`
-4. Review evidence in `docs/benchmarks/`
+1. Check package-smoke CI results (run 34039483348 or later)
+2. Grant Accessibility + Screen Recording permissions
+3. (Optional) Start Ollama with a model
+4. Run `bash scripts/validate-macos.sh`
+5. Review evidence in `docs/benchmarks/`
 
 ## Git State
 
 ```
-latest merge: PR #305 (MSIX packaging infrastructure)
+latest merge: PR #310 (package-smoke RGBA fix)
 CI pass: run 34027544715 (both platforms)
+Package-smoke: run 34039483348 (in progress)
 always run `git log -1` at session start for actual HEAD.
 ```
 
