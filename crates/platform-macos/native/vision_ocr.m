@@ -13,6 +13,7 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <stdlib.h>
 #import <string.h>
+#import <math.h>
 
 bool lens_vision_available(void) {
     return NSClassFromString(@"VNRecognizeTextRequest") != nil;
@@ -22,15 +23,28 @@ LensOcrResult lens_vision_recognize(const uint8_t *pixels,
                                     int32_t width,
                                     int32_t height,
                                     int32_t stride) {
-    LensOcrResult result = { .text = NULL, .word_count = 0, .word_data = NULL };
+    LensOcrResult result = { .text = NULL, .word_count = 0, .words = NULL };
 
-    if (!pixels || width <= 0 || height <= 0) return result;
+    // Input validation.
+    if (!pixels || width <= 0 || height <= 0 || stride <= 0) return result;
+    // BGRA requires at least 4 bytes per pixel.
+    if (stride < width * 4) return result;
+    // Overflow check: stride * height must not overflow size_t.
+    if ((uint64_t)stride * (uint64_t)height > SIZE_MAX) return result;
+    // Reasonable upper bound: 100 megapixels.
+    if ((uint64_t)width * (uint64_t)height > 100ULL * 1000000) return result;
 
     @autoreleasepool {
         CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+        if (!cs) return result;
+
         CGBitmapInfo bitmapInfo = kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little;
         CGDataProviderRef provider = CGDataProviderCreateWithData(
             NULL, pixels, (size_t)(stride * height), NULL);
+        if (!provider) {
+            CGColorSpaceRelease(cs);
+            return result;
+        }
 
         CGImageRef image = CGImageCreate(
             (size_t)width, (size_t)height,
@@ -70,7 +84,8 @@ LensOcrResult lens_vision_recognize(const uint8_t *pixels,
         }
 
         NSMutableString *fullText = [NSMutableString string];
-        NSMutableArray *wordEntries = [NSMutableArray array];
+        // Temporary storage for words before copying to the C struct.
+        NSMutableArray *wordItems = [NSMutableArray array];
 
         for (VNRecognizedTextObservation *obs in observations) {
             VNRecognizedText *topCandidate =
@@ -120,31 +135,52 @@ LensOcrResult lens_vision_recognize(const uint8_t *pixels,
                 // Compute UTF-8 offset of this word in the full text.
                 NSString *prefix = [obsText substringToIndex:wordRange.location];
                 NSData *prefixUtf8 = [prefix dataUsingEncoding:NSUTF8StringEncoding];
-                NSUInteger wordUtf8Offset = obsUtf8Start + prefixUtf8.length;
+                uint32_t wordUtf8Offset = (uint32_t)(obsUtf8Start + prefixUtf8.length);
 
                 NSData *wordUtf8 = [word dataUsingEncoding:NSUTF8StringEncoding];
-                NSUInteger wordLen = wordUtf8.length;
+                uint32_t wordLen = (uint32_t)wordUtf8.length;
 
-                [wordEntries addObject:@(px)];
-                [wordEntries addObject:@(py)];
-                [wordEntries addObject:@(pw)];
-                [wordEntries addObject:@(ph)];
-                [wordEntries addObject:@((float)wordUtf8Offset)];
-                [wordEntries addObject:@((float)wordLen)];
+                // Pack into an NSValue wrapping a LensOcrWord struct.
+                LensOcrWord w = {
+                    .x = px, .y = py, .width = pw, .height = ph,
+                    .utf8_offset = wordUtf8Offset, .utf8_length = wordLen
+                };
+                [wordItems addObject:[NSValue value:&w withObjCType:@encode(LensOcrWord)]];
             }];
         }
 
+        // Copy text to a C string.
         const char *utf8 = [fullText UTF8String];
         if (utf8) {
             result.text = strdup(utf8);
+            if (!result.text) {
+                CGImageRelease(image);
+                return result;
+            }
         }
 
-        int wordCount = (int)wordEntries.count / 6;
+        // Copy word data to a typed C array.
+        int32_t wordCount = (int32_t)wordItems.count;
         result.word_count = wordCount;
         if (wordCount > 0) {
-            result.word_data = (float *)malloc(sizeof(float) * wordCount * 6);
-            for (int i = 0; i < wordCount * 6; i++) {
-                result.word_data[i] = [wordEntries[i] floatValue];
+            // Overflow check for allocation.
+            if ((uint64_t)wordCount > SIZE_MAX / sizeof(LensOcrWord)) {
+                CGImageRelease(image);
+                free(result.text);
+                result.text = NULL;
+                result.word_count = 0;
+                return result;
+            }
+            result.words = (LensOcrWord *)malloc(sizeof(LensOcrWord) * wordCount);
+            if (!result.words) {
+                CGImageRelease(image);
+                free(result.text);
+                result.text = NULL;
+                result.word_count = 0;
+                return result;
+            }
+            for (int32_t i = 0; i < wordCount; i++) {
+                [wordItems[i] getValue:&result.words[i]];
             }
         }
 
@@ -155,11 +191,10 @@ LensOcrResult lens_vision_recognize(const uint8_t *pixels,
 }
 
 void lens_ocr_result_free(LensOcrResult *result) {
-    if (result) {
-        free(result->text);
-        free(result->word_data);
-        result->text = NULL;
-        result->word_data = NULL;
-        result->word_count = 0;
-    }
+    if (!result) return;
+    free(result->text);
+    free(result->words);
+    result->text = NULL;
+    result->words = NULL;
+    result->word_count = 0;
 }
