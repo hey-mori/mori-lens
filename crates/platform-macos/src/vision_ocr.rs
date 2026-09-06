@@ -79,8 +79,9 @@ pub fn recognize(pixels: &[u8], width: i32, height: i32, stride: i32) -> Option<
     if pixels.is_empty() || width <= 0 || height <= 0 || stride <= 0 {
         return None;
     }
-    // BGRA requires at least 4 bytes per pixel.
-    if stride < width * 4 {
+    // BGRA requires at least 4 bytes per pixel (widened to avoid i32 overflow).
+    let min_stride = (width as u64).checked_mul(4)?;
+    if (stride as u64) < min_stride {
         return None;
     }
     // Overflow check: stride * height must not overflow.
@@ -93,26 +94,51 @@ pub fn recognize(pixels: &[u8], width: i32, height: i32, stride: i32) -> Option<
     // bytes (checked above). The C function reads it and returns a result.
     let raw = unsafe { lens_vision_recognize(pixels.as_ptr(), width, height, stride) };
 
-    if raw.text.is_null() {
+    // RAII guard: always free the C result on any return path.
+    struct RawGuard(LensOcrResult);
+    impl Drop for RawGuard {
+        fn drop(&mut self) {
+            // SAFETY: self.0 owns the C result. lens_ocr_result_free is safe
+            // on any state returned by lens_vision_recognize (including partial).
+            unsafe { lens_ocr_result_free(&mut self.0) };
+        }
+    }
+    let guard = RawGuard(raw);
+
+    if guard.0.text.is_null() {
         return None;
     }
 
-    // SAFETY: raw.text is a valid null-terminated UTF-8 string from strdup.
+    // SAFETY: guard.0.text is a valid null-terminated UTF-8 string from strdup.
     let text = unsafe {
-        let c_str = std::ffi::CStr::from_ptr(raw.text);
+        let c_str = std::ffi::CStr::from_ptr(guard.0.text);
         c_str.to_string_lossy().into_owned()
     };
 
     // Extract per-word data from the typed struct array.
     let mut words = Vec::new();
-    if raw.word_count > 0 && !raw.words.is_null() {
+    if guard.0.word_count > 0 && !guard.0.words.is_null() {
+        // Defensive: reject negative or unreasonably large word counts.
+        let count = guard.0.word_count as usize;
+        if count > 1_000_000 {
+            return None;
+        }
         // SAFETY: words has word_count elements of type LensOcrWord.
-        let word_slice = unsafe { std::slice::from_raw_parts(raw.words, raw.word_count as usize) };
+        let word_slice = unsafe { std::slice::from_raw_parts(guard.0.words, count) };
         for w in word_slice {
-            let word_text = text
-                .get(w.utf8_offset as usize..(w.utf8_offset + w.utf8_length) as usize)
-                .unwrap_or("")
-                .to_string();
+            // Checked arithmetic for range bounds.
+            let end = (w.utf8_offset as u64).checked_add(w.utf8_length as u64)?;
+            if end > text.len() as u64 {
+                // Invalid range — skip this word (fail-closed per word).
+                continue;
+            }
+            let offset = w.utf8_offset as usize;
+            let length = w.utf8_length as usize;
+            // Verify UTF-8 char boundaries.
+            if !text.is_char_boundary(offset) || !text.is_char_boundary(offset + length) {
+                continue;
+            }
+            let word_text = text[offset..offset + length].to_string();
 
             words.push(RecognizedWord {
                 text: word_text,
@@ -120,16 +146,12 @@ pub fn recognize(pixels: &[u8], width: i32, height: i32, stride: i32) -> Option<
                 y: w.y as i32,
                 width: w.width as i32,
                 height: w.height as i32,
-                utf8_offset: w.utf8_offset as usize,
-                utf8_length: w.utf8_length as usize,
+                utf8_offset: offset,
+                utf8_length: length,
             });
         }
     }
 
-    // Free the C result. Always call free, even on early paths.
-    let mut raw_mut = raw;
-    // SAFETY: raw_mut owns the C result from lens_vision_recognize.
-    unsafe { lens_ocr_result_free(&mut raw_mut) };
-
     Some(VisionOcrResult { text, words })
+    // guard drops here, freeing the C result.
 }
