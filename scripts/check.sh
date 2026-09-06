@@ -46,9 +46,25 @@ fi
 # file appearing can only fail after one has. This fails on the way to write
 # one, which is the half that can be enforced rather than observed.
 step "no file API in the capture path"
-if git ls-files 'crates/platform-windows/src/capture.rs' 'crates/platform-windows/src/ocr_acquire.rs' | xargs grep -nE 'fs::|File::|CreateFile|WriteFile|BitmapEncoder|SaveToStream'; then
+if git ls-files \
+    'crates/platform-windows/src/capture.rs' \
+    'crates/platform-windows/src/ocr_acquire.rs' \
+    'crates/platform-macos/src/capture.rs' \
+    'crates/platform-macos/src/ocr_acquire.rs' \
+    'crates/platform-macos/src/vision_ocr.rs' \
+  | xargs grep -nE 'fs::|File::|CreateFile|WriteFile|BitmapEncoder|SaveToStream'; then
   printf '\nthe capture path must not touch a file. See docs/privacy-model.md\n'
   printf 'and the module comment at the top of capture.rs.\n'
+  exit 1
+fi
+
+# Also check native Objective-C capture/OCR sources for persistence APIs.
+step "no file API in native capture/OCR path"
+if git ls-files \
+    'crates/platform-macos/native/capture.m' \
+    'crates/platform-macos/native/vision_ocr.m' \
+  | xargs grep -nE 'fopen|fwrite|writeToFile|writeToURL|NSFileHandle|CGImageDestination|NSData\s+write'; then
+  printf '\nthe native capture/OCR path must not write to disk. See docs/privacy-model.md\n'
   exit 1
 fi
 
@@ -89,6 +105,22 @@ fi
 if [[ "$FULL" == "1" ]]; then
   step "cargo build --release -p hover-probe"
   cargo build --release -p hover-probe
+
+  # The actual product binary (apps/lens) is not a workspace member (Tauri
+  # dependency). Verify it compiles and its tests pass. This catches errors
+  # that the workspace gate misses (e.g. AppPolicy missing PartialEq).
+  step "product binary: cargo check apps/lens"
+  cargo check --manifest-path apps/lens/Cargo.toml
+
+  step "product binary: cargo test apps/lens"
+  cargo test --manifest-path apps/lens/Cargo.toml
+
+  # Force a clean native rebuild of the platform-macos crate to verify that
+  # native .m sources actually compile (cached artifacts can hide errors).
+  step "clean native rebuild: lens-platform-macos"
+  cargo clean -p lens-platform-macos
+  cargo check -p lens-platform-macos
+  cargo test -p lens-platform-macos
 fi
 
 printf '\nverified\n'
