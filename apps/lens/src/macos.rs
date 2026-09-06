@@ -11,12 +11,16 @@
 //!
 //! Included from `main.rs` behind `#[cfg(target_os = "macos")]`.
 
+// Style lints that would require significant refactoring to fix.
+// The current code is correct; these are readability preferences.
+#![allow(clippy::while_let_loop, clippy::single_match, clippy::manual_clamp)]
+
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use lens_core::acquire::{AcquireContext, AcquireError, TextAcquirer};
-use lens_core::analyse::{Analyser, DeepRequest, Profile};
+use lens_core::analyse::Analyser;
 use lens_core::cache::{AnalysisCache, CacheKey, TranslationCache};
 use lens_core::card::{Card, CardBody};
 use lens_core::geometry::{ScreenPoint, ScreenRect};
@@ -59,7 +63,6 @@ OPTIONS
 const POINTER_POLL_MS: u64 = 25;
 const CACHE_ENTRIES: usize = 256;
 const ANALYSIS_ENTRIES: usize = 32;
-const DEEP_PROMPT_VERSION: u32 = 1;
 
 #[derive(Default)]
 struct Flags {
@@ -154,9 +157,8 @@ pub fn main() -> std::process::ExitCode {
     let _ = std::fs::create_dir_all(&data_dir);
 
     // Shared settings (via settings_service — same as Windows).
-    let shared_settings: SharedSettings = Arc::new(Mutex::new(
-        settings_service::load_or_migrate(&data_dir),
-    ));
+    let shared_settings: SharedSettings =
+        Arc::new(Mutex::new(settings_service::load_or_migrate(&data_dir)));
 
     // Shared library (via library_service — same as Windows).
     let shared_library: SharedLibrary = Arc::new(Mutex::new(library_service::open(&data_dir)));
@@ -194,7 +196,7 @@ pub fn main() -> std::process::ExitCode {
     }
 
     // AX permission — not fatal.
-    let mut ax_trusted = match AxPermission::check_with_prompt(true) {
+    let ax_trusted = match AxPermission::check_with_prompt(true) {
         AxPermission::Trusted => {
             println!("  ax        trusted");
             true
@@ -209,7 +211,11 @@ pub fn main() -> std::process::ExitCode {
     let screen_recording = lens_platform_macos::capture::is_available();
     println!(
         "  screen    {}",
-        if screen_recording { "available" } else { "NOT AVAILABLE" }
+        if screen_recording {
+            "available"
+        } else {
+            "NOT AVAILABLE"
+        }
     );
 
     // Native components (created on main thread, moved to worker).
@@ -301,6 +307,7 @@ pub fn main() -> std::process::ExitCode {
 }
 
 /// The product loop. Runs on a worker thread.
+#[allow(clippy::too_many_arguments)]
 fn product_loop(
     tauri_handle: AppHandle,
     shared_diagnostics: SharedDiagnostics,
@@ -323,26 +330,58 @@ fn product_loop(
 ) {
     // Translation job types for async dispatch.
     enum QuickJob {
-        Quick { request: QuickRequest, sentence: String, generation: u64, key: CacheKey, anchor: ScreenRect },
+        Quick {
+            request: QuickRequest,
+            sentence: String,
+            generation: u64,
+            key: CacheKey,
+            anchor: ScreenRect,
+        },
     }
     enum DeepJob {
-        Deep { sentence: String, translation: Option<String>, generation: u64, anchor: ScreenRect },
+        Deep {
+            sentence: String,
+            translation: Option<String>,
+            generation: u64,
+            anchor: ScreenRect,
+        },
     }
     enum TransResult {
-        Quick { sentence: String, result: Result<lens_core::translate::QuickTranslation, String>, generation: u64, key: CacheKey, anchor: ScreenRect },
-        Deep { sentence: String, result: Result<lens_core::analyse::DeepAnalysis, String>, generation: u64, anchor: ScreenRect },
+        Quick {
+            sentence: String,
+            result: Result<lens_core::translate::QuickTranslation, String>,
+            generation: u64,
+            key: CacheKey,
+            anchor: ScreenRect,
+        },
+        Deep {
+            sentence: String,
+            result: Result<lens_core::analyse::DeepAnalysis, String>,
+            generation: u64,
+            anchor: ScreenRect,
+        },
     }
 
-    let (quick_tx, quick_rx): (std::sync::mpsc::Sender<QuickJob>, std::sync::mpsc::Receiver<QuickJob>) = mpsc::channel();
-    let (deep_tx, deep_rx): (std::sync::mpsc::Sender<DeepJob>, std::sync::mpsc::Receiver<DeepJob>) = mpsc::channel();
-    let (result_tx, result_rx): (std::sync::mpsc::Sender<TransResult>, std::sync::mpsc::Receiver<TransResult>) = mpsc::channel();
+    let (quick_tx, quick_rx): (
+        std::sync::mpsc::Sender<QuickJob>,
+        std::sync::mpsc::Receiver<QuickJob>,
+    ) = mpsc::channel();
+    let (deep_tx, deep_rx): (
+        std::sync::mpsc::Sender<DeepJob>,
+        std::sync::mpsc::Receiver<DeepJob>,
+    ) = mpsc::channel();
+    let (result_tx, result_rx): (
+        std::sync::mpsc::Sender<TransResult>,
+        std::sync::mpsc::Receiver<TransResult>,
+    ) = mpsc::channel();
     // Config update channels: (endpoint, model) sent when settings change.
     let (quick_config_tx, quick_config_rx) = mpsc::channel::<(String, Option<String>)>();
     let (deep_config_tx, deep_config_rx) = mpsc::channel::<(String, Option<String>)>();
 
     // Shared cache between product loop and translation threads.
-    let cache: Arc<Mutex<TranslationCache>> = Arc::new(Mutex::new(TranslationCache::new(CACHE_ENTRIES)));
-    let mut analysis_cache = AnalysisCache::new(ANALYSIS_ENTRIES);
+    let cache: Arc<Mutex<TranslationCache>> =
+        Arc::new(Mutex::new(TranslationCache::new(CACHE_ENTRIES)));
+    let _analysis_cache = AnalysisCache::new(ANALYSIS_ENTRIES);
 
     // Quick lane: dedicated thread for hover translations.
     // Drains pending jobs and keeps only the latest (stale coalescing).
@@ -375,7 +414,13 @@ fn product_loop(
                 }
             }
             match current {
-                QuickJob::Quick { request, sentence, generation, key, anchor } => {
+                QuickJob::Quick {
+                    request,
+                    sentence,
+                    generation,
+                    key,
+                    anchor,
+                } => {
                     let result = translator.quick(&request);
                     if let Ok(ref t) = result {
                         if let Ok(mut c) = quick_cache.lock() {
@@ -383,8 +428,11 @@ fn product_loop(
                         }
                     }
                     let _ = quick_result_tx.send(TransResult::Quick {
-                        sentence, result: result.map_err(|e| e.user_message().to_owned()),
-                        generation, key, anchor,
+                        sentence,
+                        result: result.map_err(|e| e.user_message().to_owned()),
+                        generation,
+                        key,
+                        anchor,
                     });
                 }
             }
@@ -412,15 +460,25 @@ fn product_loop(
                 let _ = translator.resolve_model();
             }
             match job {
-                DeepJob::Deep { sentence, translation, generation, anchor } => {
+                DeepJob::Deep {
+                    sentence,
+                    translation,
+                    generation,
+                    anchor,
+                } => {
                     let deep_req = lens_core::analyse::DeepRequest {
-                        sentence: sentence.clone(), word: None, target_language: String::new(),
-                        translation, profile: lens_core::analyse::Profile::default(),
+                        sentence: sentence.clone(),
+                        word: None,
+                        target_language: String::new(),
+                        translation,
+                        profile: lens_core::analyse::Profile::default(),
                     };
                     let result = translator.deep(&deep_req);
                     let _ = deep_result_tx.send(TransResult::Deep {
-                        sentence, result: result.map_err(|e| e.user_message().to_owned()),
-                        generation, anchor,
+                        sentence,
+                        result: result.map_err(|e| e.user_message().to_owned()),
+                        generation,
+                        anchor,
                     });
                 }
             }
@@ -453,8 +511,16 @@ fn product_loop(
         // Receive translation results (non-blocking).
         while let Ok(result) = result_rx.try_recv() {
             match result {
-                TransResult::Quick { sentence, result, generation, key: _, anchor } => {
-                    if generation != current_generation { continue; }
+                TransResult::Quick {
+                    sentence,
+                    result,
+                    generation,
+                    key: _,
+                    anchor,
+                } => {
+                    if generation != current_generation {
+                        continue;
+                    }
                     match result {
                         Ok(translation) => {
                             let card = Card::translated(&sentence, &translation);
@@ -463,15 +529,26 @@ fn product_loop(
                             tally.card();
                         }
                         Err(msg) => {
-                            let card = Card { original: sentence.clone(), body: CardBody::Problem(msg), footer: String::new() };
+                            let card = Card {
+                                original: sentence.clone(),
+                                body: CardBody::Problem(msg),
+                                footer: String::new(),
+                            };
                             show_card_at(&overlay, &card, &anchor);
                             current_card = Some((card, sentence));
                             tally.card();
                         }
                     }
                 }
-                TransResult::Deep { sentence, result, generation, anchor } => {
-                    if generation != current_generation { continue; }
+                TransResult::Deep {
+                    sentence,
+                    result,
+                    generation,
+                    anchor,
+                } => {
+                    if generation != current_generation {
+                        continue;
+                    }
                     match result {
                         Ok(analysis) => {
                             let card = Card::analysed(&sentence, &analysis);
@@ -480,7 +557,11 @@ fn product_loop(
                             tally.card();
                         }
                         Err(msg) => {
-                            let card = Card { original: sentence.clone(), body: CardBody::Problem(format!("analysis failed: {}", msg)), footer: String::new() };
+                            let card = Card {
+                                original: sentence.clone(),
+                                body: CardBody::Problem(format!("analysis failed: {}", msg)),
+                                footer: String::new(),
+                            };
                             show_card_at(&overlay, &card, &anchor);
                             current_card = Some((card, sentence));
                             tally.card();
@@ -492,26 +573,51 @@ fn product_loop(
 
         // Push diagnostics snapshot to the shared state so the webview
         // can read fresh data when the user opens diagnostics.
-        update_diagnostics(&shared_diagnostics, &tally, &ocr_mode, &language, &endpoint, &model);
+        update_diagnostics(
+            &shared_diagnostics,
+            &tally,
+            &ocr_mode,
+            &language,
+            &endpoint,
+            &model,
+        );
 
         // Drain commands from menu bar and global hotkeys.
         let mut pending_commands: Vec<ProductCommand> = Vec::new();
 
         if let Some(ref mb) = menubar {
-            if mb.poll_quit() { pending_commands.push(ProductCommand::Quit); }
-            if mb.poll_pause_toggle() { pending_commands.push(ProductCommand::PauseToggle); }
-            if mb.poll_deep() { pending_commands.push(ProductCommand::Deep); }
-            if mb.poll_copy() { pending_commands.push(ProductCommand::Copy); }
-            if mb.poll_save() { pending_commands.push(ProductCommand::Save); }
-            if mb.poll_ocr() { pending_commands.push(ProductCommand::ManualOcr); }
-            if mb.poll_open_settings() { pending_commands.push(ProductCommand::OpenSettings); }
-            if mb.poll_open_library() { pending_commands.push(ProductCommand::OpenLibrary); }
+            if mb.poll_quit() {
+                pending_commands.push(ProductCommand::Quit);
+            }
+            if mb.poll_pause_toggle() {
+                pending_commands.push(ProductCommand::PauseToggle);
+            }
+            if mb.poll_deep() {
+                pending_commands.push(ProductCommand::Deep);
+            }
+            if mb.poll_copy() {
+                pending_commands.push(ProductCommand::Copy);
+            }
+            if mb.poll_save() {
+                pending_commands.push(ProductCommand::Save);
+            }
+            if mb.poll_ocr() {
+                pending_commands.push(ProductCommand::ManualOcr);
+            }
+            if mb.poll_open_settings() {
+                pending_commands.push(ProductCommand::OpenSettings);
+            }
+            if mb.poll_open_library() {
+                pending_commands.push(ProductCommand::OpenLibrary);
+            }
         }
 
         if hotkeys_available {
             loop {
                 let cmd = hotkey::poll();
-                if cmd == ProductCommand::None { break; }
+                if cmd == ProductCommand::None {
+                    break;
+                }
                 pending_commands.push(cmd);
             }
         }
@@ -519,11 +625,15 @@ fn product_loop(
         // Dispatch commands.
         for cmd in pending_commands {
             match cmd {
-                ProductCommand::Quit => { quit_requested = true; }
+                ProductCommand::Quit => {
+                    quit_requested = true;
+                }
                 ProductCommand::PauseToggle => {
                     paused = !paused;
                     if let Some(ref o) = overlay {
-                        if paused { o.hide(); }
+                        if paused {
+                            o.hide();
+                        }
                     }
                     if let Some(ref mb) = menubar {
                         mb.set_title(if paused { "Lens ⏸" } else { "Lens" });
@@ -533,8 +643,10 @@ fn product_loop(
                     if let Some((_, ref sentence)) = current_card {
                         current_generation += 1;
                         let _ = deep_tx.send(DeepJob::Deep {
-                            sentence: sentence.clone(), translation: None,
-                            generation: current_generation, anchor: current_anchor,
+                            sentence: sentence.clone(),
+                            translation: None,
+                            generation: current_generation,
+                            anchor: current_anchor,
                         });
                     }
                 }
@@ -552,7 +664,9 @@ fn product_loop(
                 }
                 ProductCommand::ManualOcr => {
                     if let Some(ref ocr) = ocr_acquirer {
-                        if let Some(ref o) = overlay { o.hide(); }
+                        if let Some(ref o) = overlay {
+                            o.hide();
+                        }
                         let point = mouse_position();
                         current_generation += 1;
                         let gen = lens_core::hover::Generation(current_generation);
@@ -564,17 +678,24 @@ fn product_loop(
                                     let request = QuickRequest::new(&sentence, &language);
                                     let key = CacheKey::of(&request, "", 1);
                                     current_generation += 1;
-                                    if let Some(a) = target.anchor() { current_anchor = a; }
+                                    if let Some(a) = target.anchor() {
+                                        current_anchor = a;
+                                    }
                                     let _ = quick_tx.send(QuickJob::Quick {
-                                        request, sentence: sentence.clone(),
-                                        generation: current_generation, key,
+                                        request,
+                                        sentence: sentence.clone(),
+                                        generation: current_generation,
+                                        key,
                                         anchor: current_anchor,
                                     });
-                                    current_card = Some((Card {
-                                        original: sentence.clone(),
-                                        body: CardBody::Waiting("reading...".to_owned()),
-                                        footer: String::new(),
-                                    }, sentence));
+                                    current_card = Some((
+                                        Card {
+                                            original: sentence.clone(),
+                                            body: CardBody::Waiting("reading...".to_owned()),
+                                            footer: String::new(),
+                                        },
+                                        sentence,
+                                    ));
                                 }
                             }
                             Err(_) => {}
@@ -651,7 +772,11 @@ fn product_loop(
                 let new_model = s.model.clone();
                 let new_dwell = s.dwell_ms;
                 let new_ocr = OcrMode::named(&s.ocr).unwrap_or(OcrMode::Manual);
-                let new_policy = { let mut p = s.policy(); p.deny_self("lens"); p };
+                let new_policy = {
+                    let mut p = s.policy();
+                    p.deny_self("lens");
+                    p
+                };
 
                 // Endpoint/model change → rebuild translators on both lanes.
                 if new_ep != endpoint || new_model != model {
@@ -697,7 +822,9 @@ fn product_loop(
                 let process_name = ax_acquirer.process_name_at(point);
                 if !policy.allows(process_name.as_deref(), false) {
                     // Denied by policy: skip both AX and OCR.
-                    if let Some(ref o) = overlay { o.hide(); }
+                    if let Some(ref o) = overlay {
+                        o.hide();
+                    }
                     continue;
                 }
 
@@ -718,24 +845,32 @@ fn product_loop(
                             match ocr.acquire(point, &ctx) {
                                 Ok(target) => (target, true),
                                 Err(_) => {
-                                    if let Some(ref o) = overlay { o.hide(); }
+                                    if let Some(ref o) = overlay {
+                                        o.hide();
+                                    }
                                     continue;
                                 }
                             }
                         } else {
-                            if let Some(ref o) = overlay { o.hide(); }
+                            if let Some(ref o) = overlay {
+                                o.hide();
+                            }
                             continue;
                         }
                     }
                     Err(_) => {
-                        if let Some(ref o) = overlay { o.hide(); }
+                        if let Some(ref o) = overlay {
+                            o.hide();
+                        }
                         continue;
                     }
                 };
 
                 let sentence = target.segmented.sentence_text().to_owned();
                 if sentence.is_empty() {
-                    if let Some(ref o) = overlay { o.hide(); }
+                    if let Some(ref o) = overlay {
+                        o.hide();
+                    }
                     continue;
                 }
 
@@ -753,7 +888,7 @@ fn product_loop(
                     _ => {
                         let request = QuickRequest::new(&sentence, &language);
                         let key = {
-                            let c = cache.lock().unwrap();
+                            let _c = cache.lock().unwrap();
                             // Check shared cache first.
                             // We need model name for the key — get it from the request.
                             CacheKey::of(&request, "", 1)
@@ -772,23 +907,32 @@ fn product_loop(
 
                         // Dispatch async translation job.
                         current_generation += 1;
-                        if let Some(a) = target.anchor() { current_anchor = a; }
+                        if let Some(a) = target.anchor() {
+                            current_anchor = a;
+                        }
                         let _ = quick_tx.send(QuickJob::Quick {
-                            request, sentence: sentence.clone(),
-                            generation: current_generation, key,
+                            request,
+                            sentence: sentence.clone(),
+                            generation: current_generation,
+                            key,
                             anchor: current_anchor,
                         });
                         // Store target for when result arrives.
-                        current_card = Some((Card {
-                            original: sentence.clone(),
-                            body: CardBody::Waiting("translating...".to_owned()),
-                            footer: String::new(),
-                        }, sentence));
+                        current_card = Some((
+                            Card {
+                                original: sentence.clone(),
+                                body: CardBody::Waiting("translating...".to_owned()),
+                                footer: String::new(),
+                            },
+                            sentence,
+                        ));
                     }
                 }
             }
             Some(HoverEvent::Left { .. }) => {
-                if let Some(ref o) = overlay { o.hide(); }
+                if let Some(ref o) = overlay {
+                    o.hide();
+                }
                 current_card = None;
             }
             None => {}
@@ -804,9 +948,14 @@ fn product_loop(
 fn execute_save(card: &Card, sentence: &str, shared_library: &SharedLibrary) {
     let answer = match &card.body {
         CardBody::Translation(t) => t.clone(),
-        CardBody::Analysis { translation, rows, .. } => {
+        CardBody::Analysis {
+            translation, rows, ..
+        } => {
             let mut text = String::new();
-            if let Some(t) = translation { text.push_str(t); text.push('\n'); }
+            if let Some(t) = translation {
+                text.push_str(t);
+                text.push('\n');
+            }
             text.push_str(&CardBody::rows_as_text(rows));
             text
         }
@@ -859,7 +1008,14 @@ fn show_card_at(overlay: &Option<Overlay>, card: &Card, anchor: &ScreenRect) {
         w.max(200.0).min(600.0)
     };
     let height = 80.0;
-    overlay.show_text(&card.original, &card_body_to_text(&card.body), x, y, width, height);
+    overlay.show_text(
+        &card.original,
+        &card_body_to_text(&card.body),
+        x,
+        y,
+        width,
+        height,
+    );
 }
 
 fn card_body_to_text(body: &CardBody) -> String {
@@ -867,9 +1023,14 @@ fn card_body_to_text(body: &CardBody) -> String {
         CardBody::Translation(t) => t.clone(),
         CardBody::Problem(p) => p.clone(),
         CardBody::Waiting(w) => w.clone(),
-        CardBody::Analysis { translation, rows, .. } => {
+        CardBody::Analysis {
+            translation, rows, ..
+        } => {
             let mut text = String::new();
-            if let Some(t) = translation { text.push_str(t); text.push('\n'); }
+            if let Some(t) = translation {
+                text.push_str(t);
+                text.push('\n');
+            }
             text.push_str(&CardBody::rows_as_text(rows));
             text
         }
@@ -898,14 +1059,12 @@ fn spawn_ctrlc_handler(tx: mpsc::Sender<()>) {
     // SAFETY: signal() is a standard POSIX call.
     unsafe { signal(SIGINT, sigint_handler) };
 
-    std::thread::spawn(move || {
-        loop {
-            if received.load(Ordering::SeqCst) {
-                let _ = tx.send(());
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(100));
+    std::thread::spawn(move || loop {
+        if received.load(Ordering::SeqCst) {
+            let _ = tx.send(());
+            return;
         }
+        std::thread::sleep(Duration::from_millis(100));
     });
 }
 
@@ -923,7 +1082,10 @@ fn update_diagnostics(
     snapshot.configuration = vec![
         ("language".into(), language.into()),
         ("endpoint".into(), endpoint.into()),
-        ("model".into(), model.clone().unwrap_or_else(|| "(auto)".into())),
+        (
+            "model".into(),
+            model.clone().unwrap_or_else(|| "(auto)".into()),
+        ),
     ];
     snapshot.cards = tally.cards();
     snapshot.settled_hovers = tally.settled();
