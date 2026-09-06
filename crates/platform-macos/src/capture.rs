@@ -1,23 +1,29 @@
 //! macOS screen capture.
 //!
-//! Captures a region of the screen into an RGBA pixel buffer using
-//! `CGWindowListCreateImage`. No image is written to disk (privacy invariant).
+//! Captures a region of the screen into a BGRA pixel buffer using
+//! ScreenCaptureKit. No image is written to disk (privacy invariant).
 //!
-//! Requires Screen Recording permission on macOS 10.15+. Use
-//! [`is_available`] to check before capturing.
+//! The display containing the pointer is selected (not the request origin).
+//! The crop is clipped to that display's bounds. The actual clipped origin
+//! and scale are returned so callers can reconstruct global coordinates.
 
 use std::os::raw::{c_int, c_void};
 
 extern "C" {
     fn lens_capture_screen(
-        x: f64,
-        y: f64,
-        width: f64,
-        height: f64,
+        req_x: f64,
+        req_y: f64,
+        req_width: f64,
+        req_height: f64,
+        ptr_x: f64,
+        ptr_y: f64,
         out_pixels: *mut *mut u8,
         out_width: *mut c_int,
         out_height: *mut c_int,
         out_stride: *mut c_int,
+        out_origin_x: *mut f64,
+        out_origin_y: *mut f64,
+        out_scale: *mut f64,
     ) -> bool;
     fn lens_capture_available() -> bool;
 }
@@ -28,41 +34,70 @@ pub fn is_available() -> bool {
     unsafe { lens_capture_available() }
 }
 
-/// A captured screen region as RGBA pixels.
+/// A captured screen region with metadata for coordinate reconstruction.
 #[derive(Debug)]
 pub struct Capture {
+    /// BGRA pixel data (4 bytes/pixel, row-major, top-to-bottom).
     pub pixels: Vec<u8>,
+    /// Pixel width.
     pub width: i32,
+    /// Pixel height.
     pub height: i32,
+    /// Bytes per row.
     pub stride: i32,
+    /// Global logical X of the actual (clipped) capture origin.
+    pub origin_x: f64,
+    /// Global logical Y of the actual (clipped) capture origin.
+    pub origin_y: f64,
+    /// Display scale factor (pixels per logical point).
+    pub scale: f64,
 }
 
 /// Capture a region of the screen.
 ///
-/// `x`, `y`, `width`, `height` are in **logical screen points** (top-left
-/// origin). The returned pixel buffer is in physical pixels (RGBA, 4 bytes
-/// per pixel, row-major, top-to-bottom).
+/// `req_x`, `req_y`, `req_width`, `req_height` define the requested crop
+/// in **logical screen points** (top-left origin).
 ///
-/// Returns `None` if the capture fails (e.g. missing Screen Recording
-/// permission, or invalid region).
-pub fn capture_region(x: f64, y: f64, width: f64, height: f64) -> Option<Capture> {
+/// `ptr_x`, `ptr_y` is the pointer position in logical screen points.
+/// The display containing the pointer is selected for capture.
+///
+/// The returned `Capture` includes the actual (possibly clipped) origin
+/// and scale factor for coordinate reconstruction.
+///
+/// Returns `None` if the capture fails.
+pub fn capture_region(
+    req_x: f64,
+    req_y: f64,
+    req_width: f64,
+    req_height: f64,
+    ptr_x: f64,
+    ptr_y: f64,
+) -> Option<Capture> {
     let mut pixels: *mut u8 = std::ptr::null_mut();
     let mut w: c_int = 0;
     let mut h: c_int = 0;
     let mut stride: c_int = 0;
+    let mut origin_x: f64 = 0.0;
+    let mut origin_y: f64 = 0.0;
+    let mut scale: f64 = 1.0;
 
     // SAFETY: lens_capture_screen writes to valid stack pointers. On success,
     // it allocates a heap buffer that we take ownership of.
     let ok = unsafe {
         lens_capture_screen(
-            x,
-            y,
-            width,
-            height,
+            req_x,
+            req_y,
+            req_width,
+            req_height,
+            ptr_x,
+            ptr_y,
             &mut pixels,
             &mut w,
             &mut h,
             &mut stride,
+            &mut origin_x,
+            &mut origin_y,
+            &mut scale,
         )
     };
 
@@ -91,5 +126,8 @@ pub fn capture_region(x: f64, y: f64, width: f64, height: f64) -> Option<Capture
         width: w,
         height: h,
         stride,
+        origin_x,
+        origin_y,
+        scale,
     })
 }
