@@ -15,7 +15,7 @@ This session completed remaining implementation-ready work across all tracks.
 - Deep Analysis, Copy, Save, Manual OCR, Pause/Resume via global hotkeys
 - Tauri Settings/Library/Detail surfaces with live settings propagation
 - Policy enforcement via HoverSession (per-app deny/allow)
-- NSIS installer, signed release pipeline
+- NSIS installer, release pipeline configured (unsigned — code signing is external credential debt)
 
 **macOS (production-wired, correctness-hardened, fully wired):**
 - Accessibility acquisition production-wired (`MacTextAcquirer`)
@@ -83,11 +83,16 @@ DIAGNOSTICS:                      PRODUCTION-WIRED
   (Tally tracks cards/hovers/refusals, DiagnosticsSnapshot updated each iteration)
 
 M6 PRODUCTION INTEGRATION:        COMPLETE
-M7 PRODUCTION INTEGRATION:        COMPLETE
+M7 PRODUCTION INTEGRATION:        PARTIAL
+  (Vision OCR returns line-level observation boxes, not per-word ranges.
+   Word targeting uses observation box as approximation. True word-level
+   geometry via boundingBoxForRange is implementation-ready but not done.)
 M6 REAL-WORLD EVIDENCE:           PENDING
 M7 REAL-WORLD EVIDENCE:           PENDING
 
-MACOS PRODUCT PARITY:             COMPLETE
+MACOS PRODUCT PARITY:             PARTIAL
+  (Vision word targeting is observation-level, not per-word.
+   All other subsystems are production-wired.)
 MACOS REAL-WORLD EVIDENCE:        PENDING
 
 MANUAL REVIEW V1:                 COMPLETE
@@ -97,9 +102,8 @@ ISSUE #159:                       CLOSED
 PACKAGING:                        NOT BUILT LOCALLY (LOCAL TOOLING BLOCKER)
 CI:                               CONFIGURED, STATICALLY AUDITED
 
-REMAINING IMPLEMENTATION-READY:   NONE
-  (all remaining work is real-world validation, external credentials,
-   asset blockers, quality gates, or owner decisions)
+REMAINING IMPLEMENTATION-READY:   Vision word-level geometry
+  (boundingBoxForRange per-word targeting in vision_ocr.m)
 ```
 
 ## Architecture / Key Decisions
@@ -227,10 +231,10 @@ git diff --check:            CLEAN
 ## Git State
 
 ```
-branch:  main
-HEAD:    c4de43c (Merge PR #287 — release verification + settings perf)
-status:  clean
-open PR: none
+latest implementation merge: PR #289 (hotkey queue SPSC)
+handoff base state: clean main before this handoff update
+handoff file itself may be committed after this reference;
+always run `git log -1` at session start for actual HEAD.
 ```
 
 ## Constraints
