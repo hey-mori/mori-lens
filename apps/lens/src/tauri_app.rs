@@ -101,7 +101,7 @@ pub struct LibraryItemView {
     pub target_language: Option<String>,
     pub model: Option<String>,
     pub note: Option<String>,
-    pub review_status: String,
+    pub review_state: Option<String>,
 }
 
 /// A page of library items for the webview.
@@ -126,7 +126,7 @@ impl From<&lens_storage::Item> for LibraryItemView {
             target_language: item.target_language.clone(),
             model: item.model.clone(),
             note: item.note.clone(),
-            review_status: item.review_status.as_str().to_owned(),
+            review_state: item.review_state.clone(),
         }
     }
 }
@@ -262,20 +262,17 @@ fn library_filter(
     app: Option<String>,
     source_language: Option<String>,
     target_language: Option<String>,
-    review_status: Option<String>,
+    review_state: Option<String>,
     offset: i64,
 ) -> Result<LibraryPageView, String> {
     use lens_storage::Filter;
     let lib = state.lock().unwrap();
-    let status = review_status
-        .as_deref()
-        .and_then(|s| s.parse::<lens_storage::ReviewStatus>().ok());
     let filter = Filter {
         kind,
         app,
         source_language,
         target_language,
-        review_status: status,
+        review_state,
     };
     let page = lib
         .library()
@@ -462,19 +459,16 @@ fn library_secure_wipe(state: tauri::State<'_, SharedLibrary>) -> Result<(), Str
 }
 
 #[tauri::command]
-fn library_review_list(
+fn library_later_list(
     state: tauri::State<'_, SharedLibrary>,
     offset: Option<i64>,
 ) -> Result<LibraryPageView, String> {
     let lib = state.lock().unwrap();
     let page = lib
         .library()
-        .list_by_status(lens_storage::ReviewStatus::Later, offset.unwrap_or(0))
+        .list_later(offset.unwrap_or(0))
         .map_err(|e| format!("{e}"))?;
-    let total = lib
-        .library()
-        .count_by_status(lens_storage::ReviewStatus::Later)
-        .unwrap_or(0);
+    let total = lib.library().count_later().unwrap_or(0);
     Ok(LibraryPageView {
         items: page.items.iter().map(LibraryItemView::from).collect(),
         has_more: page.has_more,
@@ -483,25 +477,20 @@ fn library_review_list(
 }
 
 #[tauri::command]
-fn library_review_count(state: tauri::State<'_, SharedLibrary>) -> Result<i64, String> {
+fn library_later_count(state: tauri::State<'_, SharedLibrary>) -> Result<i64, String> {
     let lib = state.lock().unwrap();
-    lib.library()
-        .count_by_status(lens_storage::ReviewStatus::Later)
-        .map_err(|e| format!("{e}"))
+    lib.library().count_later().map_err(|e| format!("{e}"))
 }
 
 #[tauri::command]
-fn library_set_review_status(
+fn library_set_review_state(
     state: tauri::State<'_, SharedLibrary>,
     id: i64,
-    status: String,
+    state_: String,
 ) -> Result<bool, String> {
-    let review_status = status
-        .parse::<lens_storage::ReviewStatus>()
-        .map_err(|_| format!("invalid review status: {status}"))?;
     let lib = state.lock().unwrap();
     lib.library()
-        .set_review_status(id, review_status)
+        .set_review_state(id, &state_)
         .map_err(|e| format!("{e}"))
 }
 
@@ -700,9 +689,9 @@ pub fn build(
             library_import_jsonl,
             library_secure_wipe,
             recent_list,
-            library_review_list,
-            library_review_count,
-            library_set_review_status,
+            library_later_list,
+            library_later_count,
+            library_set_review_state,
             history_list,
             history_count,
             history_delete,

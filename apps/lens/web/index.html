@@ -144,8 +144,8 @@
         <select id="lib-filter-target" onchange="applyFilters()" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
           <option value="">All</option>
         </select>
-        <label style="font-size:12px;color:#666">Status:</label>
-        <select id="lib-filter-status" onchange="applyFilters()" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
+        <label style="font-size:12px;color:#666">State:</label>
+        <select id="lib-filter-state" onchange="applyFilters()" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
           <option value="">All</option>
           <option value="later">Later</option>
           <option value="known">Known</option>
@@ -159,20 +159,17 @@
     <!-- Review -->
     <div class="section" id="section-review">
       <h1>Review</h1>
-      <p style="color:#888;font-size:12px;margin-bottom:16px">Items you want to revisit. No schedule — open this list whenever you choose.</p>
+      <p style="color:#888;font-size:12px;margin-bottom:16px">Items marked for later review. Categorise each as Known or Archive.</p>
       <div id="review-summary" style="margin-bottom:16px"></div>
       <div id="review-list"><p class="loading">Loading...</p></div>
       <div id="review-card" style="display:none;margin-top:16px;padding:20px;background:rgba(0,0,0,0.02);border-radius:8px;max-width:500px">
         <div id="review-original" style="font-size:16px;margin-bottom:12px;line-height:1.5"></div>
-        <div id="review-answer" style="color:#555;margin-bottom:16px;padding:12px;background:rgba(0,0,0,0.03);border-radius:4px"></div>
-        <div id="review-note-area" style="margin-bottom:16px">
-          <textarea id="review-note-input" rows="2" placeholder="Add a note..." style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:13px;background:white"></textarea>
-          <button class="btn" onclick="saveReviewNote()" style="margin-top:4px;padding:4px 12px;font-size:12px">Save note</button>
-        </div>
+        <div id="review-answer" style="color:#555;margin-bottom:16px;padding:12px;background:rgba(0,0,0,0.03);border-radius:4px;display:none"></div>
         <div style="display:flex;gap:8px">
-          <button class="btn" onclick="setReviewStatus('known')" style="padding:8px 16px;background:#2e7d32;color:white;border-color:#2e7d32">Known</button>
-          <button class="btn" onclick="setReviewStatus('later')" style="padding:8px 16px">Still Later</button>
-          <button class="btn" onclick="setReviewStatus('archive')" style="padding:8px 16px;background:#555;color:white;border-color:#555">Archive</button>
+          <button class="btn" onclick="showReviewAnswer()" id="review-show-btn" style="padding:8px 16px">Show answer</button>
+          <button class="btn" onclick="setReviewState('known')" id="review-known-btn" style="padding:8px 16px;display:none;background:#2e7d32;color:white;border-color:#2e7d32">Known</button>
+          <button class="btn" onclick="setReviewState('later')" id="review-later-btn" style="padding:8px 16px;display:none;background:#f57c00;color:white;border-color:#f57c00">Keep Later</button>
+          <button class="btn" onclick="setReviewState('archive')" id="review-archive-btn" style="padding:8px 16px;display:none;background:#616161;color:white;border-color:#616161">Archive</button>
         </div>
       </div>
     </div>
@@ -618,17 +615,18 @@
     // Library functions
     let libraryOffset = 0;
     let libraryQuery = '';
-    let libraryFilters = { kind: null, app: null, source_language: null, target_language: null };
+    let libraryFilters = { kind: null, app: null, source_language: null, target_language: null, review_state: null };
 
     async function loadLibrary() {
       libraryOffset = 0;
       libraryQuery = '';
-      libraryFilters = { kind: null, app: null, source_language: null, target_language: null };
+      libraryFilters = { kind: null, app: null, source_language: null, target_language: null, review_state: null };
       document.getElementById('lib-search').value = '';
       document.getElementById('lib-filter-kind').value = '';
       document.getElementById('lib-filter-app').value = '';
       document.getElementById('lib-filter-source').value = '';
       document.getElementById('lib-filter-target').value = '';
+      document.getElementById('lib-filter-state').value = '';
       await Promise.all([loadFilterOptions(), fetchLibraryPage()]);
     }
 
@@ -667,19 +665,19 @@
       const app = document.getElementById('lib-filter-app').value || null;
       const source_language = document.getElementById('lib-filter-source').value || null;
       const target_language = document.getElementById('lib-filter-target').value || null;
-      const review_status = document.getElementById('lib-filter-status').value || null;
-      libraryFilters = { kind, app, source_language, target_language, review_status };
+      const review_state = document.getElementById('lib-filter-state').value || null;
+      libraryFilters = { kind, app, source_language, target_language, review_state };
       libraryOffset = 0;
       fetchLibraryPage();
     }
 
     function clearFilters() {
-      libraryFilters = { kind: null, app: null, source_language: null, target_language: null, review_status: null };
+      libraryFilters = { kind: null, app: null, source_language: null, target_language: null, review_state: null };
       document.getElementById('lib-filter-kind').value = '';
       document.getElementById('lib-filter-app').value = '';
       document.getElementById('lib-filter-source').value = '';
       document.getElementById('lib-filter-target').value = '';
-      document.getElementById('lib-filter-status').value = '';
+      document.getElementById('lib-filter-state').value = '';
       libraryOffset = 0;
       fetchLibraryPage();
     }
@@ -770,7 +768,7 @@
       if (!confirm('Delete ALL library and history data? This cannot be undone.\n\nThis securely wipes the database (WAL checkpoint, secure_delete, DELETE, VACUUM). Library items and persistent history are removed. saved.md and exports are not affected. This does not reach filesystem snapshots, backups, or exports you have made.')) {
         return;
       }
-      if (!confirm('Are you absolutely sure? All saved items, notes, tags, and persistent history will be permanently deleted.')) {
+      if (!confirm('Are you absolutely sure? All saved items, notes, tags, review progress, and persistent history will be permanently deleted.')) {
         return;
       }
       try {
@@ -787,7 +785,7 @@
       const countEl = document.getElementById('lib-count');
       try {
         let page;
-        const hasFilters = libraryFilters.kind || libraryFilters.app || libraryFilters.source_language || libraryFilters.target_language || libraryFilters.review_status;
+        const hasFilters = libraryFilters.kind || libraryFilters.app || libraryFilters.source_language || libraryFilters.target_language || libraryFilters.review_state;
         if (libraryQuery) {
           page = await invoke('library_search', { query: libraryQuery, offset: libraryOffset });
         } else if (hasFilters) {
@@ -796,7 +794,7 @@
             app: libraryFilters.app,
             source_language: libraryFilters.source_language,
             target_language: libraryFilters.target_language,
-            review_status: libraryFilters.review_status,
+            review_state: libraryFilters.review_state,
             offset: libraryOffset
           });
         } else {
@@ -812,10 +810,11 @@
         for (const item of page.items) {
           const date = new Date(item.created_at * 1000).toLocaleDateString();
           const kind = item.kind === 'analysis' ? 'analysis' : 'translation';
-          const review = item.review_status || 'later';
+          const review = item.review_state || 'later';
           const reviewBadge = review === 'known' ? '<span style="color:#2e7d32;font-size:11px" title="Known"> ✓</span>'
-            : review === 'archive' ? '<span style="color:#888;font-size:11px" title="Archive"> ▫</span>'
-            : '<span style="color:#1565c0;font-size:11px" title="Later"> ◧</span>';
+            : review === 'later' ? '<span style="color:#f57c00;font-size:11px" title="Later"> ◐</span>'
+            : review === 'archive' ? '<span style="color:#888;font-size:11px" title="Archive"> ▣</span>'
+            : '<span style="color:#888;font-size:11px" title="Unknown"> ○</span>';
           const preview = item.original.length > 60 ? item.original.slice(0, 60) + '...' : item.original;
           html += '<tr style="cursor:pointer" onclick="showLibraryItem(' + item.id + ')">';
           html += '<td style="width:60%;color:#333">' + escapeHtml(preview) + '</td>';
@@ -1004,7 +1003,7 @@
       if (e.key === 'Enter') searchLibrary();
     });
 
-    // -- Review list (manual, Issue #141) -----------------------------------
+    // -- Review list --------------------------------------------------------
 
     let reviewItems = [];
     let currentReviewIndex = 0;
@@ -1013,16 +1012,16 @@
       const list = document.getElementById('review-list');
       const summary = document.getElementById('review-summary');
       try {
-        const count = await window.__TAURI__.invoke('library_review_count');
-        summary.innerHTML = `<span style="font-size:24px;font-weight:600">${count}</span> <span style="color:#888;font-size:12px">items in Later queue</span>`;
+        const count = await window.__TAURI__.invoke('library_later_count');
+        summary.innerHTML = `<span style="font-size:24px;font-weight:600">${count}</span> <span style="color:#888;font-size:12px">items for later review</span>`;
 
         if (count === 0) {
-          list.innerHTML = '<p style="color:#888;padding:20px 0">No items in the Later queue. Saved items appear here until you mark them Known or Archive.</p>';
+          list.innerHTML = '<p style="color:#888;padding:20px 0">No items for later review. Save items to see them here.</p>';
           document.getElementById('review-card').style.display = 'none';
           return;
         }
 
-        const page = await window.__TAURI__.invoke('library_review_list', { offset: 0 });
+        const page = await window.__TAURI__.invoke('library_later_list', { offset: 0 });
         reviewItems = page.items;
         currentReviewIndex = 0;
         list.innerHTML = '';
@@ -1036,40 +1035,40 @@
       const card = document.getElementById('review-card');
       if (currentReviewIndex >= reviewItems.length) {
         card.style.display = 'none';
-        document.getElementById('review-list').innerHTML = '<p style="color:#2e7d32;padding:20px 0">All items reviewed. Mark them Known or Archive to clear the queue.</p>';
+        document.getElementById('review-list').innerHTML = '<p style="color:#2e7d32;padding:20px 0">All done! No more items to review.</p>';
         return;
       }
       const item = reviewItems[currentReviewIndex];
       card.style.display = 'block';
       document.getElementById('review-original').textContent = item.original;
       document.getElementById('review-answer').textContent = item.answer;
-      document.getElementById('review-note-input').value = item.note || '';
+      document.getElementById('review-answer').style.display = 'none';
+      document.getElementById('review-show-btn').style.display = '';
+      document.getElementById('review-known-btn').style.display = 'none';
+      document.getElementById('review-later-btn').style.display = 'none';
+      document.getElementById('review-archive-btn').style.display = 'none';
       document.getElementById('review-list').innerHTML = `<p style="color:#888;font-size:12px">Item ${currentReviewIndex + 1} of ${reviewItems.length}</p>`;
     }
 
-    async function saveReviewNote() {
-      const item = reviewItems[currentReviewIndex];
-      if (!item) return;
-      try {
-        const note = document.getElementById('review-note-input').value;
-        await window.__TAURI__.invoke('library_update_note', { id: item.id, note: note });
-        item.note = note;
-      } catch (e) {
-        alert('Failed to save note: ' + e);
-      }
+    function showReviewAnswer() {
+      document.getElementById('review-answer').style.display = 'block';
+      document.getElementById('review-show-btn').style.display = 'none';
+      document.getElementById('review-known-btn').style.display = '';
+      document.getElementById('review-later-btn').style.display = '';
+      document.getElementById('review-archive-btn').style.display = '';
     }
 
-    async function setReviewStatus(status) {
+    async function setReviewState(newState) {
       const item = reviewItems[currentReviewIndex];
-      if (!item) return;
       try {
-        await window.__TAURI__.invoke('library_set_review_status', { id: item.id, status: status });
+        await window.__TAURI__.invoke('library_set_review_state', { id: item.id, state_: newState });
         currentReviewIndex++;
         showReviewCard();
-        const count = await window.__TAURI__.invoke('library_review_count');
-        document.getElementById('review-summary').innerHTML = `<span style="font-size:24px;font-weight:600">${count}</span> <span style="color:#888;font-size:12px">items in Later queue</span>`;
+        // Update the summary count.
+        const count = await window.__TAURI__.invoke('library_later_count');
+        document.getElementById('review-summary').innerHTML = `<span style="font-size:24px;font-weight:600">${count}</span> <span style="color:#888;font-size:12px">items for later review</span>`;
       } catch (e) {
-        alert('Failed to update status: ' + e);
+        alert('Failed to update review state: ' + e);
       }
     }
 

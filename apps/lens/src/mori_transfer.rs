@@ -250,7 +250,7 @@ mod tests {
             model: None,
             note: Some("a note".to_string()),
             tags: Some(vec!["cargo".to_string(), "build".to_string()]),
-            review_status: lens_storage::ReviewStatus::Later,
+            review_state: None,
         }
     }
 
