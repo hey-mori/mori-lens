@@ -8,6 +8,18 @@
 extern "C" {
 #endif
 
+/// A single recognized word with bounding box and text position.
+/// Geometry is in pixel coordinates (top-left origin).
+/// Offsets are UTF-8 byte positions in the full text.
+typedef struct {
+    float x;
+    float y;
+    float width;
+    float height;
+    uint32_t utf8_offset;
+    uint32_t utf8_length;
+} LensOcrWord;
+
 /// Result of an OCR recognition.
 typedef struct {
     /// The recognized text (UTF-8, heap-allocated). Caller must free with
@@ -15,19 +27,16 @@ typedef struct {
     char *text;
     /// Number of recognized words.
     int32_t word_count;
-    /// Per-word data: 6 floats per word [x, y, w, h, utf8_offset, utf8_length].
-    ///   x, y, w, h — bounding box in pixel coordinates (top-left origin).
-    ///   utf8_offset — byte offset of this word in `text`.
-    ///   utf8_length — byte length of this word in `text`.
-    /// Length is word_count * 6. Heap-allocated; freed by lens_ocr_result_free.
-    float *word_data;
+    /// Per-word data. Heap-allocated array of word_count LensOcrWord structs.
+    /// Freed by lens_ocr_result_free. NULL if word_count == 0.
+    LensOcrWord *words;
 } LensOcrResult;
 
-/// Recognize text from a raw pixel buffer.
+/// Recognize text from a raw BGRA pixel buffer.
 ///
 /// `pixels` points to BGRA pixel data (4 bytes per pixel), row-major,
 /// top-to-bottom. `width` and `height` are in pixels. `stride` is the number
-/// of bytes per row (typically width * 4).
+/// of bytes per row (must be >= width * 4).
 ///
 /// Returns per-word bounding boxes via `boundingBoxForRange:` for accurate
 /// word-level geometry. Each word includes its UTF-8 offset in the full text.
@@ -38,7 +47,7 @@ LensOcrResult lens_vision_recognize(const uint8_t *pixels,
                                     int32_t height,
                                     int32_t stride);
 
-/// Free an OCR result.
+/// Free an OCR result. Safe to call on a zeroed/default result.
 void lens_ocr_result_free(LensOcrResult *result);
 
 /// Check whether the Vision framework OCR is available on this system.
