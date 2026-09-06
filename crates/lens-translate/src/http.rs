@@ -114,11 +114,22 @@ fn request(
     } else {
         // `Connection: close` means the server ends the body by closing, so
         // reading to end is correct and Content-Length is not needed.
+        // Cap the read at MAX_BODY + 1 to detect oversized responses.
         let mut body = Vec::new();
-        reader
-            .take(MAX_BODY as u64)
-            .read_to_end(&mut body)
-            .map_err(|error| classify(&error))?;
+        let mut capped = reader.take(MAX_BODY as u64 + 1);
+        match capped.read_to_end(&mut body) {
+            Ok(_) => {}
+            Err(e) if body.len() > MAX_BODY => {
+                let _ = e;
+                // We already have enough data to know it's oversized; the
+                // read error is from the peer reacting to our slow read.
+                return Err(TranslateError::Malformed);
+            }
+            Err(error) => return Err(classify(&error)),
+        }
+        if body.len() > MAX_BODY {
+            return Err(TranslateError::Malformed);
+        }
         Ok(String::from_utf8_lossy(&body).into_owned())
     }
 }
@@ -255,10 +266,19 @@ fn classify(error: &std::io::Error) -> TranslateError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::net::TcpListener;
+    use std::time::Instant;
+
+    /// Bind a TCP listener on a random port and return its address string.
+    fn bind_local() -> (TcpListener, String) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        (listener, addr)
+    }
 
     #[test]
     fn a_read_timeout_is_a_timeout_not_an_absent_engine() {
-        // The distinction a user acts on: wait, versus start Ollama.
         let stalled = std::io::Error::new(std::io::ErrorKind::TimedOut, "stalled");
         assert_eq!(classify(&stalled), TranslateError::Timeout);
 
@@ -268,12 +288,160 @@ mod tests {
 
     #[test]
     fn a_closed_port_is_unavailable_within_the_timeout() {
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let result = get("127.0.0.1:1", "/api/tags", Duration::from_millis(300));
         assert_eq!(result, Err(TranslateError::Unavailable));
         assert!(
             started.elapsed() < Duration::from_secs(3),
             "a refused connection must not sit on the timeout",
         );
+    }
+
+    #[test]
+    fn black_hole_server_produces_timeout() {
+        // Server accepts but never sends anything.
+        let (listener, addr) = bind_local();
+        let _handle = std::thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            // Hold the connection open but send nothing.
+            std::thread::sleep(Duration::from_secs(10));
+        });
+
+        let started = Instant::now();
+        let result = get(&addr, "/api/tags", Duration::from_millis(200));
+        assert_eq!(result, Err(TranslateError::Timeout));
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "black-hole must fail within the read timeout, not hang",
+        );
+    }
+
+    #[test]
+    fn headers_then_stall_produces_timeout() {
+        // Server sends HTTP status and headers, then stalls the body.
+        let (listener, addr) = bind_local();
+        let _handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 999999\r\n\r\n",
+            );
+            let _ = stream.flush();
+            // Stall: never send the body.
+            std::thread::sleep(Duration::from_secs(10));
+        });
+
+        let started = Instant::now();
+        let result = get(&addr, "/api/generate", Duration::from_millis(200));
+        assert_eq!(result, Err(TranslateError::Timeout));
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn empty_response_is_unavailable() {
+        // Server accepts and immediately closes without sending anything.
+        let (listener, addr) = bind_local();
+        let _handle = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            drop(stream);
+        });
+
+        let result = get(&addr, "/api/tags", Duration::from_secs(2));
+        assert_eq!(result, Err(TranslateError::Unavailable));
+    }
+
+    #[test]
+    fn oversized_body_is_malformed() {
+        // Server sends a valid response slightly exceeding MAX_BODY.
+        // Use a small overflow to avoid TCP buffer deadlock.
+        let (listener, addr) = bind_local();
+        let _handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            // Read the request first so the TCP buffers are clear.
+            let mut req = [0u8; 512];
+            let _ = stream.read(&mut req);
+
+            let body_size = MAX_BODY + 64;
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {body_size}\r\nConnection: close\r\n\r\n"
+            );
+            let _ = stream.write_all(header.as_bytes());
+            // Send body in small chunks to avoid TCP buffer pressure.
+            let chunk = vec![b'A'; 1024];
+            let mut sent = 0;
+            while sent < body_size {
+                let n = (body_size - sent).min(1024);
+                if stream.write_all(&chunk[..n]).is_err() {
+                    break;
+                }
+                sent += n;
+            }
+            let _ = stream.flush();
+        });
+
+        let result = get(&addr, "/api/tags", Duration::from_secs(5));
+        assert_eq!(result, Err(TranslateError::Malformed));
+    }
+
+    #[test]
+    fn post_streaming_stall_produces_timeout() {
+        // Server accepts, sends headers, then stalls during streaming.
+        let (listener, addr) = bind_local();
+        let _handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\n\r\n",
+            );
+            let _ = stream.flush();
+            // Send one line then stall.
+            let _ = stream.write_all(b"{\"response\":\"hello\"}\n");
+            let _ = stream.flush();
+            std::thread::sleep(Duration::from_secs(10));
+        });
+
+        let started = Instant::now();
+        let mut lines = Vec::new();
+        let result = post_streaming(
+            &addr,
+            "/api/generate",
+            "{}",
+            Duration::from_millis(200),
+            &mut |line| {
+                lines.push(line.to_owned());
+                true
+            },
+        );
+        assert_eq!(result, Err(TranslateError::Timeout));
+        assert_eq!(lines.len(), 1, "the first line arrived before the stall");
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn post_streaming_oversized_is_malformed() {
+        // Server sends lines that accumulate past MAX_BODY total.
+        let (listener, addr) = bind_local();
+        let _handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\n\r\n",
+            );
+            let _ = stream.flush();
+            // 8192-byte lines; ~128 lines exceed MAX_BODY (1MB).
+            let line = format!("{}\n", "X".repeat(8191));
+            for _ in 0..130 {
+                if stream.write_all(line.as_bytes()).is_err() {
+                    break;
+                }
+                let _ = stream.flush();
+            }
+        });
+
+        let result = post_streaming(
+            &addr,
+            "/api/generate",
+            "{}",
+            Duration::from_secs(10),
+            &mut |_| true,
+        );
+        assert_eq!(result, Err(TranslateError::Malformed));
     }
 }
