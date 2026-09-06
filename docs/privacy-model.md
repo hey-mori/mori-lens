@@ -254,7 +254,7 @@ at risk is everything the default protects.
 
 ### Where a user sets this
 
-`%APPDATA%\Mori Lens\settings.conf`, written with every option in it on
+`%APPDATA%\Mori Lens\settings.toml`, written with every option in it on
 first run so the answer to "how do I stop it reading that" is a file
 that already exists:
 
@@ -362,7 +362,7 @@ Claims are worth what a user can check.
   sampled, so no accessibility call is made at all, which a process
   monitor can confirm. It is not a hidden card.
 - The per-application tier list is in
-  `%APPDATA%\Mori Lens\settings.conf`, which the tray menu opens and
+  `%APPDATA%\Mori Lens\settings.toml`, which the tray menu opens and
   which is re-read while Lens runs. Password managers are denied before
   that file is parsed, so writing `default = allow` does not switch them
   back on.
@@ -392,7 +392,7 @@ Every claim on this page, and whether the code keeps it:
 | Banking and payment applications denied by default | **not kept.** No banking application is denied by name, and naming them would be a guess that varies by country. What actually protects an unnamed application is the `Modifier` default, which is why the default tier is not `Allow`. This row is the honest version of a sentence in §2 that promised more than the code does. |
 | A pause control stops all acquisition | **kept**, as Ctrl+Alt+L. Paused means no accessibility call is made, not that a card is hidden, so a process monitor can confirm it. |
 | The tray shows the current engine | **kept**, since 2026-08-05. The tooltip names the model and whether it is local, and the icon says whether Lens is listening or paused. This row said "there is no tray" for a fortnight after there was one, which is the same defect as a stale capability claim pointing the other way: a privacy document that understates the product is one nobody can calibrate against. |
-| The per-application tier list is visible and editable | **kept**, in `%APPDATA%\Mori Lens\settings.conf`, opened from the tray menu and re-read while Lens runs. The denied password managers are not in it and cannot be overridden from it, which is the one part deliberately out of the user's reach. |
+| The per-application tier list is visible and editable | **kept**, in `%APPDATA%\Mori Lens\settings.toml`, opened from the tray menu and re-read while Lens runs. The denied password managers are not in it and cannot be overridden from it, which is the one part deliberately out of the user's reach. |
 
 Three rows are open. They are listed rather than quietly dropped
 because the point of this page is that a reader can tell which promises

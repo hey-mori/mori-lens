@@ -23,10 +23,11 @@ until the user actually needs it.
 
 ## Current state
 
-**Milestone 4 · Windows manual OCR.** The whole chain runs on Windows:
-hover, read, translate, card, and a hotkey that reads the pixels where
-the accessibility path gives nothing. `cargo build --release -p lens`
-produces something you can use today.
+**Milestone 8+ · Cross-platform with Library.** The full product runs on
+Windows and macOS: hover, read, translate, card, OCR, deep analysis,
+save to Library, manual review, and a Tauri settings/library UI.
+`cargo build --release --manifest-path apps/lens/Cargo.toml` produces
+something you can use today.
 
 What ships:
 
@@ -47,7 +48,8 @@ What ships:
 - `Ctrl+Alt+C` and `Ctrl+Alt+S` to copy or save the card.
 
 What does not exist yet: real-world validation on macOS with outside
-readers. Sequenced in [docs/roadmap.md](docs/roadmap.md).
+readers (requires Accessibility and Screen Recording permissions).
+Sequenced in [docs/roadmap.md](docs/roadmap.md).
 
 The authoritative list, capability by capability, is in
 [`docs/mori-lens-project-goal.md`](docs/mori-lens-project-goal.md).
@@ -170,7 +172,7 @@ settings file.
 - **Right-click the tray icon** for the settings file, start-with-Windows,
   and quit.
 
-The first run writes `%APPDATA%\Mori Lens\settings.conf` with every
+The first run writes `%APPDATA%\Mori Lens\settings.toml` with every
 option in it, commented. That is where the target language, the theme,
 the Ollama address, and the per-application rules live.
 
