@@ -15,6 +15,8 @@
 //   - On overflow, the newest command is dropped (not the oldest).
 //   - Critical commands (Quit, Pause) use separate atomic flags that
 //     bypass the ring buffer, guaranteeing delivery even under storm.
+//     Pause uses a saturating unsigned counter (max 1024) to preserve
+//     toggle multiplicity without signed overflow risk.
 //   - If macOS disables the tap (timeout), the callback re-enables it.
 
 #import "hotkey.h"
@@ -34,10 +36,12 @@ static atomic_int g_cmdTail = 0;  // read position (consumer only)
 
 // Critical command flags — bypass the ring buffer.
 // Quit uses a bool (idempotent command).
-// Pause uses a counter to preserve toggle multiplicity: two rapid presses
-// must produce two toggle events, not collapse into one.
+// Pause uses an unsigned counter with saturating increment to preserve
+// toggle multiplicity without risk of signed overflow. Capped at
+// PAUSE_PENDING_MAX — billions of queued toggles have no product value.
+#define PAUSE_PENDING_MAX 1024u
 static atomic_bool g_quitFlag = false;
-static atomic_int g_pauseCount = 0;
+static atomic_uint g_pauseCount = 0;
 
 static void enqueue_command(LensCommand cmd) {
     // Critical commands use dedicated atomics — never dropped.
@@ -46,7 +50,15 @@ static void enqueue_command(LensCommand cmd) {
         return;
     }
     if (cmd == LENS_CMD_PAUSE_TOGGLE) {
-        atomic_fetch_add(&g_pauseCount, 1);
+        // Saturating increment: CAS loop, no lock, no signed overflow.
+        unsigned int cur = atomic_load(&g_pauseCount);
+        while (cur < PAUSE_PENDING_MAX) {
+            if (atomic_compare_exchange_weak(&g_pauseCount, &cur, cur + 1)) {
+                break;
+            }
+            // cur is updated by compare_exchange_weak on failure; retry.
+        }
+        // If cur >= PAUSE_PENDING_MAX, silently saturate (drop extra presses).
         return;
     }
 
@@ -174,9 +186,10 @@ LensCommand lens_hotkey_poll(void) {
         atomic_store(&g_quitFlag, false);
         return LENS_CMD_QUIT;
     }
-    // Pause uses a counter to preserve multiplicity.
-    // Each press increments; each poll decrements and returns one toggle.
-    int pauseCount = atomic_load(&g_pauseCount);
+    // Pause uses a saturating unsigned counter to preserve multiplicity.
+    // Each press increments (capped at PAUSE_PENDING_MAX); each poll
+    // decrements and returns one toggle.
+    unsigned int pauseCount = atomic_load(&g_pauseCount);
     if (pauseCount > 0) {
         atomic_fetch_sub(&g_pauseCount, 1);
         return LENS_CMD_PAUSE_TOGGLE;
