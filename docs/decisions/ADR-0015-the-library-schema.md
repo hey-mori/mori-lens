@@ -123,6 +123,15 @@ as a many-to-many relationship. Review state arrived in migration 4 with
 `review_state`, `next_review_at`, and `review_count` columns and a
 partial index on `next_review_at` for the due-items query.
 
+**Migration 7 replaces spaced-repetition scheduling with manual review.**
+The review state values are now `"known"`, `"later"`, and `"archive"`.
+The `next_review_at` and `review_count` columns remain in the schema
+(added by migration 4) but are no longer written by the application.
+Migration 7 remaps `"new"` and `"learning"` to `"later"`, `"mastered"`
+to `"known"`, drops the partial index on `next_review_at`, and adds an
+`archived_at` column. The reader opens the Library and picks what to
+review; no timers, no notifications, no automatic scheduling.
+
 **`saved.md` is still written on every save.** The database is a second
 store alongside the file, not a replacement. If the database write
 fails, the file write has already succeeded. The file is the safety net

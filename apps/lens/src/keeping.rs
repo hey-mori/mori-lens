@@ -162,7 +162,7 @@ fn write_to_library(md_path: &Path, entry: &Entry, at: SystemTime) -> Option<i64
         model: entry.model.clone(),
         note: None,
         tags: None,
-        review_status: lens_storage::ReviewStatus::Later,
+        review_state: None,
     };
     lib.insert(&item).ok()
 }
@@ -235,19 +235,23 @@ mod tests {
 
     #[test]
     fn the_file_lands_beside_the_settings() {
-        // Use a platform-agnostic path to verify path_beside works correctly.
-        let settings = PathBuf::from("/fake/dir/settings.conf");
-        let result = path_beside(&settings);
-        assert_eq!(result.file_name().unwrap(), "saved.md");
-        assert_eq!(result.parent().unwrap(), settings.parent().unwrap());
+        let settings =
+            PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\Mori Lens\\settings.conf");
+        assert_eq!(
+            path_beside(&settings),
+            PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\Mori Lens\\saved.md"),
+        );
     }
 
     #[test]
     fn the_database_lands_beside_the_settings() {
-        let settings = PathBuf::from("/fake/dir/settings.conf");
+        let settings =
+            PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\Mori Lens\\settings.conf");
         let db = settings.parent().map(|p| p.join("library.db")).unwrap();
-        assert_eq!(db.file_name().unwrap(), "library.db");
-        assert_eq!(db.parent().unwrap(), settings.parent().unwrap());
+        assert_eq!(
+            db,
+            PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\Mori Lens\\library.db"),
+        );
     }
 
     #[test]
