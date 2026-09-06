@@ -33,6 +33,9 @@ pub struct SettingsState {
     /// Settings waiting to be applied by the polling loop.
     /// Set by `save_settings`, cleared after application.
     pending: Option<Settings>,
+    /// Monotonically increasing counter. Incremented on every `apply`.
+    /// The product loop checks this to avoid cloning Settings every tick.
+    generation: u64,
 }
 
 /// A serde-friendly view of the settings, for IPC with the webview.
@@ -86,6 +89,7 @@ pub fn load_or_migrate(data_dir: &std::path::Path) -> SettingsState {
                     file,
                     current,
                     pending: None,
+                    generation: 0,
                 };
             }
             Err(e) => {
@@ -119,6 +123,7 @@ pub fn load_or_migrate(data_dir: &std::path::Path) -> SettingsState {
                 file,
                 current,
                 pending: None,
+                generation: 0,
             };
         }
     }
@@ -130,6 +135,7 @@ pub fn load_or_migrate(data_dir: &std::path::Path) -> SettingsState {
         file,
         current,
         pending: None,
+        generation: 0,
     }
 }
 
@@ -207,12 +213,19 @@ impl SettingsState {
 
         self.current = self.file.to_settings();
         self.pending = Some(self.current.clone());
+        self.generation += 1;
         Ok(())
     }
 
     /// Take any pending settings, clearing the slot.
     pub fn take_pending(&mut self) -> Option<Settings> {
         self.pending.take()
+    }
+
+    /// The current settings generation. Increments on every `apply`.
+    /// The product loop checks this to avoid cloning Settings every tick.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// The current in-memory settings.
