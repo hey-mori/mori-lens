@@ -24,6 +24,7 @@ use lens_core::hover::{HoverConfig, HoverEvent, HoverMachine, PointerSample};
 use lens_core::language::decide;
 use lens_core::policy::AppPolicy;
 use lens_core::session::OcrMode;
+use lens_core::tally::Tally;
 use lens_core::translate::{QuickRequest, Translator};
 use lens_platform_macos::{
     clipboard, hotkey, overlay, AxPermission, Lifecycle, MacTextAcquirer, MenuBar, OcrTextAcquirer,
@@ -302,7 +303,7 @@ pub fn main() -> std::process::ExitCode {
 /// The product loop. Runs on a worker thread.
 fn product_loop(
     tauri_handle: AppHandle,
-    _shared_diagnostics: SharedDiagnostics,
+    shared_diagnostics: SharedDiagnostics,
     shared_settings: SharedSettings,
     shared_library: SharedLibrary,
     overlay: Option<Overlay>,
@@ -438,6 +439,7 @@ fn product_loop(
     let mut current_generation: u64 = 0;
     let mut paused = false;
     let mut quit_requested = false;
+    let mut tally = Tally::default();
 
     // Ctrl+C handler.
     let (tx, rx) = mpsc::channel::<()>();
@@ -457,11 +459,13 @@ fn product_loop(
                             let card = Card::translated(&sentence, &translation);
                             show_card_at(&overlay, &card, &anchor);
                             current_card = Some((card, sentence));
+                            tally.card();
                         }
                         Err(msg) => {
                             let card = Card { original: sentence.clone(), body: CardBody::Problem(msg), footer: String::new() };
                             show_card_at(&overlay, &card, &anchor);
                             current_card = Some((card, sentence));
+                            tally.card();
                         }
                     }
                 }
@@ -472,16 +476,22 @@ fn product_loop(
                             let card = Card::analysed(&sentence, &analysis);
                             show_card_at(&overlay, &card, &anchor);
                             current_card = Some((card, sentence));
+                            tally.card();
                         }
                         Err(msg) => {
                             let card = Card { original: sentence.clone(), body: CardBody::Problem(format!("analysis failed: {}", msg)), footer: String::new() };
                             show_card_at(&overlay, &card, &anchor);
                             current_card = Some((card, sentence));
+                            tally.card();
                         }
                     }
                 }
             }
         }
+
+        // Push diagnostics snapshot to the shared state so the webview
+        // can read fresh data when the user opens diagnostics.
+        update_diagnostics(&shared_diagnostics, &tally, &ocr_mode, &language, &endpoint, &model);
 
         // Drain commands from menu bar and global hotkeys.
         let mut pending_commands: Vec<ProductCommand> = Vec::new();
@@ -887,4 +897,30 @@ fn spawn_ctrlc_handler(tx: mpsc::Sender<()>) {
             std::thread::sleep(Duration::from_millis(100));
         }
     });
+}
+
+/// Update the shared diagnostics snapshot from the product loop.
+fn update_diagnostics(
+    shared: &SharedDiagnostics,
+    tally: &Tally,
+    ocr_mode: &OcrMode,
+    language: &str,
+    endpoint: &str,
+    model: &Option<String>,
+) {
+    let mut snapshot = shared.lock().unwrap();
+    snapshot.build = format!("{} macOS", env!("CARGO_PKG_VERSION"));
+    snapshot.configuration = vec![
+        ("language".into(), language.into()),
+        ("endpoint".into(), endpoint.into()),
+        ("model".into(), model.clone().unwrap_or_else(|| "(auto)".into())),
+    ];
+    snapshot.cards = tally.cards();
+    snapshot.settled_hovers = tally.settled();
+    snapshot.refusals = tally
+        .refusals()
+        .into_iter()
+        .map(|(reason, count)| (reason.to_owned(), count))
+        .collect();
+    snapshot.ocr_mode = format!("{ocr_mode:?}");
 }
