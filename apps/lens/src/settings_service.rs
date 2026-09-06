@@ -237,3 +237,146 @@ fn parse_tier(s: &str) -> Option<AppTier> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    fn temp_dir() -> std::path::PathBuf {
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "lens-settings-test-{}-{}", std::process::id(), id
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn default_view() -> SettingsView {
+        SettingsView {
+            language: "Korean".into(),
+            dwell_ms: 320,
+            theme: "forest".into(),
+            translucency: "on".into(),
+            text_size: "medium".into(),
+            default_tier: "allow".into(),
+            ocr: "manual".into(),
+            profile: "default".into(),
+            hover_scope: "sentence".into(),
+            history: false,
+            history_days: 30,
+            history_store_app: false,
+            history_excluded: vec![],
+            quick_engine: "local".into(),
+            quick_model: None,
+            quick_endpoint: "127.0.0.1:11434".into(),
+            deep_engine: "local".into(),
+            deep_model: None,
+            deep_endpoint: "127.0.0.1:11434".into(),
+            applications: vec![],
+        }
+    }
+
+    #[test]
+    fn load_or_migrate_creates_defaults_when_no_file() {
+        let dir = temp_dir();
+        let state = load_or_migrate(&dir);
+        assert!(state.pending.is_none());
+        let view = state.view();
+        assert_eq!(view.language, "Korean");
+        assert_eq!(view.dwell_ms, 320);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_or_migrate_loads_existing_file() {
+        let dir = temp_dir();
+        // Create defaults first.
+        let _ = load_or_migrate(&dir);
+        // Load again — should read the file.
+        let state = load_or_migrate(&dir);
+        assert_eq!(state.view().language, "Korean");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_sets_pending_and_persists() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir);
+        assert!(state.take_pending().is_none());
+
+        let mut view = default_view();
+        view.language = "Japanese".into();
+        view.dwell_ms = 500;
+        state.apply(view).unwrap();
+
+        // Pending is set after apply.
+        let pending = state.take_pending().unwrap();
+        assert_eq!(pending.language, "Japanese");
+        assert_eq!(pending.dwell_ms, 500);
+
+        // Second take returns None.
+        assert!(state.take_pending().is_none());
+
+        // Current reflects the applied settings.
+        assert_eq!(state.current().language, "Japanese");
+
+        // File persists: reload and check.
+        let reloaded = load_or_migrate(&dir);
+        assert_eq!(reloaded.current().language, "Japanese");
+        assert_eq!(reloaded.current().dwell_ms, 500);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_clamps_dwell_ms() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir);
+        let mut view = default_view();
+        view.dwell_ms = 10; // Below minimum (80).
+        state.apply(view).unwrap();
+        assert_eq!(state.current().dwell_ms, 80);
+
+        let mut view = default_view();
+        view.dwell_ms = 9999; // Above maximum (3000).
+        state.apply(view).unwrap();
+        assert_eq!(state.current().dwell_ms, 3000);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_invalid_tier_falls_back_to_default() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir);
+        let mut view = default_view();
+        view.default_tier = "bogus".into();
+        state.apply(view).unwrap();
+        // Invalid tier falls back to the Settings default.
+        assert_eq!(state.current().default_tier, Settings::default().default_tier);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn view_roundtrip_preserves_values() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir);
+        let mut view = default_view();
+        view.language = "Spanish".into();
+        view.hover_scope = "word".into();
+        view.history = true;
+        view.history_days = 90;
+        view.applications = vec![("Safari".into(), "deny".into())];
+        state.apply(view.clone()).unwrap();
+
+        let read_back = state.view();
+        assert_eq!(read_back.language, "Spanish");
+        assert_eq!(read_back.hover_scope, "word");
+        assert_eq!(read_back.history, true);
+        assert_eq!(read_back.history_days, 90);
+        assert_eq!(read_back.applications, vec![("Safari".into(), "deny".into())]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
