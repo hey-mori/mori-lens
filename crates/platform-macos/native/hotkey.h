@@ -42,6 +42,10 @@ void lens_hotkey_remove(void);
 /// is queued. Edge-triggered: each command is returned once.
 LensCommand lens_hotkey_poll(void);
 
+/// Check whether the event tap is currently enabled.
+/// Returns false if the tap is not installed or has been disabled by macOS.
+bool lens_hotkey_is_enabled(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -77,8 +77,6 @@ pub fn is_enabled() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     /// Simulate the native ring buffer algorithm to verify correctness.
     /// This mirrors the logic in hotkey.m exactly.
     struct SimQueue {
@@ -213,7 +211,7 @@ mod tests {
         let mut produced = 0u64;
         let mut consumed = 0u64;
         for i in 0..10_000 {
-            q.enqueue((i % 8) as i32 + 1);
+            q.enqueue((i % 8) + 1);
             produced += 1;
             // Poll roughly half the time.
             if i % 2 == 0 {
