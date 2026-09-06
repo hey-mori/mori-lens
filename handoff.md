@@ -6,7 +6,7 @@ Last updated: 2026-09-06
 
 macOS native implementation for Mori Lens cross-platform desktop product.
 Windows implementation is complete and stable. macOS is the active workstream.
-**Implementation phase complete. Evidence collection phase completed.**
+**Implementation complete. Automated/CI evidence complete. Real-world macOS validation requires OS permissions.**
 
 ## Current Product State
 
@@ -17,182 +17,159 @@ Windows implementation is complete and stable. macOS is the active workstream.
 - Policy enforcement via HoverSession (per-app deny/allow)
 - NSIS installer, release pipeline configured (unsigned — code signing is external credential debt)
 
-**macOS (implementation complete, evidence collected):**
-- Accessibility acquisition production-wired (`MacTextAcquirer`)
-- Vision OCR with per-word geometry (`boundingBoxForRange` → `VNRectangleObservation`)
-- Typed FFI ABI (`LensOcrWord` struct: float geometry + `uint32_t` offsets)
-- Integer overflow protection: widened arithmetic in both native and Rust
-- Narrowing safety: explicit bounds checks before `NSUInteger → uint32_t/int32_t`
-- Ownership safety: RAII `RawGuard` ensures C result freed on all Rust return paths
-- Range validation: checked arithmetic, UTF-8 char boundary verification, fail-closed
-- Passive native overlay (NSPanel, transparent, click-through, ARC-clean)
-- Real global commands via CGEventTap (Cmd+Opt+L/D/C/S/O/Q)
-- Hotkey queue: true SPSC ring buffer + saturating unsigned Pause counter (max 1024)
-- Critical commands: Quit (bool, highest priority), Pause (saturating counter, second priority)
-- Ordering contract: Quit > Pause > queued FIFO (tested with 16 tests)
-- Correct capture: pointer-based display selection, `SCDisplay.frame` property
-- Correct pixel format: BGRA canonical throughout capture→Vision pipeline
-- Safe lifetime: SCStream single-owner stop, no stack-capture UAF
-- Overlay exclusion: Lens overlay excluded from ScreenCaptureKit via CGWindowID
-- Shutdown cleanup: hotkey removal, overlay hide, Ollama model release
-- Diagnostics wired: Tally tracks cards/hovers/refusals
-- Settings hot-path: generation counter avoids full clone every 25ms
-- Policy enforcement: `process_name_at()` → `policy.allows()` before acquisition
+**macOS (implementation complete, automated evidence complete, real-world validation pending permissions):**
+- All implementation features complete (AX, OCR, overlay, hotkeys, settings, library)
+- CI passes on both Windows and macOS (run 34027544715)
+- Release binary builds and starts (arm64 Mach-O, 11MB)
+- Single-instance guard works
+- Library/Manual Review: 73 tests pass (full lifecycle: Save → Later → Known → Archive → Note → persistence)
+- Settings: 6 tests pass (load, apply, pending, clamp, roundtrip)
+- Policy: 13 tests pass (deny/allow, tier, password managers)
+- Validation script + fixture ready for permission-gated testing
 
 **Verification gate (`scripts/check.sh --full`):**
-- Fast tier (`scripts/check.sh`): workspace fmt + clippy + test
-- Product tier (`--full`): workspace + apps/lens fmt/clippy/check/test + clean native rebuild + privacy gates + version consistency + probe release build
-
-**Shared/core:**
-- `lens-core` platform-neutral (ADR-0003 invariant held)
-- `lens-storage::Library` is canonical save target (SQLite, ADR-0013)
+- Workspace fmt + clippy + test
+- Product binary fmt + clippy + check + test
+- Clean native rebuild
+- Privacy static gates
+- Version consistency
 
 ## This Session
 
-- **PR #298** — Hotkey pause saturation (CAS, max 1024) + ordering contract tests
-- **PR #299** — Fix `manual_filter` clippy lint (Rust 1.98 compat)
-- **PR #300** — Skip AX acquire on CI to prevent SIGTRAP exit
-- **PR #301** — Add missing crate imports to win.rs
-- **PR #302** — Skip all AX-touching tests on CI to prevent SIGTRAP
+- Validated release binary (arm64, startup, single-instance, SIGTRAP on permission-restricted APIs without grants)
+- Confirmed Ollama NOT AVAILABLE (connection refused)
+- Confirmed cargo-tauri NOT AVAILABLE (tooling blocker)
+- Created validation fixture (`docs/fixtures/validation-surface.html`)
+- Created validation script (`scripts/validate-macos.sh`)
+- Ran Library/Settings/Policy tests as evidence
+- Confirmed 4 open issues (#148, #140, #34, #14)
 
 ## Agent Assessment
 
 ```
 IMPLEMENTATION PHASE:             COMPLETE
 
-FULL PRODUCT GATE:                PRODUCT-GATED (check.sh --full PASS)
+AUTOMATED PRODUCT GATE:           PRODUCT-GATED (check.sh --full PASS)
 WINDOWS CI:                       CI EXECUTED PASS (run 34027544715)
 MACOS CI:                         CI EXECUTED PASS (run 34027544715)
 
-HOTKEY PAUSE SATURATION:          PRODUCTION-WIRED (atomic_uint, CAS, max 1024)
-HOTKEY ORDERING:                  PRODUCTION-WIRED (Quit > Pause > FIFO, tested)
-HOTKEY CONCURRENCY EVIDENCE:      CONCURRENCY-MODEL-TESTED (16 tests)
+RELEASE BINARY:                   BUILT (arm64 Mach-O, 11MB)
+BINARY STARTUP:                   PASS (prints config, starts Tauri)
+BINARY SHUTDOWN:                  BLOCKED (SIGTRAP without AX permission)
+SINGLE INSTANCE:                  PASS (lock file guard works)
 
-OCR INTEGER BOUNDARIES:           PRODUCTION-WIRED (widened arithmetic)
-OCR OFFSET/COUNT NARROWING:       PRODUCTION-WIRED (bounds-checked casts)
-OCR RAW RESULT OWNERSHIP:         PRODUCTION-WIRED (RAII guard)
-OCR RANGE VALIDATION:             PRODUCTION-WIRED (fail-closed)
-OCR ABI LAYOUT:                   STATICALLY AUDITED (repr(C) mirror)
+LIBRARY / MANUAL REVIEW:          UNIT-TESTED (73 tests, full lifecycle)
+SETTINGS:                         UNIT-TESTED (6 tests, load/apply/persist)
+POLICY:                           UNIT-TESTED (13 tests, deny/allow/tier)
 
-MACOS AX EVIDENCE:                BLOCKED (requires permission grant)
-MACOS OCR EVIDENCE:               BLOCKED (requires screen content)
-MACOS WORD-GEOMETRY EVIDENCE:     BLOCKED (requires real OCR run)
-MACOS OVERLAY EVIDENCE:           BLOCKED (requires visual verification)
-MACOS HOTKEY EVIDENCE:            BLOCKED (requires global hotkey permission)
+MACOS AX REAL-WORLD:              BLOCKED (Accessibility permission required)
+MACOS OCR REAL-WORLD:             BLOCKED (Screen Recording permission required)
+MACOS WORD GEOMETRY:              BLOCKED (requires OCR)
+MACOS OVERLAY:                    BLOCKED (requires AX permission)
+MACOS HOTKEYS:                    BLOCKED (requires AX permission)
+MACOS SETTINGS LIVE:              BLOCKED (requires running product)
+MACOS LIBRARY LIVE:               BLOCKED (requires running product)
 
-QUICK EVIDENCE:                   BLOCKED (requires Ollama service)
-DEEP EVIDENCE:                    BLOCKED (requires Ollama service)
-TWO-SPEED EVIDENCE:               UNIT-TESTED (sequential model tests)
+QUICK REAL-WORLD:                 BLOCKED (Ollama not available)
+DEEP REAL-WORLD:                  BLOCKED (Ollama not available)
+TWO-SPEED REAL-WORLD:             BLOCKED (Ollama not available)
 
 APP BUNDLE:                       TOOLING BLOCKER (cargo-tauri not installed)
 
-M6 REAL-WORLD EVIDENCE:           PENDING (human validation required)
-M7 REAL-WORLD EVIDENCE:           PENDING (human validation required)
-
-MACOS PRODUCT PARITY:             COMPLETE (implementation)
+ISSUE #14 WINDOWS VALIDATION:     PENDING (Windows environment required)
+ISSUE #34 WINDOWS VALIDATION:     PENDING (Windows environment required)
+ISSUE #140:                       HUMAN VALIDATION (clean machine + different person)
+ISSUE #148:                       QUALITY GATE OPEN (threshold not met)
 
 REMAINING IMPLEMENTATION-READY:   NONE
-REMAINING QUALITY GATES:          #148 (colour linkage threshold)
-REMAINING HUMAN VALIDATION:       #14 #34 #140 + real OCR/AX/overlay/hotkey
-REMAINING EXTERNAL DEBT:          signing, notarization, .icns, cargo-tauri
+REMAINING MACOS VALIDATION:       BLOCKED BY PERMISSIONS (AX + Screen Recording)
+REMAINING WINDOWS VALIDATION:     BLOCKED BY ENVIRONMENT (Windows machine required)
+REMAINING EXTERNAL DEBT:          signing, notarization, .icns, cargo-tauri, Ollama
 ```
 
-## Evidence Matrix
+## Evidence Summary
 
-| Capability                    | Implementation | Automated | CI        | Agent Runtime | Human       |
-|-------------------------------|----------------|-----------|-----------|---------------|-------------|
-| macOS AX acquisition          | COMPLETE       | UNIT-TEST | PASS      | BLOCKED       | PENDING     |
-| macOS OCR                     | COMPLETE       | UNIT-TEST | PASS      | BLOCKED       | PENDING     |
-| Word geometry                 | COMPLETE       | UNIT-TEST | PASS      | BLOCKED       | PENDING     |
-| Display crop                  | COMPLETE       | UNIT-TEST | PASS      | BLOCKED       | PENDING     |
-| Overlay                       | COMPLETE       | UNIT-TEST | PASS      | BLOCKED       | PENDING     |
-| Overlay exclusion             | COMPLETE       | STATIC    | PASS      | BLOCKED       | PENDING     |
-| Global hotkeys                | COMPLETE       | 16-TEST   | PASS      | BLOCKED       | PENDING     |
-| Quick translation             | COMPLETE       | UNIT-TEST | PASS      | BLOCKED       | PENDING     |
-| Deep translation              | COMPLETE       | UNIT-TEST | PASS      | BLOCKED       | PENDING     |
-| Quick-during-Deep             | COMPLETE       | UNIT-TEST | PASS      | BLOCKED       | PENDING     |
-| Settings live reload          | COMPLETE       | UNIT-TEST | PASS      | BLOCKED       | PENDING     |
-| Policy                        | COMPLETE       | UNIT-TEST | PASS      | BLOCKED       | PENDING     |
-| Save/Library                  | COMPLETE       | INTEG-TEST| PASS      | N/A           | PENDING     |
-| Manual Review                 | COMPLETE       | INTEG-TEST| PASS      | N/A           | PENDING     |
-| Lifecycle                     | COMPLETE       | STATIC    | PASS      | BLOCKED       | PENDING     |
-| Single instance               | COMPLETE       | STATIC    | PASS      | BLOCKED       | PENDING     |
-| .app packaging                | COMPLETE       | STATIC    | PASS      | TOOLING BLOCK | PENDING     |
-| Windows CI                    | N/A            | SCRIPT    | PASS      | N/A           | N/A         |
-| macOS CI                      | N/A            | SCRIPT    | PASS      | N/A           | N/A         |
+### DONE WITHOUT PERMISSION
+- Release binary build (arm64 Mach-O, 11MB)
+- Binary --version / --help
+- Binary startup (prints config, starts Tauri)
+- Single-instance guard (lock file + flock)
+- Library/Manual Review (73 unit tests, full lifecycle)
+- Settings service (6 unit tests)
+- Policy enforcement (13 unit tests)
+- Full product gate (scripts/check.sh --full PASS)
+- CI execution (both platforms PASS)
+- Validation fixture + script created
 
-## Automated Evidence
+### BLOCKED BY ACCESSIBILITY
+- AX text acquisition from real apps
+- Overlay rendering
+- Global hotkey installation/functionality
+- Product binary clean shutdown (SIGTRAP without permission)
 
-```
-scripts/check.sh --full:          PASS (all steps, 2026-09-06)
-workspace fmt/clippy/tests:       PASS (665+ tests)
-product fmt/clippy/check/test:    PASS
-clean native rebuild:             PASS
-platform-macos tests:             PASS (56 tests including 16 hotkey)
-lens-translate tests:             PASS (8 HTTP fault tests)
-privacy static gate:              CLEAN
-release binary build:             PASS (11MB arm64 Mach-O)
-release binary --version:         PASS ("Mori Lens 0.1.0 · macOS")
-release binary --help:            PASS
-```
+### BLOCKED BY SCREEN RECORDING
+- ScreenCaptureKit OCR pipeline
+- Vision word geometry
+- Overlay exclusion verification
 
-## CI Evidence
+### BLOCKED BY OLLAMA
+- Quick translation runtime
+- Deep translation runtime
+- Two-speed (Quick-during-Deep) runtime
 
-```
-CI run 34027544715:               PASS (both platforms)
-  Windows job:                    PASS
-  macOS job:                      PASS
-```
+### BLOCKED BY TOOLING
+- .app bundle build (cargo-tauri not installed)
 
-## Agent-run Runtime Evidence
+### BLOCKED BY HUMAN / HARDWARE
+- Sleep/wake lifecycle
+- Display hot-plug
+- Multi-monitor edge cases (no second display)
+- VS Code / KakaoTalk real-app validation
 
-```
-Product binary startup:           PASS (--version, --help, clean exit)
-Product binary release build:     PASS (11MB arm64)
-Unit tests:                       PASS (665+ tests)
-Integration tests:                PASS (Windows console window check)
+## Validation Procedure
 
-AX acquisition:                   BLOCKED (requires Accessibility permission)
-OCR on real apps:                 BLOCKED (requires screen content + permission)
-Overlay visibility:               BLOCKED (requires visual verification)
-Hotkey functionality:             BLOCKED (requires global hotkey permission)
-Multi-monitor:                    BLOCKED (requires physical hardware)
+When permissions are granted, run:
+
+```bash
+bash scripts/validate-macos.sh
 ```
 
-## Packaging Evidence
+This script:
+1. Checks permission state
+2. Opens controlled fixture in Safari
+3. Starts product binary
+4. Records automated evidence
+5. Prompts for visual checkpoints (overlay, hotkeys, OCR)
+6. Cleans up on exit
+7. Writes evidence to `docs/benchmarks/`
 
-```
-cargo-tauri:                      NOT AVAILABLE (TOOLING BLOCKER)
-.app bundle:                      NOT BUILT
-Code signing:                     NOT CONFIGURED (CREDENTIAL BLOCKER)
-Notarization:                     NOT CONFIGURED (CREDENTIAL BLOCKER)
-```
+## Controlled Fixture
 
-## Bugs Found and Fixed This Session
+`docs/fixtures/validation-surface.html` contains deterministic test content:
+- English sentences
+- Korean sentences (모리 렌즈는 화면의 글자를 읽습니다.)
+- Japanese sentences (モリレンズは画面の文字を読みます。)
+- Mixed language
+- Repeated words (cat cat cat)
+- Unicode/emoji (café, 😀)
 
-1. **Hotkey pause counter overflow** — `atomic_int` could overflow. Fixed with `atomic_uint` + CAS saturation (max 1024).
-2. **AX test SIGTRAP on CI** — macOS AX framework crashes on exit when AX APIs called without permission. Fixed by skipping AX-touching tests on CI.
-3. **Windows missing crate imports** — `win.rs` used shared modules without `use crate::` imports. Fixed by adding imports.
-4. **Windows clippy warnings** — `#![windows_subsystem]` in wrong location, unused imports, redundant closure, empty println. Fixed all.
-5. **`manual_filter` clippy lint** — Rust 1.98 caught `and_then` pattern. Fixed with `filter`.
+## Known Runtime Issue
+
+Binary crashes with SIGTRAP when AX APIs are called without Accessibility permission.
+This is expected macOS behavior — the product should be run after granting permissions.
+CI tests skip AX-touching tests to avoid this crash in the test environment.
 
 ## Open Issues / Gates
 
 ```
 #148  colour linkage quality gate     QUALITY GATE OPEN (threshold not met)
-#140  unzip → first card measurement  HUMAN VALIDATION
-#34   KakaoTalk real-app reach        HUMAN VALIDATION
-#14   VS Code real-app reach          HUMAN VALIDATION
+#140  unzip → first card measurement  HUMAN VALIDATION (clean machine + different person)
+#34   KakaoTalk real-app reach        WINDOWS VALIDATION (area:acquire, Windows UIA)
+#14   VS Code real-app reach          WINDOWS VALIDATION (area:platform-windows)
 ```
 
-## Human Validation Debt
-
-- Safari/VS Code/KakaoTalk AX acquisition
-- OCR accuracy with per-word geometry on Korean/Japanese/emoji
-- Multi-monitor OCR near display edges
-- Physical sleep/wake/display hot-plug
-- Overlay visual quality and placement
-- Hotkey functionality with other apps in foreground
+Note: #14 and #34 are Windows-specific issues (UIA control types, platform-windows label).
+macOS testing does not close these issues.
 
 ## External / Tooling / Credential Debt
 
@@ -200,30 +177,22 @@ Notarization:                     NOT CONFIGURED (CREDENTIAL BLOCKER)
 - Notarization service — CREDENTIAL BLOCKER
 - `.icns` icon source asset — ASSET BLOCKER
 - `cargo-tauri` CLI (local `.app` build) — TOOLING BLOCKER
-
-## Review Targets
-
-- Korean/Japanese Vision word geometry on real rendered text
-- Real multi-monitor edge crop behavior
-- VS Code editor accessibility text acquisition
-- KakaoTalk conversation targeting
-- Sleep/wake/display hot-plug lifecycle
+- Ollama + model (Quick/Deep translation) — SERVICE BLOCKER
 
 ## Next Session — Start Here
 
-1. Install cargo-tauri and build .app bundle
-2. Request Accessibility + Screen Recording permissions
-3. Run macOS binary against Safari, VS Code, KakaoTalk
-4. Verify per-word OCR accuracy with Korean/Japanese text
-5. Test overlay visibility and hotkey functionality
+1. Grant Accessibility + Screen Recording permissions
+2. (Optional) Start Ollama with a model for translation testing
+3. Run `bash scripts/validate-macos.sh`
+4. Review evidence in `docs/benchmarks/`
+5. Fix any bugs discovered during validation
 
 ## Git State
 
 ```
-latest implementation merge: PR #302 (skip AX tests on CI)
-latest CI pass: run 34027544715 (both platforms PASS)
-handoff base state: clean main before this handoff update
-handoff file itself may be committed after this reference;
+latest commit: 39e4429 (validation script + fixture)
+CI pass: run 34027544715 (both platforms)
+handoff base state: clean main
 always run `git log -1` at session start for actual HEAD.
 ```
 
@@ -231,7 +200,6 @@ always run `git log -1` at session start for actual HEAD.
 
 - Agent investigation stays inside `PROJECT_ROOT/**`.
 - `lens-core` remains platform-neutral (ADR-0003).
-- Human validation does not block implementation. Mark as VALIDATION DEBT.
 - Do not install external tools without explicit permission.
 - Work in coherent branch → PR → merge units. No direct main pushes.
 - macOS native code uses Objective-C bridges compiled by `cc` crate with `-fobjc-arc`.
