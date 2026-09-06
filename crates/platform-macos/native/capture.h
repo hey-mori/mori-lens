@@ -11,12 +11,15 @@ extern "C" {
 /// Capture a region of the screen into an RGBA pixel buffer.
 ///
 /// `x`, `y`, `width`, `height` are in global screen points (top-left origin).
-/// On return, `*out_pixels` points to a heap-allocated RGBA buffer
-/// (4 bytes per pixel, row-major, top-to-bottom). The caller must free it
-/// with `free()`. `*out_stride` is the number of bytes per row.
+/// The display containing (x, y) is selected. The crop region is clipped to
+/// that display's bounds. Output pixels are at the display's native scale.
+///
+/// On return, `*out_pixels` points to a heap-allocated buffer (BGRA format,
+/// row-major, top-to-bottom). The caller must free it with `free()`.
+/// `*out_stride` is the number of bytes per row.
 ///
 /// Returns true on success. Returns false if the capture failed (e.g. missing
-/// Screen Recording permission).
+/// Screen Recording permission, invalid region, or no display found).
 bool lens_capture_screen(double x, double y,
                          double width, double height,
                          uint8_t **out_pixels,

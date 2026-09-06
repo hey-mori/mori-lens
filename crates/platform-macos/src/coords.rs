@@ -97,6 +97,25 @@ impl DisplayTopology {
         2.0
     }
 
+    /// Find the display containing a Lens physical pixel point.
+    ///
+    /// Returns `None` if the point is not on any known display.
+    pub fn display_at_screen_point(&self, point: ScreenPoint) -> Option<&DisplayInfo> {
+        for display in &self.displays {
+            let b = &display.bounds_points;
+            let s = display.scale;
+            let px_left = (b.origin.x * s).round() as i32;
+            let px_top = (b.origin.y * s).round() as i32;
+            let px_right = ((b.origin.x + b.size.width) * s).round() as i32;
+            let px_bottom = ((b.origin.y + b.size.height) * s).round() as i32;
+            if point.x >= px_left && point.x < px_right && point.y >= px_top && point.y < px_bottom
+            {
+                return Some(display);
+            }
+        }
+        None
+    }
+
     /// Find the scale factor for the display containing a Lens physical pixel
     /// point.
     ///
@@ -122,6 +141,85 @@ impl DisplayTopology {
         // safe Retina default.
         2.0
     }
+}
+
+/// Compute the display-local crop rectangle for a capture request.
+///
+/// Given a capture region in global logical points and a display topology,
+/// returns:
+/// - The display containing the capture origin (or the first display as fallback)
+/// - The crop rectangle in display-local logical points, clipped to display bounds
+/// - The output pixel dimensions at the display's native scale
+///
+/// Returns `None` if the clipped crop has zero or negative area.
+pub fn compute_crop_rect(
+    topology: &DisplayTopology,
+    global_x: f64,
+    global_y: f64,
+    width: f64,
+    height: f64,
+) -> Option<(DisplayInfo, ffi::CGRect, i32, i32)> {
+    if width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+
+    let display = topology
+        .displays
+        .iter()
+        .find(|d| {
+            let b = &d.bounds_points;
+            global_x >= b.origin.x
+                && global_x < b.origin.x + b.size.width
+                && global_y >= b.origin.y
+                && global_y < b.origin.y + b.size.height
+        })
+        .or_else(|| topology.displays.first())?;
+
+    let b = &display.bounds_points;
+
+    let mut crop_x = global_x - b.origin.x;
+    let mut crop_y = global_y - b.origin.y;
+    let mut crop_w = width;
+    let mut crop_h = height;
+
+    if crop_x < 0.0 {
+        crop_w += crop_x;
+        crop_x = 0.0;
+    }
+    if crop_y < 0.0 {
+        crop_h += crop_y;
+        crop_y = 0.0;
+    }
+    if crop_x + crop_w > b.size.width {
+        crop_w = b.size.width - crop_x;
+    }
+    if crop_y + crop_h > b.size.height {
+        crop_h = b.size.height - crop_y;
+    }
+
+    if crop_w <= 0.0 || crop_h <= 0.0 {
+        return None;
+    }
+
+    let scale = display.scale;
+    let out_w = (crop_w * scale).round() as i32;
+    let out_h = (crop_h * scale).round() as i32;
+    if out_w <= 0 || out_h <= 0 {
+        return None;
+    }
+
+    let local_rect = ffi::CGRect {
+        origin: ffi::CGPoint {
+            x: crop_x,
+            y: crop_y,
+        },
+        size: ffi::CGSize {
+            width: crop_w,
+            height: crop_h,
+        },
+    };
+
+    Some((*display, local_rect, out_w, out_h))
 }
 
 /// Convert a Lens physical pixel point to a CoreGraphics point (logical
@@ -396,5 +494,158 @@ mod tests {
 
         let p = ScreenPoint::new(-500, 300);
         assert!((topo.scale_at_screen_point(p) - 1.0).abs() < 0.001);
+    }
+
+    fn dual_monitor_topology() -> DisplayTopology {
+        DisplayTopology {
+            displays: vec![
+                DisplayInfo {
+                    id: 1,
+                    bounds_points: ffi::CGRect {
+                        origin: ffi::CGPoint { x: 0.0, y: 0.0 },
+                        size: ffi::CGSize {
+                            width: 1440.0,
+                            height: 900.0,
+                        },
+                    },
+                    scale: 2.0,
+                    is_main: true,
+                },
+                DisplayInfo {
+                    id: 2,
+                    bounds_points: ffi::CGRect {
+                        origin: ffi::CGPoint { x: 1440.0, y: 0.0 },
+                        size: ffi::CGSize {
+                            width: 1920.0,
+                            height: 1080.0,
+                        },
+                    },
+                    scale: 1.0,
+                    is_main: false,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn display_at_screen_point_finds_primary_retina() {
+        let topo = dual_monitor_topology();
+        // Center of primary Retina (physical: 1440x900 = middle of 2880x1800).
+        let d = topo.display_at_screen_point(ScreenPoint::new(1440, 900));
+        assert!(d.is_some());
+        assert_eq!(d.unwrap().id, 1);
+    }
+
+    #[test]
+    fn display_at_screen_point_finds_external_1x() {
+        let topo = dual_monitor_topology();
+        // Physical pixel on external display: logical x=1440 → physical x=2880.
+        let d = topo.display_at_screen_point(ScreenPoint::new(3000, 500));
+        assert!(d.is_some());
+        assert_eq!(d.unwrap().id, 2);
+    }
+
+    #[test]
+    fn display_at_screen_point_off_display_returns_none() {
+        let topo = dual_monitor_topology();
+        // Far below both displays.
+        let d = topo.display_at_screen_point(ScreenPoint::new(500, 99999));
+        assert!(d.is_none());
+    }
+
+    #[test]
+    fn crop_rect_on_primary_retina() {
+        let topo = dual_monitor_topology();
+        // Capture band centered at logical (500, 400) on primary, 600x120 points.
+        let result = compute_crop_rect(&topo, 500.0, 400.0, 600.0, 120.0);
+        assert!(result.is_some());
+        let (display, rect, out_w, out_h) = result.unwrap();
+        assert_eq!(display.id, 1);
+        // Display-local: same as global since primary origin is (0,0).
+        assert!((rect.origin.x - 500.0).abs() < 0.001);
+        assert!((rect.origin.y - 400.0).abs() < 0.001);
+        assert!((rect.size.width - 600.0).abs() < 0.001);
+        assert!((rect.size.height - 120.0).abs() < 0.001);
+        // Output at 2x scale.
+        assert_eq!(out_w, 1200);
+        assert_eq!(out_h, 240);
+    }
+
+    #[test]
+    fn crop_rect_on_external_1x() {
+        let topo = dual_monitor_topology();
+        // Capture on external display at logical (2000, 500), 600x120 points.
+        let result = compute_crop_rect(&topo, 2000.0, 500.0, 600.0, 120.0);
+        assert!(result.is_some());
+        let (display, rect, out_w, out_h) = result.unwrap();
+        assert_eq!(display.id, 2);
+        // Display-local: subtract external origin (1440, 0).
+        assert!((rect.origin.x - 560.0).abs() < 0.001);
+        assert!((rect.origin.y - 500.0).abs() < 0.001);
+        // Output at 1x scale.
+        assert_eq!(out_w, 600);
+        assert_eq!(out_h, 120);
+    }
+
+    #[test]
+    fn crop_rect_clipped_to_display_boundary() {
+        let topo = dual_monitor_topology();
+        // Capture near right edge of primary: 500x120 starting at x=1200.
+        // Primary is 1440 wide, so crop extends to 1700 → clipped to 1440.
+        let result = compute_crop_rect(&topo, 1200.0, 400.0, 500.0, 120.0);
+        assert!(result.is_some());
+        let (_, rect, out_w, _) = result.unwrap();
+        assert!((rect.origin.x - 1200.0).abs() < 0.001);
+        // Clipped width: 1440 - 1200 = 240.
+        assert!((rect.size.width - 240.0).abs() < 0.001);
+        assert_eq!(out_w, 480); // 240 * 2x
+    }
+
+    #[test]
+    fn crop_rect_outside_all_displays_returns_none() {
+        let topo = dual_monitor_topology();
+        // Far outside any display.
+        let result = compute_crop_rect(&topo, 99999.0, 99999.0, 600.0, 120.0);
+        // Falls back to first display, but crop is entirely outside → clipped to zero.
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn crop_rect_zero_dimension_returns_none() {
+        let topo = dual_monitor_topology();
+        assert!(compute_crop_rect(&topo, 500.0, 400.0, 0.0, 120.0).is_none());
+        assert!(compute_crop_rect(&topo, 500.0, 400.0, 600.0, 0.0).is_none());
+        assert!(compute_crop_rect(&topo, 500.0, 400.0, -1.0, 120.0).is_none());
+    }
+
+    #[test]
+    fn crop_rect_on_negative_display() {
+        let topo = DisplayTopology {
+            displays: vec![DisplayInfo {
+                id: 1,
+                bounds_points: ffi::CGRect {
+                    origin: ffi::CGPoint { x: -1920.0, y: 0.0 },
+                    size: ffi::CGSize {
+                        width: 1920.0,
+                        height: 1080.0,
+                    },
+                },
+                scale: 1.0,
+                is_main: false,
+            }],
+        };
+        // Capture at logical (-500, 300) on the left display.
+        let result = compute_crop_rect(&topo, -500.0, 300.0, 600.0, 120.0);
+        assert!(result.is_some());
+        let (display, rect, out_w, out_h) = result.unwrap();
+        assert_eq!(display.id, 1);
+        // Display-local: -500 - (-1920) = 1420.
+        assert!((rect.origin.x - 1420.0).abs() < 0.001);
+        assert!((rect.origin.y - 300.0).abs() < 0.001);
+        // Crop extends from x=1420 to x=2020, but display is 1920 wide.
+        // Clipped to width 500.
+        assert!((rect.size.width - 500.0).abs() < 0.001);
+        assert_eq!(out_w, 500);
+        assert_eq!(out_h, 120);
     }
 }
