@@ -125,28 +125,16 @@ impl TextAcquirer for OcrTextAcquirer {
 
         // Build the segmented text from the OCR result.
         let full_text = ocr_result.text;
-        let focus_offset = if let Some(word) = focus_word {
-            // Find the word's position in the full text.
-            full_text.find(&word.text).unwrap_or(0)
-        } else {
-            0
-        };
+        // Use the word's actual UTF-8 offset (from boundingBoxForRange),
+        // not String::find which is ambiguous for repeated words.
+        let focus_offset = focus_word.map_or(0, |w| w.utf8_offset);
 
         let segmented: SegmentedText = text::segment(&full_text, focus_offset);
 
-        // Word bounds: just the focused word's rect, if found.
-        let word_bounds = focus_word
-            .and_then(|word| {
-                word_rects.iter().enumerate().find_map(|(i, rect)| {
-                    ocr_result.words.get(i).and_then(|w| {
-                        if w.text == word.text {
-                            Some(vec![*rect])
-                        } else {
-                            None
-                        }
-                    })
-                })
-            })
+        // Word bounds: the focused word's rect by index, not by text match.
+        let word_bounds = line_idx
+            .and_then(|idx| word_rects.get(idx))
+            .map(|rect| vec![*rect])
             .unwrap_or_default();
 
         // Context bounds: all word rects (the full capture band).
