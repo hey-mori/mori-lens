@@ -94,12 +94,21 @@ LensOcrResult lens_vision_recognize(const uint8_t *pixels,
                                        options:NSStringEnumerationByWords
                                     usingBlock:^(NSString *word, NSRange wordRange,
                                                  NSRange enclosingRange, BOOL *stop) {
+                (void)enclosingRange;
+                (void)stop;
                 if (!word || !word.length) return;
 
                 // Get per-word bounding box via Vision API.
+                // boundingBoxForRange: returns VNRectangleObservation *, not CGRect.
                 NSError *boxError = nil;
-                CGRect box = [topCandidate boundingBoxForRange:wordRange error:&boxError];
-                if (boxError || CGRectIsEmpty(box)) return;
+                VNRectangleObservation *boxObs =
+                    [topCandidate boundingBoxForRange:wordRange error:&boxError];
+                if (boxError || !boxObs) return;
+                CGRect box = boxObs.boundingBox;
+                if (CGRectIsEmpty(box)) return;
+                // Validate finite coordinates.
+                if (!isfinite(box.origin.x) || !isfinite(box.origin.y) ||
+                    !isfinite(box.size.width) || !isfinite(box.size.height)) return;
 
                 // Convert normalized Vision box (bottom-left origin) to
                 // pixel coordinates (top-left origin).
