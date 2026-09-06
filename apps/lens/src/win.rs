@@ -18,6 +18,12 @@ use lens_core::cache::{AnalysisCache, CacheKey, TranslationCache};
 use lens_core::card::Card;
 use lens_core::geometry::{ScreenPoint, ScreenRect};
 use lens_core::hover::{Generation, HoverConfig};
+
+use crate::detail_view::{self, SharedSavePath};
+use crate::keeping;
+use crate::library_service::{self, SharedLibrary};
+use crate::settings_service::{self, SharedSettings};
+use crate::tauri_app::{self, AppHandle, SharedDiagnostics, SharedRecent};
 use lens_core::icon::Glyph;
 use lens_core::language::{decide, Decision};
 use lens_core::policy::{AppPolicy, AppTier};
