@@ -23,12 +23,12 @@ def make_png(width: int, height: int, filepath: str) -> None:
         crc = struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
         return struct.pack(">I", len(data)) + c + crc
 
-    # IHDR: width, height, bit depth 8, color type 2 (RGB)
-    ihdr_data = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    # IHDR: width, height, bit depth 8, color type 6 (RGBA)
+    ihdr_data = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
     # IDAT: uncompressed rows with filter byte 0
     raw_data = b""
     for _ in range(height):
-        raw_data += b"\x00" + b"\x80\x80\x80" * width  # filter + grey pixels
+        raw_data += b"\x00" + b"\x80\x80\x80\xff" * width  # filter + grey+opaque RGBA
     compressed = zlib.compress(raw_data)
 
     os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
