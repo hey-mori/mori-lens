@@ -18,6 +18,9 @@
 #import <stdlib.h>
 #import <string.h>
 
+// From overlay.m — the overlay panel's CGWindowID, or 0 if not created.
+extern int32_t lens_overlay_window_id(void);
+
 // Delegate that captures a single frame. The caller owns the stop lifecycle.
 @interface LensCaptureDelegate : NSObject <SCStreamDelegate, SCStreamOutput>
 @property (nonatomic, assign) uint8_t *pixelData;
@@ -164,7 +167,13 @@ bool lens_capture_screen(double x, double y,
         if (cropW <= 0 || cropH <= 0) return false;
 
         // Step 4: Configure the stream for the crop region.
-        SCContentFilter *filter = [[SCContentFilter alloc] initWithDisplay:display excludingWindows:@[]];
+        // Exclude the Lens overlay from capture so OCR never reads its own card.
+        NSMutableArray *excludeWindows = [NSMutableArray array];
+        int32_t overlayWID = lens_overlay_window_id();
+        if (overlayWID != 0) {
+            [excludeWindows addObject:@(overlayWID)];
+        }
+        SCContentFilter *filter = [[SCContentFilter alloc] initWithDisplay:display excludingWindows:excludeWindows];
         SCStreamConfiguration *config = [[SCStreamConfiguration alloc] init];
 
         // sourceRect: the crop region in display-local logical points.
