@@ -76,8 +76,8 @@ not written), **out of v1** (deliberately excluded).
 | Copy what the card says | **shipped** · Ctrl+Alt+C puts the sentence and its answer on the clipboard, with the AI-explanation label when it is an explanation and never the model or the timing. The card stays up and its footer says 복사함, because a confirmation card would take the text away at the moment somebody decided to keep it. Verified against a real clipboard, which it puts back afterwards |
 | Automatic OCR fallback (Windows) | **built, unverified** · `ocr = automatic` installs an OcrTextAcquirer behind the session's own routing, so a hover accessibility could not serve falls through to pixels with no keypress. Off by default. Unit tested; nobody has hovered an editor with it on |
 | Manual OCR fallback (Windows) | **shipped** · Ctrl+Alt+O reads a band around the pointer, hides the card first, resolves the word under it, and feeds the same translation and card path. Never automatic, never to disk. Measured against VS Code on 2026-08-06, the application that prompted the milestone: 336 words recovered where accessibility resolves 9 points in 260 |
-| macOS acquisition | planned · M6 |
-| macOS overlay and Vision OCR | planned · M7 |
+| macOS acquisition | built, unverified · M6 implementation complete, CI passes, real-world validation pending Accessibility permission |
+| macOS overlay and Vision OCR | built, unverified · M7 implementation complete, CI passes, real-world validation pending Screen Recording permission |
 | A staged first hover | **shipped** · on the run that creates the settings file, a window Lens owns shows two sentences the reader provably cannot read, and hovering one produces a card by the ordinary path, so the first card is also proof that Ollama answered and the overlay draws. The lesson is chosen by asking `decide` the same question the product is about to ask, and the heading names the modifier when the reader's default needs one. Measured on 2026-08-11 against a live run: `lesson a hover reached the welcome's own sentence`, then both lines as cards, 56 and 42 characters, with no OCR line anywhere in the log. The first card took **7.4s** because the model was still loading, the second 1.5s, and repeats came from cache. Two failures got there first and neither was visible to `cargo test`: the window shipped **blank**, because `ShowWindow` paints and what to paint was stored after it, and the live check passed throughout since a blank window owns its points as well as a painted one. **Nobody who did not build it has hovered it**, which is the whole point of it and is [#140](https://github.com/swarea/mori-lens/issues/140) |
 | Saved vocabulary and sentences | **shipped** · Ctrl+Alt+S appends the card to `saved.md` and inserts it into `library.db` (SQLite, [ADR-0013](decisions/ADR-0013-the-local-library.md), [ADR-0015](decisions/ADR-0015-the-library-schema.md)). The database carries kind, model, language, and review status fields; the file is the human-readable export. Library UI with search, filters, notes, tags, and export (MD + JSON + JSONL round-trip). Manual review (Later/Known/Archive, [Issue #141](https://github.com/swarea/mori-lens/issues/141)); no automatic scheduling. Session-recent tier ([ADR-0014](decisions/ADR-0014-three-tiers-of-history.md)): latest 50 cards or 2 hours, memory only, visible in the webview |
 | Mori integration | planned · after M8, as a process boundary |
@@ -98,8 +98,8 @@ What is still missing before this is something a person installs: **a
 signed binary**. That is the whole of the remaining list. The decision is
 made ([ADR-0017](decisions/ADR-0017-signed-binary-distribution.md)): the
 primary channel is a Microsoft Store MSIX, which the Store signs. What
-remains is the Store developer account and MSIX packaging, both external
-dependencies.
+remains is the Store developer account (external) and MSIX packaging
+structure (repo-local, implementable without an account).
 
 It is the whole of the remaining list **for installable**, which is not
 the same as finished. The distance from one to the other is nothing on
