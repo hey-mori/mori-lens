@@ -1,6 +1,23 @@
 fn main() {
     #[cfg(target_os = "macos")]
     {
+        // Explicitly track all native sources and headers for rebuild invalidation.
+        // Without this, Cargo may use cached artifacts when .m/.h files change.
+        println!("cargo:rerun-if-changed=native/overlay.m");
+        println!("cargo:rerun-if-changed=native/overlay.h");
+        println!("cargo:rerun-if-changed=native/vision_ocr.m");
+        println!("cargo:rerun-if-changed=native/vision_ocr.h");
+        println!("cargo:rerun-if-changed=native/capture.m");
+        println!("cargo:rerun-if-changed=native/capture.h");
+        println!("cargo:rerun-if-changed=native/menubar.m");
+        println!("cargo:rerun-if-changed=native/menubar.h");
+        println!("cargo:rerun-if-changed=native/clipboard.m");
+        println!("cargo:rerun-if-changed=native/clipboard.h");
+        println!("cargo:rerun-if-changed=native/lifecycle.m");
+        println!("cargo:rerun-if-changed=native/lifecycle.h");
+        println!("cargo:rerun-if-changed=native/hotkey.m");
+        println!("cargo:rerun-if-changed=native/hotkey.h");
+
         // Compile the Objective-C bridges.
         cc::Build::new()
             .file("native/overlay.m")

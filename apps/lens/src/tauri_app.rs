@@ -496,7 +496,8 @@ fn library_set_review_status(
     id: i64,
     status: String,
 ) -> Result<bool, String> {
-    let review_status = status.parse::<lens_storage::ReviewStatus>()
+    let review_status = status
+        .parse::<lens_storage::ReviewStatus>()
         .map_err(|_| format!("invalid review status: {status}"))?;
     let lib = state.lock().unwrap();
     lib.library()
