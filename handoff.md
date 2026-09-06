@@ -5,8 +5,8 @@ Last updated: 2026-09-06
 ## Current Goal
 
 macOS native implementation for Mori Lens cross-platform desktop product.
-Windows implementation is complete and stable. macOS is the active workstream.
-**Implementation complete. Automated/CI evidence complete. Real-world macOS validation requires OS permissions.**
+Windows implementation is complete and stable. macOS implementation is complete.
+**All repository-local implementation work is complete. Remaining work is validation, external accounts, human gates, or quality research.**
 
 ## Current Product State
 
@@ -15,116 +15,128 @@ Windows implementation is complete and stable. macOS is the active workstream.
 - Deep Analysis, Copy, Save, Manual OCR, Pause/Resume via global hotkeys
 - Tauri Settings/Library/Detail surfaces with live settings propagation
 - Policy enforcement via HoverSession (per-app deny/allow)
-- NSIS installer, release pipeline configured (unsigned — code signing is external credential debt)
+- NSIS installer + MSIX packaging infrastructure (ADR-0017)
+- Code signing: NOT CONFIGURED (Store account needed for MSIX path)
 
-**macOS (implementation complete, automated evidence complete, real-world validation pending permissions):**
-- All implementation features complete (AX, OCR, overlay, hotkeys, settings, library)
-- CI passes on both Windows and macOS (run 34027544715)
-- Release binary builds and starts (arm64 Mach-O, 11MB)
-- Single-instance guard works
-- Library/Manual Review: 73 tests pass (full lifecycle: Save → Later → Known → Archive → Note → persistence)
-- Settings: 6 tests pass (load, apply, pending, clamp, roundtrip)
-- Policy: 13 tests pass (deny/allow, tier, password managers)
-- Validation script + fixture ready for permission-gated testing
+**macOS (implementation complete, CI passing, real-world validation pending permissions):**
+- Accessibility acquisition production-wired (`MacTextAcquirer`)
+- Vision OCR with per-word geometry (`boundingBoxForRange` → `VNRectangleObservation`)
+- Typed FFI ABI (`LensOcrWord` struct: float geometry + `uint32_t` offsets)
+- Integer overflow protection, narrowing safety, RAII ownership, range validation
+- Passive native overlay (NSPanel, transparent, click-through, ARC-clean)
+- Real global commands via CGEventTap (Cmd+Opt+L/D/C/S/O/Q)
+- Hotkey queue: true SPSC + saturating unsigned Pause counter (max 1024)
+- Correct capture: pointer-based display selection, BGRA canonical
+- Overlay exclusion via CGWindowID, shutdown cleanup, diagnostics wired
+- Settings hot-path: generation counter, policy enforcement
 
 **Verification gate (`scripts/check.sh --full`):**
 - Workspace fmt + clippy + test
 - Product binary fmt + clippy + check + test
-- Clean native rebuild
-- Privacy static gates
-- Version consistency
+- Clean native rebuild + privacy gates + version consistency
 
 ## This Session
 
-- Validated release binary (arm64, startup, single-instance, SIGTRAP on permission-restricted APIs without grants)
-- Confirmed Ollama NOT AVAILABLE (connection refused)
-- Confirmed cargo-tauri NOT AVAILABLE (tooling blocker)
-- Created validation fixture (`docs/fixtures/validation-surface.html`)
-- Created validation script (`scripts/validate-macos.sh`)
-- Ran Library/Settings/Policy tests as evidence
-- Confirmed 4 open issues (#148, #140, #34, #14)
+- **PR #303** — docs: fix stale macOS claims in project-goal.md (planned → built, unverified)
+- **PR #304** — docs: add M6/M7/M8 gate status tables to roadmap
+- **PR #305** — feat: Windows MSIX packaging infrastructure (ADR-0017)
+
+## Completion Matrix
+
+```
+Area                    Implementation  Automated  Runtime   Human     Distribution
+M1 Windows acquire      SHIPPED         CLOSED     CLOSED    PENDING   N/A
+M2 Windows overlay      SHIPPED         CLOSED     CLOSED    PENDING   N/A
+M3 Quick translation    SHIPPED         CLOSED     CLOSED    N/A       N/A
+M4 Windows OCR          SHIPPED         CLOSED     CLOSED    PENDING   N/A
+M5 Deep analysis        SHIPPED         CLOSED     CLOSED    OPEN*     N/A
+M6 macOS acquire        COMPLETE        CLOSED     BLOCKED   PENDING   N/A
+M7 macOS overlay/OCR    COMPLETE        CLOSED     BLOCKED   PENDING   N/A
+M8 Library/Review       COMPLETE        CLOSED     N/A       N/A       N/A
+Mori boundary           PLANNED         N/A        N/A       N/A       N/A
+Windows NSIS release    SHIPPED         CLOSED     N/A       N/A       UNSIGNED
+Windows MSIX release    INFRASTRUCTURE  CLOSED     N/A       N/A       BLOCKED†
+macOS raw binary        BUILT           CLOSED     N/A       N/A       UNSIGNED
+macOS .app bundle       BLOCKED‡       N/A        N/A       N/A       BLOCKED‡
+First-user onboarding   NOT TESTED      N/A        N/A       PENDING   N/A
+Return/re-entry         NOT TESTED      N/A        N/A       PENDING   N/A
+
+* M5 explanation quality: model-quality research, gate open (P1 lemma 63%)
+† Store developer account required (external)
+‡ cargo-tauri not installed (tooling blocker)
+```
 
 ## Agent Assessment
 
 ```
-IMPLEMENTATION PHASE:             COMPLETE
+REMAINING CODE IMPLEMENTATION:    NONE
+  (all repository-local implementation work is complete)
 
-AUTOMATED PRODUCT GATE:           PRODUCT-GATED (check.sh --full PASS)
-WINDOWS CI:                       CI EXECUTED PASS (run 34027544715)
-MACOS CI:                         CI EXECUTED PASS (run 34027544715)
+REMAINING ROADMAP GATES:
+  M1 correct-word human judgement     HUMAN VALIDATION
+  M2 exclusive fullscreen             HUMAN/HARDWARE VALIDATION
+  M4 scanned PDF/image-text           HUMAN VALIDATION
+  M4 VS Code/KakaoTalk OCR            HUMAN VALIDATION
+  M5 explanation quality              QUALITY RESEARCH (model-dependent)
+  M6 macOS compatibility matrix       HUMAN VALIDATION (needs AX permission)
+  M7 macOS overlay/OCR real-world     HUMAN VALIDATION (needs Screen Recording)
+  M8 gate                             CLOSED (automated evidence sufficient)
 
-RELEASE BINARY:                   BUILT (arm64 Mach-O, 11MB)
-BINARY STARTUP:                   PASS (prints config, starts Tauri)
-BINARY SHUTDOWN:                  BLOCKED (SIGTRAP without AX permission)
-SINGLE INSTANCE:                  PASS (lock file guard works)
+REMAINING QUALITY GATES:
+  #148 colour linkage                 QUALITY GATE OPEN (threshold not met)
+  M5 explanations right               QUALITY RESEARCH OPEN (model-dependent)
 
-LIBRARY / MANUAL REVIEW:          UNIT-TESTED (73 tests, full lifecycle)
-SETTINGS:                         UNIT-TESTED (6 tests, load/apply/persist)
-POLICY:                           UNIT-TESTED (13 tests, deny/allow/tier)
+REMAINING PRODUCT GATES:
+  First-user installs unaided         HUMAN PRODUCT GATE
+  Keeps running for a week            HUMAN PRODUCT GATE
+  Can state what it is for            HUMAN PRODUCT GATE
 
-MACOS AX REAL-WORLD:              BLOCKED (Accessibility permission required)
-MACOS OCR REAL-WORLD:             BLOCKED (Screen Recording permission required)
-MACOS WORD GEOMETRY:              BLOCKED (requires OCR)
-MACOS OVERLAY:                    BLOCKED (requires AX permission)
-MACOS HOTKEYS:                    BLOCKED (requires AX permission)
-MACOS SETTINGS LIVE:              BLOCKED (requires running product)
-MACOS LIBRARY LIVE:               BLOCKED (requires running product)
+REMAINING PLATFORM VALIDATION:
+  macOS AX/OCR/overlay/hotkeys        BLOCKED BY PERMISSIONS
+  macOS sleep/wake/hot-plug           BLOCKED BY HARDWARE
+  Windows VS Code/KakaoTalk           BLOCKED BY ENVIRONMENT
 
-QUICK REAL-WORLD:                 BLOCKED (Ollama not available)
-DEEP REAL-WORLD:                  BLOCKED (Ollama not available)
-TWO-SPEED REAL-WORLD:             BLOCKED (Ollama not available)
+REMAINING DISTRIBUTION WORK:
+  MSIX packaging infrastructure       IMPLEMENTED (this session)
+  Store submission                    BLOCKED (developer account)
+  macOS .app bundle                   BLOCKED (cargo-tauri not installed)
+  Code signing (Windows direct)       BLOCKED (OV certificate)
+  Code signing (macOS)                BLOCKED (Developer ID)
+  Notarization                        BLOCKED (Apple account)
+  Real icon assets                    ASSET BLOCKER
 
-APP BUNDLE:                       TOOLING BLOCKER (cargo-tauri not installed)
+REMAINING EXTERNAL BLOCKERS:
+  Store developer account             CREDENTIAL BLOCKER
+  Apple Developer ID                  CREDENTIAL BLOCKER
+  OV code-signing certificate         CREDENTIAL BLOCKER
+  cargo-tauri CLI                     TOOLING BLOCKER
+  Ollama + model (Quick/Deep test)    SERVICE BLOCKER
 
-ISSUE #14 WINDOWS VALIDATION:     PENDING (Windows environment required)
-ISSUE #34 WINDOWS VALIDATION:     PENDING (Windows environment required)
-ISSUE #140:                       HUMAN VALIDATION (clean machine + different person)
-ISSUE #148:                       QUALITY GATE OPEN (threshold not met)
-
-REMAINING IMPLEMENTATION-READY:   NONE
-REMAINING MACOS VALIDATION:       BLOCKED BY PERMISSIONS (AX + Screen Recording)
-REMAINING WINDOWS VALIDATION:     BLOCKED BY ENVIRONMENT (Windows machine required)
-REMAINING EXTERNAL DEBT:          signing, notarization, .icns, cargo-tauri, Ollama
+REMAINING OWNER DECISIONS:
+  Legal publishing identity           OWNER DECISION
+  OV certificate vendor               OWNER DECISION
+  Return/re-entry UX approach         OWNER DECISION
 ```
 
-## Evidence Summary
+## Automated Evidence
 
-### DONE WITHOUT PERMISSION
-- Release binary build (arm64 Mach-O, 11MB)
-- Binary --version / --help
-- Binary startup (prints config, starts Tauri)
-- Single-instance guard (lock file + flock)
-- Library/Manual Review (73 unit tests, full lifecycle)
-- Settings service (6 unit tests)
-- Policy enforcement (13 unit tests)
-- Full product gate (scripts/check.sh --full PASS)
-- CI execution (both platforms PASS)
-- Validation fixture + script created
+```
+scripts/check.sh --full:          PASS (2026-09-06)
+workspace fmt/clippy/tests:       PASS (665+ tests)
+product fmt/clippy/check/test:    PASS
+clean native rebuild:             PASS
+platform-macos tests:             PASS (56 tests including 16 hotkey)
+lens-translate tests:             PASS (8 HTTP fault tests)
+lens-storage tests:               PASS (73 tests, full M8 lifecycle)
+privacy static gate:              CLEAN
+CI run 34027544715:               PASS (both platforms)
+```
 
-### BLOCKED BY ACCESSIBILITY
-- AX text acquisition from real apps
-- Overlay rendering
-- Global hotkey installation/functionality
-- Product binary clean shutdown (SIGTRAP without permission)
+## Known Runtime Issues
 
-### BLOCKED BY SCREEN RECORDING
-- ScreenCaptureKit OCR pipeline
-- Vision word geometry
-- Overlay exclusion verification
-
-### BLOCKED BY OLLAMA
-- Quick translation runtime
-- Deep translation runtime
-- Two-speed (Quick-during-Deep) runtime
-
-### BLOCKED BY TOOLING
-- .app bundle build (cargo-tauri not installed)
-
-### BLOCKED BY HUMAN / HARDWARE
-- Sleep/wake lifecycle
-- Display hot-plug
-- Multi-monitor edge cases (no second display)
-- VS Code / KakaoTalk real-app validation
+- Binary crashes with SIGTRAP when AX APIs called without Accessibility permission (expected macOS behavior)
+- Lock file permission bug (`--w-------` → fixed to `-rw-------`)
+- Ollama not available locally (Quick/Deep translation BLOCKED)
 
 ## Validation Procedure
 
@@ -134,65 +146,35 @@ When permissions are granted, run:
 bash scripts/validate-macos.sh
 ```
 
-This script:
-1. Checks permission state
-2. Opens controlled fixture in Safari
-3. Starts product binary
-4. Records automated evidence
-5. Prompts for visual checkpoints (overlay, hotkeys, OCR)
-6. Cleans up on exit
-7. Writes evidence to `docs/benchmarks/`
+This script handles: permission check → Safari fixture → binary start → evidence recording → visual checkpoints → cleanup.
 
 ## Controlled Fixture
 
-`docs/fixtures/validation-surface.html` contains deterministic test content:
-- English sentences
-- Korean sentences (모리 렌즈는 화면의 글자를 읽습니다.)
-- Japanese sentences (モリレンズは画面の文字を読みます。)
-- Mixed language
-- Repeated words (cat cat cat)
-- Unicode/emoji (café, 😀)
+`docs/fixtures/validation-surface.html` contains deterministic test content: English, Korean, Japanese, mixed language, repeated words, Unicode/emoji.
 
-## Known Runtime Issue
-
-Binary crashes with SIGTRAP when AX APIs are called without Accessibility permission.
-This is expected macOS behavior — the product should be run after granting permissions.
-CI tests skip AX-touching tests to avoid this crash in the test environment.
-
-## Open Issues / Gates
+## Open Issues
 
 ```
-#148  colour linkage quality gate     QUALITY GATE OPEN (threshold not met)
-#140  unzip → first card measurement  HUMAN VALIDATION (clean machine + different person)
-#34   KakaoTalk real-app reach        WINDOWS VALIDATION (area:acquire, Windows UIA)
-#14   VS Code real-app reach          WINDOWS VALIDATION (area:platform-windows)
+#148  colour linkage quality gate     QUALITY GATE OPEN
+#140  first-user onboarding           HUMAN VALIDATION
+#34   KakaoTalk                       WINDOWS VALIDATION (area:acquire)
+#14   VS Code                         WINDOWS VALIDATION (area:platform-windows)
 ```
 
-Note: #14 and #34 are Windows-specific issues (UIA control types, platform-windows label).
-macOS testing does not close these issues.
-
-## External / Tooling / Credential Debt
-
-- Apple Developer ID (code signing) — CREDENTIAL BLOCKER
-- Notarization service — CREDENTIAL BLOCKER
-- `.icns` icon source asset — ASSET BLOCKER
-- `cargo-tauri` CLI (local `.app` build) — TOOLING BLOCKER
-- Ollama + model (Quick/Deep translation) — SERVICE BLOCKER
+Note: #14 and #34 are Windows-specific (UIA control types, platform-windows label).
 
 ## Next Session — Start Here
 
 1. Grant Accessibility + Screen Recording permissions
-2. (Optional) Start Ollama with a model for translation testing
+2. (Optional) Start Ollama with a model
 3. Run `bash scripts/validate-macos.sh`
 4. Review evidence in `docs/benchmarks/`
-5. Fix any bugs discovered during validation
 
 ## Git State
 
 ```
-latest commit: 39e4429 (validation script + fixture)
+latest merge: PR #305 (MSIX packaging infrastructure)
 CI pass: run 34027544715 (both platforms)
-handoff base state: clean main
 always run `git log -1` at session start for actual HEAD.
 ```
 
