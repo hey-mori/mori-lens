@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mori Lens Validation Surface</title>
+<style>
+body { font-family: -apple-system, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; line-height: 2; }
+.section { margin: 30px 0; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
+h2 { margin-top: 0; }
+.target { font-size: 18px; padding: 8px; margin: 4px 0; background: #f8f8f8; border-radius: 4px; }
+.korean { font-size: 20px; }
+.japanese { font-size: 20px; }
+.mixed { font-size: 18px; }
+.repeated { font-size: 18px; }
+.unicode { font-size: 18px; }
+.note { color: #666; font-size: 14px; font-style: italic; }
+</style>
+</head>
+<body>
+<h1>Mori Lens — Controlled Validation Surface</h1>
+<p class="note">Generated fixture for automated validation. No private content.</p>
+
+<div class="section">
+<h2>English (AX + OCR target)</h2>
+<p class="target" id="en1">The quick brown fox jumps over the lazy dog.</p>
+<p class="target" id="en2">Mori Lens is a local-first language layer for your desktop.</p>
+</div>
+
+<div class="section">
+<h2>Korean (AX + OCR target)</h2>
+<p class="target korean" id="ko1">모리 렌즈는 화면의 글자를 읽습니다.</p>
+<p class="target korean" id="ko2">사용자의 언어로 즉시 번역합니다.</p>
+</div>
+
+<div class="section">
+<h2>Japanese (AX + OCR target)</h2>
+<p class="target japanese" id="ja1">モリレンズは画面の文字を読みます。</p>
+<p class="target japanese" id="ja2">ユーザーの言語に即座に翻訳します。</p>
+</div>
+
+<div class="section">
+<h2>Mixed Language (AX + OCR target)</h2>
+<p class="target mixed" id="mix1">Mori Lens는 local-first language layer입니다.</p>
+<p class="target mixed" id="mix2">このアプリケーションは画面を翻訳します.</p>
+</div>
+
+<div class="section">
+<h2>Repeated Words (word geometry target)</h2>
+<p class="target repeated" id="rep1">cat cat cat</p>
+<p class="target repeated" id="rep2">the the the</p>
+</div>
+
+<div class="section">
+<h2>Unicode / Emoji (OCR edge case)</h2>
+<p class="target unicode" id="uni1">café naïve résumé</p>
+<p class="target unicode" id="uni2">hello 😀 world</p>
+</div>
+
+</body>
+</html>
