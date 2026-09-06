@@ -81,8 +81,11 @@ impl TextAcquirer for OcrTextAcquirer {
         let band_x = px - BAND_WIDTH_POINTS / 2.0;
         let band_y = py - BAND_HEIGHT_POINTS / 2.0;
 
-        let cap = capture::capture_region(band_x, band_y, BAND_WIDTH_POINTS, BAND_HEIGHT_POINTS)
-            .ok_or(AcquireError::Empty)?;
+        let cap = capture::capture_region(
+            band_x, band_y, BAND_WIDTH_POINTS, BAND_HEIGHT_POINTS,
+            px, py,  // pointer position for display selection
+        )
+        .ok_or(AcquireError::Empty)?;
 
         // Run Vision OCR on the captured pixels.
         let ocr_result = vision_ocr::recognize(&cap.pixels, cap.width, cap.height, cap.stride)
@@ -93,14 +96,20 @@ impl TextAcquirer for OcrTextAcquirer {
         }
 
         // Build word bounds in screen coordinates (physical pixels).
+        // Use the ACTUAL captured origin (cap.origin_x/y), not the requested
+        // band origin. After display-boundary clipping, these may differ.
+        let cap_scale = cap.scale;
+        let cap_origin_x = cap.origin_x;
+        let cap_origin_y = cap.origin_y;
         let word_rects: Vec<ScreenRect> = ocr_result
             .words
             .iter()
             .map(|w| {
                 // Word boxes are in capture-local pixel coordinates.
-                // Convert to global screen physical pixels.
-                let global_x = (band_x * scale) + w.x as f64;
-                let global_y = (band_y * scale) + w.y as f64;
+                // Convert to global screen physical pixels using the
+                // actual captured origin (not the requested band origin).
+                let global_x = (cap_origin_x * cap_scale) + w.x as f64;
+                let global_y = (cap_origin_y * cap_scale) + w.y as f64;
                 ScreenRect::new(
                     global_x.round() as i32,
                     global_y.round() as i32,
