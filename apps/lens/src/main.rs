@@ -4,6 +4,10 @@
 //! library, settings, detail, keeping, Mori transfer) are declared here
 //! and shared by both Windows and macOS platform consumers.
 
+// Some items are architecturally defined for cross-platform parity
+// but not yet wired into every product path. Kept for future use.
+#![allow(dead_code)]
+
 // -- Platform-neutral shared modules --
 mod detail_view;
 mod keeping;

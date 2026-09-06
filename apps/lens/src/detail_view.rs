@@ -137,9 +137,13 @@ pub(crate) fn detail_copy(state: tauri::State<'_, SharedDetail>) -> bool {
         })
         .unwrap_or(&view.original);
     #[cfg(windows)]
-    { lens_platform_windows::clipboard::put_text(text) }
+    {
+        lens_platform_windows::clipboard::put_text(text)
+    }
     #[cfg(target_os = "macos")]
-    { lens_platform_macos::clipboard::put_text(text) }
+    {
+        lens_platform_macos::clipboard::put_text(text)
+    }
 }
 
 /// Tauri command: save the detail to the library and saved.md.
