@@ -20,8 +20,9 @@ understand a sentence.
 ## 2. What it is not
 
 - **Not a screen translator.** It does not capture the screen and OCR
-  it. OCR is a fallback for surfaces that expose no text, and in the
-  first version it is manual only ([ADR-0002](decisions/ADR-0002-accessibility-first-acquisition.md)).
+  it. OCR is a fallback for surfaces that expose no text. The default is
+  manual (hotkey-triggered); automatic OCR is an explicit opt-in
+  ([ADR-0002](decisions/ADR-0002-accessibility-first-acquisition.md)).
 - **Not a browser extension.** It works in editors, PDF viewers,
   messengers, and settings screens, not only in a browser.
 - **Not a chat interface.** There is no prompt box. The pointer is the
@@ -80,7 +81,7 @@ not written), **out of v1** (deliberately excluded).
 | macOS overlay and Vision OCR | built, unverified · M7 implementation complete, CI passes, real-world validation pending Screen Recording permission |
 | A staged first hover | **shipped** · on the run that creates the settings file, a window Lens owns shows two sentences the reader provably cannot read, and hovering one produces a card by the ordinary path, so the first card is also proof that Ollama answered and the overlay draws. The lesson is chosen by asking `decide` the same question the product is about to ask, and the heading names the modifier when the reader's default needs one. Measured on 2026-08-11 against a live run: `lesson a hover reached the welcome's own sentence`, then both lines as cards, 56 and 42 characters, with no OCR line anywhere in the log. The first card took **7.4s** because the model was still loading, the second 1.5s, and repeats came from cache. Two failures got there first and neither was visible to `cargo test`: the window shipped **blank**, because `ShowWindow` paints and what to paint was stored after it, and the live check passed throughout since a blank window owns its points as well as a painted one. **Nobody who did not build it has hovered it**, which is the whole point of it and is [#140](https://github.com/swarea/mori-lens/issues/140) |
 | Saved vocabulary and sentences | **shipped** · Ctrl+Alt+S appends the card to `saved.md` and inserts it into `library.db` (SQLite, [ADR-0013](decisions/ADR-0013-the-local-library.md), [ADR-0015](decisions/ADR-0015-the-library-schema.md)). The database carries kind, model, language, and review status fields; the file is the human-readable export. Library UI with search, filters, notes, tags, and export (MD + JSON + JSONL round-trip). Manual review (Later/Known/Archive, [Issue #141](https://github.com/swarea/mori-lens/issues/141)); no automatic scheduling. Session-recent tier ([ADR-0014](decisions/ADR-0014-three-tiers-of-history.md)): latest 50 cards or 2 hours, memory only, visible in the webview |
-| Mori integration | planned · after M8, as a process boundary |
+| Mori integration | built, unverified · process boundary with capability discovery (`.capability.json`), version negotiation, explicit user action to send items. No shared DB, no shared package, no hidden sync ([ADR-0018](decisions/ADR-0018-mori-process-boundary.md)). Implemented but no live cross-process measurement yet |
 | Automatic full-screen OCR | out of v1 |
 | Browser extension | out of v1 |
 | Cloud sync, accounts, teams | out of v1 |
@@ -95,11 +96,11 @@ Seventeen capabilities have passed it. The rest have unit tests, which
 prove the logic and prove nothing about a desktop.
 
 What is still missing before this is something a person installs: **a
-signed binary**. That is the whole of the remaining list. The decision is
-made ([ADR-0017](decisions/ADR-0017-signed-binary-distribution.md)): the
-primary channel is a Microsoft Store MSIX, which the Store signs. What
-remains is the Store developer account (external) and MSIX packaging
-structure (repo-local, implementable without an account).
+signed binary and Store/Apple accounts**. The MSIX packaging structure
+is implemented (`packaging/windows-msix/`); what remains is the Store
+developer account (external). On macOS, `.app` bundling requires
+`cargo-tauri` (local tooling blocker), and distribution requires
+Developer ID + notarization (external credentials).
 
 It is the whole of the remaining list **for installable**, which is not
 the same as finished. The distance from one to the other is nothing on
