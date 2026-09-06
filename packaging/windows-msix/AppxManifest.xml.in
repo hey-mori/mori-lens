@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Mori Lens — MSIX AppxManifest template.
+
+  This is a template for Microsoft Store MSIX packaging (ADR-0017).
+  Placeholder values marked with PLACEHOLDER must be replaced before
+  Store submission. The Store signs the package on behalf of the
+  publisher, so no purchased certificate is needed for the Store path.
+
+  Build: scripts/package-msix.ps1
+  Verify: scripts/verify-msix.ps1
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap rescap">
+
+  <!--
+    Identity: replace PLACEHOLDER values before Store submission.
+    Publisher must match the Store account's publisher DN.
+    Version must match the product version in Cargo.toml / tauri.conf.json.
+  -->
+  <Identity
+    Name="PLACEHOLDER_PUBLISHER.MoriLens"
+    Publisher="CN=PLACEHOLDER_PUBLISHER_NAME"
+    Version="0.1.0.0"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Mori Lens</DisplayName>
+    <PublisherDisplayName>PLACEHOLDER_PUBLISHER_DISPLAY_NAME</PublisherDisplayName>
+    <Description>A local-first language layer for the whole screen. Rest the pointer on a sentence; Lens reads it and shows the meaning.</Description>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily
+      Name="Windows.Desktop"
+      MinVersion="10.0.17763.0"
+      MaxVersionTested="10.0.22621.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+    <Resource Language="ko-kr" />
+    <Resource Language="ja-jp" />
+  </Resources>
+
+  <Applications>
+    <Application
+      Id="MoriLens"
+      Executable="lens.exe"
+      EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Mori Lens"
+        Description="Local-first language layer"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!--
+      Mori Lens is a full-trust desktop application. It uses standard Win32
+      file APIs and does not need broadFileSystemAccess (which is for UWP
+      app container sandbox escape). runFullTrust is the only capability
+      needed for a desktop app packaged as MSIX.
+    -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

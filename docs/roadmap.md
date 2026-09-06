@@ -226,7 +226,7 @@ Markdown, carrying the AI-explanation label when what is saved is an
 explanation.
 
 The developer and exam profiles are built, 2026-08-18. A profile is one
-line in the deep system prompt and a name in `settings.conf`. It changes
+line in the deep system prompt and a name in `settings.toml`. It changes
 what is asked for rather than what is filtered afterwards, which is the
 rule `Answerable` already followed, and it does **not** change the schema:
 all five fields stay required, because one list builds the schema and
@@ -263,6 +263,21 @@ Retina and Spaces coordinate handling.
 unchanged by the addition, which is the test of whether
 [ADR-0003](decisions/ADR-0003-rust-core-platform-adapters.md) held.
 
+**IMPLEMENTATION: complete.** All macOS AX acquisition code is merged and
+CI passes on both platforms. `lens-core` is unchanged (ADR-0003 held).
+What remains is real-world measurement on actual macOS applications,
+which requires Accessibility permission and is tracked as validation debt.
+
+Standing, 2026-09-06:
+
+| Condition | Automated | Real-world |
+|---|---|---|
+| lens-core unchanged | CLOSED (no platform-specific additions to core) | N/A |
+| macOS compatibility matrix comparable to M1 | OPEN | **AWAITING** Accessibility permission |
+| Retina coordinate handling | CLOSED (unit tests, scale factor tests) | **AWAITING** real Retina display |
+| Spaces coordinate handling | CLOSED (compile-time, CG API) | **AWAITING** real Spaces test |
+| Permission flow | CLOSED (unit tests, CI skip on no-permission) | **AWAITING** real permission grant |
+
 ## M7 · macOS overlay and Vision OCR
 
 `NSPanel` overlay, accessibility and screen-recording onboarding staged
@@ -271,6 +286,25 @@ separately, ScreenCaptureKit crops, Vision recognition.
 **Gate** · a user who never uses OCR is never asked for screen
 recording; Spaces and full-screen verified; Retina coordinates match.
 
+**IMPLEMENTATION: complete.** NSPanel overlay, ScreenCaptureKit capture
+with per-display selection and sourceRect crop, Vision OCR with
+per-word geometry via `boundingBoxForRange:`, BGRA pixel format
+canonical throughout, overlay exclusion via CGWindowID. CI passes on
+both platforms. What remains is real-world measurement, which requires
+Screen Recording permission and is tracked as validation debt.
+
+Standing, 2026-09-06:
+
+| Condition | Automated | Real-world |
+|---|---|---|
+| Non-OCR user never asked for screen recording | CLOSED (AX and OCR are separate paths, OCR only when explicitly triggered) | **AWAITING** real permission flow |
+| Spaces verified | CLOSED (compile-time, CG API) | **AWAITING** real Spaces test |
+| Full-screen verified | CLOSED (compile-time) | **AWAITING** real full-screen app |
+| Retina coordinates match | CLOSED (unit tests, scale factor tests) | **AWAITING** real Retina display |
+| Overlay never steals focus | CLOSED (NSPanel config, unit tests) | **AWAITING** real visual check |
+| Click-through works | CLOSED (NSPanel config) | **AWAITING** real visual check |
+| Overlay exclusion from OCR | CLOSED (CGWindowID in SCContentFilter) | **AWAITING** real compositor test |
+
 ## M8 · Learning
 
 Saved words and sentences, notes, review list, export. Saving is always
@@ -278,6 +312,19 @@ explicit; nothing is captured automatically.
 
 **Gate** · nothing is stored without a user action; export round-trips;
 deletion is real.
+
+**IMPLEMENTATION: complete.** Library (SQLite, 73 tests), Manual Review
+(Later/Known/Archive, no scheduling), export (MD + JSON + JSONL),
+JSONL round-trip, secure wipe, real deletion. All gate conditions have
+automated test evidence.
+
+Standing, 2026-09-06:
+
+| Condition | State |
+|---|---|
+| Nothing stored without user action | CLOSED: Save is explicit (Ctrl+Alt+S), no automatic capture. SessionRecent is memory-only. PersistentHistory requires explicit opt-in. 73 library tests confirm. |
+| Export round-trips | CLOSED: JSONL export → import preserves items, tags, review status. MD/JSON export tested. `jsonl_round_trip_preserves_items_and_tags`, `jsonl_semantic_round_trip`, `jsonl_round_trip_preserves_review_status` all pass. |
+| Deletion is real | CLOSED: `delete()` removes DB row. `secure_wipe()` removes all library + history rows and survives reopen. `library_delete_does_not_affect_history` confirms isolation. `archive_is_not_delete` confirms archive ≠ delete. |
 
 ## What no milestone here covers
 

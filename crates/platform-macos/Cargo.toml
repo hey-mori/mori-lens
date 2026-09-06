@@ -1,0 +1,17 @@
+[package]
+name = "lens-platform-macos"
+description = "macOS Accessibility text acquisition for Mori Lens."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+lens-core.workspace = true
+
+[build-dependencies]
+cc = "1"
+
+[lints]
+workspace = true

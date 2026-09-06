@@ -29,8 +29,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": ["nsis", "app"],
     "icon": [
+      "icons/icon.png",
       "icons/icon.ico"
     ],
     "windows": {
@@ -38,6 +39,12 @@
         "installMode": "currentUser",
         "displayLanguageSelector": false
       }
+    },
+    "macOS": {
+      "minimumSystemVersion": "12.3",
+      "exceptionDomain": "",
+      "signingIdentity": null,
+      "entitlements": null
     }
   }
 }
