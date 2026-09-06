@@ -220,7 +220,7 @@ mod tests {
         }
         // Quit arrives — uses the flag, bypasses the ring buffer.
         q.enqueue(6); // Quit
-        // Quit has priority in poll.
+                      // Quit has priority in poll.
         assert_eq!(q.poll(), 6, "Quit must be returned immediately via flag");
     }
 

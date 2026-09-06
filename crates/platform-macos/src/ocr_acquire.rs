@@ -82,8 +82,12 @@ impl TextAcquirer for OcrTextAcquirer {
         let band_y = py - BAND_HEIGHT_POINTS / 2.0;
 
         let cap = capture::capture_region(
-            band_x, band_y, BAND_WIDTH_POINTS, BAND_HEIGHT_POINTS,
-            px, py,  // pointer position for display selection
+            band_x,
+            band_y,
+            BAND_WIDTH_POINTS,
+            BAND_HEIGHT_POINTS,
+            px,
+            py, // pointer position for display selection
         )
         .ok_or(AcquireError::Empty)?;
 
