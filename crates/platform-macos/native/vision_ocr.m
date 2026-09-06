@@ -25,10 +25,10 @@ LensOcrResult lens_vision_recognize(const uint8_t *pixels,
                                     int32_t stride) {
     LensOcrResult result = { .text = NULL, .word_count = 0, .words = NULL };
 
-    // Input validation.
+    // Input validation — all arithmetic in widened domain to prevent overflow.
     if (!pixels || width <= 0 || height <= 0 || stride <= 0) return result;
-    // BGRA requires at least 4 bytes per pixel.
-    if (stride < width * 4) return result;
+    // BGRA requires at least 4 bytes per pixel (widened to avoid int32 overflow).
+    if ((uint64_t)stride < (uint64_t)width * 4ULL) return result;
     // Overflow check: stride * height must not overflow size_t.
     if ((uint64_t)stride * (uint64_t)height > SIZE_MAX) return result;
     // Reasonable upper bound: 100 megapixels.
@@ -135,15 +135,19 @@ LensOcrResult lens_vision_recognize(const uint8_t *pixels,
                 // Compute UTF-8 offset of this word in the full text.
                 NSString *prefix = [obsText substringToIndex:wordRange.location];
                 NSData *prefixUtf8 = [prefix dataUsingEncoding:NSUTF8StringEncoding];
-                uint32_t wordUtf8Offset = (uint32_t)(obsUtf8Start + prefixUtf8.length);
+                NSUInteger rawOffset = obsUtf8Start + prefixUtf8.length;
 
                 NSData *wordUtf8 = [word dataUsingEncoding:NSUTF8StringEncoding];
-                uint32_t wordLen = (uint32_t)wordUtf8.length;
+                NSUInteger rawLen = wordUtf8.length;
+
+                // Bounds check before narrowing to uint32_t.
+                if (rawOffset > UINT32_MAX || rawLen > UINT32_MAX) return;
+                if (rawOffset + rawLen > UINT32_MAX) return;
 
                 // Pack into an NSValue wrapping a LensOcrWord struct.
                 LensOcrWord w = {
                     .x = px, .y = py, .width = pw, .height = ph,
-                    .utf8_offset = wordUtf8Offset, .utf8_length = wordLen
+                    .utf8_offset = (uint32_t)rawOffset, .utf8_length = (uint32_t)rawLen
                 };
                 [wordItems addObject:[NSValue value:&w withObjCType:@encode(LensOcrWord)]];
             }];
@@ -160,6 +164,13 @@ LensOcrResult lens_vision_recognize(const uint8_t *pixels,
         }
 
         // Copy word data to a typed C array.
+        // Bounds check before narrowing NSUInteger → int32_t.
+        if (wordItems.count > (NSUInteger)INT32_MAX) {
+            CGImageRelease(image);
+            free(result.text);
+            result.text = NULL;
+            return result;
+        }
         int32_t wordCount = (int32_t)wordItems.count;
         result.word_count = wordCount;
         if (wordCount > 0) {
