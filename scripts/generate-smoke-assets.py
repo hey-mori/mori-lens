@@ -16,7 +16,7 @@ import sys
 
 
 def make_png(width: int, height: int, filepath: str) -> None:
-    """Generate a minimal valid PNG file (8-bit RGB, solid grey)."""
+    """Generate a minimal valid PNG file (8-bit RGBA, solid grey)."""
 
     def chunk(chunk_type: bytes, data: bytes) -> bytes:
         c = chunk_type + data
@@ -47,16 +47,20 @@ def main() -> None:
     make_png(1024, 1024, icon_path)
     print(f"Generated: {icon_path}")
 
-    # MSIX Store assets (50x50 each)
+    # MSIX Store assets — each at its required size for MakeAppx validation
     assets_dir = os.path.join(project_root, "packaging", "windows-msix", "Assets")
-    for name in [
-        "StoreLogo.png",
-        "Square44x44Logo.png",
-        "Square150x150Logo.png",
-        "Wide310x150Logo.png",
-    ]:
+    asset_sizes = {
+        "StoreLogo.png": 50,
+        "Square44x44Logo.png": 44,
+        "Square150x150Logo.png": 150,
+        "Wide310x150Logo.png": 310,  # width; height is 150
+    }
+    for name, size in asset_sizes.items():
         path = os.path.join(assets_dir, name)
-        make_png(50, 50, path)
+        if name == "Wide310x150Logo.png":
+            make_png(310, 150, path)
+        else:
+            make_png(size, size, path)
         print(f"Generated: {path}")
 
     print("All smoke assets generated successfully.")

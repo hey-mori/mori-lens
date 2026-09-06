@@ -72,8 +72,8 @@ New-Item -ItemType Directory -Path $StagingDir -Force | Out-Null
 # Copy binary
 Copy-Item $Binary (Join-Path $StagingDir "lens.exe")
 
-# Process manifest template
-$Manifest = Get-Content $ManifestTemplate -Raw
+# Process manifest template — read as UTF-8 explicitly
+$Manifest = [System.IO.File]::ReadAllText($ManifestTemplate, [System.Text.Encoding]::UTF8)
 $Manifest = $Manifest -replace 'Version="[^"]*"', "Version=`"$MsixVersion`""
 # Note: Publisher placeholders remain — they must be replaced before Store submission
 # Write manifest with UTF-8 no-BOM encoding (PowerShell 5.x Out-File adds BOM)
