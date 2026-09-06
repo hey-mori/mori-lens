@@ -32,6 +32,7 @@ This session completed remaining implementation-ready work across all tracks.
 - Overlay exclusion: Lens overlay excluded from ScreenCaptureKit capture
 - Shutdown cleanup: hotkey removal, overlay hide, Ollama model release
 - Diagnostics wired: Tally tracks cards/hovers/refusals, shared with webview
+- Settings hot-path: generation counter avoids full clone every 25ms
 - Policy enforcement: `process_name_at()` → `policy.allows()` before acquisition
 - Lifecycle resilience (sleep/wake, display change)
 - Single instance guard (flock)
@@ -48,6 +49,7 @@ This session completed remaining implementation-ready work across all tracks.
 - **PR #284** — test/http-fault-injection: 6 synthetic TCP server tests + fix oversized body detection gap
 - **PR #285** — fix/macos-diagnostics: wire Tally + DiagnosticsSnapshot to product loop
 - **PR #286** — test/settings-service-tests: 6 settings tests + fix AppPolicy PartialEq derive
+- **PR #287** — fix/release-verification-and-settings-perf: Windows artifact verification + settings generation counter
 
 ## Agent Assessment
 
@@ -155,6 +157,7 @@ crates/lens-core/src/policy.rs          AppPolicy with PartialEq
 
 ## Latest Implementation Changes
 
+- PR #287 — Release workflow artifact verification + settings generation counter
 - PR #286 — Settings service tests + AppPolicy PartialEq
 - PR #285 — Diagnostics wiring (Tally + DiagnosticsSnapshot)
 - PR #284 — HTTP fault injection tests + oversized body fix
@@ -225,7 +228,7 @@ git diff --check:            CLEAN
 
 ```
 branch:  main
-HEAD:    933117a (style: fmt)
+HEAD:    c4de43c (Merge PR #287 — release verification + settings perf)
 status:  clean
 open PR: none
 ```
