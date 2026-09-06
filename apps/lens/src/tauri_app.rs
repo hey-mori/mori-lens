@@ -102,8 +102,6 @@ pub struct LibraryItemView {
     pub model: Option<String>,
     pub note: Option<String>,
     pub review_state: Option<String>,
-    pub next_review_at: Option<i64>,
-    pub review_count: Option<i64>,
 }
 
 /// A page of library items for the webview.
@@ -129,8 +127,6 @@ impl From<&lens_storage::Item> for LibraryItemView {
             model: item.model.clone(),
             note: item.note.clone(),
             review_state: item.review_state.clone(),
-            next_review_at: item.next_review_at,
-            review_count: item.review_count,
         }
     }
 }
@@ -266,6 +262,7 @@ fn library_filter(
     app: Option<String>,
     source_language: Option<String>,
     target_language: Option<String>,
+    review_state: Option<String>,
     offset: i64,
 ) -> Result<LibraryPageView, String> {
     use lens_storage::Filter;
@@ -275,6 +272,7 @@ fn library_filter(
         app,
         source_language,
         target_language,
+        review_state,
     };
     let page = lib
         .library()
@@ -461,20 +459,16 @@ fn library_secure_wipe(state: tauri::State<'_, SharedLibrary>) -> Result<(), Str
 }
 
 #[tauri::command]
-fn library_review_list(
+fn library_later_list(
     state: tauri::State<'_, SharedLibrary>,
     offset: Option<i64>,
 ) -> Result<LibraryPageView, String> {
     let lib = state.lock().unwrap();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
     let page = lib
         .library()
-        .list_due(now, offset.unwrap_or(0))
+        .list_later(offset.unwrap_or(0))
         .map_err(|e| format!("{e}"))?;
-    let total = lib.library().count_due(now).unwrap_or(0);
+    let total = lib.library().count_later().unwrap_or(0);
     Ok(LibraryPageView {
         items: page.items.iter().map(LibraryItemView::from).collect(),
         has_more: page.has_more,
@@ -483,28 +477,20 @@ fn library_review_list(
 }
 
 #[tauri::command]
-fn library_review_count(state: tauri::State<'_, SharedLibrary>) -> Result<i64, String> {
+fn library_later_count(state: tauri::State<'_, SharedLibrary>) -> Result<i64, String> {
     let lib = state.lock().unwrap();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    lib.library().count_due(now).map_err(|e| format!("{e}"))
+    lib.library().count_later().map_err(|e| format!("{e}"))
 }
 
 #[tauri::command]
-fn library_record_review(
+fn library_set_review_state(
     state: tauri::State<'_, SharedLibrary>,
     id: i64,
-    success: bool,
+    state_: String,
 ) -> Result<bool, String> {
     let lib = state.lock().unwrap();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
     lib.library()
-        .record_review(id, success, now)
+        .set_review_state(id, &state_)
         .map_err(|e| format!("{e}"))
 }
 
@@ -703,9 +689,9 @@ pub fn build(
             library_import_jsonl,
             library_secure_wipe,
             recent_list,
-            library_review_list,
-            library_review_count,
-            library_record_review,
+            library_later_list,
+            library_later_count,
+            library_set_review_state,
             history_list,
             history_count,
             history_delete,

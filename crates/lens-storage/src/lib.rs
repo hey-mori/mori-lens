@@ -46,16 +46,9 @@ pub struct Item {
     /// Tags for this item, populated on demand.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
-    /// Review state: `"new"`, `"learning"`, or `"mastered"`.
+    /// Review state: "known", "later", or "archive".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub review_state: Option<String>,
-    /// When the item is next due for review, seconds since the Unix epoch.
-    /// NULL when mastered or not yet scheduled.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_review_at: Option<i64>,
-    /// How many times the reader has successfully reviewed this item.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub review_count: Option<i64>,
 }
 
 /// A page of items returned by [`Library::list`] or [`Library::search`].
@@ -137,6 +130,8 @@ pub struct Filter {
     pub source_language: Option<String>,
     /// Filter by target language code.
     pub target_language: Option<String>,
+    /// Filter by review state: "known", "later", or "archive".
+    pub review_state: Option<String>,
 }
 
 /// A page size for listing and searching.
@@ -148,20 +143,12 @@ const PAGE_SIZE: i64 = 50;
 /// deterministic: `created_at ASC, id ASC`.
 const DEFAULT_HISTORY_MAX_ENTRIES: i64 = 1000;
 
-/// Review intervals in seconds, indexed by the number of successful reviews.
-///
-/// A simplified SM-2 schedule: 1 day, 3 days, 7 days, 14 days, 30 days.
-/// After five successful reviews the item is mastered.
-const REVIEW_INTERVALS: [i64; 5] = [
-    86_400,    // 1 day
-    259_200,   // 3 days
-    604_800,   // 7 days
-    1_209_600, // 14 days
-    2_592_000, // 30 days
-];
-
-/// The review state for an item that has been mastered.
-const REVIEW_MASTERED: &str = "mastered";
+/// Review state for an item the reader knows.
+pub const REVIEW_KNOWN: &str = "known";
+/// Review state for an item the reader wants to revisit.
+pub const REVIEW_LATER: &str = "later";
+/// Review state for an item the reader has archived.
+pub const REVIEW_ARCHIVE: &str = "archive";
 
 /// Errors from library operations.
 #[derive(Debug)]
@@ -228,16 +215,10 @@ impl Library {
     /// Insert one item. Returns the new item's id.
     ///
     /// The `id` field on the item is ignored; the database assigns one.
-    /// Review state starts as `"new"` with `next_review_at` set to one day
-    /// from now.
+    /// Review state starts as `"later"`.
     pub fn insert(&self, item: &Item) -> Result<i64, Error> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        let next_review = now + REVIEW_INTERVALS[0];
         self.conn.execute(
-            "INSERT INTO library (original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state, next_review_at, review_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'new', ?11, 0)",
+            "INSERT INTO library (original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'later')",
             params![
                 item.original,
                 item.answer,
@@ -249,7 +230,27 @@ impl Library {
                 item.target_language,
                 item.model,
                 item.note,
-                next_review,
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Insert one item with an explicit review state (used by JSONL import).
+    fn insert_with_review_state(&self, item: &Item, review_state: &str) -> Result<i64, Error> {
+        self.conn.execute(
+            "INSERT INTO library (original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                item.original,
+                item.answer,
+                item.caveat,
+                item.app,
+                item.created_at,
+                item.kind,
+                item.source_language,
+                item.target_language,
+                item.model,
+                item.note,
+                review_state,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -259,7 +260,7 @@ impl Library {
     pub fn list(&self, offset: i64) -> Result<Page, Error> {
         let limit = PAGE_SIZE + 1;
         let mut stmt = self.conn.prepare(
-            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state, next_review_at, review_count FROM library ORDER BY created_at DESC, id DESC LIMIT ?1 OFFSET ?2",
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state FROM library ORDER BY created_at DESC, id DESC LIMIT ?1 OFFSET ?2",
         )?;
         let items: Vec<Item> = stmt
             .query_map(params![limit, offset], row_to_item)?
@@ -273,7 +274,7 @@ impl Library {
     /// Get one item by id.
     pub fn get(&self, id: i64) -> Result<Option<Item>, Error> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state, next_review_at, review_count FROM library WHERE id = ?1",
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state FROM library WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id], row_to_item)?;
         match rows.next() {
@@ -391,7 +392,7 @@ impl Library {
         let pattern = format!("%{trimmed}%");
         let limit = PAGE_SIZE + 1;
         let mut stmt = self.conn.prepare(
-            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state, next_review_at, review_count FROM library WHERE original LIKE ?1 OR answer LIKE ?1 ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3",
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state FROM library WHERE original LIKE ?1 OR answer LIKE ?1 ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3",
         )?;
         let items: Vec<Item> = stmt
             .query_map(params![pattern, limit, offset], row_to_item)?
@@ -423,6 +424,10 @@ impl Library {
             param_values.push(tgt.clone());
             conditions.push(format!("target_language = ?{}", param_values.len()));
         }
+        if let Some(ref rs) = filter.review_state {
+            param_values.push(rs.clone());
+            conditions.push(format!("review_state = ?{}", param_values.len()));
+        }
 
         let where_clause = if conditions.is_empty() {
             String::new()
@@ -432,7 +437,7 @@ impl Library {
 
         let limit = PAGE_SIZE + 1;
         let sql = format!(
-            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state, next_review_at, review_count FROM library{where_clause} ORDER BY created_at DESC, id DESC LIMIT ?{} OFFSET ?{}",
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state FROM library{where_clause} ORDER BY created_at DESC, id DESC LIMIT ?{} OFFSET ?{}",
             param_values.len() + 1,
             param_values.len() + 2
         );
@@ -631,7 +636,7 @@ impl Library {
             offset += PAGE_SIZE;
         }
 
-        let mut out = String::from("{\"version\":1}\n");
+        let mut out = String::from("{\"version\":2}\n");
         for item in &all_items {
             let line = serde_json::to_string(item)
                 .map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
@@ -643,14 +648,20 @@ impl Library {
 
     /// Import items from a versioned JSONL string.
     ///
-    /// The first line must be a version header (`{"version": 1}`). Each
-    /// subsequent line is one JSON object. Items with the same original
-    /// text and kind as an existing row are skipped (duplicate detection).
+    /// The first line must be a version header (`{"version": 1}` or
+    /// `{"version": 2}`). Each subsequent line is one JSON object. Items
+    /// with the same original text and kind as an existing row are skipped
+    /// (duplicate detection).
+    ///
+    /// Version 1 items are inserted with review state `"later"`. Version 2
+    /// items preserve their `review_state` field; unknown values default
+    /// to `"later"`.
     ///
     /// Returns the number of items imported (not counting skipped
     /// duplicates).
     pub fn import_jsonl(&self, jsonl: &str) -> Result<i64, Error> {
         let mut imported = 0i64;
+        let mut format_version: i64 = 0;
         for (i, line) in jsonl.lines().enumerate() {
             let trimmed = line.trim();
             if trimmed.is_empty() {
@@ -661,10 +672,10 @@ impl Library {
             if i == 0 {
                 let header: serde_json::Value = serde_json::from_str(trimmed)
                     .map_err(|e| Error::Io(std::io::Error::other(format!("line 1: {e}"))))?;
-                let version = header.get("version").and_then(|v| v.as_i64()).unwrap_or(0);
-                if version != 1 {
+                format_version = header.get("version").and_then(|v| v.as_i64()).unwrap_or(0);
+                if format_version != 1 && format_version != 2 {
                     return Err(Error::Io(std::io::Error::other(format!(
-                        "unsupported JSONL version: {version}"
+                        "unsupported JSONL version: {format_version}"
                     ))));
                 }
                 continue;
@@ -681,8 +692,19 @@ impl Library {
                 continue;
             }
 
-            // Insert without review state: the import preserves the
-            // original creation date but schedules a fresh review.
+            // Determine the review state for the imported item.
+            let review_state = if format_version >= 2 {
+                match item.review_state.as_deref() {
+                    Some(REVIEW_KNOWN) | Some(REVIEW_LATER) | Some(REVIEW_ARCHIVE) => item
+                        .review_state
+                        .clone()
+                        .unwrap_or_else(|| REVIEW_LATER.to_owned()),
+                    _ => REVIEW_LATER.to_owned(),
+                }
+            } else {
+                REVIEW_LATER.to_owned()
+            };
+
             let insert_item = Item {
                 id: 0,
                 original: item.original,
@@ -697,10 +719,8 @@ impl Library {
                 note: item.note,
                 tags: None,
                 review_state: None,
-                next_review_at: None,
-                review_count: None,
             };
-            let id = self.insert(&insert_item)?;
+            let id = self.insert_with_review_state(&insert_item, &review_state)?;
 
             // Restore tags.
             if let Some(tags) = item.tags {
@@ -722,18 +742,23 @@ impl Library {
 
     // -- review list --------------------------------------------------------
 
-    /// List items due for review at the given time.
-    ///
-    /// An item is due when its `review_state` is not `"mastered"` and its
-    /// `next_review_at` is at or before `now`. Results are ordered by
-    /// `next_review_at` ascending (most overdue first).
-    pub fn list_due(&self, now: i64, offset: i64) -> Result<Page, Error> {
+    /// Set the review state of a library item.
+    pub fn set_review_state(&self, id: i64, state: &str) -> Result<bool, Error> {
+        let changed = self.conn.execute(
+            "UPDATE library SET review_state = ?1 WHERE id = ?2",
+            params![state, id],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// List items marked "later", newest first.
+    pub fn list_later(&self, offset: i64) -> Result<Page, Error> {
         let limit = PAGE_SIZE + 1;
         let mut stmt = self.conn.prepare(
-            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state, next_review_at, review_count FROM library WHERE review_state != 'mastered' AND next_review_at IS NOT NULL AND next_review_at <= ?1 ORDER BY next_review_at ASC, id ASC LIMIT ?2 OFFSET ?3",
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state FROM library WHERE review_state = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3",
         )?;
         let items: Vec<Item> = stmt
-            .query_map(params![now, limit, offset], row_to_item)?
+            .query_map(params![REVIEW_LATER, limit, offset], row_to_item)?
             .collect::<Result<_, _>>()?;
         let has_more = items.len() as i64 > PAGE_SIZE;
         let mut items = items;
@@ -741,58 +766,15 @@ impl Library {
         Ok(Page { items, has_more })
     }
 
-    /// Count items due for review at the given time.
-    pub fn count_due(&self, now: i64) -> Result<i64, Error> {
-        self.conn.query_row(
-            "SELECT COUNT(*) FROM library WHERE review_state != 'mastered' AND next_review_at IS NOT NULL AND next_review_at <= ?1",
-            params![now],
-            |row| row.get(0),
-        ).map_err(Error::Sqlite)
-    }
-
-    /// Record a review outcome for an item.
-    ///
-    /// When `success` is true, the review count increments and the next
-    /// review is scheduled according to the interval table. After five
-    /// successful reviews the item is mastered and `next_review_at` is
-    /// cleared.
-    ///
-    /// When `success` is false, the review count resets to zero and the
-    /// next review is scheduled for one day from now.
-    ///
-    /// Returns whether the item existed.
-    pub fn record_review(&self, id: i64, success: bool, now: i64) -> Result<bool, Error> {
-        let item = match self.get(id)? {
-            Some(item) => item,
-            None => return Ok(false),
-        };
-
-        let count = item.review_count.unwrap_or(0);
-        let (new_state, new_count, next_at) = if success {
-            let new_count = count + 1;
-            if new_count >= REVIEW_INTERVALS.len() as i64 {
-                (REVIEW_MASTERED.to_owned(), new_count, None)
-            } else {
-                let state = if new_count == 1 {
-                    "learning".to_owned()
-                } else {
-                    item.review_state
-                        .clone()
-                        .unwrap_or_else(|| "new".to_owned())
-                };
-                let next = now + REVIEW_INTERVALS[new_count as usize];
-                (state, new_count, Some(next))
-            }
-        } else {
-            let next = now + REVIEW_INTERVALS[0];
-            ("learning".to_owned(), 0, Some(next))
-        };
-
-        self.conn.execute(
-            "UPDATE library SET review_state = ?1, review_count = ?2, next_review_at = ?3 WHERE id = ?4",
-            params![new_state, new_count, next_at, id],
-        )?;
-        Ok(true)
+    /// Count items marked "later".
+    pub fn count_later(&self) -> Result<i64, Error> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM library WHERE review_state = ?1",
+                params![REVIEW_LATER],
+                |row| row.get(0),
+            )
+            .map_err(Error::Sqlite)
     }
 
     /// Securely wipe all data from the database.
@@ -855,7 +837,7 @@ impl Library {
         // The highest version this build understands. If the database has
         // migrations beyond this, a newer build wrote them and this build
         // must not mutate the schema.
-        const CURRENT_SCHEMA: i64 = 6;
+        const CURRENT_SCHEMA: i64 = 7;
         let max_applied = applied.iter().copied().max().unwrap_or(0);
         if max_applied > CURRENT_SCHEMA {
             return Err(Error::FutureSchema {
@@ -981,6 +963,30 @@ impl Library {
             tx.commit()?;
         }
 
+        // Review contract v1 (#141): replace spaced-repetition scheduling
+        // with manual Known/Later/Archive categorisation.
+        //
+        // - Remap review_state values: 'new' and 'learning' -> 'later',
+        //   'mastered' -> 'known'.
+        // - Drop the partial index on next_review_at (scheduling removed).
+        // - Add `archived_at` column (NULL unless state is 'archive').
+        if !applied.contains(&7) {
+            let tx = self.conn.unchecked_transaction()?;
+            tx.execute_batch(
+                "DROP INDEX IF EXISTS library_review_due;
+
+                 UPDATE library SET review_state = 'later'
+                     WHERE review_state IN ('new', 'learning');
+                 UPDATE library SET review_state = 'known'
+                     WHERE review_state = 'mastered';
+
+                 ALTER TABLE library ADD COLUMN archived_at INTEGER;
+
+                 INSERT INTO schema_migrations (version) VALUES (7);",
+            )?;
+            tx.commit()?;
+        }
+
         Ok(())
     }
 
@@ -1085,13 +1091,8 @@ impl Library {
                 other => Error::Sqlite(other),
             })?;
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        let next_review = now + REVIEW_INTERVALS[0];
         self.conn.execute(
-            "INSERT INTO library (original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state, next_review_at, review_count) VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, NULL, 'new', ?9, 0)",
+            "INSERT INTO library (original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state) VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, NULL, 'later')",
             params![
                 entry.original,
                 entry.answer,
@@ -1101,7 +1102,6 @@ impl Library {
                 entry.source_language,
                 entry.target_language,
                 entry.model,
-                next_review,
             ],
         )?;
         let library_id = self.conn.last_insert_rowid();
@@ -1178,9 +1178,7 @@ fn row_to_item(row: &rusqlite::Row) -> rusqlite::Result<Item> {
         target_language: row.get(8)?,
         model: row.get(9)?,
         note: row.get(10)?,
-        review_state: row.get::<_, Option<String>>(11)?.or(Some("new".to_owned())),
-        next_review_at: row.get(12)?,
-        review_count: row.get::<_, Option<i64>>(13)?.or(Some(0)),
+        review_state: row.get::<_, Option<String>>(11)?,
         tags: None,
     })
 }
@@ -1433,8 +1431,6 @@ mod tests {
             note: None,
             tags: None,
             review_state: None,
-            next_review_at: None,
-            review_count: None,
         }
     }
 
@@ -1453,8 +1449,6 @@ mod tests {
             note: None,
             tags: None,
             review_state: None,
-            next_review_at: None,
-            review_count: None,
         }
     }
 
@@ -1475,7 +1469,7 @@ mod tests {
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
-        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7]);
         cleanup(&path);
     }
 
@@ -1811,8 +1805,6 @@ mod tests {
             note: None,
             tags: None,
             review_state: None,
-            next_review_at: None,
-            review_count: None,
         };
         lib.insert(&item).unwrap();
 
@@ -1847,8 +1839,6 @@ mod tests {
             note: Some("my note".to_owned()),
             tags: None,
             review_state: None,
-            next_review_at: None,
-            review_count: None,
         };
         let id = lib.insert(&item).unwrap();
         lib.set_tags(id, &["tag1".to_owned(), "tag2".to_owned()])
@@ -1889,8 +1879,6 @@ mod tests {
             note: None,
             tags: None,
             review_state: None,
-            next_review_at: None,
-            review_count: None,
         };
         lib.insert(&item).unwrap();
         item.original = "second".to_owned();
@@ -1903,7 +1891,7 @@ mod tests {
         assert_eq!(lines.len(), 3);
 
         let header: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
-        assert_eq!(header["version"], 1);
+        assert_eq!(header["version"], 2);
 
         let first: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
         let second: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
@@ -1933,8 +1921,6 @@ mod tests {
             note: Some("a note".to_owned()),
             tags: None,
             review_state: None,
-            next_review_at: None,
-            review_count: None,
         };
         let id = lib_a.insert(&item).unwrap();
         lib_a
@@ -2347,16 +2333,17 @@ mod tests {
         assert!(tables.contains(&"history".to_owned()));
         assert!(tables.contains(&"schema_migrations".to_owned()));
 
-        // Verify schema version is 5
+        // Verify schema version is 7
         let version: i64 = lib
             .conn
             .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
 
-        // Verify library table has review columns (from migration 4)
+        // Verify library table has review_state column (from migration 4)
+        // and archived_at column (from migration 7)
         let columns: Vec<String> = lib
             .conn
             .prepare("PRAGMA table_info(library)")
@@ -2366,8 +2353,7 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert!(columns.contains(&"review_state".to_owned()));
-        assert!(columns.contains(&"next_review_at".to_owned()));
-        assert!(columns.contains(&"review_count".to_owned()));
+        assert!(columns.contains(&"archived_at".to_owned()));
 
         cleanup(&path);
     }
@@ -2411,14 +2397,14 @@ mod tests {
         assert_eq!(lib2.count().unwrap(), count_before);
         assert_eq!(lib2.history_count().unwrap(), history_before);
 
-        // Verify schema version is still 5
+        // Verify schema version is still 7
         let version: i64 = lib2
             .conn
             .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
 
         cleanup(&path);
     }
@@ -2487,32 +2473,35 @@ mod tests {
         cleanup(&path_b);
     }
 
-    /// JSONL import does not preserve review state (intentional).
+    /// JSONL v2 round-trip preserves review state.
     #[test]
-    fn jsonl_round_trip_resets_review_state() {
+    fn jsonl_round_trip_preserves_review_state() {
         let path_a = temp_db("jsonl-review-export");
         let lib_a = Library::open(&path_a).unwrap();
 
-        // Create item and advance review state
-        let item = a_translation();
-        let id = lib_a.insert(&item).unwrap();
-        lib_a.record_review(id, true, 1000).unwrap(); // review_state -> 'learning'
+        // Create items with different review states.
+        let item1 = a_translation();
+        let id1 = lib_a.insert(&item1).unwrap();
+        lib_a.set_review_state(id1, REVIEW_KNOWN).unwrap();
 
-        // Verify review state before export
-        let item_before = lib_a.get(id).unwrap().unwrap();
-        assert_eq!(item_before.review_state.as_deref(), Some("learning"));
+        let mut item2 = a_translation();
+        item2.original = "second item".to_owned();
+        let id2 = lib_a.insert(&item2).unwrap();
+        lib_a.set_review_state(id2, REVIEW_ARCHIVE).unwrap();
 
-        // Export and import
+        // Export and import (v2 format).
         let jsonl = lib_a.export_jsonl().unwrap();
         let path_b = temp_db("jsonl-review-import");
         let lib_b = Library::open(&path_b).unwrap();
         lib_b.import_jsonl(&jsonl).unwrap();
 
-        // Verify review state is reset
+        // Verify review states are preserved.
         let items = lib_b.list(0).unwrap().items;
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].review_state.as_deref(), Some("new")); // Reset to 'new'
-        assert_eq!(items[0].review_count, Some(0)); // Reset to 0
+        assert_eq!(items.len(), 2);
+        let known = items.iter().find(|i| i.original == item1.original).unwrap();
+        assert_eq!(known.review_state.as_deref(), Some("known"));
+        let archived = items.iter().find(|i| i.original == "second item").unwrap();
+        assert_eq!(archived.review_state.as_deref(), Some("archive"));
 
         cleanup(&path_a);
         cleanup(&path_b);
@@ -2665,7 +2654,7 @@ mod tests {
         let item = lib.get(library_id).unwrap().unwrap();
         assert_eq!(item.original, "test original");
         assert_eq!(item.answer, "test answer");
-        assert_eq!(item.review_state.as_deref(), Some("new")); // Fresh review state
+        assert_eq!(item.review_state.as_deref(), Some("later")); // Fresh review state
 
         cleanup(&path);
     }
@@ -2745,7 +2734,7 @@ mod tests {
         cleanup(&path);
     }
 
-    /// Review state is initialized to 'new' when promoting history to library.
+    /// Review state is initialized to 'later' when promoting history to library.
     #[test]
     fn history_promote_initializes_review_state() {
         let path = temp_db("history-promote-review");
@@ -2768,9 +2757,7 @@ mod tests {
         let library_id = lib.history_promote(history_id).unwrap();
 
         let item = lib.get(library_id).unwrap().unwrap();
-        assert_eq!(item.review_state.as_deref(), Some("new"));
-        assert_eq!(item.review_count, Some(0));
-        assert!(item.next_review_at.is_some()); // Scheduled for review
+        assert_eq!(item.review_state.as_deref(), Some("later"));
 
         cleanup(&path);
     }
@@ -2778,119 +2765,109 @@ mod tests {
     // -- review list --------------------------------------------------------
 
     #[test]
-    fn new_items_are_scheduled_for_review_one_day_later() {
+    fn new_items_start_with_review_state_later() {
         let path = temp_db("review-new");
         let lib = Library::open(&path).unwrap();
         let id = lib.insert(&a_translation()).unwrap();
 
         let item = lib.get(id).unwrap().unwrap();
-        assert_eq!(item.review_state.as_deref(), Some("new"));
-        assert_eq!(item.review_count, Some(0));
-        assert!(item.next_review_at.is_some());
-
-        // The next review should be roughly 1 day from now.
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-        let scheduled = item.next_review_at.unwrap();
-        assert!(scheduled > now);
-        assert!(scheduled <= now + 86_400 + 10);
+        assert_eq!(item.review_state.as_deref(), Some("later"));
 
         cleanup(&path);
     }
 
     #[test]
-    fn list_due_returns_items_past_their_review_time() {
-        let path = temp_db("review-due");
+    fn set_review_state_changes_the_state() {
+        let path = temp_db("review-set-state");
         let lib = Library::open(&path).unwrap();
         let id = lib.insert(&a_translation()).unwrap();
 
-        // Not yet due (just scheduled).
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-        assert_eq!(lib.count_due(now).unwrap(), 0);
-        assert!(lib.list_due(now, 0).unwrap().items.is_empty());
+        assert!(lib.set_review_state(id, REVIEW_KNOWN).unwrap());
+        let item = lib.get(id).unwrap().unwrap();
+        assert_eq!(item.review_state.as_deref(), Some("known"));
 
-        // Fast forward past the review time.
-        let future = now + 100_000;
-        assert_eq!(lib.count_due(future).unwrap(), 1);
-        let page = lib.list_due(future, 0).unwrap();
+        assert!(lib.set_review_state(id, REVIEW_ARCHIVE).unwrap());
+        let item = lib.get(id).unwrap().unwrap();
+        assert_eq!(item.review_state.as_deref(), Some("archive"));
+
+        // Setting review state on a missing item returns false.
+        assert!(!lib.set_review_state(999, REVIEW_KNOWN).unwrap());
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn list_later_returns_only_later_items() {
+        let path = temp_db("review-later");
+        let lib = Library::open(&path).unwrap();
+
+        let id1 = lib.insert(&a_translation()).unwrap();
+        let mut item2 = a_translation();
+        item2.original = "second".to_owned();
+        let id2 = lib.insert(&item2).unwrap();
+        lib.set_review_state(id2, REVIEW_KNOWN).unwrap();
+
+        let page = lib.list_later(0).unwrap();
         assert_eq!(page.items.len(), 1);
-        assert_eq!(page.items[0].id, id);
+        assert_eq!(page.items[0].id, id1);
 
         cleanup(&path);
     }
 
     #[test]
-    fn a_successful_review_advances_the_schedule() {
-        let path = temp_db("review-success");
+    fn count_later_returns_the_correct_count() {
+        let path = temp_db("review-count-later");
         let lib = Library::open(&path).unwrap();
-        let id = lib.insert(&a_translation()).unwrap();
 
-        let now = 1_700_000_000i64;
-        assert!(lib.record_review(id, true, now).unwrap());
+        assert_eq!(lib.count_later().unwrap(), 0);
 
-        let item = lib.get(id).unwrap().unwrap();
-        assert_eq!(item.review_state.as_deref(), Some("learning"));
-        assert_eq!(item.review_count, Some(1));
-        // After 1 success, next review is 3 days out.
-        assert_eq!(item.next_review_at, Some(now + 259_200));
+        let id1 = lib.insert(&a_translation()).unwrap();
+        assert_eq!(lib.count_later().unwrap(), 1);
+
+        let mut item2 = a_translation();
+        item2.original = "second".to_owned();
+        let id2 = lib.insert(&item2).unwrap();
+        assert_eq!(lib.count_later().unwrap(), 2);
+
+        lib.set_review_state(id1, REVIEW_KNOWN).unwrap();
+        assert_eq!(lib.count_later().unwrap(), 1);
+
+        lib.set_review_state(id2, REVIEW_ARCHIVE).unwrap();
+        assert_eq!(lib.count_later().unwrap(), 0);
+
+        // Unused variable suppression.
+        let _ = id1;
 
         cleanup(&path);
     }
 
     #[test]
-    fn a_failed_review_resets_the_count() {
-        let path = temp_db("review-fail");
+    fn filter_by_review_state() {
+        let path = temp_db("review-filter");
         let lib = Library::open(&path).unwrap();
-        let id = lib.insert(&a_translation()).unwrap();
 
-        // First, a success to bump the count.
-        lib.record_review(id, true, 1_700_000_000).unwrap();
-        let item = lib.get(id).unwrap().unwrap();
-        assert_eq!(item.review_count, Some(1));
+        let id1 = lib.insert(&a_translation()).unwrap();
+        let mut item2 = a_translation();
+        item2.original = "known item".to_owned();
+        let id2 = lib.insert(&item2).unwrap();
+        lib.set_review_state(id2, REVIEW_KNOWN).unwrap();
 
-        // Then a failure resets to zero.
-        let now = 1_700_100_000i64;
-        lib.record_review(id, false, now).unwrap();
-        let item = lib.get(id).unwrap().unwrap();
-        assert_eq!(item.review_count, Some(0));
-        assert_eq!(item.next_review_at, Some(now + 86_400));
+        let filter = Filter {
+            review_state: Some(REVIEW_LATER.to_owned()),
+            ..Default::default()
+        };
+        let page = lib.list_filtered(&filter, 0).unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].id, id1);
 
-        cleanup(&path);
-    }
+        let filter = Filter {
+            review_state: Some(REVIEW_KNOWN.to_owned()),
+            ..Default::default()
+        };
+        let page = lib.list_filtered(&filter, 0).unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].id, id2);
 
-    #[test]
-    fn five_successes_master_the_item() {
-        let path = temp_db("review-master");
-        let lib = Library::open(&path).unwrap();
-        let id = lib.insert(&a_translation()).unwrap();
-
-        let mut now = 1_700_000_000i64;
-        for _ in 0..5 {
-            lib.record_review(id, true, now).unwrap();
-            now += 86_400;
-        }
-
-        let item = lib.get(id).unwrap().unwrap();
-        assert_eq!(item.review_state.as_deref(), Some("mastered"));
-        assert_eq!(item.review_count, Some(5));
-        assert!(item.next_review_at.is_none());
-
-        // Mastered items are not due.
-        assert_eq!(lib.count_due(now + 1_000_000).unwrap(), 0);
-
-        cleanup(&path);
-    }
-
-    #[test]
-    fn recording_a_review_on_a_missing_item_returns_false() {
-        let path = temp_db("review-missing");
-        let lib = Library::open(&path).unwrap();
-        assert!(!lib.record_review(999, true, 0).unwrap());
         cleanup(&path);
     }
 
@@ -3006,7 +2983,7 @@ mod tests {
         let item = lib.get(library_id).unwrap().unwrap();
         assert_eq!(item.original, "hello world");
         assert_eq!(item.answer, "안녕 세상");
-        assert_eq!(item.review_state.as_deref(), Some("new"));
+        assert_eq!(item.review_state.as_deref(), Some("later"));
 
         cleanup(&path);
     }
