@@ -67,20 +67,15 @@ bool lens_overlay_show(const char *source_text,
     }
 
     // Copy strings for the async block (block captures them).
+    // Under ARC, the block automatically retains captured objects.
     NSString *src = source_text ? [NSString stringWithUTF8String:source_text] : nil;
     NSString *trans = translation_text ? [NSString stringWithUTF8String:translation_text] : nil;
-
-    // Retain for the async block.
-    [src retain];
-    [trans retain];
 
     // Dispatch all AppKit UI mutations to the main queue.
     dispatch_async(dispatch_get_main_queue(), ^{
         @autoreleasepool {
             NSScreen *screen = [NSScreen mainScreen];
             if (!screen || !g_panel) {
-                [src release];
-                [trans release];
                 return;
             }
 
@@ -105,8 +100,6 @@ bool lens_overlay_show(const char *source_text,
             int pxH = (int)(h * scale);
 
             if (pxW <= 0 || pxH <= 0) {
-                [src release];
-                [trans release];
                 return;
             }
 
@@ -117,8 +110,6 @@ bool lens_overlay_show(const char *source_text,
             CGColorSpaceRelease(cs);
 
             if (!ctx) {
-                [src release];
-                [trans release];
                 return;
             }
 
@@ -186,8 +177,6 @@ bool lens_overlay_show(const char *source_text,
             [g_panel orderFront:nil];
             atomic_store(&g_visible, true);
         }
-        [src release];
-        [trans release];
     });
 
     // Optimistically set visible — the async block will confirm.

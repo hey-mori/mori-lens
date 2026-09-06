@@ -83,6 +83,10 @@ static LensCommand map_key_to_command(uint16_t keycode) {
     }
 }
 
+// Forward declarations for the event tap (used in callback for re-enable).
+static CFMachPortRef g_eventTap = NULL;
+static CFRunLoopSourceRef g_runLoopSource = NULL;
+
 static CGEventRef hotkey_callback(CGEventTapProxy proxy, CGEventType type,
                                    CGEventRef event, void *userInfo) {
     (void)proxy;
@@ -119,9 +123,6 @@ static CGEventRef hotkey_callback(CGEventTapProxy proxy, CGEventType type,
 
     return event;
 }
-
-static CFMachPortRef g_eventTap = NULL;
-static CFRunLoopSourceRef g_runLoopSource = NULL;
 
 bool lens_hotkey_install(void) {
     if (g_eventTap) return true;  // Already installed.
