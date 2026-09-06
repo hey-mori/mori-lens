@@ -233,7 +233,11 @@ mod tests {
             q.enqueue(2);
         }
         q.enqueue(3); // Pause
-        assert_eq!(q.poll(), 3, "Pause must be returned immediately via counter");
+        assert_eq!(
+            q.poll(),
+            3,
+            "Pause must be returned immediately via counter"
+        );
     }
 
     #[test]

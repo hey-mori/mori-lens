@@ -424,9 +424,8 @@ mod tests {
             let mut req = [0u8; 512];
             let _ = stream.read(&mut req);
 
-            let _ = stream.write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\n\r\n",
-            );
+            let _ =
+                stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\n\r\n");
             let _ = stream.flush();
             // 4096-byte lines; 257 lines exceed MAX_BODY (1MB).
             let line = format!("{}\n", "X".repeat(4095));

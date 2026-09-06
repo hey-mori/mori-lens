@@ -107,9 +107,7 @@ pub fn recognize(pixels: &[u8], width: i32, height: i32, stride: i32) -> Option<
     let mut words = Vec::new();
     if raw.word_count > 0 && !raw.words.is_null() {
         // SAFETY: words has word_count elements of type LensOcrWord.
-        let word_slice = unsafe {
-            std::slice::from_raw_parts(raw.words, raw.word_count as usize)
-        };
+        let word_slice = unsafe { std::slice::from_raw_parts(raw.words, raw.word_count as usize) };
         for w in word_slice {
             let word_text = text
                 .get(w.utf8_offset as usize..(w.utf8_offset + w.utf8_length) as usize)
