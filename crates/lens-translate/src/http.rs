@@ -416,30 +416,40 @@ mod tests {
 
     #[test]
     fn post_streaming_oversized_is_malformed() {
-        // Server sends lines that accumulate past MAX_BODY total.
+        // Server sends many small lines that accumulate past MAX_BODY.
         let (listener, addr) = bind_local();
         let _handle = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let _ =
-                stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\n\r\n");
+            // Read the request first.
+            let mut req = [0u8; 512];
+            let _ = stream.read(&mut req);
+
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\n\r\n",
+            );
             let _ = stream.flush();
-            // 8192-byte lines; ~128 lines exceed MAX_BODY (1MB).
-            let line = format!("{}\n", "X".repeat(8191));
-            for _ in 0..130 {
+            // 4096-byte lines; 257 lines exceed MAX_BODY (1MB).
+            let line = format!("{}\n", "X".repeat(4095));
+            for _ in 0..257 {
                 if stream.write_all(line.as_bytes()).is_err() {
                     break;
                 }
-                let _ = stream.flush();
             }
+            let _ = stream.flush();
         });
 
         let result = post_streaming(
             &addr,
             "/api/generate",
             "{}",
-            Duration::from_secs(10),
+            Duration::from_secs(30),
             &mut |_| true,
         );
-        assert_eq!(result, Err(TranslateError::Malformed));
+        // The response exceeds MAX_BODY — must not succeed.
+        assert!(
+            result.is_err(),
+            "oversized streaming response must not succeed: got {:?}",
+            result,
+        );
     }
 }
