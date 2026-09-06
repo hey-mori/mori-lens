@@ -172,7 +172,8 @@ README.md:                  M8+ milestone, settings.toml ✓
 - Lock file permission bug (`--w-------` → fixed to `-rw-------`)
 - Ollama not available locally (Quick/Deep translation BLOCKED)
 - macOS binary starts gracefully without AX permission (SIGTRAP fixed in PR #307)
-- Package-smoke CI slow (cargo install tauri-cli takes 30-50 min on CI)
+- Package-smoke CI slow: `cargo install tauri-cli` takes 30-50 min on CI runners
+- Package-smoke CI icon iteration: Tauri requires specific icon format/size, multiple iterations needed (RGBA ✓, 1024x1024 ✓, format still being validated on CI)
 
 ## Validation Procedure
 
