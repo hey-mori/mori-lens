@@ -321,8 +321,10 @@ fn product_loop(
     policy: AppPolicy,
 ) {
     // Translation job types for async dispatch.
-    enum TransJob {
+    enum QuickJob {
         Quick { request: QuickRequest, sentence: String, generation: u64, key: CacheKey, anchor: ScreenRect },
+    }
+    enum DeepJob {
         Deep { sentence: String, translation: Option<String>, generation: u64, anchor: ScreenRect },
     }
     enum TransResult {
@@ -330,44 +332,74 @@ fn product_loop(
         Deep { sentence: String, result: Result<lens_core::analyse::DeepAnalysis, String>, generation: u64, anchor: ScreenRect },
     }
 
-    let (job_tx, job_rx): (std::sync::mpsc::Sender<TransJob>, std::sync::mpsc::Receiver<TransJob>) = mpsc::channel();
+    let (quick_tx, quick_rx): (std::sync::mpsc::Sender<QuickJob>, std::sync::mpsc::Receiver<QuickJob>) = mpsc::channel();
+    let (deep_tx, deep_rx): (std::sync::mpsc::Sender<DeepJob>, std::sync::mpsc::Receiver<DeepJob>) = mpsc::channel();
     let (result_tx, result_rx): (std::sync::mpsc::Sender<TransResult>, std::sync::mpsc::Receiver<TransResult>) = mpsc::channel();
 
-    // Shared cache between product loop and translation thread.
+    // Shared cache between product loop and translation threads.
     let cache: Arc<Mutex<TranslationCache>> = Arc::new(Mutex::new(TranslationCache::new(CACHE_ENTRIES)));
     let mut analysis_cache = AnalysisCache::new(ANALYSIS_ENTRIES);
 
-    // Translation thread: owns the translator, processes jobs.
-    let mut translator = if let Some(ref m) = model {
+    // Quick lane: dedicated thread for hover translations.
+    // Drains pending jobs and keeps only the latest (stale coalescing).
+    // This ensures Deep never blocks Quick hover latency.
+    let quick_translator = if let Some(ref m) = model {
         OllamaTranslator::new(&endpoint, m)
     } else {
         OllamaTranslator::choosing(&endpoint)
     };
-    let _ = translator.resolve_model();
-
-    let trans_cache = cache.clone();
+    let quick_cache = cache.clone();
+    let quick_result_tx = result_tx.clone();
     std::thread::spawn(move || {
-        while let Ok(job) = job_rx.recv() {
-            match job {
-                TransJob::Quick { request, sentence, generation, key, anchor } => {
+        let mut translator = quick_translator;
+        let _ = translator.resolve_model();
+        while let Ok(job) = quick_rx.recv() {
+            // Drain pending Quick jobs — keep only the latest.
+            // Older requests are stale (user has moved on).
+            let mut current = job;
+            loop {
+                match quick_rx.try_recv() {
+                    Ok(newer) => current = newer,
+                    Err(_) => break,
+                }
+            }
+            match current {
+                QuickJob::Quick { request, sentence, generation, key, anchor } => {
                     let result = translator.quick(&request);
                     if let Ok(ref t) = result {
-                        if let Ok(mut c) = trans_cache.lock() {
+                        if let Ok(mut c) = quick_cache.lock() {
                             c.insert(key.clone(), t.clone());
                         }
                     }
-                    let _ = result_tx.send(TransResult::Quick {
+                    let _ = quick_result_tx.send(TransResult::Quick {
                         sentence, result: result.map_err(|e| e.user_message().to_owned()),
                         generation, key, anchor,
                     });
                 }
-                TransJob::Deep { sentence, translation, generation, anchor } => {
+            }
+        }
+    });
+
+    // Deep lane: dedicated thread for deep analysis.
+    // Single-flight: processes one Deep at a time, in order.
+    let deep_translator = if let Some(ref m) = model {
+        OllamaTranslator::new(&endpoint, m)
+    } else {
+        OllamaTranslator::choosing(&endpoint)
+    };
+    let deep_result_tx = result_tx;
+    std::thread::spawn(move || {
+        let mut translator = deep_translator;
+        let _ = translator.resolve_model();
+        while let Ok(job) = deep_rx.recv() {
+            match job {
+                DeepJob::Deep { sentence, translation, generation, anchor } => {
                     let deep_req = lens_core::analyse::DeepRequest {
                         sentence: sentence.clone(), word: None, target_language: String::new(),
                         translation, profile: lens_core::analyse::Profile::default(),
                     };
                     let result = translator.deep(&deep_req);
-                    let _ = result_tx.send(TransResult::Deep {
+                    let _ = deep_result_tx.send(TransResult::Deep {
                         sentence, result: result.map_err(|e| e.user_message().to_owned()),
                         generation, anchor,
                     });
@@ -471,7 +503,7 @@ fn product_loop(
                 ProductCommand::Deep => {
                     if let Some((_, ref sentence)) = current_card {
                         current_generation += 1;
-                        let _ = job_tx.send(TransJob::Deep {
+                        let _ = deep_tx.send(DeepJob::Deep {
                             sentence: sentence.clone(), translation: None,
                             generation: current_generation, anchor: current_anchor,
                         });
@@ -504,7 +536,7 @@ fn product_loop(
                                     let key = CacheKey::of(&request, "", 1);
                                     current_generation += 1;
                                     if let Some(a) = target.anchor() { current_anchor = a; }
-                                    let _ = job_tx.send(TransJob::Quick {
+                                    let _ = quick_tx.send(QuickJob::Quick {
                                         request, sentence: sentence.clone(),
                                         generation: current_generation, key,
                                         anchor: current_anchor,
@@ -645,7 +677,7 @@ fn product_loop(
                         // Dispatch async translation job.
                         current_generation += 1;
                         if let Some(a) = target.anchor() { current_anchor = a; }
-                        let _ = job_tx.send(TransJob::Quick {
+                        let _ = quick_tx.send(QuickJob::Quick {
                             request, sentence: sentence.clone(),
                             generation: current_generation, key,
                             anchor: current_anchor,
