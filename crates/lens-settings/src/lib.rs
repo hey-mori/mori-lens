@@ -333,7 +333,7 @@ fn extract_engine(doc: &toml_edit::DocumentMut, section: &str) -> schema::Engine
             .map(|s| s.to_owned())
     };
 
-    let model = get_str("model").and_then(|m| if m == "auto" { None } else { Some(m) });
+    let model = get_str("model").filter(|m| m != "auto");
 
     schema::EngineConfig {
         engine: get_str("engine").unwrap_or_else(|| "ollama".to_owned()),
