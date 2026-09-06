@@ -111,18 +111,24 @@ static double display_scale(CGDirectDisplayID displayID) {
     return 1.0;
 }
 
-bool lens_capture_screen(double x, double y,
-                         double width, double height,
+bool lens_capture_screen(double req_x, double req_y,
+                         double req_width, double req_height,
+                         double ptr_x, double ptr_y,
                          uint8_t **out_pixels,
                          int32_t *out_width,
                          int32_t *out_height,
-                         int32_t *out_stride) {
+                         int32_t *out_stride,
+                         double *out_origin_x,
+                         double *out_origin_y,
+                         double *out_scale) {
     if (!out_pixels || !out_width || !out_height || !out_stride) return false;
-    if (width <= 0 || height <= 0) return false;
+    if (!out_origin_x || !out_origin_y || !out_scale) return false;
+    if (req_width <= 0 || req_height <= 0) return false;
     // Reject NaN/Inf crossing FFI.
-    if (x != x || y != y || width != width || height != height) return false;
+    if (req_x != req_x || req_y != req_y || req_width != req_width || req_height != req_height) return false;
+    if (ptr_x != ptr_x || ptr_y != ptr_y) return false;
     // Reject unreasonably large captures (> 10000 points in either dimension).
-    if (width > 10000 || height > 10000) return false;
+    if (req_width > 10000 || req_height > 10000) return false;
 
     if (@available(macOS 12.3, *)) {
         // Step 1: Get shareable content.
@@ -141,19 +147,21 @@ bool lens_capture_screen(double x, double y,
         }
         if (contentError || !content || content.displays.count == 0) return false;
 
-        // Step 2: Find the display containing the capture origin.
-        SCDisplay *display = find_display_for_point(content, x, y);
+        // Step 2: Find the display containing the POINTER (not the request
+        // origin). This ensures OCR near a display edge selects the correct
+        // monitor even when the band extends into another display's space.
+        SCDisplay *display = find_display_for_point(content, ptr_x, ptr_y);
         if (!display) {
-            // Fallback: try the first display if the point is between displays.
+            // Fallback: try the first display if the pointer is between displays.
             display = content.displays[0];
         }
 
         // Step 3: Compute the crop rect in display-local coordinates.
         CGRect displayRect = display.rect;
-        double cropX = x - displayRect.origin.x;
-        double cropY = y - displayRect.origin.y;
-        double cropW = width;
-        double cropH = height;
+        double cropX = req_x - displayRect.origin.x;
+        double cropY = req_y - displayRect.origin.y;
+        double cropW = req_width;
+        double cropH = req_height;
 
         // Clip to display bounds.
         if (cropX < 0) { cropW += cropX; cropX = 0; }
@@ -185,6 +193,14 @@ bool lens_capture_screen(double x, double y,
         int outW = (int)(cropW * scale);
         int outH = (int)(cropH * scale);
         if (outW <= 0 || outH <= 0) return false;
+
+        // Return the actual (clipped) global logical origin and scale.
+        // The caller uses these for coordinate reconstruction, NOT the
+        // original request origin (which may differ after clipping).
+        *out_origin_x = displayRect.origin.x + cropX;
+        *out_origin_y = displayRect.origin.y + cropY;
+        *out_scale = scale;
+
         config.width = outW;
         config.height = outH;
         config.captureResolution = SCCaptureResolutionAutomatic;
