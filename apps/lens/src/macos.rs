@@ -440,6 +440,7 @@ fn product_loop(
     let mut paused = false;
     let mut quit_requested = false;
     let mut tally = Tally::default();
+    let mut settings_gen: u64 = 0;
 
     // Ctrl+C handler.
     let (tx, rx) = mpsc::channel::<()>();
@@ -633,43 +634,52 @@ fn product_loop(
         }
 
         // Live settings: detect changes from Settings UI.
-        // The actual variables (language, endpoint, model, etc.) are mutable
-        // and updated directly so the next iteration uses the new values.
+        // Check generation first (cheap u64 comparison) to avoid cloning
+        // the entire Settings struct on every 25ms tick when nothing changed.
         {
-            let s = shared_settings.lock().unwrap().current().clone();
-            let new_lang = s.language.clone();
-            let new_ep = s.endpoint.clone();
-            let new_model = s.model.clone();
-            let new_dwell = s.dwell_ms;
-            let new_ocr = OcrMode::named(&s.ocr).unwrap_or(OcrMode::Manual);
-            let new_policy = { let mut p = s.policy(); p.deny_self("lens"); p };
+            let guard = shared_settings.lock().unwrap();
+            let gen = guard.generation();
+            if gen == settings_gen {
+                drop(guard);
+            } else {
+                settings_gen = gen;
+                let s = guard.current().clone();
+                drop(guard);
 
-            // Endpoint/model change → rebuild translators on both lanes.
-            if new_ep != endpoint || new_model != model {
-                let _ = quick_config_tx.send((new_ep.clone(), new_model.clone()));
-                let _ = deep_config_tx.send((new_ep.clone(), new_model.clone()));
-                endpoint = new_ep;
-                model = new_model;
-            }
-            // Language change → affects translation target for new requests.
-            if new_lang != language {
-                language = new_lang;
-            }
-            // Dwell change → rebuild hover config.
-            if new_dwell != dwell_ms {
-                dwell_ms = new_dwell;
-                machine = HoverMachine::new(HoverConfig {
-                    dwell: Duration::from_millis(dwell_ms),
-                    ..HoverConfig::default()
-                });
-            }
-            // OCR mode change → affects whether OCR fallback runs.
-            if new_ocr != ocr_mode {
-                ocr_mode = new_ocr;
-            }
-            // Policy change → Allow→Deny must take effect before next acquisition.
-            if new_policy != policy {
-                policy = new_policy;
+                let new_lang = s.language.clone();
+                let new_ep = s.endpoint.clone();
+                let new_model = s.model.clone();
+                let new_dwell = s.dwell_ms;
+                let new_ocr = OcrMode::named(&s.ocr).unwrap_or(OcrMode::Manual);
+                let new_policy = { let mut p = s.policy(); p.deny_self("lens"); p };
+
+                // Endpoint/model change → rebuild translators on both lanes.
+                if new_ep != endpoint || new_model != model {
+                    let _ = quick_config_tx.send((new_ep.clone(), new_model.clone()));
+                    let _ = deep_config_tx.send((new_ep.clone(), new_model.clone()));
+                    endpoint = new_ep;
+                    model = new_model;
+                }
+                // Language change → affects translation target for new requests.
+                if new_lang != language {
+                    language = new_lang;
+                }
+                // Dwell change → rebuild hover config.
+                if new_dwell != dwell_ms {
+                    dwell_ms = new_dwell;
+                    machine = HoverMachine::new(HoverConfig {
+                        dwell: Duration::from_millis(dwell_ms),
+                        ..HoverConfig::default()
+                    });
+                }
+                // OCR mode change → affects whether OCR fallback runs.
+                if new_ocr != ocr_mode {
+                    ocr_mode = new_ocr;
+                }
+                // Policy change → Allow→Deny must take effect before next acquisition.
+                if new_policy != policy {
+                    policy = new_policy;
+                }
             }
         }
 
