@@ -222,6 +222,13 @@ bool lens_overlay_is_visible(void) {
     return atomic_load(&g_visible);
 }
 
+/// Return the CGWindowID of the overlay panel, or 0 if not created.
+/// Used by capture.m to exclude the overlay from ScreenCaptureKit capture.
+int32_t lens_overlay_window_id(void) {
+    if (!g_panel) return 0;
+    return (int32_t)[g_panel windowNumber];
+}
+
 bool lens_mouse_position(double *x, double *y) {
     if (!x || !y) return false;
     @autoreleasepool {
