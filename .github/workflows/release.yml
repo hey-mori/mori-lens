@@ -61,6 +61,16 @@ jobs:
       - name: Build installer
         run: cargo tauri build --bundles nsis
 
+      - name: Verify installer exists
+        shell: bash
+        run: |
+          EXE=$(find apps/lens/target/release/bundle/nsis -maxdepth 1 -name "*.exe" -type f | head -1)
+          if [ -z "$EXE" ]; then
+            echo "ERROR: NSIS installer not found in apps/lens/target/release/bundle/nsis/"
+            exit 1
+          fi
+          echo "Found: $EXE"
+
       - name: Generate SHA-256 manifest
         shell: bash
         run: |
