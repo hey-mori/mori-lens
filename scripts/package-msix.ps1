@@ -76,7 +76,13 @@ Copy-Item $Binary (Join-Path $StagingDir "lens.exe")
 $Manifest = Get-Content $ManifestTemplate -Raw
 $Manifest = $Manifest -replace 'Version="[^"]*"', "Version=`"$MsixVersion`""
 # Note: Publisher placeholders remain — they must be replaced before Store submission
-$Manifest | Out-File (Join-Path $StagingDir "AppxManifest.xml") -Encoding utf8
+# Write manifest with UTF-8 no-BOM encoding (PowerShell 5.x Out-File adds BOM)
+$Utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText(
+    (Join-Path $StagingDir "AppxManifest.xml"),
+    $Manifest,
+    $Utf8NoBom
+)
 
 # Copy assets
 $StagingAssets = Join-Path $StagingDir "Assets"
