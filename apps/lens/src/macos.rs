@@ -195,14 +195,19 @@ pub fn main() -> std::process::ExitCode {
         println!("  endpoint  {}", settings.endpoint);
     }
 
-    // AX permission — not fatal.
-    let ax_trusted = match AxPermission::check_with_prompt(true) {
+    // AX permission — not fatal. Check without prompt on startup to avoid
+    // SIGTRAP when the accessibility framework encounters an error during
+    // the permission prompt flow. The product degrades gracefully: no AX
+    // acquisition, no hotkeys, but overlay/menubar/settings still work.
+    let ax_trusted = match AxPermission::check() {
         AxPermission::Trusted => {
             println!("  ax        trusted");
             true
         }
         AxPermission::NotTrusted => {
             println!("  ax        NOT TRUSTED (hover translation unavailable)");
+            println!("             Grant Accessibility permission in System Settings,");
+            println!("             then restart Mori Lens.");
             false
         }
     };
