@@ -77,12 +77,16 @@ pub fn is_enabled() -> bool {
 
 #[cfg(test)]
 mod tests {
-    /// Simulate the native ring buffer algorithm to verify correctness.
-    /// This mirrors the logic in hotkey.m exactly.
+    /// Simulate the native hotkey queue algorithm to verify correctness.
+    /// This mirrors the logic in hotkey.m exactly:
+    /// - Ring buffer with drop-newest overflow (true SPSC).
+    /// - Separate atomic flags for critical commands (Quit, Pause).
     struct SimQueue {
         queue: [i32; 64],
         head: usize,
         tail: usize,
+        quit_flag: bool,
+        pause_flag: bool,
     }
 
     impl SimQueue {
@@ -91,17 +95,27 @@ mod tests {
                 queue: [0; 64],
                 head: 0,
                 tail: 0,
+                quit_flag: false,
+                pause_flag: false,
             }
         }
 
         fn enqueue(&mut self, cmd: i32) {
+            // Critical commands use dedicated flags — never dropped.
+            if cmd == 6 {
+                // LENS_CMD_QUIT
+                self.quit_flag = true;
+                return;
+            }
+            if cmd == 3 {
+                // LENS_CMD_PAUSE_TOGGLE
+                self.pause_flag = true;
+                return;
+            }
+
             let next_head = (self.head + 1) % 64;
             if next_head == self.tail {
-                // Queue full — evict oldest, advance both.
-                let new_tail = (self.tail + 1) % 64;
-                self.queue[self.head] = cmd;
-                self.head = (self.head + 1) % 64;
-                self.tail = new_tail;
+                // Queue full — drop the NEWEST command (true SPSC).
                 return;
             }
             self.queue[self.head] = cmd;
@@ -109,6 +123,15 @@ mod tests {
         }
 
         fn poll(&mut self) -> i32 {
+            // Critical commands have priority.
+            if self.quit_flag {
+                self.quit_flag = false;
+                return 6;
+            }
+            if self.pause_flag {
+                self.pause_flag = false;
+                return 3;
+            }
             if self.tail == self.head {
                 return 0; // None
             }
@@ -118,7 +141,7 @@ mod tests {
         }
 
         fn is_empty(&self) -> bool {
-            self.head == self.tail
+            self.head == self.tail && !self.quit_flag && !self.pause_flag
         }
     }
 
@@ -131,8 +154,8 @@ mod tests {
     #[test]
     fn enqueue_and_poll_single() {
         let mut q = SimQueue::new();
-        q.enqueue(6); // Quit
-        assert_eq!(q.poll(), 6);
+        q.enqueue(1); // Deep (non-critical)
+        assert_eq!(q.poll(), 1);
         assert!(q.is_empty());
     }
 
@@ -141,22 +164,23 @@ mod tests {
         let mut q = SimQueue::new();
         q.enqueue(1);
         q.enqueue(2);
-        q.enqueue(3);
+        q.enqueue(4);
         assert_eq!(q.poll(), 1);
         assert_eq!(q.poll(), 2);
-        assert_eq!(q.poll(), 3);
+        assert_eq!(q.poll(), 4);
         assert!(q.is_empty());
     }
 
     #[test]
     fn wraparound_works() {
         let mut q = SimQueue::new();
-        // Fill to 63 (capacity - 1), then drain, then fill again.
-        for i in 1..=63 {
-            q.enqueue(i);
+        // Fill to 63 (capacity - 1), avoiding critical values 3 and 6.
+        let cmds: Vec<i32> = (1..=100).filter(|&c| c != 3 && c != 6).take(63).collect();
+        for &c in &cmds {
+            q.enqueue(c);
         }
-        for i in 1..=63 {
-            assert_eq!(q.poll(), i);
+        for &c in &cmds {
+            assert_eq!(q.poll(), c);
         }
         assert!(q.is_empty());
         // Now enqueue again — head/tail have wrapped.
@@ -167,42 +191,56 @@ mod tests {
     }
 
     #[test]
-    fn overflow_evicts_oldest() {
+    fn overflow_drops_newest() {
         let mut q = SimQueue::new();
-        // Fill to capacity (63 items).
-        for i in 1..=63 {
-            q.enqueue(i);
+        // Fill to capacity (63 items), avoiding critical values 3 and 6.
+        let cmds: Vec<i32> = (1..=100).filter(|&c| c != 3 && c != 6).take(63).collect();
+        for &c in &cmds {
+            q.enqueue(c);
         }
-        // One more — should evict item 1.
+        // One more non-critical — should be DROPPED (not evict oldest).
         q.enqueue(64);
-        // First polled item should be 2 (1 was evicted).
-        assert_eq!(q.poll(), 2);
-        assert_eq!(q.poll(), 3);
-        // Drain items 4..=63 (60 items), then 64.
-        for _ in 0..60 {
+        // First polled item should still be cmds[0] (nothing evicted).
+        assert_eq!(q.poll(), cmds[0]);
+        assert_eq!(q.poll(), cmds[1]);
+        // Drain remaining.
+        for _ in 0..61 {
             q.poll();
         }
-        assert_eq!(q.poll(), 64);
         assert!(q.is_empty());
+        // 64 was dropped, not queued.
     }
 
     #[test]
-    fn storm_quit_survives() {
+    fn critical_quit_survives_storm() {
         let mut q = SimQueue::new();
-        // Simulate a storm of Deep commands (2) filling the queue.
+        // Fill the queue with Deep commands.
         for _ in 0..100 {
             q.enqueue(2); // Deep
         }
-        // Then a Quit arrives.
+        // Quit arrives — uses the flag, bypasses the ring buffer.
         q.enqueue(6); // Quit
-                      // Quit should be in the queue (oldest Deep entries evicted).
-        let mut found_quit = false;
-        while !q.is_empty() {
-            if q.poll() == 6 {
-                found_quit = true;
-            }
+        // Quit has priority in poll.
+        assert_eq!(q.poll(), 6, "Quit must be returned immediately via flag");
+    }
+
+    #[test]
+    fn critical_pause_survives_storm() {
+        let mut q = SimQueue::new();
+        for _ in 0..100 {
+            q.enqueue(2);
         }
-        assert!(found_quit, "Quit must survive a command storm");
+        q.enqueue(3); // Pause
+        assert_eq!(q.poll(), 3, "Pause must be returned immediately via flag");
+    }
+
+    #[test]
+    fn critical_flag_cleared_after_poll() {
+        let mut q = SimQueue::new();
+        q.enqueue(6); // Quit
+        assert_eq!(q.poll(), 6);
+        // Flag is cleared — second poll returns None (or next queued item).
+        assert_eq!(q.poll(), 0);
     }
 
     #[test]
@@ -229,7 +267,7 @@ mod tests {
             }
             consumed += 1;
         }
-        // produced == consumed + evicted. All accounted for.
+        // produced >= consumed (some may have been dropped on overflow).
         assert!(consumed <= produced);
         assert!(q.is_empty());
     }
