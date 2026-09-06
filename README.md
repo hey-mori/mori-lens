@@ -23,10 +23,11 @@ until the user actually needs it.
 
 ## Current state
 
-**Milestone 4 · Windows manual OCR.** The whole chain runs on Windows:
-hover, read, translate, card, and a hotkey that reads the pixels where
-the accessibility path gives nothing. `cargo build --release -p lens`
-produces something you can use today.
+**Milestone 8+ · Cross-platform with Library.** The full product runs on
+Windows and macOS: hover, read, translate, card, OCR, deep analysis,
+save to Library, manual review, and a Tauri settings/library UI.
+`cargo build --release --manifest-path apps/lens/Cargo.toml` produces
+something you can use today.
 
 What ships:
 
@@ -46,8 +47,9 @@ What ships:
 - `Ctrl+Alt+D` for grammar, structure, and vocabulary explanation.
 - `Ctrl+Alt+C` and `Ctrl+Alt+S` to copy or save the card.
 
-What does not exist yet: macOS and saved vocabulary review. Sequenced
-in [docs/roadmap.md](docs/roadmap.md).
+What does not exist yet: real-world validation on macOS with outside
+readers (requires Accessibility and Screen Recording permissions).
+Sequenced in [docs/roadmap.md](docs/roadmap.md).
 
 The authoritative list, capability by capability, is in
 [`docs/mori-lens-project-goal.md`](docs/mori-lens-project-goal.md).
@@ -86,8 +88,7 @@ dependency in either direction.
 - Core: Rust, platform-neutral, no OS types in the domain crates
 - Windows: `windows-rs`, UI Automation, Win32, Direct2D and DirectWrite
   for the card
-- macOS (later): a small Swift bridge over Accessibility, AppKit,
-  ScreenCaptureKit, Vision
+- macOS: Accessibility, AppKit, ScreenCaptureKit, Vision
 - Local inference: Ollama over `127.0.0.1`, never bundled, spoken to
   over hand-written HTTP with no client dependency
 - Storage: `settings.toml` (versioned, round-trip TOML via `lens-settings`);
@@ -171,7 +172,7 @@ settings file.
 - **Right-click the tray icon** for the settings file, start-with-Windows,
   and quit.
 
-The first run writes `%APPDATA%\Mori Lens\settings.conf` with every
+The first run writes `%APPDATA%\Mori Lens\settings.toml` with every
 option in it, commented. That is where the target language, the theme,
 the Ollama address, and the per-application rules live.
 

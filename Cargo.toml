@@ -6,6 +6,7 @@ members = [
   "crates/lens-settings",
   "crates/lens-storage",
   "crates/lens-translate",
+  "crates/platform-macos",
   "crates/platform-windows",
   "apps/hover-probe",
 ]
@@ -27,6 +28,7 @@ repository = "https://github.com/swarea/mori-lens"
 
 [workspace.dependencies]
 lens-core = { path = "crates/lens-core" }
+lens-platform-macos = { path = "crates/platform-macos" }
 lens-platform-windows = { path = "crates/platform-windows" }
 lens-translate = { path = "crates/lens-translate" }
 unicode-segmentation = "1.13"

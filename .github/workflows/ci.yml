@@ -41,12 +41,21 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  verify:
-    # windows-latest on purpose: crates/platform-windows only compiles on
-    # Windows, so a Linux runner would silently skip the half of the workspace
-    # most likely to break.
-    name: scripts/check.sh --full
+  verify-windows:
+    name: scripts/check.sh (Windows)
     runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: bash scripts/check.sh --full
+        shell: bash
+
+  verify-macos:
+    name: scripts/check.sh (macOS)
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
