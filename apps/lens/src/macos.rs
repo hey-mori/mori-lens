@@ -582,6 +582,23 @@ fn product_loop(
 
         // Check quit.
         if quit_requested || rx.try_recv().is_ok() {
+            // Explicit shutdown cleanup before exiting.
+            // Order: stop accepting input → hide UI → release model.
+            if hotkeys_available {
+                hotkey::remove();
+            }
+            if let Some(ref o) = overlay {
+                o.hide();
+            }
+            // Release the Ollama model so it doesn't stay resident after exit.
+            // Best-effort: if Ollama is unreachable this is silently skipped.
+            let release_translator = if let Some(ref m) = model {
+                OllamaTranslator::new(&endpoint, m)
+            } else {
+                OllamaTranslator::choosing(&endpoint)
+            };
+            release_translator.release();
+
             tauri_handle.exit();
             break;
         }
