@@ -1,7 +1,7 @@
 // Mori Lens · macOS Vision framework OCR.
 //
 // Uses VNRecognizeTextRequest to recognize text from a pixel buffer.
-// The buffer is passed directly from Rust (RGBA, top-to-bottom).
+// The buffer is passed directly from Rust (BGRA, top-to-bottom).
 // No image is written to disk (privacy invariant).
 
 #import "vision_ocr.h"
@@ -26,9 +26,9 @@ LensOcrResult lens_vision_recognize(const uint8_t *pixels,
     @autoreleasepool {
         // Create a CGImage from the raw pixel buffer.
         CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-        // The input is RGBA, top-to-bottom. We use a data provider that
-        // does not copy the buffer (the caller keeps it alive for the
-        // duration of this call).
+        // The input is BGRA, top-to-bottom.
+        // kCGImageAlphaPremultipliedFirst + kCGBitmapByteOrder32Little = BGRA.
+        CGBitmapInfo bitmapInfo = kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little;
         CGDataProviderRef provider = CGDataProviderCreateWithData(
             NULL, pixels, (size_t)(stride * height), NULL);
 
@@ -37,7 +37,7 @@ LensOcrResult lens_vision_recognize(const uint8_t *pixels,
             8, 32,                      // bits per component, bits per pixel
             (size_t)stride,
             cs,
-            (CGBitmapInfo)kCGImageAlphaPremultipliedLast,
+            bitmapInfo,
             provider,
             NULL, NO,
             kCGRenderingIntentDefault);
