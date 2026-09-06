@@ -80,13 +80,14 @@ mod tests {
     /// Simulate the native hotkey queue algorithm to verify correctness.
     /// This mirrors the logic in hotkey.m exactly:
     /// - Ring buffer with drop-newest overflow (true SPSC).
-    /// - Separate atomic flags for critical commands (Quit, Pause).
+    /// - Quit uses a bool flag (idempotent).
+    /// - Pause uses a counter to preserve toggle multiplicity.
     struct SimQueue {
         queue: [i32; 64],
         head: usize,
         tail: usize,
         quit_flag: bool,
-        pause_flag: bool,
+        pause_count: i32,
     }
 
     impl SimQueue {
@@ -96,20 +97,20 @@ mod tests {
                 head: 0,
                 tail: 0,
                 quit_flag: false,
-                pause_flag: false,
+                pause_count: 0,
             }
         }
 
         fn enqueue(&mut self, cmd: i32) {
-            // Critical commands use dedicated flags — never dropped.
+            // Critical commands use dedicated atomics — never dropped.
             if cmd == 6 {
                 // LENS_CMD_QUIT
                 self.quit_flag = true;
                 return;
             }
             if cmd == 3 {
-                // LENS_CMD_PAUSE_TOGGLE
-                self.pause_flag = true;
+                // LENS_CMD_PAUSE_TOGGLE — increment counter.
+                self.pause_count += 1;
                 return;
             }
 
@@ -128,8 +129,9 @@ mod tests {
                 self.quit_flag = false;
                 return 6;
             }
-            if self.pause_flag {
-                self.pause_flag = false;
+            // Pause counter: each poll returns one toggle and decrements.
+            if self.pause_count > 0 {
+                self.pause_count -= 1;
                 return 3;
             }
             if self.tail == self.head {
@@ -141,7 +143,7 @@ mod tests {
         }
 
         fn is_empty(&self) -> bool {
-            self.head == self.tail && !self.quit_flag && !self.pause_flag
+            self.head == self.tail && !self.quit_flag && self.pause_count == 0
         }
     }
 
@@ -231,7 +233,31 @@ mod tests {
             q.enqueue(2);
         }
         q.enqueue(3); // Pause
-        assert_eq!(q.poll(), 3, "Pause must be returned immediately via flag");
+        assert_eq!(q.poll(), 3, "Pause must be returned immediately via counter");
+    }
+
+    #[test]
+    fn pause_multiplicity_preserved() {
+        let mut q = SimQueue::new();
+        // Two rapid pause presses before any poll.
+        q.enqueue(3);
+        q.enqueue(3);
+        // Both must produce separate toggle events.
+        assert_eq!(q.poll(), 3, "first pause toggle");
+        assert_eq!(q.poll(), 3, "second pause toggle");
+        assert_eq!(q.poll(), 0, "no more pauses");
+    }
+
+    #[test]
+    fn pause_three_presses() {
+        let mut q = SimQueue::new();
+        q.enqueue(3);
+        q.enqueue(3);
+        q.enqueue(3);
+        assert_eq!(q.poll(), 3);
+        assert_eq!(q.poll(), 3);
+        assert_eq!(q.poll(), 3);
+        assert_eq!(q.poll(), 0);
     }
 
     #[test]
