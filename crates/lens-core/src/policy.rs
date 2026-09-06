@@ -18,14 +18,14 @@ pub enum AppTier {
 
 /// Matched case-insensitively against the executable stem, as a substring, so
 /// `1Password.exe` and `1password-helper` are both caught by `1password`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Rule {
     needle: String,
     tier: AppTier,
 }
 
 /// Per-application tiers with a default for everything unlisted.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppPolicy {
     default_tier: AppTier,
     rules: Vec<Rule>,
