@@ -33,18 +33,20 @@ static atomic_int g_cmdHead = 0;  // write position (producer only)
 static atomic_int g_cmdTail = 0;  // read position (consumer only)
 
 // Critical command flags — bypass the ring buffer.
-// Set by the producer (callback), cleared by the consumer (poll).
+// Quit uses a bool (idempotent command).
+// Pause uses a counter to preserve toggle multiplicity: two rapid presses
+// must produce two toggle events, not collapse into one.
 static atomic_bool g_quitFlag = false;
-static atomic_bool g_pauseFlag = false;
+static atomic_int g_pauseCount = 0;
 
 static void enqueue_command(LensCommand cmd) {
-    // Critical commands use dedicated flags — never dropped.
+    // Critical commands use dedicated atomics — never dropped.
     if (cmd == LENS_CMD_QUIT) {
         atomic_store(&g_quitFlag, true);
         return;
     }
     if (cmd == LENS_CMD_PAUSE_TOGGLE) {
-        atomic_store(&g_pauseFlag, true);
+        atomic_fetch_add(&g_pauseCount, 1);
         return;
     }
 
@@ -172,8 +174,11 @@ LensCommand lens_hotkey_poll(void) {
         atomic_store(&g_quitFlag, false);
         return LENS_CMD_QUIT;
     }
-    if (atomic_load(&g_pauseFlag)) {
-        atomic_store(&g_pauseFlag, false);
+    // Pause uses a counter to preserve multiplicity.
+    // Each press increments; each poll decrements and returns one toggle.
+    int pauseCount = atomic_load(&g_pauseCount);
+    if (pauseCount > 0) {
+        atomic_fetch_sub(&g_pauseCount, 1);
         return LENS_CMD_PAUSE_TOGGLE;
     }
 
