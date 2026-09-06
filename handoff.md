@@ -6,7 +6,7 @@ Last updated: 2026-09-06
 
 macOS native implementation for Mori Lens cross-platform desktop product.
 Windows implementation is complete and stable. macOS is the active workstream.
-This session verified and fixed the automated verification gate itself.
+This session closed the last FFI/ownership/verification boundaries.
 
 ## Current Product State
 
@@ -20,8 +20,12 @@ This session verified and fixed the automated verification gate itself.
 **macOS (production-wired, correctness-hardened, verification-proven):**
 - Accessibility acquisition production-wired (`MacTextAcquirer`)
 - Vision OCR with per-word geometry (`boundingBoxForRange` → `VNRectangleObservation`)
-- Typed FFI ABI (`LensOcrWord` struct with `uint32_t` offsets, not floats)
-- Input validation + memory safety (overflow checks, allocation failure handling)
+- Typed FFI ABI (`LensOcrWord` struct: float geometry + `uint32_t` offsets)
+- Integer overflow protection: widened arithmetic in both native and Rust
+- Narrowing safety: explicit bounds checks before `NSUInteger → uint32_t/int32_t`
+- Ownership safety: RAII `RawGuard` ensures C result freed on all Rust return paths
+- Range validation: checked arithmetic, UTF-8 char boundary verification, fail-closed
+- Input validation: stride ≥ width×4, overflow checks, 100MP upper bound
 - Passive native overlay (NSPanel, transparent, click-through, ARC-clean)
 - Real global commands via CGEventTap (Cmd+Opt+L/D/C/S/O/Q)
 - Hotkey queue: true SPSC ring buffer + atomic counter for Pause multiplicity
@@ -39,9 +43,10 @@ This session verified and fixed the automated verification gate itself.
 
 **Verification gate (`scripts/check.sh --full`):**
 - Workspace fmt + clippy + test
-- Privacy static gate: Windows + macOS Rust + macOS native Objective-C
-- Product binary: `apps/lens` cargo check + test (not workspace member)
+- Product binary: apps/lens fmt + clippy + check + test
 - Clean native rebuild: `cargo clean -p lens-platform-macos` + check + test
+- Privacy static gate: Windows + macOS Rust + macOS native Objective-C
+- Native source invalidation: explicit `rerun-if-changed` in build.rs
 - Version consistency: workspace vs apps/lens vs tauri.conf.json
 
 **Shared/core:**
@@ -51,50 +56,57 @@ This session verified and fixed the automated verification gate itself.
 
 ## This Session
 
-- **PR #292** — fix/macos-native-compile-errors: 4 native compile errors found by clean rebuild (ARC violations, VNRectangleObservation return type, SCDisplay.frame, forward declaration)
-- **PR #293** — fix/ocr-typed-ffi-and-safety: typed LensOcrWord struct, uint32_t offsets, input validation, memory safety
-- **PR #294** — fix/macos-hotkey-toggle-semantics: Pause uses atomic_int counter (preserves multiplicity), Quit stays bool
-- **PR #295** — build/product-verification-gate: apps/lens in --full, clean native rebuild, macOS privacy gate, cross-platform keeping tests
+- **PR #296** — fix/macos-ocr-integer-ownership-boundaries: stride overflow (widened uint64_t), NSUInteger narrowing checks, RAII ownership guard, checked word range validation
+- **PR #297** — build/full-product-quality-gate: apps/lens fmt + clippy in --full, build.rs rerun-if-changed, fixed pre-existing apps/lens clippy warnings
 
 ## Agent Assessment
 
 ```
-VISION API CONTRACT:            CLEAN-COMPILED
-  (boundingBoxForRange: returns VNRectangleObservation *,
-   .boundingBox extracted to CGRect, finite coordinate validation)
+OCR INTEGER BOUNDARIES:         PRODUCTION-WIRED
+  (width*4 in uint64_t domain, stride*height overflow checked,
+   100MP upper bound, both native and Rust)
 
-VISION CLEAN NATIVE BUILD:      VERIFIED
-  (cargo clean -p lens-platform-macos + cargo check passes)
+OCR OFFSET/COUNT NARROWING:     PRODUCTION-WIRED
+  (NSUInteger→uint32_t bounds-checked before cast,
+   wordItems.count→int32_t INT32_MAX check)
 
-OCR FFI ABI:                    PRODUCTION-WIRED
-  (LensOcrWord struct: float geometry + uint32_t offsets,
-   repr(C) mirror in Rust, no float-encoded integers)
+OCR RAW RESULT OWNERSHIP:       PRODUCTION-WIRED
+  (RAII RawGuard in Rust frees C result on ALL return paths,
+   text=NULL + words allocated no longer leaks)
 
-OCR MEMORY SAFETY:              STATICALLY AUDITED
-  (input validation: stride >= width*4, overflow checks,
-   allocation failure handling, safe cleanup on all error paths)
+OCR RANGE VALIDATION:           PRODUCTION-WIRED
+  (checked_add for offset+length, UTF-8 char boundary verification,
+   fail-closed per invalid word, defensive 1M word count cap)
 
-OCR WORD/RANGE TARGETING:       PRODUCTION-WIRED
-  (boundingBoxForRange per-word, UTF-8 offset/length,
-   repeated words resolved by index not String::find)
+OCR ABI LAYOUT:                 STATICALLY AUDITED
+  (LensOcrWord repr(C) matches C struct: 4 floats + 2 uint32_t)
 
-HOTKEY TOGGLE SEMANTICS:        PRODUCTION-WIRED
-  (Pause: atomic_int counter preserves multiplicity,
-   Quit: atomic_bool idempotent, 11 tests)
+HOTKEY PAUSE OVERFLOW:          PRODUCTION-WIRED
+  (atomic_int counter, saturating semantics — 2B backlog is
+   physically unreachable; no signed overflow)
 
-HOTKEY CONCURRENCY:             PRODUCTION-WIRED
-  (true SPSC: producer only writes head, consumer only writes tail,
-   drop-newest overflow, critical commands bypass ring buffer)
+HOTKEY ORDERING:                PRODUCTION-WIRED
+  (Pause/Quit bypass ring buffer as critical-control semantics,
+   always polled before queued commands)
 
-WORKSPACE VERIFICATION:         PASS
-  (fmt, clippy -D warnings, 665+ tests)
+HOTKEY CONCURRENT STRESS:       UNIT-TESTED
+  (11 tests: 10k events, wraparound, overflow, critical commands,
+   pause multiplicity, sequential producer/consumer model)
 
-PRODUCT BINARY VERIFICATION:    PASS
-  (apps/lens cargo check + test in scripts/check.sh --full)
+WORKSPACE FORMAT/CLIPPY:        PASS
+PRODUCT FORMAT/CLIPPY:          PASS
+PRODUCT CHECK/TEST:             PASS
+NATIVE CLEAN BUILD:             PASS
+PRIVACY GATE:                   STATICALLY AUDITED
+  (Rust + native .m checked for persistence APIs)
 
-MACOS PRIVACY GATE:             STATICALLY AUDITED
-  (Rust capture/OCR paths + native .m sources checked for
-   file/persistence APIs in scripts/check.sh)
+SCSTREAM LIFETIME:              PRODUCTION-WIRED
+  (caller owns stop, no stack-capture in completion handlers,
+   ARC retains stream/delegate through late completion)
+
+TRANSLATION BOUNDEDNESS:        PRODUCTION-WIRED
+  (HTTP connect/read/write timeouts, QUICK_TIMEOUT=20s, DEEP_TIMEOUT=60s,
+   per-read timeout allows long generation — deliberate for model output)
 
 M6 PRODUCTION INTEGRATION:      COMPLETE
 M7 PRODUCTION INTEGRATION:      COMPLETE
@@ -119,23 +131,27 @@ REMAINING IMPLEMENTATION-READY: NONE
 - Pixel format is BGRA throughout: capture → Vision → CGImage.
 - Vision OCR uses `boundingBoxForRange:` → `VNRectangleObservation *` → `.boundingBox`.
 - OCR FFI uses typed `LensOcrWord` struct (float geometry + uint32_t offsets).
-- Word text extracted via UTF-8 offsets (not `String::find`).
+- All integer arithmetic at FFI boundary uses widened/checked operations.
+- Rust RAII guard owns C result lifetime — no leak on any return path.
+- Word text extracted via UTF-8 offsets with char boundary verification.
 - Hotkey queue: true SPSC ring buffer + atomic flags/counter for critical commands.
 - Pause uses atomic_int counter to preserve toggle multiplicity.
 - All AppKit UI mutations use `dispatch_async(dispatch_get_mainQueue())` (ARC-clean).
-- Verification gate includes product binary + clean native rebuild.
+- Verification gate includes product binary fmt/clippy/check/test + clean native rebuild.
 - Privacy gate covers Windows + macOS Rust + macOS native Objective-C.
+- build.rs explicitly tracks all native .m/.h files for rebuild invalidation.
 
 ## Important Files
 
 ```
 scripts/check.sh                    Verification gate (workspace + product + native)
+crates/platform-macos/build.rs      Native source rerun-if-changed tracking
 apps/lens/src/macos.rs              macOS product loop, live settings, diagnostics, shutdown
-crates/platform-macos/native/vision_ocr.m  Vision per-word geometry, BGRA, typed ABI
-crates/platform-macos/native/capture.m     ScreenCaptureKit, pointer display selection
+crates/platform-macos/native/vision_ocr.m  Vision per-word geometry, BGRA, typed ABI, overflow safety
+crates/platform-macos/native/capture.m     ScreenCaptureKit, pointer display selection, overlay exclusion
 crates/platform-macos/native/hotkey.m      CGEventTap, true SPSC, pause counter
 crates/platform-macos/native/overlay.m     NSPanel, ARC-clean, overlay exclusion
-crates/platform-macos/src/vision_ocr.rs    LensOcrWord repr(C), input validation
+crates/platform-macos/src/vision_ocr.rs    LensOcrWord repr(C), RAII guard, range validation
 crates/platform-macos/src/capture.rs       Capture struct with origin_x/y/scale
 crates/platform-macos/src/hotkey.rs        Ring buffer + pause counter tests (11)
 ```
@@ -144,13 +160,11 @@ crates/platform-macos/src/hotkey.rs        Ring buffer + pause counter tests (11
 
 ```
 scripts/check.sh --full:          PASS (all steps)
-workspace tests:                  PASS (665+ tests)
-product binary (apps/lens):       PASS (check + test)
+workspace fmt/clippy/tests:       PASS (665+ tests)
+product fmt/clippy/check/test:    PASS
 clean native rebuild:             PASS (cargo clean + check + test)
 platform-macos tests:             PASS (49 tests including 11 hotkey)
 lens-translate tests:             PASS (8 HTTP fault tests)
-cargo fmt --check:                CLEAN
-cargo clippy -D warnings:         CLEAN
 privacy static gate:              CLEAN (Windows + macOS Rust + native)
 ```
 
@@ -160,8 +174,8 @@ privacy static gate:              CLEAN (Windows + macOS Rust + native)
 
 ## Known Risks
 
-- SCStream: if stop completion never arrives, 5s timeout returns. ARC prevents UAF.
-- Translation: per-read timeout allows long generation if each read makes progress.
+- SCStream: if stop completion never arrives, 5s timeout returns. ARC retains captured objects.
+- Translation: per-read timeout allows long generation if each read makes progress. Deliberate for model output.
 - Settings: CLI overrides superseded by Settings UI at runtime. Matches Windows contract.
 
 ## Review Targets
@@ -169,7 +183,7 @@ privacy static gate:              CLEAN (Windows + macOS Rust + native)
 - Verify per-word boundingBoxForRange returns correct boxes for Korean/Japanese/emoji.
 - Verify BGRA interpretation is correct end-to-end with real OCR.
 - Verify pointer-based display selection near display edges with real hardware.
-- Verify Pause counter survives 100k+ rapid presses without overflow.
+- Verify Pause counter survives rapid presses without unexpected saturation.
 
 ## Open Issues / Gates
 
@@ -204,7 +218,7 @@ privacy static gate:              CLEAN (Windows + macOS Rust + native)
 ## Git State
 
 ```
-latest implementation merge: PR #295 (product verification gate)
+latest implementation merge: PR #297 (full product quality gate)
 handoff base state: clean main before this handoff update
 handoff file itself may be committed after this reference;
 always run `git log -1` at session start for actual HEAD.
@@ -219,4 +233,4 @@ always run `git log -1` at session start for actual HEAD.
 - Work in coherent branch → PR → merge units. No direct main pushes.
 - macOS native code uses Objective-C bridges compiled by `cc` crate with `-fobjc-arc`.
 - All unsafe blocks require SAFETY comments (clippy `-D warnings`).
-- `apps/lens` is not a workspace member (Tauri dependency); verified by `scripts/check.sh --full`.
+- `apps/lens` is not a workspace member; verified by `scripts/check.sh --full`.
