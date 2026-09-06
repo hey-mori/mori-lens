@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 #
-# The single verification gate.
+# The verification gate, in two tiers:
+#
+#   scripts/check.sh          fast repository gate (workspace fmt/clippy/test)
+#   scripts/check.sh --full   product-quality gate:
+#                               workspace fmt/clippy/test
+#                               apps/lens fmt/clippy/check/test
+#                               clean native rebuild (lens-platform-macos)
+#                               release build of hover-probe
+#                               privacy static gates
+#                               version consistency
 #
 # Local runs and CI both call this script, so there is exactly one definition of
 # "verified" and the two cannot drift. CI must never re-list these commands in
 # YAML; it runs `scripts/check.sh --full`.
-#
-#   scripts/check.sh          fmt, clippy, tests
-#   scripts/check.sh --full   the above plus a release build of the probe
 #
 # What this script CANNOT check, stated so a green run is not over-read: the
 # platform adapters call UI Automation, which needs a live desktop with a

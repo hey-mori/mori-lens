@@ -81,13 +81,15 @@ mod tests {
     /// This mirrors the logic in hotkey.m exactly:
     /// - Ring buffer with drop-newest overflow (true SPSC).
     /// - Quit uses a bool flag (idempotent).
-    /// - Pause uses a counter to preserve toggle multiplicity.
+    /// - Pause uses a saturating unsigned counter (max 1024).
+    const PAUSE_PENDING_MAX: u32 = 1024;
+
     struct SimQueue {
         queue: [i32; 64],
         head: usize,
         tail: usize,
         quit_flag: bool,
-        pause_count: i32,
+        pause_count: u32,
     }
 
     impl SimQueue {
@@ -109,8 +111,10 @@ mod tests {
                 return;
             }
             if cmd == 3 {
-                // LENS_CMD_PAUSE_TOGGLE — increment counter.
-                self.pause_count += 1;
+                // LENS_CMD_PAUSE_TOGGLE — saturating increment.
+                if self.pause_count < PAUSE_PENDING_MAX {
+                    self.pause_count += 1;
+                }
                 return;
             }
 
@@ -299,6 +303,85 @@ mod tests {
         }
         // produced >= consumed (some may have been dropped on overflow).
         assert!(consumed <= produced);
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn pause_saturates_at_max() {
+        let mut q = SimQueue::new();
+        // Enqueue far more than PAUSE_PENDING_MAX.
+        for _ in 0..2000 {
+            q.enqueue(3);
+        }
+        // Count how many toggles we can poll.
+        let mut count = 0;
+        loop {
+            let cmd = q.poll();
+            if cmd == 0 {
+                break;
+            }
+            assert_eq!(cmd, 3);
+            count += 1;
+        }
+        assert_eq!(
+            count, PAUSE_PENDING_MAX as i32,
+            "pause must saturate at max"
+        );
+    }
+
+    #[test]
+    fn pause_priority_over_queued_commands() {
+        let mut q = SimQueue::new();
+        // Enqueue some normal commands first.
+        q.enqueue(2); // Deep
+        q.enqueue(4); // Copy
+                      // Then a Pause.
+        q.enqueue(3);
+        // Pause must be returned before any queued command.
+        assert_eq!(q.poll(), 3, "Pause has priority over queued commands");
+        assert_eq!(q.poll(), 2, "then queued commands in FIFO order");
+        assert_eq!(q.poll(), 4);
+    }
+
+    #[test]
+    fn quit_priority_over_everything() {
+        let mut q = SimQueue::new();
+        q.enqueue(2); // Deep
+        q.enqueue(3); // Pause
+        q.enqueue(4); // Copy
+        q.enqueue(6); // Quit
+                      // Quit must be first.
+        assert_eq!(q.poll(), 6, "Quit has highest priority");
+        // Then Pause (also critical).
+        assert_eq!(q.poll(), 3, "Pause before queued commands");
+        // Then queued commands in FIFO.
+        assert_eq!(q.poll(), 2);
+        assert_eq!(q.poll(), 4);
+    }
+
+    #[test]
+    fn quit_under_full_queue() {
+        let mut q = SimQueue::new();
+        // Fill the ring buffer with non-critical commands.
+        let cmds: Vec<i32> = (1..=100).filter(|&c| c != 3 && c != 6).collect();
+        for &c in &cmds {
+            q.enqueue(c);
+        }
+        // Quit must still be delivered.
+        q.enqueue(6);
+        assert_eq!(q.poll(), 6, "Quit survives full queue");
+    }
+
+    #[test]
+    fn pause_deep_pause_ordering() {
+        let mut q = SimQueue::new();
+        q.enqueue(3); // Pause
+        q.enqueue(2); // Deep
+        q.enqueue(3); // Pause
+                      // Both Pauses come before Deep (critical priority).
+        assert_eq!(q.poll(), 3);
+        assert_eq!(q.poll(), 3);
+        assert_eq!(q.poll(), 2);
         assert!(q.is_empty());
     }
 }
