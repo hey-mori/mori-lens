@@ -58,7 +58,7 @@ not written), **out of v1** (deliberately excluded).
 | Pause control | **shipped** · Ctrl+Alt+L or the tray icon, and paused means the pointer is not sampled |
 | Ollama address is configurable | **shipped** · `endpoint` in the settings file and `--endpoint`, both restricted to this machine by one check. A remote address is refused rather than warned about: there is no TLS on this path and no per-provider grant, so it would send hovered text in clear |
 | It says why nothing happened | **shipped** · an application exposing no text is told once with the hotkey that would work, and a reader who has not held the modifier is told once on a card. Both because a release binary has no console to print a line in |
-| Settings file | **shipped** · `%APPDATA%\Mori Lens\settings.conf`, written with every option on first run, and a line it does not understand is reported at startup rather than ignored |
+| Settings file | **shipped** · `%APPDATA%\Mori Lens\settings.toml`, written with every option on first run, and a line it does not understand is reported at startup rather than ignored |
 | Per-application tiers | **shipped** · set in the settings file; password managers are denied before the file is read and cannot be re-enabled by omission |
 | One instance at a time | **shipped** · a named per-session mutex, claimed before anything else. A second copy says so on a card and exits with 0. Measured before it existed: two tray icons, two overlays racing for the same hover, and both hotkeys reported as taken by another application, which was a sentence about Lens naming something else |
 | No console window | **shipped** · a Windows subsystem binary that takes the launching terminal's console when there is one, guarded by a test that reads the PE header |

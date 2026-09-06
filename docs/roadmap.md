@@ -226,7 +226,7 @@ Markdown, carrying the AI-explanation label when what is saved is an
 explanation.
 
 The developer and exam profiles are built, 2026-08-18. A profile is one
-line in the deep system prompt and a name in `settings.conf`. It changes
+line in the deep system prompt and a name in `settings.toml`. It changes
 what is asked for rather than what is filtered afterwards, which is the
 rule `Answerable` already followed, and it does **not** change the schema:
 all five fields stay required, because one list builds the schema and
