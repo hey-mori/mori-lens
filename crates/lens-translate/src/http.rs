@@ -388,9 +388,8 @@ mod tests {
         let (listener, addr) = bind_local();
         let _handle = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let _ = stream.write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\n\r\n",
-            );
+            let _ =
+                stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\n\r\n");
             let _ = stream.flush();
             // Send one line then stall.
             let _ = stream.write_all(b"{\"response\":\"hello\"}\n");
@@ -421,9 +420,8 @@ mod tests {
         let (listener, addr) = bind_local();
         let _handle = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let _ = stream.write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\n\r\n",
-            );
+            let _ =
+                stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\n\r\n");
             let _ = stream.flush();
             // 8192-byte lines; ~128 lines exceed MAX_BODY (1MB).
             let line = format!("{}\n", "X".repeat(8191));
