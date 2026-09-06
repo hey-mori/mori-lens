@@ -48,9 +48,9 @@ pub struct VisionOcrResult {
     pub words: Vec<RecognizedWord>,
 }
 
-/// Recognize text from a raw RGBA pixel buffer.
+/// Recognize text from a raw BGRA pixel buffer.
 ///
-/// `pixels` is RGBA, 4 bytes per pixel, row-major, top-to-bottom.
+/// `pixels` is BGRA, 4 bytes per pixel, row-major, top-to-bottom.
 /// `width` and `height` are in pixels. `stride` is bytes per row.
 ///
 /// Returns `None` if recognition fails or no text is found.
