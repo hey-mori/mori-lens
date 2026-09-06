@@ -18,14 +18,13 @@
 #import <stdlib.h>
 #import <string.h>
 
-// Delegate that captures a single frame and stops the stream.
+// Delegate that captures a single frame. The caller owns the stop lifecycle.
 @interface LensCaptureDelegate : NSObject <SCStreamDelegate, SCStreamOutput>
 @property (nonatomic, assign) uint8_t *pixelData;
 @property (nonatomic, assign) int32_t pixelWidth;
 @property (nonatomic, assign) int32_t pixelHeight;
 @property (nonatomic, assign) int32_t pixelStride;
 @property (nonatomic, assign) BOOL done;
-@property (nonatomic, strong) SCStream *stream;
 @end
 
 @implementation LensCaptureDelegate
@@ -70,10 +69,8 @@
     self.pixelHeight = (int32_t)bufHeight;
     self.pixelStride = (int32_t)bytesPerRow;
     self.done = YES;
-
-    [self.stream stopCaptureWithCompletionHandler:^(NSError * _Nullable error) {
-        (void)error;
-    }];
+    // The caller owns the stop lifecycle (see stopCaptureWithCompletionHandler
+    // in lens_capture_screen). The delegate only records the frame.
 }
 
 @end
@@ -188,24 +185,18 @@ bool lens_capture_screen(double x, double y,
 
         NSError *streamError = nil;
         SCStream *stream = [[SCStream alloc] initWithFilter:filter configuration:config delegate:delegate];
-        delegate.stream = stream;
 
         [stream addStreamOutput:delegate type:SCStreamOutputTypeScreen sampleHandlerQueue:dispatch_queue_create("lens.capture", DISPATCH_QUEUE_SERIAL) error:&streamError];
         if (streamError) return false;
 
-        // Step 5: Start capture and wait for one frame.
-        __block NSError *startError = nil;
-        dispatch_semaphore_t sema2 = dispatch_semaphore_create(0);
-
-        [stream startCaptureWithCompletionHandler:^(NSError *error) {
-            startError = error;
-            dispatch_semaphore_signal(sema2);
+        // Step 5: Start capture (no completion handler — the frame poll
+        // below is the combined start+frame deadline). If start fails
+        // asynchronously, no frames arrive and the poll times out.
+        // This avoids capturing stack-local state in a completion block
+        // that could fire after the function returns on timeout.
+        [stream startCaptureWithCompletionHandler:^(NSError * _Nullable error) {
+            (void)error;
         }];
-
-        if (dispatch_semaphore_wait(sema2, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0) {
-            return false;
-        }
-        if (startError) return false;
 
         // Wait for the delegate to capture a frame (up to 5 seconds).
         for (int i = 0; i < 100; i++) {
@@ -213,8 +204,8 @@ bool lens_capture_screen(double x, double y,
             [NSThread sleepForTimeInterval:0.05];
         }
 
-        // Stop the stream and wait for completion to ensure the delegate
-        // is not deallocated while callbacks are still in flight.
+        // Stop the stream and wait for completion to ensure all callbacks
+        // have finished before we access the delegate's pixel data.
         dispatch_semaphore_t sema3 = dispatch_semaphore_create(0);
         [stream stopCaptureWithCompletionHandler:^(NSError * _Nullable error) {
             (void)error;
