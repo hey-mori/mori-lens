@@ -1,11 +1,20 @@
 // Mori Lens · macOS global hotkeys via CGEventTap.
 //
 // Intercepts Cmd+Opt+key combinations globally and maps them to product
-// commands. Uses CGEventTapCreate which requires Accessibility permission
-// (already requested by Lens for AX text acquisition).
+// commands. Uses CGEventTapCreate with Default (non-ListenOnly) option
+// so matched hotkeys are consumed and not forwarded to the foreground app.
 //
 // The event tap runs on the main thread's run loop. Commands are queued
-// in a lock-free ring buffer and polled by the Rust product loop.
+// in a bounded ring buffer and polled by the Rust product loop.
+//
+// Contract:
+//   - Single producer (CGEventTap callback on main thread run loop).
+//   - Single consumer (Rust product loop on worker thread).
+//   - Only the producer writes head. Only the consumer writes tail.
+//   - On overflow, the oldest command is evicted (both head and tail
+//     advance together in the producer). The evicted slot is then
+//     overwritten with the new command.
+//   - If macOS disables the tap (timeout), the callback re-enables it.
 
 #import "hotkey.h"
 #import <CoreGraphics/CoreGraphics.h>
@@ -15,16 +24,27 @@
 // Ring buffer for pending commands (power-of-2 size for fast modulo).
 #define CMD_QUEUE_SIZE 64
 static atomic_int g_cmdQueue[CMD_QUEUE_SIZE];
-static atomic_int g_cmdHead = 0;  // write position
-static atomic_int g_cmdTail = 0;  // read position
+static atomic_int g_cmdHead = 0;  // write position (producer only)
+static atomic_int g_cmdTail = 0;  // read position (consumer only)
 
 static void enqueue_command(LensCommand cmd) {
-    int next_head = (atomic_load(&g_cmdHead) + 1) % CMD_QUEUE_SIZE;
-    if (next_head == atomic_load(&g_cmdTail)) {
-        // Queue full — drop the oldest command.
-        atomic_store(&g_cmdTail, (atomic_load(&g_cmdTail) + 1) % CMD_QUEUE_SIZE);
+    int head = atomic_load(&g_cmdHead);
+    int tail = atomic_load(&g_cmdTail);
+    int next_head = (head + 1) % CMD_QUEUE_SIZE;
+
+    if (next_head == tail) {
+        // Queue full — evict the oldest entry so critical commands
+        // like Quit are not lost behind a storm of Deep requests.
+        // Both head and tail advance together; only the producer
+        // touches these in this branch.
+        int new_tail = (tail + 1) % CMD_QUEUE_SIZE;
+        atomic_store(&g_cmdQueue[head], (int)cmd);
+        atomic_store(&g_cmdHead, (head + 1) % CMD_QUEUE_SIZE);
+        atomic_store(&g_cmdTail, new_tail);
+        return;
     }
-    atomic_store(&g_cmdQueue[atomic_load(&g_cmdHead)], (int)cmd);
+
+    atomic_store(&g_cmdQueue[head], (int)cmd);
     atomic_store(&g_cmdHead, next_head);
 }
 
@@ -52,6 +72,15 @@ static CGEventRef hotkey_callback(CGEventTapProxy proxy, CGEventType type,
     (void)proxy;
     (void)userInfo;
 
+    // Handle tap-disabled events: re-enable the tap so hotkeys keep working.
+    if (type == kCGEventTapDisabledByTimeout
+        || type == kCGEventTapDisabledByUserInput) {
+        if (g_eventTap) {
+            CGEventTapEnable(g_eventTap, true);
+        }
+        return event;
+    }
+
     if (type != kCGEventKeyDown) return event;
 
     // Check modifiers: Cmd+Opt (no Ctrl, no Shift).
@@ -67,7 +96,8 @@ static CGEventRef hotkey_callback(CGEventTapProxy proxy, CGEventType type,
     LensCommand cmd_val = map_key_to_command(keycode);
     if (cmd_val != LENS_CMD_NONE) {
         enqueue_command(cmd_val);
-        // Swallow the event so it doesn't reach the foreground app.
+        // Consume the event so it doesn't reach the foreground app.
+        // This requires kCGEventTapOptionDefault (not ListenOnly).
         return NULL;
     }
 
@@ -86,7 +116,7 @@ bool lens_hotkey_install(void) {
     g_eventTap = CGEventTapCreate(
         kCGSessionEventTap,          // session-level (not system-wide)
         kCGHeadInsertEventTap,       // insert before other taps
-        kCGEventTapOptionListenOnly, // we swallow events by returning NULL
+        kCGEventTapOptionDefault,    // we consume matched events (return NULL)
         mask,
         hotkey_callback,
         NULL);
@@ -127,4 +157,10 @@ LensCommand lens_hotkey_poll(void) {
     LensCommand cmd = (LensCommand)atomic_load(&g_cmdQueue[tail]);
     atomic_store(&g_cmdTail, (tail + 1) % CMD_QUEUE_SIZE);
     return cmd;
+}
+
+/// Check whether the event tap is currently enabled.
+bool lens_hotkey_is_enabled(void) {
+    if (!g_eventTap) return false;
+    return CGEventTapIsEnabled(g_eventTap);
 }
