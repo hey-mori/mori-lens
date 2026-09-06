@@ -89,7 +89,7 @@ bool lens_capture_available(void) {
 /// Returns nil if no display contains the point.
 static SCDisplay *find_display_for_point(SCShareableContent *content, double gx, double gy) {
     for (SCDisplay *d in content.displays) {
-        CGRect bounds = d.rect;
+        CGRect bounds = d.frame;
         if (gx >= bounds.origin.x
             && gx < bounds.origin.x + bounds.size.width
             && gy >= bounds.origin.y
@@ -157,7 +157,7 @@ bool lens_capture_screen(double req_x, double req_y,
         }
 
         // Step 3: Compute the crop rect in display-local coordinates.
-        CGRect displayRect = display.rect;
+        CGRect displayRect = display.frame;
         double cropX = req_x - displayRect.origin.x;
         double cropY = req_y - displayRect.origin.y;
         double cropW = req_width;
