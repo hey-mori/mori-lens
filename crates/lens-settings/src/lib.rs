@@ -284,16 +284,28 @@ fn extract_general(doc: &toml_edit::DocumentMut) -> schema::General {
             .filter(|v| (80..=3000).contains(v))
             .map(|v| v as u64)
             .unwrap_or(defaults.dwell_ms),
-        theme: get_str("theme").unwrap_or(defaults.theme),
-        translucency: get_str("translucency").unwrap_or(defaults.translucency),
-        text_size: get_str("text_size").unwrap_or(defaults.text),
+        theme: get_str("theme")
+            .filter(|v| is_valid_theme(v))
+            .unwrap_or(defaults.theme),
+        translucency: get_str("translucency")
+            .filter(|v| is_valid_translucency(v))
+            .unwrap_or(defaults.translucency),
+        text_size: get_str("text_size")
+            .filter(|v| is_valid_text_size(v))
+            .unwrap_or(defaults.text),
         default_tier: get_str("default_tier")
             .as_deref()
             .and_then(parse_tier)
             .unwrap_or(defaults.default_tier),
-        ocr: get_str("ocr").unwrap_or(defaults.ocr),
-        profile: get_str("profile").unwrap_or(defaults.profile),
-        hover_scope: get_str("hover_scope").unwrap_or(defaults.hover_scope),
+        ocr: get_str("ocr")
+            .filter(|v| lens_core::session::OcrMode::named(v).is_some())
+            .unwrap_or(defaults.ocr),
+        profile: get_str("profile")
+            .filter(|v| lens_core::analyse::Profile::named(v).is_some())
+            .unwrap_or(defaults.profile),
+        hover_scope: get_str("hover_scope")
+            .filter(|v| is_valid_hover_scope(v))
+            .unwrap_or(defaults.hover_scope),
         history: table
             .get("history")
             .and_then(|v| v.as_bool())
@@ -363,6 +375,22 @@ fn parse_tier(value: &str) -> Option<lens_core::policy::AppTier> {
         "deny" => Some(lens_core::policy::AppTier::Deny),
         _ => None,
     }
+}
+
+fn is_valid_theme(s: &str) -> bool {
+    matches!(s, "system" | "forest" | "night-lake" | "paper")
+}
+
+fn is_valid_translucency(s: &str) -> bool {
+    matches!(s, "clear" | "balanced" | "solid")
+}
+
+fn is_valid_text_size(s: &str) -> bool {
+    matches!(s, "small" | "normal" | "large" | "larger")
+}
+
+fn is_valid_hover_scope(s: &str) -> bool {
+    matches!(s, "sentence" | "word")
 }
 
 fn tier_str(tier: &lens_core::policy::AppTier) -> &'static str {
@@ -721,6 +749,98 @@ endpoint = \"127.0.0.1:11434\"
             loaded.schema().applications[1],
             ("code".to_owned(), AppTier::Deny)
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn invalid_enum_values_in_toml_fall_back_to_defaults() {
+        let dir = temp_dir("invalid_enums");
+        let path = dir.join("invalid_enums.toml");
+        let content = "schema_version = 1
+
+[general]
+theme = \"purple\"
+translucency = \"invisible\"
+text_size = \"huge\"
+ocr = \"always\"
+profile = \"nobody\"
+hover_scope = \"paragraph\"
+
+[quick]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"127.0.0.1:11434\"
+
+[deep]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"127.0.0.1:11434\"
+";
+        fs::write(&path, content).unwrap();
+        let file = SettingsFile::load(&path).unwrap();
+        let settings = file.to_settings();
+        let defaults = lens_core::settings::Settings::default();
+
+        assert_eq!(
+            settings.theme, defaults.theme,
+            "invalid theme must fall back"
+        );
+        assert_eq!(
+            settings.translucency, defaults.translucency,
+            "invalid translucency must fall back"
+        );
+        assert_eq!(
+            settings.text, defaults.text,
+            "invalid text_size must fall back"
+        );
+        assert_eq!(settings.ocr, defaults.ocr, "invalid ocr must fall back");
+        assert_eq!(
+            settings.profile, defaults.profile,
+            "invalid profile must fall back"
+        );
+        assert_eq!(
+            settings.hover_scope, defaults.hover_scope,
+            "invalid hover_scope must fall back"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn valid_enum_values_in_toml_are_kept() {
+        let dir = temp_dir("valid_enums");
+        let path = dir.join("valid_enums.toml");
+        let content = "schema_version = 1
+
+[general]
+theme = \"night-lake\"
+translucency = \"solid\"
+text_size = \"larger\"
+ocr = \"automatic\"
+profile = \"developer\"
+hover_scope = \"word\"
+
+[quick]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"127.0.0.1:11434\"
+
+[deep]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"127.0.0.1:11434\"
+";
+        fs::write(&path, content).unwrap();
+        let file = SettingsFile::load(&path).unwrap();
+        let settings = file.to_settings();
+
+        assert_eq!(settings.theme, "night-lake");
+        assert_eq!(settings.translucency, "solid");
+        assert_eq!(settings.text, "larger");
+        assert_eq!(settings.ocr, "automatic");
+        assert_eq!(settings.profile, "developer");
+        assert_eq!(settings.hover_scope, "word");
 
         let _ = fs::remove_dir_all(&dir);
     }
