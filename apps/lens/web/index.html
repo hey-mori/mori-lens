@@ -383,36 +383,44 @@
     });
 
     async function loadAll() {
-      await Promise.all([loadStatus(), loadSettings(), loadAbout()]);
+      try {
+        await Promise.all([loadStatus(), loadSettings(), loadAbout()]);
+      } catch (e) {
+        console.error('loadAll failed:', e);
+      }
     }
 
     async function loadStatus() {
-      const diag = await invoke('get_diagnostics');
-      const el = document.getElementById('status-content');
-      if (!diag || !diag.build) {
-        el.innerHTML = '<p class="loading">No session data yet.</p>';
-        return;
-      }
-      let html = '<div style="margin-bottom:16px">';
-      html += '<span class="stat"><span class="stat-value">' + diag.cards + '</span> <span class="stat-label">cards</span></span>';
-      html += '<span class="stat"><span class="stat-value">' + diag.settled_hovers + '</span> <span class="stat-label">settled hovers</span></span>';
-      html += '</div>';
-      if (diag.refusals && diag.refusals.length > 0) {
-        html += '<h2>Refusals</h2><table>';
-        for (const [reason, count] of diag.refusals) {
-          const pct = diag.settled_hovers > 0 ? Math.round(count / diag.settled_hovers * 100) : 0;
-          html += '<tr class="refusal-row"><td>' + reason + '</td><td>' + count + ' (' + pct + '%)</td></tr>';
+      try {
+        const diag = await invoke('get_diagnostics');
+        const el = document.getElementById('status-content');
+        if (!diag || !diag.build) {
+          el.innerHTML = '<p class="loading">No session data yet.</p>';
+          return;
         }
-        html += '</table>';
-      }
-      if (diag.configuration && diag.configuration.length > 0) {
-        html += '<h2>Configuration</h2><table>';
-        for (const [label, value] of diag.configuration) {
-          html += '<tr><td>' + label + '</td><td>' + value + '</td></tr>';
+        let html = '<div style="margin-bottom:16px">';
+        html += '<span class="stat"><span class="stat-value">' + diag.cards + '</span> <span class="stat-label">cards</span></span>';
+        html += '<span class="stat"><span class="stat-value">' + diag.settled_hovers + '</span> <span class="stat-label">settled hovers</span></span>';
+        html += '</div>';
+        if (diag.refusals && diag.refusals.length > 0) {
+          html += '<h2>Refusals</h2><table>';
+          for (const [reason, count] of diag.refusals) {
+            const pct = diag.settled_hovers > 0 ? Math.round(count / diag.settled_hovers * 100) : 0;
+            html += '<tr class="refusal-row"><td>' + reason + '</td><td>' + count + ' (' + pct + '%)</td></tr>';
+          }
+          html += '</table>';
         }
-        html += '</table>';
+        if (diag.configuration && diag.configuration.length > 0) {
+          html += '<h2>Configuration</h2><table>';
+          for (const [label, value] of diag.configuration) {
+            html += '<tr><td>' + label + '</td><td>' + value + '</td></tr>';
+          }
+          html += '</table>';
+        }
+        el.innerHTML = html;
+      } catch (e) {
+        console.error('loadStatus failed:', e);
       }
-      el.innerHTML = html;
     }
 
     async function loadSettings() {
@@ -603,13 +611,17 @@
     }
 
     async function loadAbout() {
-      const diag = await invoke('get_diagnostics');
-      const el = document.getElementById('about-content');
-      el.innerHTML = '<table>' +
-        '<tr><td>Version</td><td>0.1.0</td></tr>' +
-        '<tr><td>Build</td><td>' + (diag.build || 'unknown') + '</td></tr>' +
-        '<tr><td>Data location</td><td>%APPDATA%\\Mori Lens\\</td></tr>' +
-        '</table>';
+      try {
+        const diag = await invoke('get_diagnostics');
+        const el = document.getElementById('about-content');
+        el.innerHTML = '<table>' +
+          '<tr><td>Version</td><td>' + (diag.version || 'unknown') + '</td></tr>' +
+          '<tr><td>Build</td><td>' + (diag.build || 'unknown') + '</td></tr>' +
+          '<tr><td>Data location</td><td>%APPDATA%\\Mori Lens\\</td></tr>' +
+          '</table>';
+      } catch (e) {
+        console.error('loadAbout failed:', e);
+      }
     }
 
     // Library functions
@@ -1190,9 +1202,12 @@
     }
 
     async function pruneHistory() {
-      if (!confirm('Prune history entries older than the retention period?')) return;
+      // Default retention: 30 days (2592000 seconds)
+      const retentionDays = 30;
+      const retentionSecs = retentionDays * 24 * 60 * 60;
+      if (!confirm(`Prune history entries older than ${retentionDays} days?`)) return;
       try {
-        const count = await invoke('history_prune');
+        const count = await invoke('history_prune', { retentionSecs });
         alert('Pruned ' + count + ' entries.');
         await fetchHistoryPage();
       } catch (e) {
