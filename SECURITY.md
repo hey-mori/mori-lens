@@ -82,7 +82,7 @@ is a stable hash, not a process name.
   tray tooltip.
 - `Ctrl+Alt+L` pauses and resumes. Pause means the pointer is not
   sampled at all, which a process monitor can confirm.
-- The per-application tier list is in `%APPDATA%\Mori Lens\settings.conf`,
+- The per-application tier list is in `%APPDATA%\Mori Lens\settings.toml`,
   opened from the tray menu and re-read while Lens runs.
 - Network calls to anything other than a granted provider are a defect,
   and the local-only case makes zero of them.
