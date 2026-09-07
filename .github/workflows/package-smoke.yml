@@ -175,7 +175,7 @@ jobs:
         run: |
           APP_DIR=$(find apps/lens/target/release/bundle/macos -maxdepth 1 -name "*.app" -type d | head -1)
           APP_NAME=$(basename "$APP_DIR")
-          VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          VERSION=$(grep -m1 '^version' apps/lens/Cargo.toml | cut -d'"' -f2)
           ZIP_NAME="Mori-Lens-${VERSION}-macos.app.zip"
           ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" "$ZIP_NAME"
           shasum -a 256 "$ZIP_NAME" > SHA256SUMS.txt
