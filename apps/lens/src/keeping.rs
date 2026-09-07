@@ -5,7 +5,7 @@
 //!
 //! # The only file Lens writes that came off a screen
 //!
-//! `settings.conf` is what somebody typed. The translation cache is memory and
+//! `settings.toml` is what somebody typed. The translation cache is memory and
 //! dies with the process, on purpose: `docs/privacy-model.md` says a durable
 //! cache would be a record of what was read, so it is a separate opt-in and
 //! does not exist.
@@ -234,6 +234,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn the_file_lands_beside_the_settings() {
         let settings =
             PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\Mori Lens\\settings.conf");
@@ -244,6 +245,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn the_database_lands_beside_the_settings() {
         let settings =
             PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\Mori Lens\\settings.conf");
@@ -251,6 +253,27 @@ mod tests {
         assert_eq!(
             db,
             PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\Mori Lens\\library.db"),
+        );
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn the_file_lands_beside_the_settings_unix() {
+        let settings = PathBuf::from("/home/someone/.config/Mori Lens/settings.toml");
+        assert_eq!(
+            path_beside(&settings),
+            PathBuf::from("/home/someone/.config/Mori Lens/saved.md"),
+        );
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn the_database_lands_beside_the_settings_unix() {
+        let settings = PathBuf::from("/home/someone/.config/Mori Lens/settings.toml");
+        let db = settings.parent().map(|p| p.join("library.db")).unwrap();
+        assert_eq!(
+            db,
+            PathBuf::from("/home/someone/.config/Mori Lens/library.db"),
         );
     }
 
