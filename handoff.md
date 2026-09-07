@@ -116,9 +116,15 @@ Return/re-entry         NOT TESTED      N/A        N/A       PENDING   N/A
 ## Agent Assessment
 
 ```
-REMAINING REPOSITORY IMPLEMENTATION:  NONE
-  (all repository-local implementation work is complete)
-  (this session found and fixed 4 hidden bugs)
+REMAINING REPOSITORY IMPLEMENTATION:
+  M8 test gaps (found this session, not yet fixed):
+    JSON round-trip:               no import_json, no round-trip test
+    Single delete + reopen:        no test for delete(id)→reopen→absent
+    Explicit save end-to-end:      no "no save → no row" integration test
+  Canonical doc gaps (found this session, not yet fixed):
+    OCR contract:                  "manual only" in §2 stale (automatic exists as built-unverified)
+    ADR markers:                   ADR-0004/0005/0007 say "Not yet built" (features are shipped)
+    macOS paths:                   settings.toml path is Windows-only in privacy-model.md
 
 REMAINING PACKAGING IMPLEMENTATION:   NONE
   (MSIX infrastructure, package-smoke CI, smoke assets, release workflow all fixed and aligned)
@@ -224,23 +230,25 @@ what-finished-means.md:           no stale claims ✓
 ## M8 Gate Evidence
 
 ```
-Gate condition                    Test evidence
-───────────────────────────────── ─────────────────────────────────────────
-Nothing stored without user       Save is explicit (Ctrl+Alt+S). SessionRecent
-action                            is memory-only. 73 library tests confirm.
-                                  insert() is the only path to persistent storage.
+Gate condition                    Test evidence                          Gap
+───────────────────────────────── ────────────────────────────────────── ──────────────────────────────
+Nothing stored without user       Save is explicit (Ctrl+Alt+S).         No end-to-end "app ran without
+action                            SessionRecent is memory-only.          save → DB stays empty" test.
+                                  73 library tests confirm.              Architectural argument only:
+                                  insert() is the only path to           append() is sole write path.
+                                  persistent storage.
 
-Export round-trips                jsonl_round_trip_preserves_items_and_tags
-                                  jsonl_semantic_round_trip
-                                  jsonl_round_trip_preserves_review_state
-                                  MD + JSON export tested.
+Export round-trips                JSONL: 3 strong round-trip tests       JSON: NO round-trip test.
+                                  (items+tags, semantic, review_state).  export_json() exists but no
+                                  MD: partial (export→parse, no          import_json function.
+                                  re-insert into fresh DB).              MD: export→parse tested but
+                                                                         not export→parse→re-insert.
 
-Deletion is real                  delete(): SQL DELETE FROM library WHERE id = ?
-                                  secure_wipe(): removes all library + history rows
-                                  secure_wipe_survives_reopen: persists after reopen
-                                  library_delete_does_not_affect_history: isolation
-                                  Archive is a review_state value, not a separate
-                                  operation. delete() removes the row entirely.
+Deletion is real                  delete(): SQL DELETE FROM library      No test: delete(id) → drop →
+                                  secure_wipe(): removes all rows        reopen → row absent → tags
+                                  secure_wipe_survives_reopen: OK        absent. secure_wipe covers
+                                  library_delete_does_not_affect_history bulk+reopen; single delete
+                                  Archive = review_state value           covers in-session only.
 ```
 
 ## Known Runtime Issues
