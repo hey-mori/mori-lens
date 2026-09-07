@@ -1,6 +1,6 @@
 # Mori Lens — Session Handoff
 
-Last updated: 2026-09-06
+Last updated: 2026-09-07
 
 ## Current Goal
 
@@ -53,6 +53,15 @@ Windows implementation is complete and stable. macOS implementation is complete.
 
 ## This Session
 
+- Dead code removal: `library_count` and `mori_is_available` commands removed from tauri_app.rs
+- Architecture documentation: added platform-macos crate section and all missing files across crates
+- MSIX packaging: fixed manifest template (placeholder names, regex bug), generated Store assets from product icon, verified MSIX build locally (11 pass, 0 fail, 2 warn), integrated MSIX build into release workflow
+- Web UI: fixed history_prune missing parameter, dynamic version display, added try/catch error handling
+- Code quality audit: no clippy warnings, no dead code, all 40 Tauri commands wired to UI
+- Mori integration audit: confirmed fully implemented (ADR-0018, 30+ tests, UI button)
+
+## Previous Session
+
 - **PR #303** — docs: fix stale macOS claims in project-goal.md
 - **PR #304** — docs: add M6/M7/M8 gate status tables to roadmap
 - **PR #305** — feat: Windows MSIX packaging infrastructure (ADR-0017)
@@ -76,7 +85,7 @@ M7 macOS overlay/OCR    COMPLETE        CLOSED     BLOCKED   PENDING   N/A
 M8 Library/Review       COMPLETE        CLOSED     N/A       N/A       N/A
 Mori boundary           BUILT           CLOSED     N/A       PENDING   N/A
 Windows NSIS release    SHIPPED         CLOSED     N/A       N/A       UNSIGNED
-Windows MSIX release    INFRASTRUCTURE  CLOSED     PENDING   N/A       BLOCKED†
+Windows MSIX release    VERIFIED        CLOSED     N/A       N/A       BLOCKED†
 macOS .app bundle       INFRASTRUCTURE  CLOSED     PENDING   N/A       UNSIGNED
 macOS notarization      BLOCKED‡       N/A        N/A       N/A       BLOCKED‡
 First-user onboarding   NOT TESTED      N/A        N/A       PENDING   N/A
@@ -118,7 +127,7 @@ REMAINING DISTRIBUTION WORK:
   Code signing (macOS)                BLOCKED (Developer ID)
   Notarization                        BLOCKED (Apple account)
   Real icon/design assets             ASSET BLOCKER
-  Package-smoke CI completion         IN PROGRESS (slow CI, cargo install tauri-cli)
+  Package-smoke CI completion         COMPLETE (workflow verified, builds NSIS + MSIX + macOS .app)
 
 REMAINING EXTERNAL BLOCKERS:
   Store developer account             CREDENTIAL BLOCKER
