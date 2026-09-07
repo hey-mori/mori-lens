@@ -3271,4 +3271,109 @@ mod tests {
 
         cleanup(&path);
     }
+
+    // -- M8 gate: JSON semantic round-trip ----------------------------------
+
+    /// Exporting as JSON and deserializing back preserves all semantic fields.
+    ///
+    /// This is the M8 gate condition "export round-trips" for the JSON format.
+    /// The JSON export is described as "the lossless export format" — this test
+    /// proves it by round-tripping through serde deserialization.
+    #[test]
+    fn json_export_semantic_round_trip() {
+        let path = temp_db("json-round-trip");
+        let lib = Library::open(&path).unwrap();
+
+        let original_item = Item {
+            id: 0,
+            original: "The pointer must rest before anything is read.".to_owned(),
+            answer: "포인터가 멈춘 뒤에야 무엇이든 읽습니다.".to_owned(),
+            caveat: Some("AI 설명 · 사실 확인 필요".to_owned()),
+            app: Some("Code".to_owned()),
+            created_at: 1_786_075_140,
+            kind: "translation".to_owned(),
+            source_language: Some("en".to_owned()),
+            target_language: Some("ko".to_owned()),
+            model: Some("qwen2.5:7b".to_owned()),
+            note: Some("important".to_owned()),
+            tags: None,
+            review_state: Some(REVIEW_KNOWN.to_owned()),
+        };
+        let id = lib.insert(&original_item).unwrap();
+        lib.set_tags(id, &["grammar".to_owned(), "essential".to_owned()])
+            .unwrap();
+        lib.set_review_state(id, REVIEW_KNOWN).unwrap();
+
+        let json = lib.export_json().unwrap();
+        let deserialized: Vec<Item> = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.len(), 1);
+
+        let rt = &deserialized[0];
+        assert_eq!(rt.original, original_item.original);
+        assert_eq!(rt.answer, original_item.answer);
+        assert_eq!(rt.caveat, original_item.caveat);
+        assert_eq!(rt.app, original_item.app);
+        assert_eq!(rt.created_at, original_item.created_at);
+        assert_eq!(rt.kind, original_item.kind);
+        assert_eq!(rt.source_language, original_item.source_language);
+        assert_eq!(rt.target_language, original_item.target_language);
+        assert_eq!(rt.model, original_item.model);
+        assert_eq!(rt.note, original_item.note);
+        assert_eq!(rt.review_state, original_item.review_state);
+        let mut rt_tags = rt.tags.clone().unwrap_or_default();
+        rt_tags.sort();
+        assert_eq!(rt_tags, vec!["essential".to_owned(), "grammar".to_owned()]);
+
+        cleanup(&path);
+    }
+
+    // -- M8 gate: single delete survives reopen -----------------------------
+
+    /// Deleting a single item persists across database reopen.
+    ///
+    /// This is the M8 gate condition "deletion is real" for single-item
+    /// delete. The existing `secure_wipe_survives_reopen` test covers bulk
+    /// wipe; this test covers the per-item contract: delete one row, close
+    /// the database, reopen it, and verify the row is gone while other rows
+    /// and their associated state survive.
+    #[test]
+    fn single_delete_survives_reopen() {
+        let path = temp_db("delete-reopen");
+        let lib = Library::open(&path).unwrap();
+
+        let mut item_a = a_translation();
+        item_a.original = "first sentence".to_owned();
+        let id_a = lib.insert(&item_a).unwrap();
+        lib.set_tags(id_a, &["keep".to_owned()]).unwrap();
+        lib.update_note(id_a, "note on A").unwrap();
+
+        let mut item_b = a_translation();
+        item_b.original = "second sentence".to_owned();
+        let id_b = lib.insert(&item_b).unwrap();
+        lib.set_tags(id_b, &["also-keep".to_owned()]).unwrap();
+
+        assert_eq!(lib.count().unwrap(), 2);
+
+        lib.delete(id_a).unwrap();
+        assert_eq!(lib.count().unwrap(), 1);
+
+        drop(lib);
+
+        let lib2 = Library::open(&path).unwrap();
+        assert_eq!(lib2.count().unwrap(), 1, "one item after reopen");
+        assert!(
+            lib2.get(id_a).unwrap().is_none(),
+            "deleted item A is absent after reopen"
+        );
+        let b = lib2.get(id_b).unwrap().expect("item B survives");
+        assert_eq!(b.original, "second sentence");
+
+        let b_tags = lib2.get_tags(id_b).unwrap();
+        assert_eq!(b_tags, vec!["also-keep".to_owned()]);
+
+        let page = lib2.search("first sentence", 0).unwrap();
+        assert!(page.items.is_empty(), "search cannot find the deleted item");
+
+        cleanup(&path);
+    }
 }
