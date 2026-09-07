@@ -676,7 +676,7 @@ pub fn main() -> std::process::ExitCode {
 ",
                 elapsed.as_millis()
             ),
-            Err(error) => println!(
+            Err(error) => eprintln!(
                 "could not warm the engine: {}
 ",
                 error.reason()
@@ -805,7 +805,7 @@ pub fn main() -> std::process::ExitCode {
                             Card::analysed(&job.original, &analysis)
                         }
                         Err(error) => {
-                            println!("deep  no analysis [{}]", error.reason());
+                            eprintln!("deep  no analysis [{}]", error.reason());
                             Card::not_readable(error.user_message())
                         }
                     };
@@ -1440,7 +1440,7 @@ pub fn main() -> std::process::ExitCode {
                             // is ordinary and passes. Said on the card because the
                             // reader pressed a key and would otherwise conclude
                             // the key does nothing.
-                            println!("copy  the clipboard would not open");
+                            eprintln!("copy  the clipboard would not open");
                             show_card(
                                 &overlay,
                                 &mut on_screen,
@@ -1503,7 +1503,7 @@ pub fn main() -> std::process::ExitCode {
                                     }))
                                     .is_ok();
                             }
-                            None => println!("deep  the acquisition thread did not answer"),
+                            None => eprintln!("deep  the acquisition thread did not answer"),
                         }
                     }
                     // The key is not silent when there is nothing to explain. A
