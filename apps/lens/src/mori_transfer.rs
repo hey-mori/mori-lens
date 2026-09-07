@@ -98,7 +98,9 @@ pub enum MoriStatus {
 
 /// `~/.mori/connectors/`. Returns `None` when the directory does not exist.
 pub fn mori_connectors_dir() -> Option<PathBuf> {
-    let home = std::env::var("USERPROFILE").ok()?;
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .ok()?;
     let connectors = PathBuf::from(home).join(".mori").join("connectors");
     if connectors.is_dir() {
         Some(connectors)
