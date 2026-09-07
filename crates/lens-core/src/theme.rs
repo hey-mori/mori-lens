@@ -101,7 +101,7 @@ impl Translucency {
     ///
     /// `Clear` rather than `Balanced` because a reader asked for the glass
     /// back, and at 236 of 255 there is not much to see. Both other levels stay
-    /// available in `settings.conf`.
+    /// available in `settings.toml`.
     pub const DEFAULT: Self = Self::Clear;
 
     /// The name this level is written under in the settings file.
