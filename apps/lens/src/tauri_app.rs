@@ -205,7 +205,7 @@ async fn list_models(endpoint: String) -> Result<Vec<ModelInfoView>, String> {
                 })
                 .collect()
         })
-        .map_err(|e| format!("{e:?}"))
+        .map_err(|e| format!("{e}"))
 }
 
 /// Tauri command: check whether an Ollama endpoint is reachable.
@@ -236,7 +236,7 @@ async fn test_model(endpoint: String, model: String) -> Result<TestResultView, S
             latency_ms: t.latency_ms as u64,
             model: t.model,
         })
-        .map_err(|e| format!("{e:?}"))
+        .map_err(|e| format!("{e}"))
 }
 
 /// Tauri command: list library items, newest first.
