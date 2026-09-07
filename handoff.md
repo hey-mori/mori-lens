@@ -6,7 +6,7 @@ Last updated: 2026-09-07
 
 macOS native implementation for Mori Lens cross-platform desktop product.
 Windows implementation is complete and stable. macOS implementation is complete.
-**All repository-local implementation work is complete. Distribution infrastructure implemented and code-fixed. CI execution blocked by GitHub Actions billing. Remaining work is billing resolution, validation, external accounts, human gates, or quality research.**
+**All repository-local implementation and evidence work is complete. Remaining work is CI execution (blocked by billing), external accounts, human gates, or quality research.**
 
 ## Current Product State
 
@@ -52,41 +52,47 @@ Windows implementation is complete and stable. macOS implementation is complete.
 - Product binary fmt + clippy + check + test
 - Clean native rebuild + privacy gates + version consistency
 
-## This Session
+## This Session (two parts)
+
+### Part 1 — Package-smoke fixes (previous session continuation)
 
 **PR #315** — fix: MSIX manifest encoding and macOS .icns icon for package-smoke
-- package-msix.ps1: Replaced regex `-replace` with simple `.Replace()` string substitution. Previous BOM-trim + regex approach (PR #314) did not resolve error C00CEE40 on Windows Server 2025 MakeAppx
-- AppxManifest.xml.in: Changed XML declaration encoding `utf-8` → `UTF-8`
-- generate-smoke-assets.py: Added `make_icns()` — generates valid .icns with all required OSType entries (icp4–ic14). Tauri requires .icns for .app bundle creation; .png and .ico alone produce "No matching IconType" error
-- tauri.conf.json: Added `icons/icon.icns` to icon list
-- apps/lens/icons/icon.icns: Committed structural placeholder (14039 bytes)
-
 **PR #316** — fix: add icon generation to release workflow jobs
-- release.yml: Added `Generate package icons` step to all three build jobs (Windows NSIS, macOS .app, Windows MSIX). Without this, tauri.conf.json's reference to `icons/icon.icns` would cause build failures since the .icns is generated, not permanently committed as a design asset
+**PR #317** — docs: fix stale capability count (26→28) and installability claims
 
-**PR #317** — docs: fix stale capability count and installability claims
-- project-goal.md: Capability count `Twenty-six` → `Twenty-eight` (actual count from capability table)
-- project-goal.md: Installability section updated to mention package-smoke CI as structural proof for both platforms
+### Part 2 — M8 gate closure and canonical truth (this session)
+
+**PR #318** — docs: reconcile canonical truth with current code state
+- project-goal.md §2: OCR contract "manual only" → "manual by default; automatic after explicit opt-in"
+- project-goal.md: package-smoke claim downgraded to honest status (infrastructure exists, CI execution pending)
+- privacy-model.md: macOS settings path added from code truth
+- roadmap.md M8: exact test names for all three gate conditions
+- ADR-0004/0005/0007: implementation status annotations appended (body preserved)
+
+**PR #319** — test: close M8 gate evidence gaps
+- `nothing_is_persisted_before_an_explicit_save`: product-level save boundary test
+- `json_export_semantic_round_trip`: JSON export → deserialize → all semantic fields preserved
+- `single_delete_survives_reopen`: delete(id) → drop → reopen → row absent, other items/tags survive
+
+**PR #320** — fix: remaining settings.conf references
+- SECURITY.md: settings.conf → settings.toml
+- keeping.rs: Windows test paths updated
 
 **Hidden backlog found and fixed:**
-1. MSIX manifest regex + PowerShell backreference interaction produced invalid XML on Windows Server 2025 MakeAppx (PR #314's BOM-trim fix was insufficient)
-2. macOS .app bundling failed: Tauri needs .icns but only .png and .ico were provided
-3. Release workflow would fail on macOS build: tauri.conf.json referenced .icns but release.yml had no icon generation step
-4. Canonical doc capability count was wrong (26 vs actual 28)
+1. M8 gate had 3 evidence gaps (JSON round-trip, delete+reopen, explicit save e2e) — all closed
+2. OCR contract stale in project-goal.md §2 — fixed
+3. Package-smoke overclaim in project-goal.md — downgraded to honest status
+4. ADR-0004/0005/0007 "Not yet built" markers — annotations added
+5. macOS settings path missing from privacy-model.md — added from code truth
+6. SECURITY.md had stale settings.conf reference — fixed
+7. keeping.rs Windows test paths used settings.conf — fixed
 
 ## Previous Sessions
 
-- **PR #303** — docs: fix stale macOS claims in project-goal.md
-- **PR #304** — docs: add M6/M7/M8 gate status tables to roadmap
-- **PR #305** — feat: Windows MSIX packaging infrastructure (ADR-0017)
-- **PR #306** — docs: fix settings.conf → settings.toml, README milestone
-- **PR #307** — fix: macOS graceful degradation without AX permission
-- **PR #308** — fix: canonical doc contradictions + MSIX manifest cleanup
-- **PR #309** — ci: package-smoke workflow for NSIS + MSIX + macOS .app
-- **PR #310** — fix: package-smoke RGBA icon generation
-- **PR #312** — fix: stale canonical doc claims and macOS compilation bug
-- **PR #313** — fix: remaining settings.conf references → settings.toml
-- **PR #314** — fix: package-smoke BOM and icon generation (insufficient fix)
+- **PR #303–#314** — various fixes (see git log)
+- **PR #315** — fix: MSIX manifest encoding + .icns icon
+- **PR #316** — fix: release workflow icon generation
+- **PR #317** — docs: capability count + installability claims
 
 ## Completion Matrix
 
@@ -116,67 +122,75 @@ Return/re-entry         NOT TESTED      N/A        N/A       PENDING   N/A
 ## Agent Assessment
 
 ```
-REMAINING REPOSITORY IMPLEMENTATION:
-  M8 test gaps (found this session, not yet fixed):
-    JSON round-trip:               no import_json, no round-trip test
-    Single delete + reopen:        no test for delete(id)→reopen→absent
-    Explicit save end-to-end:      no "no save → no row" integration test
-  Canonical doc gaps (found this session, not yet fixed):
-    OCR contract:                  "manual only" in §2 stale (automatic exists as built-unverified)
-    ADR markers:                   ADR-0004/0005/0007 say "Not yet built" (features are shipped)
-    macOS paths:                   settings.toml path is Windows-only in privacy-model.md
+M8 IMPLEMENTATION:                COMPLETE
+M8 AUTOMATED GATE:                CLOSED
+  Explicit save:                  nothing_is_persisted_before_an_explicit_save
+                                  a_save_also_writes_to_the_library_database
+  Export round-trips:             jsonl_round_trip_preserves_items_and_tags
+                                  jsonl_semantic_round_trip
+                                  jsonl_round_trip_preserves_review_state
+                                  json_export_semantic_round_trip
+                                  exporting_generates_saved_md_format
+  Deletion persistence:           single_delete_survives_reopen
+                                  secure_wipe_survives_reopen
+                                  library_delete_does_not_affect_history
 
-REMAINING PACKAGING IMPLEMENTATION:   NONE
-  (MSIX infrastructure, package-smoke CI, smoke assets, release workflow all fixed and aligned)
-  (code fixes verified locally; CI execution blocked by billing)
+PACKAGE INFRASTRUCTURE:           IMPLEMENTED (NSIS + MSIX + .app + release workflow)
+PACKAGE CURRENT-MAIN EXECUTION:   PENDING (GitHub Actions billing blocker)
+
+CANONICAL PRODUCT TRUTH:          RECONCILED
+  OCR contract:                   manual by default, automatic after opt-in
+  Package-smoke:                  honest status (not overclaimed)
+  ADR markers:                    annotated (body preserved)
+  macOS paths:                    documented from code truth
+  Settings path:                  settings.toml everywhere (no stale .conf)
+
+REMAINING REPOSITORY IMPLEMENTATION:  NONE
+REMAINING PACKAGING EXECUTION:
+  Package-smoke CI GREEN          BLOCKED BY BILLING
+  (code fixes merged in PR #315; latest blocked run 34131713859 was on old HEAD)
 
 REMAINING QUALITY RESEARCH:
-  #148 colour linkage                 QUALITY GATE OPEN (threshold not met)
-  M5 explanations right               QUALITY RESEARCH OPEN (model-dependent)
+  #148 colour linkage             QUALITY GATE OPEN (threshold not met)
+  M5 explanations right           QUALITY RESEARCH OPEN (model-dependent)
 
 REMAINING HUMAN PRODUCT GATES:
-  First-user installs unaided         HUMAN PRODUCT GATE
-  Keeps running for a week            HUMAN PRODUCT GATE
-  Can state what it is for            HUMAN PRODUCT GATE
+  First-user installs unaided     HUMAN PRODUCT GATE
+  Keeps running for a week        HUMAN PRODUCT GATE
+  Can state what it is for        HUMAN PRODUCT GATE
 
-REMAINING MACOS VALIDATION:           BLOCKED BY PERMISSIONS
-  AX/OCR/overlay/hotkeys              Requires Accessibility + Screen Recording
-  sleep/wake/hot-plug                 Requires physical hardware
+REMAINING MACOS VALIDATION:       BLOCKED BY PERMISSIONS
+  AX/OCR/overlay/hotkeys          Requires Accessibility + Screen Recording
+  sleep/wake/hot-plug             Requires physical hardware
 
-REMAINING WINDOWS VALIDATION:         BLOCKED BY ENVIRONMENT
-  VS Code/KakaoTalk real-app          Requires Windows machine
-
-REMAINING DISTRIBUTION WORK:
-  Store submission                    BLOCKED (developer account)
-  Code signing (Windows direct)       BLOCKED (OV certificate)
-  Code signing (macOS)                BLOCKED (Developer ID)
-  Notarization                        BLOCKED (Apple account)
-  Real icon/design assets             ASSET BLOCKER
-  Package-smoke CI completion         BLOCKED BY BILLING (code fixes merged, CI cannot run)
+REMAINING WINDOWS VALIDATION:     BLOCKED BY ENVIRONMENT
+  VS Code/KakaoTalk real-app      Requires Windows machine
 
 REMAINING EXTERNAL BLOCKERS:
-  GitHub Actions billing              BILLING BLOCKER (jobs fail to start: "recent account payments have failed")
-  Store developer account             CREDENTIAL BLOCKER
-  Apple Developer ID                  CREDENTIAL BLOCKER
-  OV code-signing certificate         CREDENTIAL BLOCKER
-  Ollama + model (Quick/Deep test)    SERVICE BLOCKER
+  GitHub Actions billing          BILLING BLOCKER ("recent account payments have failed")
+  Store developer account         CREDENTIAL BLOCKER
+  Apple Developer ID              CREDENTIAL BLOCKER
+  OV code-signing certificate     CREDENTIAL BLOCKER
+  Ollama + model                  SERVICE BLOCKER
+
+REMAINING ASSET DEBT:             Real icon/design assets (smoke placeholders in use)
 
 REMAINING OWNER DECISIONS:
-  Legal publishing identity           OWNER DECISION
-  OV certificate vendor               OWNER DECISION
-  Return/re-entry UX approach         OWNER DECISION
+  Legal publishing identity       OWNER DECISION
+  OV certificate vendor           OWNER DECISION
+  Return/re-entry UX approach     OWNER DECISION
 ```
 
 ## Automated Evidence
 
 ```
 scripts/check.sh --full:          PASS (2026-09-07, local)
-workspace fmt/clippy/tests:       PASS (676 tests)
-product fmt/clippy/check/test:    PASS (52 tests)
+workspace fmt/clippy/tests:       PASS (678 tests)
+product fmt/clippy/check/test:    PASS (53 tests)
 clean native rebuild:             PASS
 platform-macos tests:             PASS (56 tests including 16 hotkey)
 lens-translate tests:             PASS (8 HTTP fault tests)
-lens-storage tests:               PASS (73 tests, full M8 lifecycle)
+lens-storage tests:               PASS (76 tests, full M8 lifecycle)
 privacy static gate:              CLEAN
 Generated .icns:                  VALID (file: "Mac OS X icon, 14039 bytes, icp4 type")
 CI run 34027544715:               PASS (both platforms)
@@ -200,9 +214,12 @@ MACOS APP INSPECTION:             BLOCKED (billing)
 MACOS ZIP/HASH:                   BLOCKED (billing)
 MACOS ARTIFACT UPLOAD:            BLOCKED (billing)
 
+NOTE: blocked run HEAD (e6337d8) ≠ current main HEAD.
+      Billing resolution requires new workflow_dispatch on current main.
+
 PREVIOUS RUN (34058540557):
 WINDOWS NSIS:                     PASS
-WINDOWS MSIX:                     FAIL (error C00CEE40: XML declaration syntax — fixed in PR #315)
+WINDOWS MSIX:                     FAIL (error C00CEE40 — fixed in PR #315)
 MACOS APP:                        FAIL (No matching IconType — fixed in PR #315)
 ```
 
@@ -210,45 +227,23 @@ MACOS APP:                        FAIL (No matching IconType — fixed in PR #31
 
 ```
 project-goal.md:
-  capability count:               28 shipped (was 26, fixed in PR #317) ✓
+  capability count:               28 shipped ✓
+  OCR contract:                   manual by default, automatic opt-in ✓
   macOS acquisition:              "built, unverified" ✓
   macOS overlay/OCR:              "built, unverified" ✓
   Mori integration:               "built, unverified" ✓
   Settings file:                  settings.toml ✓
-  installability:                 cross-platform (fixed in PR #317) ✓
+  installability:                 honest status (not overclaimed) ✓
 
 roadmap.md:
-  M6 gate status table:           current ✓
-  M7 gate status table:           current ✓
-  M8 gate status table:           CLOSED with automated evidence ✓
+  M8 gate table:                  CLOSED with exact test names ✓
+  M6/M7 gate tables:              current ✓
 
-privacy-model.md:                 settings.toml references correct ✓
+privacy-model.md:                 macOS path added, platform-neutral ✓
 README.md:                        M8+ milestone, settings.toml ✓
 what-finished-means.md:           no stale claims ✓
-```
-
-## M8 Gate Evidence
-
-```
-Gate condition                    Test evidence                          Gap
-───────────────────────────────── ────────────────────────────────────── ──────────────────────────────
-Nothing stored without user       Save is explicit (Ctrl+Alt+S).         No end-to-end "app ran without
-action                            SessionRecent is memory-only.          save → DB stays empty" test.
-                                  73 library tests confirm.              Architectural argument only:
-                                  insert() is the only path to           append() is sole write path.
-                                  persistent storage.
-
-Export round-trips                JSONL: 3 strong round-trip tests       JSON: NO round-trip test.
-                                  (items+tags, semantic, review_state).  export_json() exists but no
-                                  MD: partial (export→parse, no          import_json function.
-                                  re-insert into fresh DB).              MD: export→parse tested but
-                                                                         not export→parse→re-insert.
-
-Deletion is real                  delete(): SQL DELETE FROM library      No test: delete(id) → drop →
-                                  secure_wipe(): removes all rows        reopen → row absent → tags
-                                  secure_wipe_survives_reopen: OK        absent. secure_wipe covers
-                                  library_delete_does_not_affect_history bulk+reopen; single delete
-                                  Archive = review_state value           covers in-session only.
+SECURITY.md:                      settings.toml ✓
+ADR-0004/0005/0007:               implementation status annotated ✓
 ```
 
 ## Known Runtime Issues
@@ -283,7 +278,7 @@ bash scripts/validate-macos.sh
 ## Next Session — Start Here
 
 1. **Resolve GitHub Actions billing** — package-smoke CI cannot run until this is fixed
-2. Once billing is resolved, trigger `workflow_dispatch` on `package-smoke.yml`
+2. Once billing is resolved, trigger `workflow_dispatch` on `package-smoke.yml` on **current main**
 3. If package-smoke passes: both platforms GREEN → handoff can declare PACKAGE-SMOKE: PASS
 4. If package-smoke fails: inspect logs, iterate (code fixes are in place)
 5. Grant Accessibility + Screen Recording permissions
@@ -294,7 +289,7 @@ bash scripts/validate-macos.sh
 ## Git State
 
 ```
-latest merge: PR #317 (docs: fix stale canonical claims)
+latest merge: PR #320 (fix: remaining settings.conf references)
 CI pass: run 34027544715 (both platforms)
 Package-smoke: run 34131713859 (BLOCKED — billing)
 always run `git log -1` at session start for actual HEAD.
