@@ -20,8 +20,10 @@ understand a sentence.
 ## 2. What it is not
 
 - **Not a screen translator.** It does not capture the screen and OCR
-  it. OCR is a fallback for surfaces that expose no text, and in the
-  first version it is manual only ([ADR-0002](decisions/ADR-0002-accessibility-first-acquisition.md)).
+  it. OCR is a fallback for surfaces that expose no text. The default
+  is manual (`Ctrl+Alt+O`); automatic fallback exists only after the
+  reader explicitly enables `ocr = automatic` in the settings file
+  ([ADR-0002](decisions/ADR-0002-accessibility-first-acquisition.md)).
 - **Not a browser extension.** It works in editors, PDF viewers,
   messengers, and settings screens, not only in a browser.
 - **Not a chat interface.** There is no prompt box. The pointer is the
@@ -98,11 +100,12 @@ What is still missing before this is something a person installs: **signed,
 distributable packages**. That is the whole of the remaining list. The decisions
 are made ([ADR-0017](decisions/ADR-0017-signed-binary-distribution.md)): Windows
 distributes via Microsoft Store MSIX (which the Store signs) and macOS via
-Developer ID-signed .app bundles with notarization. What remains are the external
+Developer ID-signed .app bundles with notarization. Package-smoke infrastructure
+exists (NSIS, MSIX, .app bundle). A prior run exposed Windows MSIX and macOS
+.app failures; fixes are merged, but current-main execution is pending because
+GitHub Actions cannot start jobs (billing). What remains are the external
 dependencies: Store developer account, Apple Developer ID, and code signing
-certificates. Package-smoke CI proves the structural packaging pipeline works
-on both platforms (NSIS, MSIX, .app bundle); what remains is signing and
-store/developer account credentials.
+certificates.
 
 It is the whole of the remaining list **for installable**, which is not
 the same as finished. The distance from one to the other is nothing on
