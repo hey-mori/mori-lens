@@ -71,11 +71,17 @@ crates/lens-core/          no OS dependencies, no async runtime
   tally.rs                 session counts and what the numbers suggest
   diagnostics.rs           is this working for me, in a window rather than a console (#165)
   icon.rs                  the tray glyph, computed rather than shipped
+  analyse.rs               deep analysis: schema, parser, answerable filter
+  contract_tests.rs        property-based tests for the acquisition contract
+  stress_tests.rs          load and stress tests for concurrent acquisition
 
 crates/lens-translate/     the Ollama client, no HTTP or JSON dependency
   lib.rs                   OllamaTranslator: quick, streaming, deep
   http.rs                  just enough HTTP/1.1 for a loopback socket
   json.rs                  just enough JSON, with the escaping that matters
+  analyse.rs               schema, prompt, and parse for deep analysis
+  deep_eval.rs             deep evaluation and linkage quality benchmarks
+  live_tests.rs            integration tests against a running Ollama instance
 
 crates/lens-settings/      versioned TOML settings, round-trip preservation
   schema.rs                the V1 schema: general, quick, deep, applications
@@ -98,6 +104,29 @@ crates/platform-windows/   the Windows implementation of TextAcquirer
   autostart.rs             the per-user run key, off unless asked
   appearance.rs            what Windows says the interface should look like
   protected_harness.rs     a real password control, so a refusal can be proved
+  ocr_acquire.rs           OCR-based text acquisition fallback
+  single.rs                single-instance enforcement via named mutex
+  clipboard.rs             clipboard read/write for text transfer
+  welcome.rs               first-run welcome message display
+  fullscreen_harness.rs    fullscreen application detection and handling
+  panel_window.rs          non-card panel surface window management
+  live_tests.rs            integration tests against live applications
+
+crates/platform-macos/     the macOS implementation of TextAcquirer
+  acquirer.rs              the AXUIElement-based text acquisition
+  capture.rs               screen region capture for OCR fallback
+  clipboard.rs             clipboard read/write for text transfer
+  coords.rs                coordinate conversion between screen and view space
+  ffi.rs                   foreign function bindings to macOS frameworks
+  hotkey.rs                global hotkey registration and handling
+  lifecycle.rs             application lifecycle and window management
+  menubar.rs               the menu bar icon and its menu
+  ocr_acquire.rs           Vision framework OCR integration
+  overlay.rs               the overlay window: transparent, click-through
+  permission.rs            accessibility permission checking and prompting
+  single.rs                single-instance enforcement
+  utf.rs                   UTF-8/UTF-16 conversion utilities
+  vision_ocr.rs            Vision framework wrapper for text recognition
 
 apps/hover-probe/          the measurement instrument
   probe/sweep.rs           a grid across a window, pointer untouched
@@ -120,7 +149,13 @@ apps/lens/                 the product
   detail_view.rs           the pinned interactive detail window
   settings_service.rs      the Tauri-managed settings state
   tauri_app.rs             the Tauri webview surface and commands
+  lesson.rs                the first-run interactive lesson
+  macos.rs                 macOS-specific application setup and lifecycle
+  main.rs                  the application entry point and platform dispatch
+  mori_transfer.rs         Mori integration and text transfer protocol
+  win.rs                   Windows-specific application setup and lifecycle
   web/index.html           settings, library and diagnostics in a Tauri webview
+  web/detail.html          the pinned detail window with interactive actions
 ```
 
 The dependency arrow only ever points from an adapter to the core. A

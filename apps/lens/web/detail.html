@@ -128,8 +128,12 @@
   let noteDebounce = null;
 
   async function load() {
-    const detail = await invoke('detail_read');
-    render(detail);
+    try {
+      const detail = await invoke('detail_read');
+      render(detail);
+    } catch (e) {
+      console.error('load failed:', e);
+    }
   }
 
   function render(detail) {
@@ -220,9 +224,13 @@
   }
 
   async function doCopy() {
-    const ok = await invoke('detail_copy');
-    if (!ok) {
-      console.warn('clipboard unavailable');
+    try {
+      const ok = await invoke('detail_copy');
+      if (!ok) {
+        console.warn('clipboard unavailable');
+      }
+    } catch (e) {
+      console.error('copy failed:', e);
     }
   }
 
@@ -239,12 +247,19 @@
   }
 
   async function doExplain() {
-    await invoke('detail_request_explain');
+    try {
+      await invoke('detail_request_explain');
+    } catch (e) {
+      console.error('explain failed:', e);
+    }
   }
 
   async function doOpenLibrary() {
-    await invoke('detail_open_in_library');
-    // The main window receives the event and switches to the Library tab.
+    try {
+      await invoke('detail_open_in_library');
+    } catch (e) {
+      console.error('open library failed:', e);
+    }
   }
 
   function onNoteInput() {

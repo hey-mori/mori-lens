@@ -27,6 +27,7 @@ pub struct RecentCardView {
 /// A snapshot of the session's diagnostics, shared with the webview.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct DiagnosticsSnapshot {
+    pub version: String,
     pub build: String,
     pub configuration: Vec<(String, String)>,
     pub cards: u32,
@@ -389,13 +390,6 @@ fn library_distinct_target_languages(
         .map_err(|e| format!("{e}"))
 }
 
-/// Tauri command: get the library count.
-#[tauri::command]
-fn library_count(state: tauri::State<'_, SharedLibrary>) -> Result<i64, String> {
-    let lib = state.lock().unwrap();
-    lib.library().count().map_err(|e| format!("{e}"))
-}
-
 /// Tauri command: export the library as Markdown.
 #[tauri::command]
 fn library_export(state: tauri::State<'_, SharedLibrary>) -> Result<String, String> {
@@ -508,6 +502,7 @@ pub struct HistoryEntryView {
     pub model: Option<String>,
     pub app: Option<String>,
     pub provenance: String,
+    pub provider_scope: String,
     pub created_at: i64,
 }
 
@@ -531,6 +526,7 @@ impl From<&lens_storage::HistoryEntry> for HistoryEntryView {
             model: e.model.clone(),
             app: e.app.clone(),
             provenance: e.provenance.clone(),
+            provider_scope: e.provider_scope.clone(),
             created_at: e.created_at,
         }
     }
@@ -586,11 +582,6 @@ fn history_prune(
     lib.library()
         .history_prune(now, retention_secs)
         .map_err(|e| format!("{e}"))
-}
-
-#[tauri::command]
-fn mori_is_available() -> bool {
-    crate::mori_transfer::is_mori_available()
 }
 
 #[tauri::command]
@@ -661,7 +652,10 @@ pub fn build(
     explain_flag: ExplainFlag,
     save_path: SharedSavePath,
 ) -> Result<(AppHandle, SharedDiagnostics, tauri::App), tauri::Error> {
-    let diagnostics: SharedDiagnostics = Arc::new(Mutex::new(DiagnosticsSnapshot::default()));
+    let diagnostics: SharedDiagnostics = Arc::new(Mutex::new(DiagnosticsSnapshot {
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        ..Default::default()
+    }));
 
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -682,7 +676,6 @@ pub fn build(
             library_distinct_apps,
             library_distinct_source_languages,
             library_distinct_target_languages,
-            library_count,
             library_export,
             library_export_json,
             library_export_jsonl,
@@ -697,7 +690,6 @@ pub fn build(
             history_delete,
             history_promote,
             history_prune,
-            mori_is_available,
             mori_status,
             mori_send_item,
             export_diagnostics,
