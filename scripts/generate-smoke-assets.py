@@ -39,13 +39,72 @@ def make_png(width: int, height: int, filepath: str) -> None:
         f.write(chunk(b"IEND", b""))
 
 
+def make_ico(filepath: str) -> None:
+    """Generate a minimal valid ICO file (16x16, 32-bit RGBA).
+    
+    ICO format: ICONDIR + ICONDIRENTRY + image data (BITMAPINFOHEADER + pixels + AND mask)
+    """
+    width, height = 16, 16
+    bpp = 32
+    
+    # BITMAPINFOHEADER (40 bytes)
+    bmp_header = struct.pack("<IiiHHIIiiII",
+        40,              # biSize
+        width,           # biWidth
+        height * 2,      # biHeight (doubled for ICO - includes AND mask)
+        1,               # biPlanes
+        bpp,             # biBitCount
+        0,               # biCompression (BI_RGB)
+        0,               # biSizeImage (can be 0 for BI_RGB)
+        0, 0,            # biXPPM, biYPPM
+        0, 0             # biClrUsed, biClrImportant
+    )
+    
+    # Pixel data (BGRA, bottom-up)
+    pixels = b""
+    for _ in range(height):
+        for _ in range(width):
+            pixels += b"\x80\x80\x80\xff"  # BGRA: grey, fully opaque
+    
+    # AND mask (1bpp, all zeros = fully opaque)
+    and_mask = b"\x00" * ((width + 31) // 32 * 4 * height)
+    
+    # Image data
+    image_data = bmp_header + pixels + and_mask
+    
+    # ICONDIRENTRY (16 bytes)
+    icon_entry = struct.pack("<BBBBHHII",
+        width if width < 256 else 0,   # bWidth (0 = 256)
+        height if height < 256 else 0, # bHeight (0 = 256)
+        0,               # bColorCount
+        0,               # bReserved
+        1,               # wPlanes
+        bpp,             # wBitCount
+        len(image_data), # dwBytesInRes
+        22               # dwImageOffset (6 + 16 = ICONDIR + 1 ICONDIRENTRY)
+    )
+    
+    # ICONDIR (6 bytes)
+    icon_dir = struct.pack("<HHH",
+        0,    # idReserved
+        1,    # idType (1 = ICO)
+        1     # idCount
+    )
+    
+    with open(filepath, "wb") as f:
+        f.write(icon_dir + icon_entry + image_data)
+
+
 def main() -> None:
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    # Tauri icon (1024x1024 for macOS .app bundling — Tauri needs large PNG)
-    icon_path = os.path.join(project_root, "apps", "lens", "icons", "icon.png")
-    make_png(1024, 1024, icon_path)
-    print(f"Generated: {icon_path}")
+    # Tauri icons (1024x1024 PNG for macOS .app bundling, 16x16 ICO for Windows)
+    icon_png_path = os.path.join(project_root, "apps", "lens", "icons", "icon.png")
+    icon_ico_path = os.path.join(project_root, "apps", "lens", "icons", "icon.ico")
+    make_png(1024, 1024, icon_png_path)
+    print(f"Generated: {icon_png_path}")
+    make_ico(icon_ico_path)
+    print(f"Generated: {icon_ico_path}")
 
     # MSIX Store assets — each at its required size for MakeAppx validation
     assets_dir = os.path.join(project_root, "packaging", "windows-msix", "Assets")
