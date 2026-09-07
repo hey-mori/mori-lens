@@ -313,18 +313,18 @@ explicit; nothing is captured automatically.
 **Gate** · nothing is stored without a user action; export round-trips;
 deletion is real.
 
-**IMPLEMENTATION: complete.** Library (SQLite, 73 tests), Manual Review
+**IMPLEMENTATION: complete.** Library (SQLite, 76 tests), Manual Review
 (Later/Known/Archive, no scheduling), export (MD + JSON + JSONL),
-JSONL round-trip, secure wipe, real deletion. All gate conditions have
-automated test evidence.
+JSONL round-trip, JSON semantic round-trip, secure wipe, real deletion.
+All gate conditions have automated test evidence.
 
-Standing, 2026-09-06:
+Standing, 2026-09-07:
 
 | Condition | State |
 |---|---|
-| Nothing stored without user action | CLOSED: Save is explicit (Ctrl+Alt+S), no automatic capture. SessionRecent is memory-only. PersistentHistory requires explicit opt-in. 73 library tests confirm. |
-| Export round-trips | CLOSED: JSONL export → import preserves items, tags, review status. MD/JSON export tested. `jsonl_round_trip_preserves_items_and_tags`, `jsonl_semantic_round_trip`, `jsonl_round_trip_preserves_review_status` all pass. |
-| Deletion is real | CLOSED: `delete()` removes DB row. `secure_wipe()` removes all library + history rows and survives reopen. `library_delete_does_not_affect_history` confirms isolation. `archive_is_not_delete` confirms archive ≠ delete. |
+| Nothing stored without user action | CLOSED: Save is explicit (Ctrl+Alt+S), no automatic capture. SessionRecent is memory-only. PersistentHistory requires explicit opt-in. `nothing_is_persisted_before_an_explicit_save` proves no files exist before append; `a_save_also_writes_to_the_library_database` proves dual-write after. |
+| Export round-trips | CLOSED: JSONL: `jsonl_round_trip_preserves_items_and_tags`, `jsonl_semantic_round_trip`, `jsonl_round_trip_preserves_review_state`. JSON: `json_export_semantic_round_trip` (all fields + tags + review_state). MD: `exporting_generates_saved_md_format` (export→parse). |
+| Deletion is real | CLOSED: `single_delete_survives_reopen` proves delete(id)→drop→reopen→absent with surviving items and tags. `secure_wipe_survives_reopen` covers bulk. `library_delete_does_not_affect_history` confirms isolation. Archive is a review_state value, not a separate operation. |
 
 ## What no milestone here covers
 
