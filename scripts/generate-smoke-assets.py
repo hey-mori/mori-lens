@@ -95,16 +95,62 @@ def make_ico(filepath: str) -> None:
         f.write(icon_dir + icon_entry + image_data)
 
 
+def make_icns(filepath: str) -> None:
+    """Generate a minimal valid .icns file from embedded PNG data.
+
+    .icns format: file header (8 bytes) + icon entries.
+    Each entry: 4-byte OSType + 4-byte length + data.
+    We embed raw PNG data for each required size.
+    """
+    # (OSType, width, height)
+    icon_types = [
+        (b"icp4", 16, 16),
+        (b"icp5", 32, 32),
+        (b"icp6", 64, 64),
+        (b"ic07", 128, 128),
+        (b"ic08", 256, 256),
+        (b"ic09", 512, 512),
+        (b"ic10", 1024, 1024),
+        (b"ic14", 512, 512),
+    ]
+
+    entries = []
+    for ostype, w, h in icon_types:
+        ihdr_data = struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)
+        raw_data = b""
+        for _ in range(h):
+            raw_data += b"\x00" + b"\x80\x80\x80\xff" * w
+        compressed = zlib.compress(raw_data)
+
+        png = b"\x89PNG\r\n\x1a\n"
+        png += struct.pack(">I", len(ihdr_data)) + b"IHDR" + ihdr_data
+        png += struct.pack(">I", len(compressed)) + b"IDAT" + compressed
+        png += struct.pack(">I", 0) + b"IEND"
+
+        entry = ostype + struct.pack(">I", len(png) + 8) + png
+        entries.append(entry)
+
+    all_data = b"".join(entries)
+    file_header = b"icns" + struct.pack(">I", len(all_data) + 8)
+
+    os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
+    with open(filepath, "wb") as f:
+        f.write(file_header + all_data)
+
+
 def main() -> None:
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    # Tauri icons (1024x1024 PNG for macOS .app bundling, 16x16 ICO for Windows)
+    # Tauri icons
     icon_png_path = os.path.join(project_root, "apps", "lens", "icons", "icon.png")
     icon_ico_path = os.path.join(project_root, "apps", "lens", "icons", "icon.ico")
+    icon_icns_path = os.path.join(project_root, "apps", "lens", "icons", "icon.icns")
     make_png(1024, 1024, icon_png_path)
     print(f"Generated: {icon_png_path}")
     make_ico(icon_ico_path)
     print(f"Generated: {icon_ico_path}")
+    make_icns(icon_icns_path)
+    print(f"Generated: {icon_icns_path}")
 
     # MSIX Store assets — each at its required size for MakeAppx validation
     assets_dir = os.path.join(project_root, "packaging", "windows-msix", "Assets")
