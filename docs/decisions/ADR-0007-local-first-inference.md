@@ -115,3 +115,11 @@ twice without a line of routing code being written for either.
   is a target measured per machine, never a promise.
 - Nothing about the trust model needs to change if a cloud engine is
   added later, because the boundary and the disclosure are built first.
+
+---
+
+*Implementation status (updated 2026-09-07):* Implemented. Lens
+communicates with a local Ollama over `127.0.0.1` via hand-written HTTP.
+No models are bundled (per this ADR's constraint). The endpoint is
+configurable in `settings.toml` and restricted to localhost by one
+check; a remote address is refused.
