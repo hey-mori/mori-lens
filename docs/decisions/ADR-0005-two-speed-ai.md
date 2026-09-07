@@ -76,3 +76,10 @@ Rules that follow:
   ([ADR-0007](ADR-0007-local-first-inference.md)).
 - Users who want everything must click for it. That is the correct
   default for a tool that fires on hover, and the click is one press.
+
+---
+
+*Implementation status (updated 2026-09-07):* Implemented. Quick
+translation and deep analysis are separate paths with separate cache
+keys, separate prompts, and separate model resolution. `Ctrl+Alt+D`
+triggers deep analysis; hover alone triggers quick translation only.
