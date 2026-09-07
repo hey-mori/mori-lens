@@ -315,3 +315,41 @@ impl HoverSession {
         Some(self.ocr.as_ref()?.acquire(point, context))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ocr_mode_as_str_round_trips_through_named() {
+        for mode in [OcrMode::Off, OcrMode::Manual, OcrMode::Automatic] {
+            assert_eq!(OcrMode::named(mode.as_str()), Some(mode));
+        }
+    }
+
+    #[test]
+    fn ocr_mode_named_rejects_unknown() {
+        assert_eq!(OcrMode::named(""), None);
+        assert_eq!(OcrMode::named("auto"), None);
+        assert_eq!(OcrMode::named("Off"), None);
+        assert_eq!(OcrMode::named("MANUAL"), None);
+    }
+
+    #[test]
+    fn ocr_mode_as_str_values_match_settings_keys() {
+        assert_eq!(OcrMode::Off.as_str(), "off");
+        assert_eq!(OcrMode::Manual.as_str(), "manual");
+        assert_eq!(OcrMode::Automatic.as_str(), "automatic");
+    }
+
+    #[test]
+    fn input_state_default_is_all_false() {
+        let state = InputState::default();
+        assert!(!state.button_down);
+        assert!(!state.scrolling);
+        assert!(!state.typing);
+        assert!(!state.modifier_held);
+        assert!(!state.ctrl_held);
+        assert!(!state.ocr_requested);
+    }
+}

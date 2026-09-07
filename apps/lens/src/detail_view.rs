@@ -237,3 +237,114 @@ pub(crate) fn detail_open_in_library(
 pub fn new_shared() -> (SharedDetail, ExplainFlag) {
     (Arc::new(Mutex::new(None)), Arc::new(AtomicBool::new(false)))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lens_core::card::{Card, CardBody};
+
+    fn translation_card(original: &str, text: &str) -> Card {
+        Card {
+            original: original.to_owned(),
+            body: CardBody::Translation(text.to_owned()),
+            footer: "Ollama · 1.6s".to_owned(),
+        }
+    }
+
+    fn problem_card(msg: &str) -> Card {
+        Card {
+            original: "some text".to_owned(),
+            body: CardBody::Problem(msg.to_owned()),
+            footer: "Ollama".to_owned(),
+        }
+    }
+
+    fn waiting_card(msg: &str) -> Card {
+        Card {
+            original: "some text".to_owned(),
+            body: CardBody::Waiting(msg.to_owned()),
+            footer: "".to_owned(),
+        }
+    }
+
+    fn analysis_card(
+        original: &str,
+        translation: Option<&str>,
+        rows: Vec<(String, String)>,
+    ) -> Card {
+        Card {
+            original: original.to_owned(),
+            body: CardBody::Analysis {
+                translation: translation.map(|s| s.to_owned()),
+                word_at: None,
+                counterpart_at: None,
+                links: vec![],
+                rows,
+            },
+            footer: "Ollama · 4.4s".to_owned(),
+        }
+    }
+
+    #[test]
+    fn view_from_translation_card_carries_original_and_translation() {
+        let card = translation_card("Hello", "안녕");
+        let view = view_from_card(&card).expect("should produce a view");
+        assert_eq!(view.original, "Hello");
+        assert_eq!(view.translation.as_deref(), Some("안녕"));
+        assert_eq!(view.footer, "Ollama · 1.6s");
+        assert!(view.rows.is_empty());
+        assert!(view.item_id.is_none());
+    }
+
+    #[test]
+    fn view_from_analysis_card_carries_rows() {
+        let rows = vec![
+            ("Lemma".to_owned(), "run".to_owned()),
+            ("POS".to_owned(), "verb".to_owned()),
+        ];
+        let card = analysis_card("running", Some("달리고"), rows.clone());
+        let view = view_from_card(&card).expect("should produce a view");
+        assert_eq!(view.original, "running");
+        assert_eq!(view.translation.as_deref(), Some("달리고"));
+        assert_eq!(view.rows.len(), 2);
+        assert_eq!(view.rows[0], ("Lemma".to_owned(), "run".to_owned()));
+    }
+
+    #[test]
+    fn view_from_problem_card_is_none() {
+        let card = problem_card("Ollama is not running");
+        assert!(view_from_card(&card).is_none());
+    }
+
+    #[test]
+    fn view_from_waiting_card_is_none() {
+        let card = waiting_card("asking Ollama...");
+        assert!(view_from_card(&card).is_none());
+    }
+
+    #[test]
+    fn view_from_empty_original_is_none() {
+        let card = Card {
+            original: "   ".to_owned(),
+            body: CardBody::Translation("should not appear".to_owned()),
+            footer: "".to_owned(),
+        };
+        assert!(view_from_card(&card).is_none());
+    }
+
+    #[test]
+    fn view_from_analysis_without_translation_has_none_translation() {
+        let rows = vec![("Sense".to_owned(), "the feeling".to_owned())];
+        let card = analysis_card("feeling", None, rows);
+        let view = view_from_card(&card).expect("should produce a view");
+        assert!(view.translation.is_none());
+        assert_eq!(view.rows.len(), 1);
+    }
+
+    #[test]
+    fn new_shared_starts_empty_and_false() {
+        let (detail, flag) = new_shared();
+        assert!(detail.lock().unwrap().is_none());
+        assert!(!flag.load(Ordering::Relaxed));
+    }
+}
