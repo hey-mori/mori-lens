@@ -237,7 +237,7 @@ mod tests {
     #[cfg(windows)]
     fn the_file_lands_beside_the_settings() {
         let settings =
-            PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\Mori Lens\\settings.conf");
+            PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\Mori Lens\\settings.toml");
         assert_eq!(
             path_beside(&settings),
             PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\Mori Lens\\saved.md"),
@@ -248,7 +248,7 @@ mod tests {
     #[cfg(windows)]
     fn the_database_lands_beside_the_settings() {
         let settings =
-            PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\Mori Lens\\settings.conf");
+            PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\Mori Lens\\settings.toml");
         let db = settings.parent().map(|p| p.join("library.db")).unwrap();
         assert_eq!(
             db,
