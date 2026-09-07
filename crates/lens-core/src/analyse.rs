@@ -145,7 +145,7 @@ impl Profile {
         }
     }
 
-    /// The name this is written as in `settings.conf`.
+    /// The name this is written as in `settings.toml`.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Reader => "reader",
