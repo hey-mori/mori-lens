@@ -369,6 +369,36 @@ mod tests {
         let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
     }
 
+    /// Nothing is persisted before an explicit save.
+    ///
+    /// This is the M8 gate condition "nothing stored without user action"
+    /// tested at the product boundary: a fresh directory has no saved.md
+    /// and no library.db until `append` is called.
+    #[test]
+    fn nothing_is_persisted_before_an_explicit_save() {
+        let dir = std::env::temp_dir().join("mori-lens-keep-no-persist");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("saved.md");
+        let db = dir.join("library.db");
+
+        assert!(!file.exists(), "saved.md must not exist before save");
+        assert!(!db.exists(), "library.db must not exist before save");
+
+        let at = UNIX_EPOCH + Duration::from_secs(1_786_075_140);
+        append(&file, &an_entry("hello"), at).expect("kept");
+
+        assert!(file.exists(), "saved.md exists after save");
+        assert!(db.exists(), "library.db exists after save");
+
+        let written = std::fs::read_to_string(&file).unwrap();
+        assert!(written.contains("> hello"));
+
+        let lib = Library::open(&db).unwrap();
+        assert_eq!(lib.count().unwrap(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Language and model metadata survive the round-trip into the database.
     #[test]
     fn language_and_model_metadata_are_stored_in_the_database() {
