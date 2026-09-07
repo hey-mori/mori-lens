@@ -41,11 +41,7 @@ fn request(
     body: Option<&str>,
     timeout: Duration,
 ) -> Result<String, TranslateError> {
-    let address = endpoint
-        .to_socket_addrs()
-        .map_err(|_| TranslateError::Unavailable)?
-        .next()
-        .ok_or(TranslateError::Unavailable)?;
+    let address = resolve_loopback(endpoint)?;
 
     let stream =
         TcpStream::connect_timeout(&address, timeout).map_err(|_| TranslateError::Unavailable)?;
@@ -155,11 +151,7 @@ pub fn post_streaming(
     timeout: Duration,
     on_line: &mut dyn FnMut(&str) -> bool,
 ) -> Result<(), TranslateError> {
-    let address = endpoint
-        .to_socket_addrs()
-        .map_err(|_| TranslateError::Unavailable)?
-        .next()
-        .ok_or(TranslateError::Unavailable)?;
+    let address = resolve_loopback(endpoint)?;
 
     let stream =
         TcpStream::connect_timeout(&address, timeout).map_err(|_| TranslateError::Unavailable)?;
@@ -251,6 +243,29 @@ fn read_chunked(reader: &mut BufReader<TcpStream>) -> Result<String, TranslateEr
     Ok(String::from_utf8_lossy(&body).into_owned())
 }
 
+/// Resolve an endpoint to a socket address, refusing anything that is not
+/// loopback.
+///
+/// The product promise is "nothing leaves this machine." A non-loopback
+/// address here would send captured text over the network, and this module
+/// has no TLS, so it would travel in clear text. The settings file validates
+/// the endpoint, but the Tauri commands that list models and test a
+/// connection also accept an endpoint from the webview, and that path must
+/// not be able to reach another host even if the settings file is edited by
+/// hand or the frontend sends a wrong value.
+fn resolve_loopback(endpoint: &str) -> Result<std::net::SocketAddr, TranslateError> {
+    let address = endpoint
+        .to_socket_addrs()
+        .map_err(|_| TranslateError::Unavailable)?
+        .next()
+        .ok_or(TranslateError::Unavailable)?;
+    if address.ip().is_loopback() {
+        Ok(address)
+    } else {
+        Err(TranslateError::Unavailable)
+    }
+}
+
 /// A stalled read and a refused connection are different facts.
 ///
 /// Collapsing them would put "Ollama is not running" in front of a user whose
@@ -275,6 +290,25 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap().to_string();
         (listener, addr)
+    }
+
+    #[test]
+    fn a_non_loopback_endpoint_is_refused_before_connecting() {
+        // An address that is not loopback must be refused without attempting
+        // a TCP connection, regardless of whether a host is reachable.
+        let result = get("192.168.1.1:11434", "/api/tags", Duration::from_secs(5));
+        assert_eq!(result, Err(TranslateError::Unavailable));
+    }
+
+    #[test]
+    fn localhost_is_accepted_as_loopback() {
+        // "localhost" resolves to 127.0.0.1 or ::1, both loopback.
+        // It should pass the loopback check (and then fail because nothing
+        // is listening, which is a different error path).
+        let result = get("localhost:1", "/api/tags", Duration::from_millis(300));
+        assert_eq!(result, Err(TranslateError::Unavailable));
+        // If it got past the loopback check, it tried to connect and was
+        // refused quickly (not waiting 5 seconds).
     }
 
     #[test]
