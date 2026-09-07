@@ -53,12 +53,24 @@ Windows implementation is complete and stable. macOS implementation is complete.
 
 ## This Session
 
-- Dead code removal: `library_count` and `mori_is_available` commands removed from tauri_app.rs
-- Architecture documentation: added platform-macos crate section and all missing files across crates
-- MSIX packaging: fixed manifest template (placeholder names, regex bug), generated Store assets from product icon, verified MSIX build locally (11 pass, 0 fail, 2 warn), integrated MSIX build into release workflow
-- Web UI: fixed history_prune missing parameter, dynamic version display, added try/catch error handling
-- Code quality audit: no clippy warnings, no dead code, all 40 Tauri commands wired to UI
-- Mori integration audit: confirmed fully implemented (ADR-0018, 30+ tests, UI button)
+**PR #312** — fix: stale canonical doc claims and macOS compilation bug
+- project-goal.md: settings.conf → settings.toml (migration exists)
+- project-goal.md: macOS acquisition/overlay shipped → built, unverified (real-world measurement pending permissions)
+- project-goal.md: Mori integration planned → built, unverified (ADR-0018 implemented)
+- macos.rs: review_status → review_state, ReviewStatus enum → String (compilation error caught by verification gate)
+- keeping.rs: platform-specific tests with cfg(windows)/cfg(not(windows)) (Windows path tests failed on macOS)
+- keeping.rs: module comment settings.conf → settings.toml
+
+**PR #313** — fix: remaining settings.conf references → settings.toml
+- win.rs: default_settings_path() now returns settings.toml (was still pointing to settings.conf, creating dual-path inconsistency)
+- lens-core/analyse.rs: comment updated
+- lens-core/theme.rs: comment updated
+
+**Hidden backlog found and fixed:**
+1. Stale canonical doc claims in project-goal.md (4 instances)
+2. macOS compilation bug: `review_status` field did not exist in `lens_storage::Item` (should be `review_state: Option<String>`)
+3. Platform-specific test failures: Windows path tests used backslashes which don't work on macOS
+4. Windows settings path inconsistency: `default_settings_path()` returned `settings.conf` while Tauri settings service used `settings.toml`
 
 ## Previous Session
 
@@ -101,6 +113,7 @@ Return/re-entry         NOT TESTED      N/A        N/A       PENDING   N/A
 ```
 REMAINING REPOSITORY IMPLEMENTATION:  NONE
   (all repository-local implementation work is complete)
+  (this session found and fixed 4 hidden bugs that handoff claimed were fixed)
 
 REMAINING PACKAGING IMPLEMENTATION:   NONE
   (MSIX infrastructure, package-smoke CI, smoke assets all implemented)
@@ -144,9 +157,9 @@ REMAINING OWNER DECISIONS:
 ## Automated Evidence
 
 ```
-scripts/check.sh --full:          PASS (2026-09-06, local)
-workspace fmt/clippy/tests:       PASS (665+ tests)
-product fmt/clippy/check/test:    PASS
+scripts/check.sh --full:          PASS (2026-09-07, local)
+workspace fmt/clippy/tests:       PASS (676+ tests)
+product fmt/clippy/check/test:    PASS (52 tests)
 clean native rebuild:             PASS
 platform-macos tests:             PASS (56 tests including 16 hotkey)
 lens-translate tests:             PASS (8 HTTP fault tests)
@@ -160,19 +173,17 @@ Package-smoke workflow:           CREATED (execution in progress)
 
 ```
 project-goal.md:
-  macOS acquisition:        "built, unverified" (was "planned") ✓
-  macOS overlay/OCR:        "built, unverified" (was "planned") ✓
-  Mori integration:         "built, unverified" (was "planned") ✓
-  OCR contract:             "default manual, auto opt-in" (was "manual only") ✓
-  Settings file:            settings.toml (was settings.conf) ✓
-  Distribution:             MSIX infrastructure implemented ✓
+  macOS acquisition:        "built, unverified" (was "shipped") ✓ FIXED
+  macOS overlay/OCR:        "built, unverified" (was "shipped") ✓ FIXED
+  Mori integration:         "built, unverified" (was "planned") ✓ FIXED
+  Settings file:            settings.toml (was settings.conf) ✓ FIXED
 
 roadmap.md:
   M6 gate status table:     Added ✓
   M7 gate status table:     Added ✓
   M8 gate status table:     Added (CLOSED by automated tests) ✓
 
-privacy-model.md:           settings.toml references fixed ✓
+privacy-model.md:           settings.toml references correct ✓
 README.md:                  M8+ milestone, settings.toml ✓
 ```
 
@@ -216,7 +227,7 @@ bash scripts/validate-macos.sh
 ## Git State
 
 ```
-latest merge: PR #310 (package-smoke RGBA fix)
+latest merge: PR #313 (settings.conf remaining references)
 CI pass: run 34027544715 (both platforms)
 Package-smoke: run 34039483348 (in progress)
 always run `git log -1` at session start for actual HEAD.
