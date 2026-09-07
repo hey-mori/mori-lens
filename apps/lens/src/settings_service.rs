@@ -115,7 +115,7 @@ pub fn load_or_migrate(data_dir: &std::path::Path) -> SettingsState {
             } else {
                 println!("settings  migrated from settings.conf to settings.toml");
                 for problem in &report.problems {
-                    println!("settings  migration note: {}", problem.message);
+                    eprintln!("settings  migration note: {}", problem.message);
                 }
             }
             let current = file.to_settings();
@@ -286,7 +286,7 @@ fn validate_or_default(
     if is_valid(value) {
         value.to_owned()
     } else {
-        println!("settings  {field_name} = {value} is not valid, using {default}");
+        eprintln!("settings  {field_name} = {value} is not valid, using {default}");
         default.to_owned()
     }
 }
@@ -319,7 +319,7 @@ fn validate_endpoint(value: &str, default: &str, field_name: &str) -> String {
     if lens_core::translate::engine_for(value) == lens_core::translate::EngineId::LocalOllama {
         value.to_owned()
     } else {
-        println!("settings  {field_name} = {value} is not a loopback address, using {default}");
+        eprintln!("settings  {field_name} = {value} is not a loopback address, using {default}");
         default.to_owned()
     }
 }
