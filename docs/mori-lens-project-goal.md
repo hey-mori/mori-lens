@@ -91,7 +91,7 @@ recorded in
 [`compatibility/windows-app-matrix.md`](compatibility/windows-app-matrix.md).
 That gate is [ADR-0008](decisions/ADR-0008-probe-before-product.md).
 
-Twenty-six capabilities have passed it. The rest have unit tests, which
+Twenty-eight capabilities have passed it. The rest have unit tests, which
 prove the logic and prove nothing about a desktop.
 
 What is still missing before this is something a person installs: **signed,
@@ -100,7 +100,9 @@ are made ([ADR-0017](decisions/ADR-0017-signed-binary-distribution.md)): Windows
 distributes via Microsoft Store MSIX (which the Store signs) and macOS via
 Developer ID-signed .app bundles with notarization. What remains are the external
 dependencies: Store developer account, Apple Developer ID, and code signing
-certificates.
+certificates. Package-smoke CI proves the structural packaging pipeline works
+on both platforms (NSIS, MSIX, .app bundle); what remains is signing and
+store/developer account credentials.
 
 It is the whole of the remaining list **for installable**, which is not
 the same as finished. The distance from one to the other is nothing on
