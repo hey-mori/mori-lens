@@ -161,6 +161,8 @@ pub enum Error {
     /// not mutate it: an older binary touching a newer schema corrupts
     /// data silently.
     FutureSchema { have: i64, understand: i64 },
+    /// A review state string was not one of the known values.
+    InvalidReviewState(String),
 }
 
 impl std::fmt::Display for Error {
@@ -171,6 +173,10 @@ impl std::fmt::Display for Error {
             Self::FutureSchema { have, understand } => write!(
                 f,
                 "library schema version {have} is newer than this build (version {understand}); upgrade Lens or do not open this database",
+            ),
+            Self::InvalidReviewState(got) => write!(
+                f,
+                "review state must be known, later, or archive, not {got}",
             ),
         }
     }
@@ -744,6 +750,9 @@ impl Library {
 
     /// Set the review state of a library item.
     pub fn set_review_state(&self, id: i64, state: &str) -> Result<bool, Error> {
+        if state != REVIEW_KNOWN && state != REVIEW_LATER && state != REVIEW_ARCHIVE {
+            return Err(Error::InvalidReviewState(state.to_owned()));
+        }
         let changed = self.conn.execute(
             "UPDATE library SET review_state = ?1 WHERE id = ?2",
             params![state, id],
@@ -3237,6 +3246,28 @@ mod tests {
                 "entry-{i} should remain (highest id)"
             );
         }
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn an_invalid_review_state_is_refused() {
+        let path = temp_db("invalid_review_state");
+        let lib = Library::open(&path).unwrap();
+        let item = a_translation();
+        let id = lib.insert(&item).unwrap();
+
+        let result = lib.set_review_state(id, "bogus");
+        assert!(result.is_err(), "an invalid state must not be written");
+        match result.unwrap_err() {
+            Error::InvalidReviewState(got) => assert_eq!(got, "bogus"),
+            other => panic!("expected InvalidReviewState, got {other:?}"),
+        }
+
+        // The three valid states still work.
+        assert!(lib.set_review_state(id, REVIEW_KNOWN).unwrap());
+        assert!(lib.set_review_state(id, REVIEW_LATER).unwrap());
+        assert!(lib.set_review_state(id, REVIEW_ARCHIVE).unwrap());
 
         cleanup(&path);
     }
