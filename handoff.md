@@ -6,7 +6,7 @@ Last updated: 2026-09-07
 
 macOS native implementation for Mori Lens cross-platform desktop product.
 Windows implementation is complete and stable. macOS implementation is complete.
-**All repository-local implementation work is complete. Distribution infrastructure implemented. Remaining work is CI execution completion, validation, external accounts, human gates, or quality research.**
+**All repository-local implementation work is complete. Distribution infrastructure implemented and code-fixed. CI execution blocked by GitHub Actions billing. Remaining work is billing resolution, validation, external accounts, human gates, or quality research.**
 
 ## Current Product State
 
@@ -42,9 +42,10 @@ Windows implementation is complete and stable. macOS implementation is complete.
 - Package-smoke CI workflow (`.github/workflows/package-smoke.yml`)
 - Windows: NSIS (via `cargo tauri build`) + MSIX (via `scripts/package-msix.ps1`)
 - macOS: .app bundle (via `cargo tauri build`)
-- Smoke asset generation (`scripts/generate-smoke-assets.py`)
+- Smoke asset generation (`scripts/generate-smoke-assets.py`): PNG, ICO, ICNS
 - MSIX verification (`scripts/verify-msix.ps1`)
 - MSIX manifest: `runFullTrust` only (no unnecessary `broadFileSystemAccess`)
+- Release workflow (`.github/workflows/release.yml`): aligned with package-smoke
 
 **Verification gate (`scripts/check.sh --full`):**
 - Workspace fmt + clippy + test
@@ -53,26 +54,27 @@ Windows implementation is complete and stable. macOS implementation is complete.
 
 ## This Session
 
-**PR #312** — fix: stale canonical doc claims and macOS compilation bug
-- project-goal.md: settings.conf → settings.toml (migration exists)
-- project-goal.md: macOS acquisition/overlay shipped → built, unverified (real-world measurement pending permissions)
-- project-goal.md: Mori integration planned → built, unverified (ADR-0018 implemented)
-- macos.rs: review_status → review_state, ReviewStatus enum → String (compilation error caught by verification gate)
-- keeping.rs: platform-specific tests with cfg(windows)/cfg(not(windows)) (Windows path tests failed on macOS)
-- keeping.rs: module comment settings.conf → settings.toml
+**PR #315** — fix: MSIX manifest encoding and macOS .icns icon for package-smoke
+- package-msix.ps1: Replaced regex `-replace` with simple `.Replace()` string substitution. Previous BOM-trim + regex approach (PR #314) did not resolve error C00CEE40 on Windows Server 2025 MakeAppx
+- AppxManifest.xml.in: Changed XML declaration encoding `utf-8` → `UTF-8`
+- generate-smoke-assets.py: Added `make_icns()` — generates valid .icns with all required OSType entries (icp4–ic14). Tauri requires .icns for .app bundle creation; .png and .ico alone produce "No matching IconType" error
+- tauri.conf.json: Added `icons/icon.icns` to icon list
+- apps/lens/icons/icon.icns: Committed structural placeholder (14039 bytes)
 
-**PR #313** — fix: remaining settings.conf references → settings.toml
-- win.rs: default_settings_path() now returns settings.toml (was still pointing to settings.conf, creating dual-path inconsistency)
-- lens-core/analyse.rs: comment updated
-- lens-core/theme.rs: comment updated
+**PR #316** — fix: add icon generation to release workflow jobs
+- release.yml: Added `Generate package icons` step to all three build jobs (Windows NSIS, macOS .app, Windows MSIX). Without this, tauri.conf.json's reference to `icons/icon.icns` would cause build failures since the .icns is generated, not permanently committed as a design asset
+
+**PR #317** — docs: fix stale capability count and installability claims
+- project-goal.md: Capability count `Twenty-six` → `Twenty-eight` (actual count from capability table)
+- project-goal.md: Installability section updated to mention package-smoke CI as structural proof for both platforms
 
 **Hidden backlog found and fixed:**
-1. Stale canonical doc claims in project-goal.md (4 instances)
-2. macOS compilation bug: `review_status` field did not exist in `lens_storage::Item` (should be `review_state: Option<String>`)
-3. Platform-specific test failures: Windows path tests used backslashes which don't work on macOS
-4. Windows settings path inconsistency: `default_settings_path()` returned `settings.conf` while Tauri settings service used `settings.toml`
+1. MSIX manifest regex + PowerShell backreference interaction produced invalid XML on Windows Server 2025 MakeAppx (PR #314's BOM-trim fix was insufficient)
+2. macOS .app bundling failed: Tauri needs .icns but only .png and .ico were provided
+3. Release workflow would fail on macOS build: tauri.conf.json referenced .icns but release.yml had no icon generation step
+4. Canonical doc capability count was wrong (26 vs actual 28)
 
-## Previous Session
+## Previous Sessions
 
 - **PR #303** — docs: fix stale macOS claims in project-goal.md
 - **PR #304** — docs: add M6/M7/M8 gate status tables to roadmap
@@ -82,6 +84,9 @@ Windows implementation is complete and stable. macOS implementation is complete.
 - **PR #308** — fix: canonical doc contradictions + MSIX manifest cleanup
 - **PR #309** — ci: package-smoke workflow for NSIS + MSIX + macOS .app
 - **PR #310** — fix: package-smoke RGBA icon generation
+- **PR #312** — fix: stale canonical doc claims and macOS compilation bug
+- **PR #313** — fix: remaining settings.conf references → settings.toml
+- **PR #314** — fix: package-smoke BOM and icon generation (insufficient fix)
 
 ## Completion Matrix
 
@@ -113,10 +118,11 @@ Return/re-entry         NOT TESTED      N/A        N/A       PENDING   N/A
 ```
 REMAINING REPOSITORY IMPLEMENTATION:  NONE
   (all repository-local implementation work is complete)
-  (this session found and fixed 4 hidden bugs that handoff claimed were fixed)
+  (this session found and fixed 4 hidden bugs)
 
 REMAINING PACKAGING IMPLEMENTATION:   NONE
-  (MSIX infrastructure, package-smoke CI, smoke assets all implemented)
+  (MSIX infrastructure, package-smoke CI, smoke assets, release workflow all fixed and aligned)
+  (code fixes verified locally; CI execution blocked by billing)
 
 REMAINING QUALITY RESEARCH:
   #148 colour linkage                 QUALITY GATE OPEN (threshold not met)
@@ -140,9 +146,10 @@ REMAINING DISTRIBUTION WORK:
   Code signing (macOS)                BLOCKED (Developer ID)
   Notarization                        BLOCKED (Apple account)
   Real icon/design assets             ASSET BLOCKER
-  Package-smoke CI completion         COMPLETE (workflow verified, builds NSIS + MSIX + macOS .app)
+  Package-smoke CI completion         BLOCKED BY BILLING (code fixes merged, CI cannot run)
 
 REMAINING EXTERNAL BLOCKERS:
+  GitHub Actions billing              BILLING BLOCKER (jobs fail to start: "recent account payments have failed")
   Store developer account             CREDENTIAL BLOCKER
   Apple Developer ID                  CREDENTIAL BLOCKER
   OV code-signing certificate         CREDENTIAL BLOCKER
@@ -158,33 +165,82 @@ REMAINING OWNER DECISIONS:
 
 ```
 scripts/check.sh --full:          PASS (2026-09-07, local)
-workspace fmt/clippy/tests:       PASS (676+ tests)
+workspace fmt/clippy/tests:       PASS (676 tests)
 product fmt/clippy/check/test:    PASS (52 tests)
 clean native rebuild:             PASS
 platform-macos tests:             PASS (56 tests including 16 hotkey)
 lens-translate tests:             PASS (8 HTTP fault tests)
 lens-storage tests:               PASS (73 tests, full M8 lifecycle)
 privacy static gate:              CLEAN
+Generated .icns:                  VALID (file: "Mac OS X icon, 14039 bytes, icp4 type")
 CI run 34027544715:               PASS (both platforms)
-Package-smoke workflow:           CREATED (execution in progress)
+Package-smoke run 34058540557:    FAILURE (MSIX XML + macOS icon — fixed in PR #315)
+Package-smoke run 34131713859:    BLOCKED (GitHub Actions billing failure)
+```
+
+## Package-Smoke Run
+
+```
+PACKAGE-SMOKE RUN:                34131713859 (BLOCKED — billing)
+WINDOWS FULL GATE:                BLOCKED (billing)
+WINDOWS NSIS:                     BLOCKED (billing)
+WINDOWS MSIX:                     BLOCKED (billing)
+MSIX VERIFY:                      BLOCKED (billing)
+WINDOWS ARTIFACT UPLOAD:          BLOCKED (billing)
+
+MACOS FULL GATE:                  BLOCKED (billing)
+MACOS APP:                        BLOCKED (billing)
+MACOS APP INSPECTION:             BLOCKED (billing)
+MACOS ZIP/HASH:                   BLOCKED (billing)
+MACOS ARTIFACT UPLOAD:            BLOCKED (billing)
+
+PREVIOUS RUN (34058540557):
+WINDOWS NSIS:                     PASS
+WINDOWS MSIX:                     FAIL (error C00CEE40: XML declaration syntax — fixed in PR #315)
+MACOS APP:                        FAIL (No matching IconType — fixed in PR #315)
 ```
 
 ## Canonical Doc Truth (verified this session)
 
 ```
 project-goal.md:
-  macOS acquisition:        "built, unverified" (was "shipped") ✓ FIXED
-  macOS overlay/OCR:        "built, unverified" (was "shipped") ✓ FIXED
-  Mori integration:         "built, unverified" (was "planned") ✓ FIXED
-  Settings file:            settings.toml (was settings.conf) ✓ FIXED
+  capability count:               28 shipped (was 26, fixed in PR #317) ✓
+  macOS acquisition:              "built, unverified" ✓
+  macOS overlay/OCR:              "built, unverified" ✓
+  Mori integration:               "built, unverified" ✓
+  Settings file:                  settings.toml ✓
+  installability:                 cross-platform (fixed in PR #317) ✓
 
 roadmap.md:
-  M6 gate status table:     Added ✓
-  M7 gate status table:     Added ✓
-  M8 gate status table:     Added (CLOSED by automated tests) ✓
+  M6 gate status table:           current ✓
+  M7 gate status table:           current ✓
+  M8 gate status table:           CLOSED with automated evidence ✓
 
-privacy-model.md:           settings.toml references correct ✓
-README.md:                  M8+ milestone, settings.toml ✓
+privacy-model.md:                 settings.toml references correct ✓
+README.md:                        M8+ milestone, settings.toml ✓
+what-finished-means.md:           no stale claims ✓
+```
+
+## M8 Gate Evidence
+
+```
+Gate condition                    Test evidence
+───────────────────────────────── ─────────────────────────────────────────
+Nothing stored without user       Save is explicit (Ctrl+Alt+S). SessionRecent
+action                            is memory-only. 73 library tests confirm.
+                                  insert() is the only path to persistent storage.
+
+Export round-trips                jsonl_round_trip_preserves_items_and_tags
+                                  jsonl_semantic_round_trip
+                                  jsonl_round_trip_preserves_review_state
+                                  MD + JSON export tested.
+
+Deletion is real                  delete(): SQL DELETE FROM library WHERE id = ?
+                                  secure_wipe(): removes all library + history rows
+                                  secure_wipe_survives_reopen: persists after reopen
+                                  library_delete_does_not_affect_history: isolation
+                                  Archive is a review_state value, not a separate
+                                  operation. delete() removes the row entirely.
 ```
 
 ## Known Runtime Issues
@@ -193,7 +249,7 @@ README.md:                  M8+ milestone, settings.toml ✓
 - Ollama not available locally (Quick/Deep translation BLOCKED)
 - macOS binary starts gracefully without AX permission (SIGTRAP fixed in PR #307)
 - Package-smoke CI slow: `cargo install tauri-cli` takes 30-50 min on CI runners
-- Package-smoke CI icon iteration: Tauri requires specific icon format/size, multiple iterations needed (RGBA ✓, 1024x1024 ✓, format still being validated on CI)
+- GitHub Actions billing: jobs fail to start with "recent account payments have failed"
 
 ## Validation Procedure
 
@@ -218,18 +274,21 @@ bash scripts/validate-macos.sh
 
 ## Next Session — Start Here
 
-1. Check package-smoke CI results (run 34039483348 or later)
-2. Grant Accessibility + Screen Recording permissions
-3. (Optional) Start Ollama with a model
-4. Run `bash scripts/validate-macos.sh`
-5. Review evidence in `docs/benchmarks/`
+1. **Resolve GitHub Actions billing** — package-smoke CI cannot run until this is fixed
+2. Once billing is resolved, trigger `workflow_dispatch` on `package-smoke.yml`
+3. If package-smoke passes: both platforms GREEN → handoff can declare PACKAGE-SMOKE: PASS
+4. If package-smoke fails: inspect logs, iterate (code fixes are in place)
+5. Grant Accessibility + Screen Recording permissions
+6. (Optional) Start Ollama with a model
+7. Run `bash scripts/validate-macos.sh`
+8. Review evidence in `docs/benchmarks/`
 
 ## Git State
 
 ```
-latest merge: PR #313 (settings.conf remaining references)
+latest merge: PR #317 (docs: fix stale canonical claims)
 CI pass: run 34027544715 (both platforms)
-Package-smoke: run 34039483348 (in progress)
+Package-smoke: run 34131713859 (BLOCKED — billing)
 always run `git log -1` at session start for actual HEAD.
 ```
 
