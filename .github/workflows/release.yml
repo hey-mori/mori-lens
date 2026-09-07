@@ -42,6 +42,9 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2"
 
+      - name: Generate package icons
+        run: python3 scripts/generate-smoke-assets.py
+
       - name: Verify version consistency
         shell: bash
         run: |
@@ -102,6 +105,9 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2"
 
+      - name: Generate package icons
+        run: python3 scripts/generate-smoke-assets.py
+
       - name: Run checks
         shell: bash
         run: bash scripts/check.sh --full
@@ -155,6 +161,9 @@ jobs:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Generate package icons
+        run: python3 scripts/generate-smoke-assets.py
 
       - name: Run checks
         shell: bash
