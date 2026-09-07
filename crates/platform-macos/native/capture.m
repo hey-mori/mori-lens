@@ -203,7 +203,9 @@ bool lens_capture_screen(double req_x, double req_y,
 
         config.width = outW;
         config.height = outH;
-        config.captureResolution = SCCaptureResolutionAutomatic;
+        if (@available(macOS 14.0, *)) {
+            config.captureResolution = SCCaptureResolutionAutomatic;
+        }
         config.pixelFormat = 'BGRA';
 
         LensCaptureDelegate *delegate = [[LensCaptureDelegate alloc] init];
