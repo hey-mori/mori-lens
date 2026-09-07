@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Mori Lens — MSIX AppxManifest template.
+  Mori Lens - MSIX AppxManifest template.
 
   This is a template for Microsoft Store MSIX packaging (ADR-0017).
   Placeholder values marked with PLACEHOLDER must be replaced before
@@ -22,14 +22,14 @@
     Version must match the product version in Cargo.toml / tauri.conf.json.
   -->
   <Identity
-    Name="PLACEHOLDER_PUBLISHER.MoriLens"
-    Publisher="CN=PLACEHOLDER_PUBLISHER_NAME"
+    Name="PLACEHOLDERPUBLISHER.MoriLens"
+    Publisher="CN=PLACEHOLDERPUBLISHERNAME"
     Version="0.1.0.0"
     ProcessorArchitecture="x64" />
 
   <Properties>
     <DisplayName>Mori Lens</DisplayName>
-    <PublisherDisplayName>PLACEHOLDER_PUBLISHER_DISPLAY_NAME</PublisherDisplayName>
+    <PublisherDisplayName>PLACEHOLDERPUBLISHERDISPLAYNAME</PublisherDisplayName>
     <Description>A local-first language layer for the whole screen. Rest the pointer on a sentence; Lens reads it and shows the meaning.</Description>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
