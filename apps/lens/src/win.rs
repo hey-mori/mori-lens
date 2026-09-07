@@ -337,7 +337,7 @@ fn default_settings_path() -> std::path::PathBuf {
     let base = std::env::var("APPDATA")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::path::PathBuf::from("."));
-    base.join("Mori Lens").join("settings.conf")
+    base.join("Mori Lens").join("settings.toml")
 }
 
 /// Read the settings file, writing the template the first time.
