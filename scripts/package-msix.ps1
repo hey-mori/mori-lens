@@ -74,7 +74,8 @@ Copy-Item $Binary (Join-Path $StagingDir "lens.exe")
 
 # Process manifest template — read as UTF-8 explicitly
 $Manifest = [System.IO.File]::ReadAllText($ManifestTemplate, [System.Text.Encoding]::UTF8)
-$Manifest = $Manifest -replace 'Version="[^"]*"', "Version=`"$MsixVersion`""
+# Only replace the Version in the Identity element, not the XML declaration
+$Manifest = $Manifest -replace '(<Identity[^>]*Version=")[^"]*(")', "`${1}$MsixVersion`$2"
 # Note: Publisher placeholders remain — they must be replaced before Store submission
 # Write manifest with UTF-8 no-BOM encoding (PowerShell 5.x Out-File adds BOM)
 $Utf8NoBom = New-Object System.Text.UTF8Encoding $false
