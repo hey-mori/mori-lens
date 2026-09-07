@@ -172,19 +172,45 @@ impl SettingsState {
     }
 
     /// Apply a settings view from the webview, save to disk, and set pending.
+    ///
+    /// String enum fields are validated before writing. An invalid value is
+    /// replaced with the default and a warning is printed, because a setting
+    /// the user cannot see being ignored is worse than one that is refused.
     pub fn apply(&mut self, view: SettingsView) -> Result<(), String> {
         let schema = self.file.schema_mut();
+        let defaults = lens_core::settings::Settings::default();
 
         schema.general.language = view.language;
         schema.general.dwell_ms = view.dwell_ms.clamp(80, 3000);
-        schema.general.theme = view.theme;
-        schema.general.translucency = view.translucency;
-        schema.general.text_size = view.text_size;
-        schema.general.default_tier = parse_tier(&view.default_tier)
-            .unwrap_or(lens_core::settings::Settings::default().default_tier);
-        schema.general.ocr = view.ocr;
-        schema.general.profile = view.profile;
-        schema.general.hover_scope = view.hover_scope;
+        schema.general.theme =
+            validate_or_default(&view.theme, is_valid_theme, &defaults.theme, "theme");
+        schema.general.translucency = validate_or_default(
+            &view.translucency,
+            is_valid_translucency,
+            &defaults.translucency,
+            "translucency",
+        );
+        schema.general.text_size = validate_or_default(
+            &view.text_size,
+            is_valid_text_size,
+            &defaults.text,
+            "text_size",
+        );
+        schema.general.default_tier =
+            parse_tier(&view.default_tier).unwrap_or(defaults.default_tier);
+        schema.general.ocr = validate_or_default(&view.ocr, is_valid_ocr, &defaults.ocr, "ocr");
+        schema.general.profile = validate_or_default(
+            &view.profile,
+            is_valid_profile,
+            &defaults.profile,
+            "profile",
+        );
+        schema.general.hover_scope = validate_or_default(
+            &view.hover_scope,
+            is_valid_hover_scope,
+            &defaults.hover_scope,
+            "hover_scope",
+        );
         schema.general.history = view.history;
         schema.general.history_days = view.history_days;
         schema.general.history_store_app = view.history_store_app;
@@ -193,12 +219,12 @@ impl SettingsState {
         schema.quick = EngineConfig {
             engine: view.quick_engine,
             model: view.quick_model,
-            endpoint: view.quick_endpoint,
+            endpoint: validate_endpoint(&view.quick_endpoint, &defaults.endpoint, "quick_endpoint"),
         };
         schema.deep = EngineConfig {
             engine: view.deep_engine,
             model: view.deep_model,
-            endpoint: view.deep_endpoint,
+            endpoint: validate_endpoint(&view.deep_endpoint, &defaults.endpoint, "deep_endpoint"),
         };
 
         schema.applications = view
@@ -251,6 +277,53 @@ fn parse_tier(s: &str) -> Option<AppTier> {
     }
 }
 
+fn validate_or_default(
+    value: &str,
+    is_valid: fn(&str) -> bool,
+    default: &str,
+    field_name: &str,
+) -> String {
+    if is_valid(value) {
+        value.to_owned()
+    } else {
+        println!("settings  {field_name} = {value} is not valid, using {default}");
+        default.to_owned()
+    }
+}
+
+fn is_valid_theme(s: &str) -> bool {
+    matches!(s, "system" | "forest" | "night-lake" | "paper")
+}
+
+fn is_valid_translucency(s: &str) -> bool {
+    matches!(s, "clear" | "balanced" | "solid")
+}
+
+fn is_valid_text_size(s: &str) -> bool {
+    matches!(s, "small" | "normal" | "large" | "larger")
+}
+
+fn is_valid_ocr(s: &str) -> bool {
+    matches!(s, "off" | "manual" | "automatic")
+}
+
+fn is_valid_profile(s: &str) -> bool {
+    lens_core::analyse::Profile::named(s).is_some()
+}
+
+fn is_valid_hover_scope(s: &str) -> bool {
+    matches!(s, "sentence" | "word")
+}
+
+fn validate_endpoint(value: &str, default: &str, field_name: &str) -> String {
+    if lens_core::translate::engine_for(value) == lens_core::translate::EngineId::LocalOllama {
+        value.to_owned()
+    } else {
+        println!("settings  {field_name} = {value} is not a loopback address, using {default}");
+        default.to_owned()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,11 +345,11 @@ mod tests {
             language: "Korean".into(),
             dwell_ms: 320,
             theme: "forest".into(),
-            translucency: "on".into(),
-            text_size: "medium".into(),
+            translucency: "clear".into(),
+            text_size: "normal".into(),
             default_tier: "allow".into(),
             ocr: "manual".into(),
-            profile: "default".into(),
+            profile: "reader".into(),
             hover_scope: "sentence".into(),
             history: false,
             history_days: 30,
@@ -395,6 +468,96 @@ mod tests {
             read_back.applications,
             vec![("Safari".into(), "deny".into())]
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_invalid_theme_falls_back_to_default() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir);
+        let mut view = default_view();
+        view.theme = "purple".into();
+        state.apply(view).unwrap();
+        assert_eq!(state.current().theme, Settings::default().theme);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_invalid_translucency_falls_back_to_default() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir);
+        let mut view = default_view();
+        view.translucency = "invisible".into();
+        state.apply(view).unwrap();
+        assert_eq!(
+            state.current().translucency,
+            Settings::default().translucency
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_invalid_text_size_falls_back_to_default() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir);
+        let mut view = default_view();
+        view.text_size = "huge".into();
+        state.apply(view).unwrap();
+        assert_eq!(state.current().text, Settings::default().text);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_invalid_ocr_falls_back_to_default() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir);
+        let mut view = default_view();
+        view.ocr = "always".into();
+        state.apply(view).unwrap();
+        assert_eq!(state.current().ocr, Settings::default().ocr);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_invalid_hover_scope_falls_back_to_default() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir);
+        let mut view = default_view();
+        view.hover_scope = "paragraph".into();
+        state.apply(view).unwrap();
+        assert_eq!(state.current().hover_scope, Settings::default().hover_scope);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_invalid_endpoint_falls_back_to_default() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir);
+        let mut view = default_view();
+        view.quick_endpoint = "192.168.1.100:11434".into();
+        state.apply(view).unwrap();
+        assert_eq!(state.current().endpoint, Settings::default().endpoint);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_valid_enum_values_are_kept() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir);
+        let mut view = default_view();
+        view.theme = "night-lake".into();
+        view.translucency = "solid".into();
+        view.text_size = "larger".into();
+        view.ocr = "automatic".into();
+        view.profile = "developer".into();
+        view.hover_scope = "word".into();
+        state.apply(view).unwrap();
+        assert_eq!(state.current().theme, "night-lake");
+        assert_eq!(state.current().translucency, "solid");
+        assert_eq!(state.current().text, "larger");
+        assert_eq!(state.current().ocr, "automatic");
+        assert_eq!(state.current().profile, "developer");
+        assert_eq!(state.current().hover_scope, "word");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
