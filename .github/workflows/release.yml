@@ -144,9 +144,47 @@ jobs:
             ${{ env.ZIP_NAME }}
             SHA256SUMS.txt
 
+  build-msix:
+    name: Build MSIX package (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run checks
+        shell: bash
+        run: bash scripts/check.sh --full
+
+      - name: Build release binary
+        run: cargo build --release --manifest-path apps/lens/Cargo.toml
+
+      - name: Package MSIX
+        shell: powershell
+        run: .\scripts\package-msix.ps1
+
+      - name: Verify MSIX
+        shell: powershell
+        run: |
+          $msix = Get-ChildItem target\msix\*.msix | Select-Object -First 1
+          if (-not $msix) { Write-Error "MSIX not found"; exit 1 }
+          & .\scripts\verify-msix.ps1 $msix.FullName
+
+      - name: Upload MSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-msix
+          path: |
+            target/msix/*.msix
+            target/msix/*.sha256
+
   release:
     name: Create GitHub Release
-    needs: [build-windows, build-macos]
+    needs: [build-windows, build-macos, build-msix]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -163,6 +201,12 @@ jobs:
           name: macos-app
           path: artifacts/macos
 
+      - name: Download MSIX artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-msix
+          path: artifacts/msix
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
@@ -171,13 +215,17 @@ jobs:
             artifacts/windows/SHA256SUMS.txt
             artifacts/macos/*.zip
             artifacts/macos/SHA256SUMS.txt
+            artifacts/msix/*.msix
+            artifacts/msix/*.sha256
           body: |
             ## UNSIGNED DEVELOPMENT ARTIFACTS
 
             These builds are **not code-signed**.
-            - **Windows**: SmartScreen will show a warning. Verify SHA-256 before running.
+            - **Windows (NSIS)**: SmartScreen will show a warning. Verify SHA-256 before running.
+            - **Windows (MSIX)**: Structurally valid for Store submission. Publisher identity uses placeholder values.
             - **macOS**: Gatekeeper will block the unsigned .app. Right-click → Open to bypass, or verify SHA-256.
 
             Apple Developer ID signing and notarization require external credentials (not yet configured).
+            Microsoft Store submission requires a Store developer account and publisher identity replacement.
           generate_release_notes: true
           draft: true

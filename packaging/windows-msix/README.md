@@ -5,17 +5,18 @@ Microsoft Store distribution channel ([ADR-0017](../../docs/decisions/ADR-0017-s
 
 ## Status
 
-- **MSIX packaging structure**: Implemented (this directory)
-- **Store submission**: BLOCKED — requires Store developer account
+- **MSIX packaging structure**: Implemented and verified locally
+- **CI integration**: Release workflow builds and verifies MSIX on tag push
+- **Store submission**: BLOCKED on Store developer account registration
 - **Code signing**: Not needed for Store path (Store signs on behalf of publisher)
-- **Direct download signing**: BLOCKED — requires OV code-signing certificate
+- **Direct download signing**: BLOCKED on OV code-signing certificate
 
 ## Files
 
 | File | Purpose |
 |---|---|
 | `AppxManifest.xml.in` | Package manifest template with placeholder values |
-| `Assets/` | Store asset directory (placeholder rules below) |
+| `Assets/` | Store icon assets, resized from `apps/lens/icons/icon.png` |
 
 ## Building
 
@@ -33,37 +34,24 @@ Microsoft Store distribution channel ([ADR-0017](../../docs/decisions/ADR-0017-s
 .\scripts\verify-msix.ps1 target\msix\MoriLens_0.1.0.0_x64.msix
 ```
 
+A structurally valid package reports 11 passed, 0 failed, 2 warnings
+(the warnings are the placeholder publisher values, which are replaced
+before Store submission).
+
 ## Store Submission Checklist
 
 Before submitting to the Microsoft Store:
 
-1. Replace all `PLACEHOLDER_*` values in `AppxManifest.xml.in`
-2. Provide real Store assets (see Asset Requirements below)
-3. Register a Store developer account
-4. Run `scripts\package-msix.ps1` to produce the `.msix`
-5. Upload to Store via Partner Center
-
-## Asset Requirements
-
-The Store requires specific icon sizes. Place these in `Assets/`:
-
-| File | Size | Required |
-|---|---|---|
-| `StoreLogo.png` | 50x50 | Yes |
-| `Square44x44Logo.png` | 44x44 | Yes |
-| `Square150x150Logo.png` | 150x150 | Yes |
-| `Wide310x150Logo.png` | 310x150 | Yes |
-| `Square310x310Logo.png` | 310x310 | Optional |
-| `SplashScreen.png` | 620x300 | Optional |
-
-Currently these are placeholder-sized. Real design assets are an
-ASSET BLOCKER tracked in the handoff.
+1. Replace all `PLACEHOLDER*` values in `AppxManifest.xml.in`
+2. Register a Store developer account
+3. Run `scripts\package-msix.ps1` to produce the `.msix`
+4. Upload to Store via Partner Center
 
 ## Publisher Identity
 
 The `Publisher` field in the manifest must match the Store account's
 publisher DN exactly. This is determined when the Store developer
-account is registered. Until then, `PLACEHOLDER_PUBLISHER_NAME` is used.
+account is registered. Until then, `PLACEHOLDERPUBLISHERNAME` is used.
 
 ## Version Mapping
 

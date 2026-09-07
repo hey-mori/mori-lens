@@ -59,15 +59,20 @@ structure and a verification command.
 
 ### What is not implemented yet
 
-This ADR records the decision. The MSIX packaging and Store submission
-require the developer account, which is an external dependency. Until
-that account exists:
+This ADR records the decision. The Store submission requires the
+developer account, which is an external dependency. Until that account
+exists:
 
 - the existing `scripts/package.sh` continues to produce unsigned zip
   releases with SHA-256 checksums
 - SmartScreen warns about unknown publisher, and the warning is honest
 - `scripts/verify-signature.ps1` exists to check whether a binary is
   signed, for use when a signed build becomes available
+- `scripts/package-msix.ps1` builds a structurally valid MSIX locally
+  and `scripts/verify-msix.ps1` validates it; the release workflow
+  builds and verifies MSIX on every tag push
+- the MSIX uses placeholder publisher values that are replaced before
+  Store submission
 
 ## Consequences
 

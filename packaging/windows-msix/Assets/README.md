@@ -6,14 +6,14 @@ This directory holds icon assets for MSIX Store packaging.
 
 | File | Size | Status |
 |---|---|---|
-| `StoreLogo.png` | 50×50 | ASSET BLOCKER — needs real design |
-| `Square44x44Logo.png` | 44×44 | ASSET BLOCKER |
-| `Square150x150Logo.png` | 150×150 | ASSET BLOCKER |
-| `Wide310x150Logo.png` | 310×150 | ASSET BLOCKER |
+| `StoreLogo.png` | 50x50 | Generated from product icon |
+| `Square44x44Logo.png` | 44x44 | Generated from product icon |
+| `Square150x150Logo.png` | 150x150 | Generated from product icon |
+| `Wide310x150Logo.png` | 310x150 | Generated from product icon |
 
 ## Notes
 
 - These are required for Microsoft Store submission
-- The current product uses `icon.png` as a placeholder icon
-- Real `.icns` (macOS) and Store-ready PNG assets are tracked as ASSET BLOCKER in the handoff
-- Until real assets exist, MSIX packaging produces structurally valid but visually placeholder packages
+- All assets are resized from `apps/lens/icons/icon.png` (1024x1024)
+- A polished design pass is tracked as an asset improvement, not a blocker
+- The MSIX packages structurally with these assets and they render correctly
