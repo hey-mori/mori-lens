@@ -70,3 +70,10 @@ part of that feature that never needed debugging on a live desktop.
   non-activating `NSPanel` hosting a webview, which keeps focus
   behaviour while giving up show latency. That would be a superseding
   ADR, not a quiet change.
+
+---
+
+*Implementation status (updated 2026-09-07):* Implemented on both
+platforms. Windows uses Direct2D/DirectWrite in a native layered window.
+macOS uses an `NSPanel` (transparent, click-through, ARC-clean). The
+macOS fallback described above became the primary path, not a fallback.
