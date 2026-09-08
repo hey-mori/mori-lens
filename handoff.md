@@ -70,7 +70,7 @@ Windows implementation is complete and stable. macOS implementation is complete.
 - ADR-0004/0005/0007: implementation status annotations appended (body preserved)
 
 **PR #319** — test: close M8 gate evidence gaps
-- `nothing_is_persisted_before_an_explicit_save`: product-level save boundary test
+- `append_creates_both_files_from_nothing`: save boundary test with caller audit
 - `json_export_semantic_round_trip`: JSON export → deserialize → all semantic fields preserved
 - `single_delete_survives_reopen`: delete(id) → drop → reopen → row absent, other items/tags survive
 
