@@ -433,7 +433,7 @@ mod tests {
     /// - win.rs:2925 — self-test diagnostic (temp file, not user data)
     ///
     /// No other code path (hover, Quick, Deep, SessionRecent) calls append().
-    /// macOS execute_save() writes to library.db only (no saved.md).
+    /// macOS execute_save() also uses save_card(), writing to both files.
     #[test]
     fn append_creates_both_files_from_nothing() {
         let dir = std::env::temp_dir().join("mori-lens-keep-no-persist");
