@@ -143,9 +143,14 @@ Windows implementation is complete and stable. macOS implementation is complete.
 - `execute_save` now passes source app name to `save_card()` (app provenance on Save)
 - Removed unused `_analysis_cache`, `ANALYSIS_ENTRIES`, `AnalysisCache` import
 
-**History rewrite note**: Published history was rewritten once (Co-authored-by removal). Current main is the canonical baseline. No further rewrites.
+### Part 9 — App provenance timing
 
-**History rewrite**: Removed all `Co-authored-by` lines from entire git history (force push)
+**PR #344** — fix: app provenance timing — current_app synced with current_card
+- `pending_app` captures process name at hover acquisition time
+- `current_app` updated only when `current_card` is set (not at hover time)
+- Prevents wrong app name when pointer moves between apps before Save
+
+**History note**: Published history was rewritten twice (Co-authored-by removal). Current main is the canonical baseline. No further rewrites.
 
 **Hidden backlog found and fixed:**
 1. M8 gate had 3 evidence gaps (JSON round-trip, delete+reopen, explicit save e2e) — all closed
@@ -374,12 +379,12 @@ bash scripts/validate-macos.sh
 ## Git State
 
 ```
-latest merge: PR #342 (fix: macOS OCR privacy, cache model identity, app provenance)
+latest merge: PR #344 (fix: app provenance timing)
 PRE-REWRITE CI EVIDENCE: run 34027544715 PASS (historical, pre-history-rewrite)
 CURRENT REWRITTEN MAIN CI: PENDING (billing blocker — fresh run needed)
 Package-smoke: run 34131713859 (BLOCKED — billing, old HEAD)
 Branches: clean
-History: rewritten once (Co-authored-by removal). Current main is canonical baseline.
+History: rewritten twice (Co-authored-by removal). Current main is canonical baseline.
 always run `git log -1` at session start for actual HEAD.
 ```
 
