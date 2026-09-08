@@ -100,7 +100,22 @@ Windows implementation is complete and stable. macOS implementation is complete.
 - macOS `execute_save()` was broken: saved Problem/Waiting cards, no saved.md, all metadata None
 - New `keeping::save_card()`: shared save policy with eligibility, metadata, serialization
 - `SAVE_LOCK` (process-wide Mutex) prevents concurrent preamble duplication
-- Tests: `save_card_refuses_waiting`, `save_card_accepts_translation`, `concurrent_saves_do_not_duplicate_preamble`
+- Tests: `save_card_refuses_waiting`, `save_card_accepts_translation`, `concurrent_save_card_does_not_duplicate_preamble`
+
+### Part 5 — Serialization boundary and Deep/Copy parity
+
+**PR #333** — fix: move SAVE_LOCK into append() — all persistence serialized
+- SAVE_LOCK was only in `save_card()`, so direct `append()` callers (Windows hotkey, Tauri detail save) bypassed serialization
+- Moved lock into `append()` itself — ALL persistence entry points now serialized
+- New test: `concurrent_direct_append_does_not_duplicate_preamble` (8 threads, direct append)
+
+**PR #334** — fix: macOS Deep Analysis parity and Copy visual feedback
+- Deep Analysis: now extracts on-screen translation from CardBody::Translation (was always None)
+- Deep Analysis: passes current language setting (was empty string)
+- Deep Analysis: reads Profile from settings (was always Profile::default())
+- Copy: calls `card.copied()` after successful clipboard write (was missing visual feedback)
+
+**History rewrite note**: Published history was rewritten once (Co-authored-by removal). Current main is the canonical baseline. No further rewrites.
 
 **History rewrite**: Removed all `Co-authored-by` lines from entire git history (force push)
 
@@ -155,7 +170,9 @@ M8 AUTOMATED GATE:                CLOSED
                                   session_recent_does_not_survive_drop
                                   save_card_refuses_waiting
                                   save_card_accepts_translation
-                                  concurrent_saves_do_not_duplicate_preamble
+                                  concurrent_save_card_does_not_duplicate_preamble
+                                  concurrent_direct_append_does_not_duplicate_preamble
+                                  SAVE_LOCK in append() — ALL persistence serialized (no bypass)
                                   Caller audit: 3 append() sites (win.rs:1305, detail_view.rs:175, win.rs:2925)
                                   All Save paths use shared save_card() policy
   Export round-trips:             jsonl_round_trip_preserves_items_and_tags
@@ -182,9 +199,9 @@ CANONICAL PRODUCT TRUTH:          RECONCILED
   macOS paths:                    documented from code truth
   Settings path:                  settings.toml everywhere (no stale .conf)
 
-REMAINING REPOSITORY IMPLEMENTATION:  NONE
-  (all repo-local implementation, tests, and evidence work complete)
-  (ICNS CRC bug fixed, smoke asset verifier added, M8 evidence audited)
+REMAINING REPOSITORY IMPLEMENTATION:
+  OCR provenance parity     macOS drops from_pixels/doubtful/app on OCR cards (documented)
+  (all other repo-local work complete: save serialization, Deep parity, Copy feedback)
 REMAINING PACKAGING EXECUTION:
   Package-smoke CI GREEN          BLOCKED BY BILLING
   (code fixes merged in PR #315; latest blocked run 34131713859 was on old HEAD)
@@ -225,7 +242,7 @@ REMAINING OWNER DECISIONS:
 ```
 scripts/check.sh --full:          PASS (2026-09-08, local)
 workspace fmt/clippy/tests:       PASS (680 tests)
-product fmt/clippy/check/test:    PASS (57 tests)
+product fmt/clippy/check/test:    PASS (58 tests)
 clean native rebuild:             PASS
 platform-macos tests:             PASS (56 tests including 16 hotkey)
 lens-translate tests:             PASS (8 HTTP fault tests)
@@ -329,11 +346,12 @@ bash scripts/validate-macos.sh
 ## Git State
 
 ```
-latest merge: PR #331 (fix: cross-platform save contract)
-CI pass: run 34027544715 (both platforms)
-Package-smoke: run 34131713859 (BLOCKED — billing)
-Branches: clean (57 stale remote branches pruned)
-History: all Co-authored-by lines removed (force push)
+latest merge: PR #334 (fix: macOS Deep Analysis parity and Copy visual feedback)
+PRE-REWRITE CI EVIDENCE: run 34027544715 PASS (historical, pre-history-rewrite)
+CURRENT REWRITTEN MAIN CI: PENDING (billing blocker — fresh run needed)
+Package-smoke: run 34131713859 (BLOCKED — billing, old HEAD)
+Branches: clean
+History: rewritten once (Co-authored-by removal). Current main is canonical baseline.
 always run `git log -1` at session start for actual HEAD.
 ```
 
