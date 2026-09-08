@@ -47,6 +47,7 @@ static SAVE_LOCK: Mutex<()> = Mutex::new(());
 ///
 /// Beside it because a reader who has found one has found the other, and the
 /// settings file's path is printed at startup and reachable from the tray.
+#[allow(dead_code)]
 pub fn path_beside(settings: &Path) -> PathBuf {
     settings
         .parent()
@@ -72,6 +73,7 @@ impl NotKept {
         }
     }
 
+    #[allow(dead_code)]
     pub fn reason(&self) -> &'static str {
         match self {
             Self::NothingToKeep => "nothing-to-keep",

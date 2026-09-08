@@ -81,6 +81,7 @@ pub type SharedSavePath = Arc<PathBuf>;
 ///
 /// Returns `None` when the card has nothing worth pinning (a problem or a
 /// half-arrived answer), matching [`lens_core::detail::Detail::from_card`].
+#[allow(dead_code)]
 pub fn view_from_card(card: &lens_core::card::Card) -> Option<DetailView> {
     use lens_core::card::CardBody;
 
