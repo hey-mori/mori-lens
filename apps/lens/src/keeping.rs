@@ -32,10 +32,16 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::SystemTime;
 
+use lens_core::card::Card;
 use lens_core::keep::{block, Entry, PREAMBLE};
 use lens_storage::{Item, Library};
+
+/// Serialize all save operations so concurrent saves cannot interleave
+/// file writes or race on the preamble/duplicate checks.
+static SAVE_LOCK: Mutex<()> = Mutex::new(());
 
 /// Where saved items go, beside the settings file.
 ///
@@ -124,6 +130,34 @@ pub fn append(file: &Path, entry: &Entry, at: SystemTime) -> Result<Option<i64>,
     // The structured store. If the database write fails, the file has
     // already succeeded, and the entry is not lost.
     Ok(write_to_library(file, entry, at))
+}
+
+/// Cross-platform save policy: eligibility check, metadata, serialization.
+///
+/// All Save entry points (Windows hotkey, macOS hotkey, detail UI) must use
+/// this function rather than calling `append()` directly. It enforces:
+///
+/// - **Eligibility**: only Translation and Analysis cards are savable.
+///   Problem and Waiting cards return `Ok(None)` (nothing to keep).
+/// - **Metadata**: target_language and model are populated on the Entry.
+/// - **Serialization**: a process-wide lock prevents concurrent saves from
+///   interleaving file writes or racing on preamble/duplicate checks.
+/// - **Storage contract**: both saved.md and library.db are written via
+///   `append()`, per ADR-0013/ADR-0015.
+pub fn save_card(
+    card: &Card,
+    app: Option<&str>,
+    save_path: &Path,
+    target_language: Option<String>,
+    model: Option<String>,
+) -> Result<Option<i64>, NotKept> {
+    let _guard = SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    let mut entry = card.kept_as(app).ok_or(NotKept::NothingToKeep)?;
+    entry.target_language = target_language;
+    entry.model = model;
+
+    append(save_path, &entry, SystemTime::now())
 }
 
 /// Insert the entry into `library.db` beside the saved.md file.
@@ -439,5 +473,122 @@ mod tests {
         assert_eq!(item.target_language.as_deref(), Some("Korean"));
         assert_eq!(item.model.as_deref(), Some("qwen2.5:7b"));
         let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
+    }
+
+    // -- save_card: cross-platform save policy ------------------------------
+
+    fn a_translation_card() -> Card {
+        use lens_core::translate::{EngineId, QuickTranslation};
+        Card::translated(
+            "Hello world",
+            &QuickTranslation {
+                text: "안녕 세계".to_owned(),
+                engine: EngineId::LocalOllama,
+                model: "qwen2.5:7b".to_owned(),
+                latency_ms: 42,
+                cached: false,
+                part_was_removed: false,
+                name_changed: false,
+            },
+        )
+    }
+
+    /// save_card refuses Waiting cards — they are transient, not savable.
+    #[test]
+    fn save_card_refuses_waiting() {
+        let dir = std::env::temp_dir().join("mori-lens-save-refuse-waiting");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("saved.md");
+
+        let card = Card::waiting("번역 중");
+        let result = save_card(&card, None, &file, Some("ko".into()), Some("model".into()));
+        assert!(
+            matches!(result, Err(NotKept::NothingToKeep)),
+            "Waiting card must be refused"
+        );
+        assert!(!file.exists(), "saved.md must not be created for Waiting");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// save_card accepts Translation cards and writes both saved.md and library.db.
+    #[test]
+    fn save_card_accepts_translation() {
+        let dir = std::env::temp_dir().join("mori-lens-save-accept-translation");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("saved.md");
+
+        let card = a_translation_card();
+        let result = save_card(
+            &card,
+            Some("TestApp"),
+            &file,
+            Some("ko".into()),
+            Some("qwen".into()),
+        );
+        assert!(result.is_ok(), "Translation card must be savable");
+        assert!(file.exists(), "saved.md must exist after save");
+
+        let db_path = dir.join("library.db");
+        let lib = Library::open(&db_path).unwrap();
+        assert_eq!(lib.count().unwrap(), 1);
+        let item = lib.get(1).unwrap().unwrap();
+        assert_eq!(item.original, "Hello world");
+        assert_eq!(item.target_language.as_deref(), Some("ko"));
+        assert_eq!(item.model.as_deref(), Some("qwen"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Concurrent saves from multiple threads produce exactly one preamble
+    /// and all expected blocks, with no interleaving or corruption.
+    #[test]
+    fn concurrent_saves_do_not_duplicate_preamble() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let dir = std::env::temp_dir().join("mori-lens-save-concurrent");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = Arc::new(dir.join("saved.md"));
+
+        let threads: Vec<_> = (0..4)
+            .map(|_| {
+                let file = file.clone();
+                thread::spawn(move || {
+                    let card = a_translation_card();
+                    let _ = save_card(
+                        &card,
+                        Some("ConcurrentTest"),
+                        &file,
+                        Some("ko".into()),
+                        Some("model".into()),
+                    );
+                })
+            })
+            .collect();
+
+        for t in threads {
+            t.join().unwrap();
+        }
+
+        let content = std::fs::read_to_string(file.as_path()).unwrap();
+        let preamble_count = content.matches("# Saved from Mori Lens").count();
+        assert_eq!(
+            preamble_count, 1,
+            "exactly one preamble expected, got {preamble_count}"
+        );
+
+        let block_count = content.matches("> Hello world").count();
+        assert_eq!(
+            block_count, 4,
+            "all 4 saves must be present, got {block_count}"
+        );
+
+        let db_path = dir.join("library.db");
+        let lib = Library::open(&db_path).unwrap();
+        // Duplicates are collapsed: same original+kind → 1 row
+        assert!(lib.count().unwrap() >= 1, "library must have rows");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
