@@ -115,6 +115,18 @@ Windows implementation is complete and stable. macOS implementation is complete.
 - Deep Analysis: reads Profile from settings (was always Profile::default())
 - Copy: calls `card.copied()` after successful clipboard write (was missing visual feedback)
 
+### Part 6 — OCR provenance and command regression tests
+
+**PR #337** — fix: macOS OCR provenance — from_pixels carried to final card
+- Added `from_pixels: bool` to `QuickJob::Quick` and `TransResult::Quick`
+- Manual OCR dispatch sets `from_pixels: true`, normal hover sets `false`
+- Result handler applies `card.read_from_the_screen()` when `from_pixels` is true
+
+**PR #338** — fix: extract pause gate into testable ProductCommand method
+- Added `ProductCommand::works_when_paused()` — policy encoded in type
+- Single top-level check replaces 4 inline `if paused { continue; }` checks
+- New test: `pause_gate_allows_only_quit_and_pause_toggle` (all 9 variants)
+
 **History rewrite note**: Published history was rewritten once (Co-authored-by removal). Current main is the canonical baseline. No further rewrites.
 
 **History rewrite**: Removed all `Co-authored-by` lines from entire git history (force push)
@@ -200,10 +212,8 @@ CANONICAL PRODUCT TRUTH:          RECONCILED
   Settings path:                  settings.toml everywhere (no stale .conf)
 
 REMAINING REPOSITORY IMPLEMENTATION:
-  OCR provenance parity       macOS drops from_pixels/doubtful/app on OCR cards
-  Deep focused-word parity    macOS DeepRequest.word still None (needs hover word tracking)
-  Command regression tests    PR #332 parity fixes lack automated regression tests
-  (completed: save serialization, Deep translation/profile/language, Copy feedback)
+  Deep focused-word parity    macOS DeepRequest.word still None (needs hover word tracking refactor)
+  (completed: save serialization, Deep translation/profile/language, Copy feedback, OCR provenance, pause gate tests)
 REMAINING PACKAGING EXECUTION:
   Package-smoke CI GREEN          BLOCKED BY BILLING
   (code fixes merged in PR #315; latest blocked run 34131713859 was on old HEAD)
@@ -243,7 +253,7 @@ REMAINING OWNER DECISIONS:
 
 ```
 scripts/check.sh --full:          PASS (2026-09-08, local)
-workspace fmt/clippy/tests:       PASS (680 tests)
+workspace fmt/clippy/tests:       PASS (681 tests)
 product fmt/clippy/check/test:    PASS (58 tests)
 clean native rebuild:             PASS
 platform-macos tests:             PASS (56 tests including 16 hotkey)
@@ -348,7 +358,7 @@ bash scripts/validate-macos.sh
 ## Git State
 
 ```
-latest merge: PR #334 (fix: macOS Deep Analysis parity and Copy visual feedback)
+latest merge: PR #338 (fix: extract pause gate into testable ProductCommand method)
 PRE-REWRITE CI EVIDENCE: run 34027544715 PASS (historical, pre-history-rewrite)
 CURRENT REWRITTEN MAIN CI: PENDING (billing blocker — fresh run needed)
 Package-smoke: run 34131713859 (BLOCKED — billing, old HEAD)
