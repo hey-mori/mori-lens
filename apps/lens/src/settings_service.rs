@@ -1,13 +1,12 @@
-//! Settings service: the only writer of settings.toml.
+//! Settings service: runtime owner of settings.toml.
 //!
-//! The product's settings file was hand-written until #165. This module
-//! makes the Tauri window the sole writer, with atomic save, external
-//! edit detection, and a pending slot so changes take effect without
-//! waiting for the next file poll.
+//! This module owns the runtime settings state, accessed by Tauri commands
+//! and the polling loop. The canonical file-lifecycle logic (loading,
+//! migration, initialization) lives in [`lens_settings::load_or_initialize`].
 //!
-//! The existing `refresh::Watcher` still watches for *external* edits
-//! (a user editing the file in a text editor). When it detects one,
-//! it re-parses and the polling loop applies it.
+//! The existing `refresh::Watcher` watches for *external* edits (a user
+//! editing the file in a text editor). When it detects one, it re-parses
+//! and the polling loop applies it.
 
 use std::sync::{Arc, Mutex};
 
@@ -68,74 +67,61 @@ pub struct SettingsView {
 
 /// Load or migrate the settings file.
 ///
-/// If `settings.toml` exists, load it. If only `settings.conf` exists,
-/// migrate it to TOML (keeping the old file as backup). Otherwise,
-/// create defaults.
+/// This uses the canonical [`lens_settings::load_or_initialize`] which
+/// handles all file-lifecycle decisions: loading valid files, migrating
+/// legacy format, creating defaults on first run, and preserving invalid
+/// files without destructive overwrites.
 ///
 /// # Recovery
 ///
-/// A corrupt or future-version file is backed up to `settings.toml.bak`
-/// before defaults are written. A future-version file is also flagged
-/// read-only so this build does not silently downgrade it.
+/// A corrupt or future-version file is preserved without modification.
+/// The reader's own configuration is not lost.
 pub fn load_or_migrate(data_dir: &std::path::Path) -> SettingsState {
     let toml_path = data_dir.join("settings.toml");
-    let conf_path = data_dir.join("settings.conf");
 
-    if toml_path.exists() {
-        match SettingsFile::load(&toml_path) {
-            Ok(file) => {
-                let current = file.to_settings();
-                return SettingsState {
-                    file,
-                    current,
-                    pending: None,
-                    generation: 0,
-                };
-            }
-            Err(e) => {
-                eprintln!("settings  cannot load {toml_path:?}: {e}");
-                // Back up the corrupt or future-version file so the reader's
-                // own configuration is not lost when defaults are written.
-                let backup = toml_path.with_extension("toml.bak");
-                if std::fs::rename(&toml_path, &backup).is_ok() {
-                    eprintln!("settings  backed up to {backup:?}");
-                }
-                // Fall through to defaults.
-            }
-        }
-    }
-
-    if conf_path.exists() {
-        if let Ok(text) = std::fs::read_to_string(&conf_path) {
-            let report = lens_settings::migrate::migrate_from_conf(&text);
-            let mut file = SettingsFile::new_defaults(toml_path.clone());
-            *file.schema_mut() = report.schema;
-            if let Err(e) = file.save() {
-                eprintln!("settings  migration save failed: {e}");
-            } else {
-                println!("settings  migrated from settings.conf to settings.toml");
-                for problem in &report.problems {
-                    eprintln!("settings  migration note: {}", problem.message);
-                }
-            }
+    // Use canonical loader
+    match lens_settings::load_or_initialize(&toml_path) {
+        Ok((file, disposition)) => {
             let current = file.to_settings();
-            return SettingsState {
+
+            // Report what happened
+            match disposition {
+                lens_settings::LoadDisposition::Loaded => {
+                    // Silent success
+                }
+                lens_settings::LoadDisposition::Created => {
+                    println!("settings  created defaults at {toml_path:?}");
+                }
+                lens_settings::LoadDisposition::Migrated { problems } => {
+                    println!("settings  migrated to canonical format");
+                    for problem in &problems {
+                        eprintln!("settings  migration note: {}", problem.message);
+                    }
+                }
+                lens_settings::LoadDisposition::InvalidPreserved { reason } => {
+                    eprintln!("settings  {reason}");
+                }
+            }
+
+            SettingsState {
                 file,
                 current,
                 pending: None,
                 generation: 0,
-            };
+            }
         }
-    }
-
-    // No file exists; create defaults.
-    let file = SettingsFile::new_defaults(toml_path);
-    let current = file.to_settings();
-    SettingsState {
-        file,
-        current,
-        pending: None,
-        generation: 0,
+        Err(e) => {
+            // IO error: use defaults
+            eprintln!("settings  cannot load {toml_path:?}: {e}");
+            let file = lens_settings::SettingsFile::new_defaults(toml_path);
+            let current = file.to_settings();
+            SettingsState {
+                file,
+                current,
+                pending: None,
+                generation: 0,
+            }
+        }
     }
 }
 
