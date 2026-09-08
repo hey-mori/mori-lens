@@ -160,6 +160,18 @@ Windows implementation is complete and stable. macOS implementation is complete.
 - Tauri `apply()` validates history_days against [0,1,7,30,90] and engine name
 - Invalid values fall back to defaults with warning
 
+### Part 11 — OCR provenance critical fix + endpoint locality
+
+**PR #349** — fix: OCR provenance was reversed — AX cards claimed OCR, OCR claimed AX
+- `from_pixels` was hardcoded wrong at both dispatch sites
+- Fixed by deriving from `target.source == AcquisitionSource::Ocr`
+- Cache hit path now also applies `read_from_the_screen()` when from_pixels is true
+
+**PR #350** — fix: unify endpoint locality with canonical engine_for()
+- Removed duplicate `is_loopback_endpoint()` from lens-settings
+- Weak reimplementation could misclassify adversarial endpoints (e.g. `127.0.0.1.evil`)
+- Now uses `lens_core::translate::engine_for()` as single source of truth
+
 **History note**: Published history was rewritten twice (Co-authored-by removal). Current main is the canonical baseline. No further rewrites.
 
 **Hidden backlog found and fixed:**
@@ -242,9 +254,10 @@ CANONICAL PRODUCT TRUTH:          RECONCILED
   macOS paths:                    documented from code truth
   Settings path:                  settings.toml everywhere (no stale .conf)
 
-REMAINING REPOSITORY IMPLEMENTATION:  NONE
-  (all repo-local work complete: save serialization, Deep translation/profile/language/focused-word,
-  Copy feedback, OCR provenance, pause gate tests)
+REMAINING REPOSITORY IMPLEMENTATION:
+  hover_scope on macOS        Not implemented (needs Ctrl key tracking infrastructure)
+  (all other repo-local work complete: save serialization, Deep parity, OCR provenance,
+  Copy feedback, pause gate, settings privacy, endpoint locality)
 REMAINING PACKAGING EXECUTION:
   Package-smoke CI GREEN          BLOCKED BY BILLING
   (code fixes merged in PR #315; latest blocked run 34131713859 was on old HEAD)
@@ -389,7 +402,7 @@ bash scripts/validate-macos.sh
 ## Git State
 
 ```
-latest merge: PR #347 (fix: settings write path validation)
+latest merge: PR #350 (fix: unify endpoint locality with canonical engine_for)
 PRE-REWRITE CI EVIDENCE: run 34027544715 PASS (historical, pre-history-rewrite)
 CURRENT REWRITTEN MAIN CI: PENDING (billing blocker — fresh run needed)
 Package-smoke: run 34131713859 (BLOCKED — billing, old HEAD)
