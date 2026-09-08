@@ -498,4 +498,27 @@ mod tests {
         let e = TransferError::VersionMismatch;
         assert!(e.to_string().contains("version mismatch"));
     }
+
+    /// payload_from_item maps all semantic fields and produces valid JSON.
+    #[test]
+    fn payload_from_item_round_trips_through_json() {
+        let item = sample_item();
+        let payload = payload_from_item(&item);
+
+        assert_eq!(payload.schema_version, OUR_SCHEMA_VERSION);
+        assert_eq!(payload.original, item.original);
+        assert_eq!(payload.answer, item.answer);
+        assert_eq!(payload.kind, item.kind);
+        assert!(!payload.transfer_id.is_empty());
+
+        let json = serde_json::to_string_pretty(&payload).expect("serializes");
+        let parsed: TransferPayload = serde_json::from_str(&json).expect("deserializes");
+        assert_eq!(parsed.schema_version, payload.schema_version);
+        assert_eq!(parsed.original, payload.original);
+        assert_eq!(parsed.answer, payload.answer);
+        assert_eq!(parsed.kind, payload.kind);
+        assert_eq!(parsed.transfer_id, payload.transfer_id);
+        assert_eq!(parsed.source_language, payload.source_language);
+        assert_eq!(parsed.target_language, payload.target_language);
+    }
 }
