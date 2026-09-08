@@ -340,6 +340,7 @@ fn product_loop(
         Quick {
             request: QuickRequest,
             sentence: String,
+            from_pixels: bool,
             generation: u64,
             key: CacheKey,
             anchor: ScreenRect,
@@ -359,6 +360,7 @@ fn product_loop(
         Quick {
             sentence: String,
             result: Result<lens_core::translate::QuickTranslation, String>,
+            from_pixels: bool,
             generation: u64,
             key: CacheKey,
             anchor: ScreenRect,
@@ -426,6 +428,7 @@ fn product_loop(
                 QuickJob::Quick {
                     request,
                     sentence,
+                    from_pixels,
                     generation,
                     key,
                     anchor,
@@ -439,6 +442,7 @@ fn product_loop(
                     let _ = quick_result_tx.send(TransResult::Quick {
                         sentence,
                         result: result.map_err(|e| e.user_message().to_owned()),
+                        from_pixels,
                         generation,
                         key,
                         anchor,
@@ -525,6 +529,7 @@ fn product_loop(
                 TransResult::Quick {
                     sentence,
                     result,
+                    from_pixels,
                     generation,
                     key: _,
                     anchor,
@@ -534,7 +539,10 @@ fn product_loop(
                     }
                     match result {
                         Ok(translation) => {
-                            let card = Card::translated(&sentence, &translation);
+                            let mut card = Card::translated(&sentence, &translation);
+                            if from_pixels {
+                                card = card.read_from_the_screen();
+                            }
                             show_card_at(&overlay, &card, &anchor);
                             current_card = Some((card, sentence));
                             tally.card();
@@ -736,6 +744,7 @@ fn product_loop(
                                     let _ = quick_tx.send(QuickJob::Quick {
                                         request,
                                         sentence: sentence.clone(),
+                                        from_pixels: false,
                                         generation: current_generation,
                                         key,
                                         anchor: current_anchor,
@@ -969,6 +978,7 @@ fn product_loop(
                         let _ = quick_tx.send(QuickJob::Quick {
                             request,
                             sentence: sentence.clone(),
+                            from_pixels: true,
                             generation: current_generation,
                             key,
                             anchor: current_anchor,
