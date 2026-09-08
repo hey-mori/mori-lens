@@ -100,7 +100,16 @@ impl NotKept {
 /// Returns the library item id when the database insert succeeds, or `None`
 /// when the database write was skipped (duplicate or error). The file write
 /// always succeeds independently.
+///
+/// # Concurrency
+///
+/// All persistence is serialized through a process-wide `SAVE_LOCK`. Every
+/// caller — `save_card()`, direct `append()` from Windows hotkey, Tauri
+/// detail save, self-test — passes through this single lock. No production
+/// path can bypass it.
 pub fn append(file: &Path, entry: &Entry, at: SystemTime) -> Result<Option<i64>, NotKept> {
+    let _guard = SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
     if let Some(folder) = file.parent() {
         // The settings folder already exists by the time anything is saved,
         // but a reader who pointed `--settings` somewhere new has not created
@@ -132,18 +141,18 @@ pub fn append(file: &Path, entry: &Entry, at: SystemTime) -> Result<Option<i64>,
     Ok(write_to_library(file, entry, at))
 }
 
-/// Cross-platform save policy: eligibility check, metadata, serialization.
+/// Cross-platform save policy: eligibility check and metadata population.
 ///
-/// All Save entry points (Windows hotkey, macOS hotkey, detail UI) must use
-/// this function rather than calling `append()` directly. It enforces:
+/// All Save entry points (Windows hotkey, macOS hotkey, detail UI) should use
+/// this function when they have a `Card` to save. It enforces:
 ///
 /// - **Eligibility**: only Translation and Analysis cards are savable.
 ///   Problem and Waiting cards return `Ok(None)` (nothing to keep).
 /// - **Metadata**: target_language and model are populated on the Entry.
-/// - **Serialization**: a process-wide lock prevents concurrent saves from
-///   interleaving file writes or racing on preamble/duplicate checks.
 /// - **Storage contract**: both saved.md and library.db are written via
 ///   `append()`, per ADR-0013/ADR-0015.
+///
+/// Serialization is handled by `append()` itself — no separate lock needed here.
 pub fn save_card(
     card: &Card,
     app: Option<&str>,
@@ -151,8 +160,6 @@ pub fn save_card(
     target_language: Option<String>,
     model: Option<String>,
 ) -> Result<Option<i64>, NotKept> {
-    let _guard = SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-
     let mut entry = card.kept_as(app).ok_or(NotKept::NothingToKeep)?;
     entry.target_language = target_language;
     entry.model = model;
@@ -540,10 +547,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Concurrent saves from multiple threads produce exactly one preamble
-    /// and all expected blocks, with no interleaving or corruption.
+    /// Concurrent saves via `save_card()` produce exactly one preamble.
     #[test]
-    fn concurrent_saves_do_not_duplicate_preamble() {
+    fn concurrent_save_card_does_not_duplicate_preamble() {
         use std::sync::Arc;
         use std::thread;
 
@@ -587,8 +593,59 @@ mod tests {
 
         let db_path = dir.join("library.db");
         let lib = Library::open(&db_path).unwrap();
-        // Duplicates are collapsed: same original+kind → 1 row
         assert!(lib.count().unwrap() >= 1, "library must have rows");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Concurrent direct `append()` calls produce exactly one preamble.
+    /// This tests the real serialization boundary — the lock lives in
+    /// `append()`, so even callers that bypass `save_card()` are serialized.
+    #[test]
+    fn concurrent_direct_append_does_not_duplicate_preamble() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let dir = std::env::temp_dir().join("mori-lens-append-concurrent");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = Arc::new(dir.join("saved.md"));
+        let at = UNIX_EPOCH + Duration::from_secs(1_786_075_140);
+
+        let threads: Vec<_> = (0..8)
+            .map(|i| {
+                let file = file.clone();
+                thread::spawn(move || {
+                    let entry = an_entry(&format!("concurrent item {i}"));
+                    let _ = append(&file, &entry, at);
+                })
+            })
+            .collect();
+
+        for t in threads {
+            t.join().unwrap();
+        }
+
+        let content = std::fs::read_to_string(file.as_path()).unwrap();
+        let preamble_count = content.matches("# Saved from Mori Lens").count();
+        assert_eq!(
+            preamble_count, 1,
+            "exactly one preamble expected, got {preamble_count}"
+        );
+
+        for i in 0..8 {
+            assert!(
+                content.contains(&format!("concurrent item {i}")),
+                "item {i} missing from saved.md"
+            );
+        }
+
+        let db_path = dir.join("library.db");
+        let lib = Library::open(&db_path).unwrap();
+        assert_eq!(
+            lib.count().unwrap(),
+            8,
+            "all 8 items must be in the database"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
