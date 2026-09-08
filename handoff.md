@@ -200,8 +200,10 @@ CANONICAL PRODUCT TRUTH:          RECONCILED
   Settings path:                  settings.toml everywhere (no stale .conf)
 
 REMAINING REPOSITORY IMPLEMENTATION:
-  OCR provenance parity     macOS drops from_pixels/doubtful/app on OCR cards (documented)
-  (all other repo-local work complete: save serialization, Deep parity, Copy feedback)
+  OCR provenance parity       macOS drops from_pixels/doubtful/app on OCR cards
+  Deep focused-word parity    macOS DeepRequest.word still None (needs hover word tracking)
+  Command regression tests    PR #332 parity fixes lack automated regression tests
+  (completed: save serialization, Deep translation/profile/language, Copy feedback)
 REMAINING PACKAGING EXECUTION:
   Package-smoke CI GREEN          BLOCKED BY BILLING
   (code fixes merged in PR #315; latest blocked run 34131713859 was on old HEAD)
