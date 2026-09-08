@@ -28,13 +28,18 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+if [[ "$(uname -s)" != "MINGW"* && "$(uname -s)" != "MSYS"* && "$(uname -s)" != "CYGWIN"* ]]; then
+    echo "package.sh is for Windows builds. Use cargo tauri build on macOS." >&2
+    exit 1
+fi
+
 ALLOW_DIRTY=0
 [[ "${1:-}" == "--dirty" ]] && ALLOW_DIRTY=1
 
 step() { printf '\n· %s\n' "$1"; }
 
 SHA="$(git rev-parse --short HEAD)"
-VERSION="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+VERSION="$(grep -m1 '^version' apps/lens/Cargo.toml | cut -d'"' -f2)"
 SUFFIX=""
 
 if [[ -n "$(git status --porcelain)" ]]; then
