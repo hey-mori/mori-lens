@@ -150,6 +150,16 @@ Windows implementation is complete and stable. macOS implementation is complete.
 - `current_app` updated only when `current_card` is set (not at hover time)
 - Prevents wrong app name when pointer moves between apps before Save
 
+### Part 10 — Settings privacy and validation
+
+**PR #346** — fix: settings endpoint loopback validation + file permissions
+- TOML parser rejects non-loopback endpoints at parse time (privacy fix)
+- Settings file created with mode 0o600 on Unix (was world-readable)
+
+**PR #347** — fix: settings write path validation for history_days and engine
+- Tauri `apply()` validates history_days against [0,1,7,30,90] and engine name
+- Invalid values fall back to defaults with warning
+
 **History note**: Published history was rewritten twice (Co-authored-by removal). Current main is the canonical baseline. No further rewrites.
 
 **Hidden backlog found and fixed:**
@@ -379,7 +389,7 @@ bash scripts/validate-macos.sh
 ## Git State
 
 ```
-latest merge: PR #344 (fix: app provenance timing)
+latest merge: PR #347 (fix: settings write path validation)
 PRE-REWRITE CI EVIDENCE: run 34027544715 PASS (historical, pre-history-rewrite)
 CURRENT REWRITTEN MAIN CI: PENDING (billing blocker — fresh run needed)
 Package-smoke: run 34131713859 (BLOCKED — billing, old HEAD)
