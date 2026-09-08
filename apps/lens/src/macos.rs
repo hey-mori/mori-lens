@@ -352,6 +352,7 @@ fn product_loop(
             translation: Option<String>,
             target_language: String,
             profile: lens_core::analyse::Profile,
+            focused_word: Option<String>,
             generation: u64,
             anchor: ScreenRect,
         },
@@ -478,12 +479,13 @@ fn product_loop(
                     translation,
                     target_language,
                     profile,
+                    focused_word,
                     generation,
                     anchor,
                 } => {
                     let deep_req = lens_core::analyse::DeepRequest {
                         sentence: sentence.clone(),
-                        word: None,
+                        word: focused_word,
                         target_language,
                         translation,
                         profile,
@@ -508,6 +510,7 @@ fn product_loop(
     };
     let mut machine = HoverMachine::new(hover_config);
     let mut current_card: Option<(Card, String)> = None;
+    let mut current_focused_word: Option<String> = None;
     let mut current_anchor = ScreenRect::new(0, 0, 0, 0);
     let mut current_generation: u64 = 0;
     let mut paused = false;
@@ -687,6 +690,7 @@ fn product_loop(
                             translation,
                             target_language,
                             profile,
+                            focused_word: current_focused_word.clone(),
                             generation: current_generation,
                             anchor: current_anchor,
                         });
@@ -923,6 +927,9 @@ fn product_loop(
                 };
 
                 let sentence = target.segmented.sentence_text().to_owned();
+                // Carry the focused word through to Deep analysis,
+                // matching Windows behavior (win.rs:2017).
+                current_focused_word = target.segmented.word_text().map(str::to_owned);
                 if sentence.is_empty() {
                     if let Some(ref o) = overlay {
                         o.hide();
