@@ -349,6 +349,8 @@ fn product_loop(
         Deep {
             sentence: String,
             translation: Option<String>,
+            target_language: String,
+            profile: lens_core::analyse::Profile,
             generation: u64,
             anchor: ScreenRect,
         },
@@ -470,15 +472,17 @@ fn product_loop(
                 DeepJob::Deep {
                     sentence,
                     translation,
+                    target_language,
+                    profile,
                     generation,
                     anchor,
                 } => {
                     let deep_req = lens_core::analyse::DeepRequest {
                         sentence: sentence.clone(),
                         word: None,
-                        target_language: String::new(),
+                        target_language,
                         translation,
-                        profile: lens_core::analyse::Profile::default(),
+                        profile,
                     };
                     let result = translator.deep(&deep_req);
                     let _ = deep_result_tx.send(TransResult::Deep {
@@ -651,11 +655,30 @@ fn product_loop(
                     if paused {
                         continue;
                     }
-                    if let Some((_, ref sentence)) = current_card {
+                    if let Some((ref card, ref sentence)) = current_card {
+                        // Extract the on-screen translation if the current card
+                        // is a finished translation. This grounds the deep
+                        // analysis in what the reader is actually looking at
+                        // (ADR-0005), matching Windows behavior.
+                        let translation = match &card.body {
+                            lens_core::card::CardBody::Translation(text) => Some(text.clone()),
+                            _ => None,
+                        };
+
+                        // Read current profile and language from live settings.
+                        let (target_language, profile) = {
+                            let s = shared_settings.lock().unwrap().current().clone();
+                            let p =
+                                lens_core::analyse::Profile::named(&s.profile).unwrap_or_default();
+                            (language.clone(), p)
+                        };
+
                         current_generation += 1;
                         let _ = deep_tx.send(DeepJob::Deep {
                             sentence: sentence.clone(),
-                            translation: None,
+                            translation,
+                            target_language,
+                            profile,
                             generation: current_generation,
                             anchor: current_anchor,
                         });
@@ -673,6 +696,10 @@ fn product_loop(
                                 show_card_at(&overlay, &err_card, &current_anchor);
                                 continue;
                             }
+                            // Visual feedback: mark the card as copied,
+                            // matching Windows behavior.
+                            let copied_card = card.clone().copied();
+                            show_card_at(&overlay, &copied_card, &current_anchor);
                         }
                     }
                 }
