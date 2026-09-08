@@ -644,6 +644,9 @@ fn product_loop(
         // Dispatch commands. Quit and PauseToggle work even when paused;
         // all other commands are blocked (matching Windows behavior).
         for cmd in pending_commands {
+            if paused && !cmd.works_when_paused() {
+                continue;
+            }
             match cmd {
                 ProductCommand::Quit => {
                     quit_requested = true;
@@ -660,9 +663,6 @@ fn product_loop(
                     }
                 }
                 ProductCommand::Deep => {
-                    if paused {
-                        continue;
-                    }
                     if let Some((ref card, ref sentence)) = current_card {
                         // Extract the on-screen translation if the current card
                         // is a finished translation. This grounds the deep
@@ -693,9 +693,6 @@ fn product_loop(
                     }
                 }
                 ProductCommand::Copy => {
-                    if paused {
-                        continue;
-                    }
                     if let Some((ref card, _)) = current_card {
                         if let Some(text) = card.for_the_clipboard() {
                             if !clipboard::put_text(&text) {
@@ -712,17 +709,11 @@ fn product_loop(
                     }
                 }
                 ProductCommand::Save => {
-                    if paused {
-                        continue;
-                    }
                     if let Some((ref card, ref _sentence)) = current_card {
                         execute_save(card, &shared_save_path, &language, &model);
                     }
                 }
                 ProductCommand::ManualOcr => {
-                    if paused {
-                        continue;
-                    }
                     if let Some(ref ocr) = ocr_acquirer {
                         if let Some(ref o) = overlay {
                             o.hide();
