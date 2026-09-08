@@ -629,7 +629,8 @@ fn product_loop(
             }
         }
 
-        // Dispatch commands.
+        // Dispatch commands. Quit and PauseToggle work even when paused;
+        // all other commands are blocked (matching Windows behavior).
         for cmd in pending_commands {
             match cmd {
                 ProductCommand::Quit => {
@@ -647,6 +648,9 @@ fn product_loop(
                     }
                 }
                 ProductCommand::Deep => {
+                    if paused {
+                        continue;
+                    }
                     if let Some((_, ref sentence)) = current_card {
                         current_generation += 1;
                         let _ = deep_tx.send(DeepJob::Deep {
@@ -658,18 +662,32 @@ fn product_loop(
                     }
                 }
                 ProductCommand::Copy => {
+                    if paused {
+                        continue;
+                    }
                     if let Some((ref card, _)) = current_card {
                         if let Some(text) = card.for_the_clipboard() {
-                            clipboard::put_text(&text);
+                            if !clipboard::put_text(&text) {
+                                eprintln!("copy  the clipboard would not open");
+                                let err_card = Card::not_readable("클립보드를 열지 못했습니다");
+                                show_card_at(&overlay, &err_card, &current_anchor);
+                                continue;
+                            }
                         }
                     }
                 }
                 ProductCommand::Save => {
+                    if paused {
+                        continue;
+                    }
                     if let Some((ref card, ref _sentence)) = current_card {
                         execute_save(card, &shared_save_path, &language, &model);
                     }
                 }
                 ProductCommand::ManualOcr => {
+                    if paused {
+                        continue;
+                    }
                     if let Some(ref ocr) = ocr_acquirer {
                         if let Some(ref o) = overlay {
                             o.hide();
@@ -705,7 +723,11 @@ fn product_loop(
                                     ));
                                 }
                             }
-                            Err(_) => {}
+                            Err(refusal) => {
+                                eprintln!("ocr   no reading [{}]", refusal.reason());
+                                let card = Card::not_readable(refusal.reason());
+                                show_card_at(&overlay, &card, &current_anchor);
+                            }
                         }
                     }
                 }

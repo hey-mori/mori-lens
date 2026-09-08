@@ -94,6 +94,16 @@ Windows implementation is complete and stable. macOS implementation is complete.
 
 **Branch cleanup:** 57 stale remote branches pruned
 
+### Part 4 — Cross-platform save contract
+
+**PR #331** — fix: cross-platform save contract with shared save_card()
+- macOS `execute_save()` was broken: saved Problem/Waiting cards, no saved.md, all metadata None
+- New `keeping::save_card()`: shared save policy with eligibility, metadata, serialization
+- `SAVE_LOCK` (process-wide Mutex) prevents concurrent preamble duplication
+- Tests: `save_card_refuses_waiting`, `save_card_accepts_translation`, `concurrent_saves_do_not_duplicate_preamble`
+
+**History rewrite**: Removed all `Co-authored-by` lines from entire git history (force push)
+
 **Hidden backlog found and fixed:**
 1. M8 gate had 3 evidence gaps (JSON round-trip, delete+reopen, explicit save e2e) — all closed
 2. OCR contract stale in project-goal.md §2 — fixed
@@ -143,7 +153,11 @@ M8 AUTOMATED GATE:                CLOSED
   Explicit save:                  append_creates_both_files_from_nothing
                                   a_save_also_writes_to_the_library_database
                                   session_recent_does_not_survive_drop
+                                  save_card_refuses_waiting
+                                  save_card_accepts_translation
+                                  concurrent_saves_do_not_duplicate_preamble
                                   Caller audit: 3 append() sites (win.rs:1305, detail_view.rs:175, win.rs:2925)
+                                  All Save paths use shared save_card() policy
   Export round-trips:             jsonl_round_trip_preserves_items_and_tags
                                   jsonl_semantic_round_trip
                                   jsonl_round_trip_preserves_review_state
@@ -209,9 +223,9 @@ REMAINING OWNER DECISIONS:
 ## Automated Evidence
 
 ```
-scripts/check.sh --full:          PASS (2026-09-07, local)
-workspace fmt/clippy/tests:       PASS (678 tests)
-product fmt/clippy/check/test:    PASS (53 tests)
+scripts/check.sh --full:          PASS (2026-09-08, local)
+workspace fmt/clippy/tests:       PASS (680 tests)
+product fmt/clippy/check/test:    PASS (57 tests)
 clean native rebuild:             PASS
 platform-macos tests:             PASS (56 tests including 16 hotkey)
 lens-translate tests:             PASS (8 HTTP fault tests)
@@ -315,10 +329,11 @@ bash scripts/validate-macos.sh
 ## Git State
 
 ```
-latest merge: PR #329 (fix: ICNS PNG CRC, smoke asset verifier, honest M8 tests)
+latest merge: PR #331 (fix: cross-platform save contract)
 CI pass: run 34027544715 (both platforms)
 Package-smoke: run 34131713859 (BLOCKED — billing)
 Branches: clean (57 stale remote branches pruned)
+History: all Co-authored-by lines removed (force push)
 always run `git log -1` at session start for actual HEAD.
 ```
 
