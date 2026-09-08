@@ -174,4 +174,21 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].original, "new");
     }
+
+    /// SessionRecent is memory-only: dropping and recreating loses all data.
+    /// This is the M8 contract — SessionRecent never persists to disk.
+    #[test]
+    fn session_recent_does_not_survive_drop() {
+        let mut recent = SessionRecent::new();
+        recent.record(a_card("persisted?", 1000));
+        assert_eq!(recent.list(1000).len(), 1);
+
+        drop(recent);
+
+        let mut fresh = SessionRecent::new();
+        assert!(
+            fresh.list(1000).is_empty(),
+            "SessionRecent must not persist across instances"
+        );
+    }
 }
