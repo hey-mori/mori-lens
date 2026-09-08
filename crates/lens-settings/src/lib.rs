@@ -119,6 +119,241 @@ impl From<write::AtomicWriteError> for SettingsError {
     }
 }
 
+/// Outcome of loading or initializing a settings file.
+///
+/// The caller uses this to report what happened (first run, migrated,
+/// loaded existing) and decide whether to show a welcome message.
+#[derive(Debug)]
+pub enum LoadDisposition {
+    /// Loaded an existing valid settings file.
+    Loaded,
+    /// Created a new file with defaults (first run).
+    Created,
+    /// Migrated from legacy flat format.
+    Migrated {
+        /// Problems found during migration.
+        problems: Vec<lens_core::settings::Problem>,
+    },
+    /// File exists but is invalid; preserved without modification.
+    InvalidPreserved {
+        /// Why the file could not be loaded.
+        reason: String,
+    },
+}
+
+/// Load a settings file, migrating from legacy format if needed.
+///
+/// This is the canonical file-lifecycle entry point. It handles:
+/// - Loading valid new-format TOML files
+/// - Migrating legacy flat-format files with fail-safe backup
+/// - Creating new files with defaults on first run
+/// - Preserving invalid files without destructive overwrites
+///
+/// The migration is fail-safe: if the backup cannot be created, the
+/// original file is never modified. If the backup exists, a numbered
+/// variant is used to avoid collision.
+///
+/// Returns the loaded file and the disposition indicating what happened.
+pub fn load_or_initialize(path: &Path) -> Result<(SettingsFile, LoadDisposition), SettingsError> {
+    // Try reading the file first
+    let content = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // First run: create new file with defaults
+            let mut file = SettingsFile::new_defaults(path.to_path_buf());
+            if let Err(e) = file.save() {
+                eprintln!("settings  cannot create {path:?}: {e}");
+                // Return the file anyway; caller can use defaults
+                return Ok((file, LoadDisposition::Created));
+            }
+            return Ok((file, LoadDisposition::Created));
+        }
+        Err(e) => {
+            return Err(SettingsError::Io {
+                path: path.to_path_buf(),
+                source: e,
+            });
+        }
+    };
+
+    // Try loading as new format
+    match SettingsFile::load(path) {
+        Ok(file) => Ok((file, LoadDisposition::Loaded)),
+        Err(SettingsError::MissingVersion { .. }) => {
+            // No schema_version: check if it's legacy format
+            if is_legacy_format(&content) {
+                // Migrate legacy format
+                migrate_legacy_file(path, &content)
+            } else {
+                // Not legacy, not new format: preserve and report
+                let reason = "no schema_version and not recognized as legacy format".to_string();
+                eprintln!("settings  {path:?}: {reason}");
+                let file = SettingsFile::new_defaults(path.to_path_buf());
+                Ok((file, LoadDisposition::InvalidPreserved { reason }))
+            }
+        }
+        Err(SettingsError::FutureVersion { .. }) => {
+            // Future version: preserve, never downgrade
+            let reason = "future schema version; cannot load without downgrading".to_string();
+            eprintln!("settings  {path:?}: {reason}");
+            let file = SettingsFile::new_defaults(path.to_path_buf());
+            Ok((file, LoadDisposition::InvalidPreserved { reason }))
+        }
+        Err(SettingsError::Parse { .. }) => {
+            // Malformed TOML: not legacy, preserve
+            let reason = "not valid TOML; preserving original".to_string();
+            eprintln!("settings  {path:?}: {reason}");
+            let file = SettingsFile::new_defaults(path.to_path_buf());
+            Ok((file, LoadDisposition::InvalidPreserved { reason }))
+        }
+        Err(e) => {
+            // Other error: preserve
+            let reason = format!("cannot load: {e}");
+            eprintln!("settings  {path:?}: {reason}");
+            let file = SettingsFile::new_defaults(path.to_path_buf());
+            Ok((file, LoadDisposition::InvalidPreserved { reason }))
+        }
+    }
+}
+
+/// Detect whether content is in the legacy flat format.
+///
+/// Legacy format characteristics:
+/// - No `schema_version` field
+/// - Top-level keys like `language`, `model`, `dwell_ms`, etc.
+/// - No new schema sections like `[general]`, `[quick]`, `[deep]`
+///
+/// This function assumes the content is valid TOML (or close enough to
+/// parse). If TOML parsing fails, this returns false.
+fn is_legacy_format(content: &str) -> bool {
+    // Try to parse as TOML
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+
+    // If it has schema_version, it's new format
+    if doc.get("schema_version").is_some() {
+        return false;
+    }
+
+    // Check for new schema sections (indicates new format without version)
+    if doc.get("general").is_some() || doc.get("quick").is_some() || doc.get("deep").is_some() {
+        return false;
+    }
+
+    // Check for legacy top-level keys
+    let legacy_keys = [
+        "language",
+        "model",
+        "dwell_ms",
+        "theme",
+        "translucency",
+        "endpoint",
+        "ocr",
+        "text",
+        "profile",
+        "hover_scope",
+        "history",
+        "history_days",
+        "history_store_app",
+        "default",
+    ];
+
+    let has_legacy_key = legacy_keys.iter().any(|key| doc.get(key).is_some());
+
+    // If it has at least one legacy key and no new sections, it's legacy
+    has_legacy_key
+}
+
+/// Migrate a legacy format file to new TOML format with fail-safe backup.
+///
+/// The migration is transactional:
+/// 1. Parse legacy format
+/// 2. Build new schema in memory
+/// 3. Create backup (with collision handling)
+/// 4. Write new file
+///
+/// If backup creation fails, the original file is never modified.
+fn migrate_legacy_file(
+    path: &Path,
+    content: &str,
+) -> Result<(SettingsFile, LoadDisposition), SettingsError> {
+    let report = migrate::migrate_from_conf(content);
+    let mut file = SettingsFile::new_defaults(path.to_path_buf());
+    *file.schema_mut() = report.schema;
+
+    // Create backup with collision handling
+    let backup = create_backup(path)?;
+
+    // Backup succeeded, now we can safely overwrite
+    eprintln!("settings  migrated legacy format to {path:?} (backup at {backup:?})");
+    for problem in &report.problems {
+        eprintln!("settings  migration note: {}", problem.message);
+    }
+
+    if let Err(e) = file.save() {
+        // Save failed after backup was created
+        eprintln!("settings  migration save failed: {e}");
+        eprintln!("settings  original preserved at {backup:?}");
+        // Return defaults; original is backed up
+        return Ok((
+            SettingsFile::new_defaults(path.to_path_buf()),
+            LoadDisposition::InvalidPreserved {
+                reason: format!("migration save failed: {e}"),
+            },
+        ));
+    }
+
+    Ok((
+        file,
+        LoadDisposition::Migrated {
+            problems: report.problems,
+        },
+    ))
+}
+
+/// Create a backup of the file, handling collisions.
+///
+/// Returns the backup path on success. On failure, the original file
+/// is not modified.
+fn create_backup(path: &Path) -> Result<PathBuf, SettingsError> {
+    // Try the standard backup name first
+    let backup = path.with_extension("toml.legacy-backup");
+
+    if !backup.exists() {
+        // No collision: simple rename
+        if let Err(e) = fs::rename(path, &backup) {
+            return Err(SettingsError::Io {
+                path: path.to_path_buf(),
+                source: e,
+            });
+        }
+        return Ok(backup);
+    }
+
+    // Collision: try numbered variants
+    for i in 1..=100 {
+        let numbered = path.with_extension(format!("toml.legacy-backup.{i}"));
+        if !numbered.exists() {
+            if let Err(e) = fs::rename(path, &numbered) {
+                return Err(SettingsError::Io {
+                    path: path.to_path_buf(),
+                    source: e,
+                });
+            }
+            return Ok(numbered);
+        }
+    }
+
+    // Too many backups: refuse to migrate
+    Err(SettingsError::Io {
+        path: path.to_path_buf(),
+        source: std::io::Error::other(
+            "too many legacy backups already exist; manual cleanup required",
+        ),
+    })
+}
+
 impl SettingsFile {
     /// Load a settings file from disk.
     ///
