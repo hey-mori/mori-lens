@@ -510,6 +510,7 @@ fn product_loop(
     let mut current_card: Option<(Card, String)> = None;
     let mut current_focused_word: Option<String> = None;
     let mut current_app: Option<String> = None;
+    let mut pending_app: Option<String> = None;
     let mut current_anchor = ScreenRect::new(0, 0, 0, 0);
     let mut current_generation: u64 = 0;
     let mut paused = false;
@@ -539,6 +540,8 @@ fn product_loop(
                     if generation != current_generation {
                         continue;
                     }
+                    // Sync app provenance with the card about to be created.
+                    current_app = pending_app.clone();
                     match result {
                         Ok(translation) => {
                             let mut card = Card::translated(&sentence, &translation);
@@ -570,6 +573,7 @@ fn product_loop(
                     if generation != current_generation {
                         continue;
                     }
+                    current_app = pending_app.clone();
                     match result {
                         Ok(analysis) => {
                             let card = Card::analysed(&sentence, &analysis);
@@ -750,6 +754,7 @@ fn product_loop(
                                         key,
                                         anchor: current_anchor,
                                     });
+                                    current_app = pending_app.clone();
                                     current_card = Some((
                                         Card {
                                             original: sentence.clone(),
@@ -893,7 +898,10 @@ fn product_loop(
                     }
                     continue;
                 }
-                current_app = process_name.clone();
+                // Carry app identity alongside the acquisition.
+                // current_app is updated only when current_card is set,
+                // so Save always matches the card's actual source.
+                pending_app = process_name.clone();
 
                 // AX acquisition first.
                 let acquire_result = if ax_trusted {
@@ -956,6 +964,7 @@ fn product_loop(
                             footer: String::new(),
                         };
                         show_card(&overlay, &card, &target);
+                        current_app = pending_app.clone();
                         current_card = Some((card, sentence));
                     }
                     _ => {
@@ -971,6 +980,7 @@ fn product_loop(
                             if let Some(cached) = c.get(&key) {
                                 let card = Card::translated(&sentence, &cached);
                                 show_card(&overlay, &card, &target);
+                                current_app = pending_app.clone();
                                 current_card = Some((card, sentence));
                                 continue;
                             }
@@ -990,6 +1000,7 @@ fn product_loop(
                             anchor: current_anchor,
                         });
                         // Store target for when result arrives.
+                        current_app = pending_app.clone();
                         current_card = Some((
                             Card {
                                 original: sentence.clone(),
