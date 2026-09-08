@@ -15,28 +15,35 @@ import os
 import sys
 
 
-def make_png(width: int, height: int, filepath: str) -> None:
-    """Generate a minimal valid PNG file (8-bit RGBA, solid grey)."""
+def _encode_png(width: int, height: int) -> bytes:
+    """Encode a minimal valid PNG (8-bit RGBA, solid grey) and return bytes.
+
+    Every chunk includes the required CRC32(type + data).
+    """
 
     def chunk(chunk_type: bytes, data: bytes) -> bytes:
         c = chunk_type + data
         crc = struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
         return struct.pack(">I", len(data)) + c + crc
 
-    # IHDR: width, height, bit depth 8, color type 6 (RGBA)
     ihdr_data = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
-    # IDAT: uncompressed rows with filter byte 0
     raw_data = b""
     for _ in range(height):
-        raw_data += b"\x00" + b"\x80\x80\x80\xff" * width  # filter + grey+opaque RGBA
+        raw_data += b"\x00" + b"\x80\x80\x80\xff" * width
     compressed = zlib.compress(raw_data)
 
+    png = b"\x89PNG\r\n\x1a\n"
+    png += chunk(b"IHDR", ihdr_data)
+    png += chunk(b"IDAT", compressed)
+    png += chunk(b"IEND", b"")
+    return png
+
+
+def make_png(width: int, height: int, filepath: str) -> None:
+    """Generate a minimal valid PNG file (8-bit RGBA, solid grey)."""
     os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
     with open(filepath, "wb") as f:
-        f.write(b"\x89PNG\r\n\x1a\n")
-        f.write(chunk(b"IHDR", ihdr_data))
-        f.write(chunk(b"IDAT", compressed))
-        f.write(chunk(b"IEND", b""))
+        f.write(_encode_png(width, height))
 
 
 def make_ico(filepath: str) -> None:
@@ -116,17 +123,7 @@ def make_icns(filepath: str) -> None:
 
     entries = []
     for ostype, w, h in icon_types:
-        ihdr_data = struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)
-        raw_data = b""
-        for _ in range(h):
-            raw_data += b"\x00" + b"\x80\x80\x80\xff" * w
-        compressed = zlib.compress(raw_data)
-
-        png = b"\x89PNG\r\n\x1a\n"
-        png += struct.pack(">I", len(ihdr_data)) + b"IHDR" + ihdr_data
-        png += struct.pack(">I", len(compressed)) + b"IDAT" + compressed
-        png += struct.pack(">I", 0) + b"IEND"
-
+        png = _encode_png(w, h)
         entry = ostype + struct.pack(">I", len(png) + 8) + png
         entries.append(entry)
 
