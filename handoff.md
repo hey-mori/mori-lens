@@ -60,7 +60,7 @@ Windows implementation is complete and stable. macOS implementation is complete.
 **PR #316** — fix: add icon generation to release workflow jobs
 **PR #317** — docs: fix stale capability count (26→28) and installability claims
 
-### Part 2 — M8 gate closure and canonical truth (this session)
+### Part 2 — M8 gate closure and canonical truth
 
 **PR #318** — docs: reconcile canonical truth with current code state
 - project-goal.md §2: OCR contract "manual only" → "manual by default; automatic after explicit opt-in"
@@ -77,6 +77,22 @@ Windows implementation is complete and stable. macOS implementation is complete.
 **PR #320** — fix: remaining settings.conf references
 - SECURITY.md: settings.conf → settings.toml
 - keeping.rs: Windows test paths updated
+
+### Part 3 — Implementation improvements and code audit
+
+**PR #322** — fix: cross-platform mori_transfer, macOS availability, version source
+- mori_transfer.rs: `HOME` fallback when `USERPROFILE` unset (was silently broken on macOS)
+- capture.m: `@available(macOS 14.0, *)` guard for `setCaptureResolution:` (eliminated CI warning)
+- package-smoke.yml: version source from `apps/lens/Cargo.toml` (was workspace root)
+
+**PR #323** — fix: mori payload test, package.sh platform guard and version source
+- mori_transfer: `payload_from_item_round_trips_through_json` test (transfer pipeline coverage)
+- package.sh: Windows-only platform guard + version source fix
+
+**PR #324** — docs: document reserved AX accessors in platform-macos
+- acquirer.rs: `get_position`/`get_size` doc comments explaining reserved status
+
+**Branch cleanup:** 57 stale remote branches pruned
 
 **Hidden backlog found and fixed:**
 1. M8 gate had 3 evidence gaps (JSON round-trip, delete+reopen, explicit save e2e) — all closed
@@ -191,6 +207,7 @@ clean native rebuild:             PASS
 platform-macos tests:             PASS (56 tests including 16 hotkey)
 lens-translate tests:             PASS (8 HTTP fault tests)
 lens-storage tests:               PASS (76 tests, full M8 lifecycle)
+mori_transfer tests:              PASS (23 tests including payload round-trip)
 privacy static gate:              CLEAN
 Generated .icns:                  VALID (file: "Mac OS X icon, 14039 bytes, icp4 type")
 CI run 34027544715:               PASS (both platforms)
@@ -289,9 +306,10 @@ bash scripts/validate-macos.sh
 ## Git State
 
 ```
-latest merge: PR #320 (fix: remaining settings.conf references)
+latest merge: PR #324 (docs: document reserved AX accessors)
 CI pass: run 34027544715 (both platforms)
 Package-smoke: run 34131713859 (BLOCKED — billing)
+Branches: clean (57 stale remote branches pruned)
 always run `git log -1` at session start for actual HEAD.
 ```
 
