@@ -124,15 +124,15 @@ M7 macOS overlay/OCR    COMPLETE        CLOSED     BLOCKED   PENDING   N/A
 M8 Library/Review       COMPLETE        CLOSED     N/A       N/A       N/A
 Mori boundary           BUILT           CLOSED     N/A       PENDING   N/A
 Windows NSIS release    SHIPPED         CLOSED     N/A       N/A       UNSIGNED
-Windows MSIX release    VERIFIED        CLOSED     N/A       N/A       BLOCKED†
-macOS .app bundle       INFRASTRUCTURE  CLOSED     PENDING   N/A       UNSIGNED
+Windows MSIX release    IMPLEMENTED     CLOSED     N/A       N/A       BLOCKED†
+macOS .app bundle       IMPLEMENTED     CLOSED     PENDING   N/A       UNSIGNED
 macOS notarization      BLOCKED‡       N/A        N/A       N/A       BLOCKED‡
 First-user onboarding   NOT TESTED      N/A        N/A       PENDING   N/A
 Return/re-entry         NOT TESTED      N/A        N/A       PENDING   N/A
 
 * M5 explanation quality: model-quality research, gate open (P1 lemma 63%)
-† Store developer account required (external)
-‡ cargo-tauri not installed locally; CI execution in progress
+† Store developer account required; current-main CI execution blocked by billing
+‡ Apple Developer ID credentials required; CI blocked by billing
 ```
 
 ## Agent Assessment
@@ -140,16 +140,23 @@ Return/re-entry         NOT TESTED      N/A        N/A       PENDING   N/A
 ```
 M8 IMPLEMENTATION:                COMPLETE
 M8 AUTOMATED GATE:                CLOSED
-  Explicit save:                  nothing_is_persisted_before_an_explicit_save
+  Explicit save:                  append_creates_both_files_from_nothing
                                   a_save_also_writes_to_the_library_database
+                                  session_recent_does_not_survive_drop
+                                  Caller audit: 3 append() sites (win.rs:1305, detail_view.rs:175, win.rs:2925)
   Export round-trips:             jsonl_round_trip_preserves_items_and_tags
                                   jsonl_semantic_round_trip
                                   jsonl_round_trip_preserves_review_state
                                   json_export_semantic_round_trip
-                                  exporting_generates_saved_md_format
+                                  exporting_generates_saved_md_format (human-readable, not machine re-import)
   Deletion persistence:           single_delete_survives_reopen
                                   secure_wipe_survives_reopen
                                   library_delete_does_not_affect_history
+
+SMOKE PNG:                        VALID (CRC verified, 1024x1024 RGBA)
+SMOKE ICO:                        VALID (directory structure verified)
+SMOKE ICNS:                       VALID (iconutil/sips decode, embedded PNG CRC verified)
+SMOKE-ASSET VERIFIER:             scripts/verify-smoke-assets.py integrated into check.sh --full
 
 PACKAGE INFRASTRUCTURE:           IMPLEMENTED (NSIS + MSIX + .app + release workflow)
 PACKAGE CURRENT-MAIN EXECUTION:   PENDING (GitHub Actions billing blocker)
@@ -162,6 +169,8 @@ CANONICAL PRODUCT TRUTH:          RECONCILED
   Settings path:                  settings.toml everywhere (no stale .conf)
 
 REMAINING REPOSITORY IMPLEMENTATION:  NONE
+  (all repo-local implementation, tests, and evidence work complete)
+  (ICNS CRC bug fixed, smoke asset verifier added, M8 evidence audited)
 REMAINING PACKAGING EXECUTION:
   Package-smoke CI GREEN          BLOCKED BY BILLING
   (code fixes merged in PR #315; latest blocked run 34131713859 was on old HEAD)
@@ -306,7 +315,7 @@ bash scripts/validate-macos.sh
 ## Git State
 
 ```
-latest merge: PR #324 (docs: document reserved AX accessors)
+latest merge: PR #329 (fix: ICNS PNG CRC, smoke asset verifier, honest M8 tests)
 CI pass: run 34027544715 (both platforms)
 Package-smoke: run 34131713859 (BLOCKED — billing)
 Branches: clean (57 stale remote branches pruned)
