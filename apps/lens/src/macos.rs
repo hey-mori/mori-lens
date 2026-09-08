@@ -176,7 +176,7 @@ pub fn main() -> std::process::ExitCode {
         shared_detail.clone(),
         shared_recent.clone(),
         explain_flag.clone(),
-        shared_save_path,
+        shared_save_path.clone(),
     ) {
         Ok(triple) => triple,
         Err(error) => {
@@ -285,6 +285,7 @@ pub fn main() -> std::process::ExitCode {
             loop_diagnostics,
             loop_settings,
             loop_library,
+            shared_save_path.clone(),
             overlay,
             menubar,
             lifecycle,
@@ -317,7 +318,8 @@ fn product_loop(
     tauri_handle: AppHandle,
     shared_diagnostics: SharedDiagnostics,
     shared_settings: SharedSettings,
-    shared_library: SharedLibrary,
+    _shared_library: SharedLibrary,
+    shared_save_path: SharedSavePath,
     overlay: Option<Overlay>,
     menubar: Option<MenuBar>,
     lifecycle: Option<Lifecycle>,
@@ -663,8 +665,8 @@ fn product_loop(
                     }
                 }
                 ProductCommand::Save => {
-                    if let Some((ref card, ref sentence)) = current_card {
-                        execute_save(card, sentence, &shared_library);
+                    if let Some((ref card, ref _sentence)) = current_card {
+                        execute_save(card, &shared_save_path, &language, &model);
                     }
                 }
                 ProductCommand::ManualOcr => {
@@ -949,51 +951,25 @@ fn product_loop(
 
 // -- Helper functions -------------------------------------------------------
 
-/// Save using the canonical Library API (same as Windows).
-fn execute_save(card: &Card, sentence: &str, shared_library: &SharedLibrary) {
-    let answer = match &card.body {
-        CardBody::Translation(t) => t.clone(),
-        CardBody::Analysis {
-            translation, rows, ..
-        } => {
-            let mut text = String::new();
-            if let Some(t) = translation {
-                text.push_str(t);
-                text.push('\n');
-            }
-            text.push_str(&CardBody::rows_as_text(rows));
-            text
+/// Save using the shared cross-platform save policy.
+///
+/// Delegates to `keeping::save_card()` which enforces eligibility (only
+/// Translation/Analysis), populates metadata, writes both saved.md and
+/// library.db, and serializes concurrent saves.
+fn execute_save(card: &Card, save_path: &std::path::Path, language: &str, model: &Option<String>) {
+    match crate::keeping::save_card(
+        card,
+        None,
+        save_path,
+        Some(language.to_owned()),
+        model.clone(),
+    ) {
+        Ok(Some(id)) => eprintln!("  save      saved as library item #{id}"),
+        Ok(None) => eprintln!("  save      nothing to keep (duplicate)"),
+        Err(crate::keeping::NotKept::NothingToKeep) => {
+            eprintln!("  save      nothing to keep (waiting/problem card refused)")
         }
-        CardBody::Problem(p) => p.clone(),
-        CardBody::Waiting(w) => w.clone(),
-    };
-    let kind = match &card.body {
-        CardBody::Analysis { .. } => "analysis",
-        _ => "translation",
-    };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    let item = lens_storage::Item {
-        id: 0,
-        original: sentence.to_owned(),
-        answer,
-        caveat: None,
-        app: None,
-        created_at: now,
-        kind: kind.to_owned(),
-        source_language: None,
-        target_language: None,
-        model: None,
-        note: None,
-        tags: None,
-        review_state: Some("later".to_string()),
-    };
-    let lib = shared_library.lock().unwrap();
-    match lib.library().insert(&item) {
-        Ok(id) => eprintln!("  save      saved as library item #{id}"),
-        Err(e) => eprintln!("  save      library insert failed: {e}"),
+        Err(e) => eprintln!("  save      failed: {}", e.user_message()),
     }
 }
 
