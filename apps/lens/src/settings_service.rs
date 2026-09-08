@@ -212,17 +212,21 @@ impl SettingsState {
             "hover_scope",
         );
         schema.general.history = view.history;
-        schema.general.history_days = view.history_days;
+        schema.general.history_days = if [0, 1, 7, 30, 90].contains(&view.history_days) {
+            view.history_days
+        } else {
+            defaults.history_days
+        };
         schema.general.history_store_app = view.history_store_app;
         schema.general.history_excluded = view.history_excluded;
 
         schema.quick = EngineConfig {
-            engine: view.quick_engine,
+            engine: validate_engine(&view.quick_engine),
             model: view.quick_model,
             endpoint: validate_endpoint(&view.quick_endpoint, &defaults.endpoint, "quick_endpoint"),
         };
         schema.deep = EngineConfig {
-            engine: view.deep_engine,
+            engine: validate_engine(&view.deep_engine),
             model: view.deep_model,
             endpoint: validate_endpoint(&view.deep_endpoint, &defaults.endpoint, "deep_endpoint"),
         };
@@ -313,6 +317,15 @@ fn is_valid_profile(s: &str) -> bool {
 
 fn is_valid_hover_scope(s: &str) -> bool {
     matches!(s, "sentence" | "word")
+}
+
+fn validate_engine(value: &str) -> String {
+    if value == "ollama" {
+        value.to_owned()
+    } else {
+        eprintln!("settings  engine = {value:?} is not recognized, using \"ollama\"");
+        "ollama".to_owned()
+    }
 }
 
 fn validate_endpoint(value: &str, default: &str, field_name: &str) -> String {
