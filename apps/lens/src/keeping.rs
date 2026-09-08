@@ -49,26 +49,35 @@ pub fn path_beside(settings: &Path) -> PathBuf {
 }
 
 /// Why an entry was not kept, in words a card can show.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NotKept {
     /// The card has no answer on it, so there is nothing to keep.
     NothingToKeep,
-    /// The file could not be opened or written.
-    NotWritten,
+    /// The file could not be opened or written. Carries the I/O error
+    /// detail for logging; `user_message` returns a stable Korean string.
+    NotWritten(String),
 }
 
 impl NotKept {
-    pub fn user_message(self) -> &'static str {
+    pub fn user_message(&self) -> &'static str {
         match self {
             Self::NothingToKeep => "저장할 내용이 아직 없습니다",
-            Self::NotWritten => "저장 파일에 쓰지 못했습니다",
+            Self::NotWritten(_) => "저장 파일에 쓰지 못했습니다",
         }
     }
 
-    pub fn reason(self) -> &'static str {
+    pub fn reason(&self) -> &'static str {
         match self {
             Self::NothingToKeep => "nothing-to-keep",
-            Self::NotWritten => "not-written",
+            Self::NotWritten(_) => "not-written",
+        }
+    }
+
+    /// I/O error detail for logging. Empty for non-I/O variants.
+    pub fn detail(&self) -> &str {
+        match self {
+            Self::NotWritten(ref msg) => msg,
+            _ => "",
         }
     }
 }
@@ -96,7 +105,7 @@ pub fn append(file: &Path, entry: &Entry, at: SystemTime) -> Result<Option<i64>,
         .create(true)
         .append(true)
         .open(file)
-        .map_err(|_| NotKept::NotWritten)?;
+        .map_err(|e| NotKept::NotWritten(e.to_string()))?;
 
     // The heading is written once, with the first entry rather than at
     // startup: a reader who never saves anything should not find a file
@@ -106,11 +115,11 @@ pub fn append(file: &Path, entry: &Entry, at: SystemTime) -> Result<Option<i64>,
     if is_empty {
         handle
             .write_all(PREAMBLE.as_bytes())
-            .map_err(|_| NotKept::NotWritten)?;
+            .map_err(|e| NotKept::NotWritten(e.to_string()))?;
     }
     handle
         .write_all(block(entry, at).as_bytes())
-        .map_err(|_| NotKept::NotWritten)?;
+        .map_err(|e| NotKept::NotWritten(e.to_string()))?;
 
     // The structured store. If the database write fails, the file has
     // already succeeded, and the entry is not lost.
@@ -280,7 +289,8 @@ mod tests {
 
     #[test]
     fn every_refusal_has_a_sentence_and_a_reason() {
-        for refusal in [NotKept::NothingToKeep, NotKept::NotWritten] {
+        let refusals = [NotKept::NothingToKeep, NotKept::NotWritten("test".into())];
+        for refusal in &refusals {
             assert!(!refusal.user_message().is_empty());
             assert_ne!(refusal.user_message(), refusal.reason());
         }
