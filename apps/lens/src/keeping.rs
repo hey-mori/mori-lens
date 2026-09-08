@@ -380,13 +380,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
     }
 
-    /// Nothing is persisted before an explicit save.
+    /// `append()` is the sole persistence function. It creates both
+    /// saved.md and library.db on first call; neither exists before.
     ///
-    /// This is the M8 gate condition "nothing stored without user action"
-    /// tested at the product boundary: a fresh directory has no saved.md
-    /// and no library.db until `append` is called.
+    /// Caller audit (the M8 "nothing stored without user action" contract):
+    ///
+    /// - win.rs:1305 — Windows Ctrl+Alt+S hotkey (Pressed::Keep)
+    /// - detail_view.rs:175 — Tauri detail window Save button
+    /// - win.rs:2925 — self-test diagnostic (temp file, not user data)
+    ///
+    /// No other code path (hover, Quick, Deep, SessionRecent) calls append().
+    /// macOS execute_save() writes to library.db only (no saved.md).
     #[test]
-    fn nothing_is_persisted_before_an_explicit_save() {
+    fn append_creates_both_files_from_nothing() {
         let dir = std::env::temp_dir().join("mori-lens-keep-no-persist");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
