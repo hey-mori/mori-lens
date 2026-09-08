@@ -39,6 +39,16 @@ impl From<c_int> for ProductCommand {
     }
 }
 
+impl ProductCommand {
+    /// Whether this command should execute even when the product is paused.
+    ///
+    /// Only Quit and PauseToggle work while paused — matching Windows behavior
+    /// where every other command is gated with `!pause.is_paused()`.
+    pub const fn works_when_paused(self) -> bool {
+        matches!(self, Self::Quit | Self::PauseToggle)
+    }
+}
+
 extern "C" {
     fn lens_hotkey_install() -> bool;
     fn lens_hotkey_remove();
@@ -77,6 +87,8 @@ pub fn is_enabled() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::ProductCommand;
+
     /// Simulate the native hotkey queue algorithm to verify correctness.
     /// This mirrors the logic in hotkey.m exactly:
     /// - Ring buffer with drop-newest overflow (true SPSC).
@@ -383,5 +395,22 @@ mod tests {
         assert_eq!(q.poll(), 3);
         assert_eq!(q.poll(), 2);
         assert!(q.is_empty());
+    }
+
+    /// Pause gate policy: only Quit and PauseToggle work while paused.
+    /// This matches Windows behavior where every command is gated with
+    /// `!pause.is_paused()` except quit/unpause.
+    #[test]
+    fn pause_gate_allows_only_quit_and_pause_toggle() {
+        assert!(ProductCommand::Quit.works_when_paused());
+        assert!(ProductCommand::PauseToggle.works_when_paused());
+
+        assert!(!ProductCommand::Deep.works_when_paused());
+        assert!(!ProductCommand::Copy.works_when_paused());
+        assert!(!ProductCommand::Save.works_when_paused());
+        assert!(!ProductCommand::ManualOcr.works_when_paused());
+        assert!(!ProductCommand::OpenSettings.works_when_paused());
+        assert!(!ProductCommand::OpenLibrary.works_when_paused());
+        assert!(!ProductCommand::None.works_when_paused());
     }
 }
