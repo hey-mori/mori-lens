@@ -134,6 +134,15 @@ Windows implementation is complete and stable. macOS implementation is complete.
 - Store in `current_focused_word` alongside `current_card`
 - Pass through `DeepJob::Deep { focused_word }` to `DeepRequest.word`
 
+### Part 8 — OCR privacy, cache correctness, app provenance
+
+**PR #342** — fix: macOS OCR privacy, cache model identity, app provenance
+- **CRITICAL**: OCR auto-fallback now requires `ocr_mode == Automatic` (was `!= Off`)
+- Manual mode no longer triggers ScreenCaptureKit on hover (privacy contract fix)
+- CacheKey now includes actual model name (was empty string — stale cache after model switch)
+- `execute_save` now passes source app name to `save_card()` (app provenance on Save)
+- Removed unused `_analysis_cache`, `ANALYSIS_ENTRIES`, `AnalysisCache` import
+
 **History rewrite note**: Published history was rewritten once (Co-authored-by removal). Current main is the canonical baseline. No further rewrites.
 
 **History rewrite**: Removed all `Co-authored-by` lines from entire git history (force push)
@@ -365,7 +374,7 @@ bash scripts/validate-macos.sh
 ## Git State
 
 ```
-latest merge: PR #340 (fix: macOS Deep Analysis focused-word parity)
+latest merge: PR #342 (fix: macOS OCR privacy, cache model identity, app provenance)
 PRE-REWRITE CI EVIDENCE: run 34027544715 PASS (historical, pre-history-rewrite)
 CURRENT REWRITTEN MAIN CI: PENDING (billing blocker — fresh run needed)
 Package-smoke: run 34131713859 (BLOCKED — billing, old HEAD)
