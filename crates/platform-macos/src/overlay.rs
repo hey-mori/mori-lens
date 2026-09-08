@@ -30,6 +30,7 @@ extern "C" {
     fn lens_display_scale_at(x: f64, y: f64) -> f64;
     fn lens_display_scale_at_physical(px: f64, py: f64) -> f64;
     fn lens_process_appkit_events();
+    fn lens_ctrl_held() -> bool;
 }
 
 /// Get the current mouse position in global screen points (top-left origin).
@@ -70,6 +71,15 @@ pub fn process_appkit_events() {
     // SAFETY: lens_process_appkit_events drains the current thread's run
     // loop. Must be called from the main thread.
     unsafe { lens_process_appkit_events() };
+}
+
+/// Whether the Control key is currently held.
+///
+/// Used by the product loop to toggle hover scope between word and sentence,
+/// matching the Windows `pointer::ctrl_held()` contract.
+pub fn ctrl_held() -> bool {
+    // SAFETY: lens_ctrl_held is a pure query that reads modifier flags.
+    unsafe { lens_ctrl_held() }
 }
 
 /// The macOS overlay window.
