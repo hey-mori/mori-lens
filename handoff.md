@@ -127,6 +127,13 @@ Windows implementation is complete and stable. macOS implementation is complete.
 - Single top-level check replaces 4 inline `if paused { continue; }` checks
 - New test: `pause_gate_allows_only_quit_and_pause_toggle` (all 9 variants)
 
+### Part 7 — Deep focused-word parity
+
+**PR #340** — fix: macOS Deep Analysis focused-word parity
+- Extract `word_text()` from `SegmentedText` at hover acquisition
+- Store in `current_focused_word` alongside `current_card`
+- Pass through `DeepJob::Deep { focused_word }` to `DeepRequest.word`
+
 **History rewrite note**: Published history was rewritten once (Co-authored-by removal). Current main is the canonical baseline. No further rewrites.
 
 **History rewrite**: Removed all `Co-authored-by` lines from entire git history (force push)
@@ -211,9 +218,9 @@ CANONICAL PRODUCT TRUTH:          RECONCILED
   macOS paths:                    documented from code truth
   Settings path:                  settings.toml everywhere (no stale .conf)
 
-REMAINING REPOSITORY IMPLEMENTATION:
-  Deep focused-word parity    macOS DeepRequest.word still None (needs hover word tracking refactor)
-  (completed: save serialization, Deep translation/profile/language, Copy feedback, OCR provenance, pause gate tests)
+REMAINING REPOSITORY IMPLEMENTATION:  NONE
+  (all repo-local work complete: save serialization, Deep translation/profile/language/focused-word,
+  Copy feedback, OCR provenance, pause gate tests)
 REMAINING PACKAGING EXECUTION:
   Package-smoke CI GREEN          BLOCKED BY BILLING
   (code fixes merged in PR #315; latest blocked run 34131713859 was on old HEAD)
@@ -358,7 +365,7 @@ bash scripts/validate-macos.sh
 ## Git State
 
 ```
-latest merge: PR #338 (fix: extract pause gate into testable ProductCommand method)
+latest merge: PR #340 (fix: macOS Deep Analysis focused-word parity)
 PRE-REWRITE CI EVIDENCE: run 34027544715 PASS (historical, pre-history-rewrite)
 CURRENT REWRITTEN MAIN CI: PENDING (billing blocker — fresh run needed)
 Package-smoke: run 34131713859 (BLOCKED — billing, old HEAD)
