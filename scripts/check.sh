@@ -83,6 +83,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 step "cargo test"
 cargo test --workspace
 
+step "smoke asset verification"
+python3 "$(dirname "$0")/verify-smoke-assets.py"
+
 # The workspace version is the single source of truth. `apps/lens` is excluded
 # from the workspace (Tauri dependency) and `apps/lens/tauri.conf.json` is not
 # Cargo at all, so both duplicate the version by necessity. If they disagree,
