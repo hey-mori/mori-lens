@@ -92,7 +92,6 @@ pub fn append(file: &Path, entry: &Entry, at: SystemTime) -> Result<Option<i64>,
         // one yet.
         let _ = std::fs::create_dir_all(folder);
     }
-    let fresh = !file.exists();
     let mut handle = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -101,8 +100,10 @@ pub fn append(file: &Path, entry: &Entry, at: SystemTime) -> Result<Option<i64>,
 
     // The heading is written once, with the first entry rather than at
     // startup: a reader who never saves anything should not find a file
-    // explaining a feature they did not use.
-    if fresh {
+    // explaining a feature they did not use. Check the actual file size
+    // after opening to avoid a TOCTOU race with concurrent saves.
+    let is_empty = file.metadata().map(|m| m.len() == 0).unwrap_or(false);
+    if is_empty {
         handle
             .write_all(PREAMBLE.as_bytes())
             .map_err(|_| NotKept::NotWritten)?;
