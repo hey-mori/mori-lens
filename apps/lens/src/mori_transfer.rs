@@ -46,7 +46,11 @@ pub enum TransferError {
     /// The capability marker is missing or has wrong identity.
     NoCapabilityMarker,
     /// The capability marker exists but versions are incompatible.
-    VersionMismatch,
+    /// Contains (mori_versions, our_version) for diagnostics.
+    VersionMismatch {
+        mori_versions: Vec<u32>,
+        our_version: u32,
+    },
     /// The file could not be written (disk full, permission denied).
     IoError(String),
     /// Serialization failed (should not happen; a bug).
@@ -58,7 +62,16 @@ impl std::fmt::Display for TransferError {
         match self {
             Self::MoriNotInstalled => write!(f, "Mori is not installed"),
             Self::NoCapabilityMarker => write!(f, "Mori capability marker missing or invalid"),
-            Self::VersionMismatch => write!(f, "Mori schema version mismatch"),
+            Self::VersionMismatch {
+                mori_versions,
+                our_version,
+            } => {
+                write!(
+                    f,
+                    "Mori schema version mismatch: Mori supports {:?}, Lens supports {}",
+                    mori_versions, our_version
+                )
+            }
             Self::IoError(msg) => write!(f, "I/O error: {msg}"),
             Self::SerializeError(msg) => write!(f, "serialization error: {msg}"),
         }
@@ -219,7 +232,15 @@ pub fn send_to_mori(item: &Item) -> Result<String, TransferError> {
         MoriStatus::Supported { .. } => {} // proceed
         MoriStatus::NotInstalled => return Err(TransferError::MoriNotInstalled),
         MoriStatus::NoCapabilityMarker => return Err(TransferError::NoCapabilityMarker),
-        MoriStatus::VersionMismatch { .. } => return Err(TransferError::VersionMismatch),
+        MoriStatus::VersionMismatch {
+            ref mori_versions,
+            our_version,
+        } => {
+            return Err(TransferError::VersionMismatch {
+                mori_versions: mori_versions.clone(),
+                our_version,
+            })
+        }
     }
     let connectors = mori_connectors_dir().ok_or(TransferError::MoriNotInstalled)?;
     let lens_dir = connectors.join("lens");
@@ -495,8 +516,12 @@ mod tests {
     fn transfer_error_display_for_new_variants() {
         let e = TransferError::NoCapabilityMarker;
         assert!(e.to_string().contains("capability marker"));
-        let e = TransferError::VersionMismatch;
+        let e = TransferError::VersionMismatch {
+            mori_versions: vec![2],
+            our_version: 1,
+        };
         assert!(e.to_string().contains("version mismatch"));
+        assert!(e.to_string().contains("[2]"));
     }
 
     /// payload_from_item maps all semantic fields and produces valid JSON.
