@@ -770,6 +770,57 @@ endpoint = \"127.0.0.1:11434\"
     }
 
     #[test]
+    fn legacy_flat_format_causes_missing_version_error() {
+        // Proves the settings parser conflict bug:
+        // - lens-core::settings::write_template() writes flat format (no schema_version)
+        // - lens-settings::SettingsFile::load() expects schema_version = 1
+        // - Result: MissingVersion error, user's settings get backed up and reset
+
+        let dir = temp_dir("legacy_conflict");
+        let path = dir.join("settings.toml");
+
+        // This is what lens-core::settings::write_template() writes
+        let legacy_flat_format = "# Mori Lens settings.
+#
+# Edited by hand, read at startup. Command line flags win over this file, so a
+# one-off run can override it without editing anything.
+
+language     = Korean
+model        = auto
+dwell_ms     = 320
+theme        = system
+translucency = clear
+endpoint     = 127.0.0.1:11434
+ocr          = manual
+text         = normal
+profile      = reader
+hover_scope  = sentence
+history      = off
+history_days = 30
+history_store_app = off
+";
+        fs::write(&path, legacy_flat_format).unwrap();
+
+        // Attempt to load with new parser
+        let result = SettingsFile::load(&path);
+
+        // Should fail with Parse error (legacy format uses unquoted strings)
+        match result {
+            Err(SettingsError::Parse { .. }) => {
+                // Conflict confirmed: legacy flat format is incompatible with new parser
+            }
+            Err(e) => {
+                panic!("Expected Parse error, got: {:?}", e);
+            }
+            Ok(_) => {
+                panic!("Legacy format should not be accepted by new parser");
+            }
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn invalid_enum_values_in_toml_fall_back_to_defaults() {
         let dir = temp_dir("invalid_enums");
         let path = dir.join("invalid_enums.toml");

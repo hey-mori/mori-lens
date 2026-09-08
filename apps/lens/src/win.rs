@@ -21,7 +21,7 @@ use lens_core::icon::Glyph;
 use lens_core::language::{decide, Decision};
 use lens_core::policy::{AppPolicy, AppTier};
 use lens_core::session::{HoverSession, InputState, OcrMode, Resolution};
-use lens_core::settings::{self, Problem, Settings};
+use lens_core::settings::{Problem, Settings};
 use lens_core::theme::{Preset, TextScale, Theme, Translucency};
 use lens_core::translate::{QuickRequest, Translator};
 use lens_platform_windows::{
@@ -348,26 +348,90 @@ fn default_settings_path() -> std::path::PathBuf {
 ///
 /// A file that cannot be written is also not an error. It means this run uses
 /// defaults and says so.
+///
+/// Migration: If the file exists but is in the legacy flat format (no
+/// schema_version), it is migrated to the new TOML format with a backup
+/// preserved.
 fn load_settings(path: &std::path::Path) -> (Settings, SettingsSource) {
+    use lens_settings::SettingsFile;
+
     match std::fs::read_to_string(path) {
         Ok(text) => {
-            let (settings, problems) = Settings::parse(&text);
-            (
-                settings,
-                SettingsSource {
-                    path: path.to_owned(),
-                    state: "read",
-                    problems,
-                    first_run: false,
-                },
-            )
+            // Try loading with new parser first
+            match SettingsFile::load(path) {
+                Ok(file) => {
+                    let settings = file.to_settings();
+                    (
+                        settings,
+                        SettingsSource {
+                            path: path.to_owned(),
+                            state: "read",
+                            problems: Vec::new(),
+                            first_run: false,
+                        },
+                    )
+                }
+                Err(lens_settings::SettingsError::Parse { .. }) => {
+                    // Legacy flat format detected - migrate it
+                    let report = lens_settings::migrate::migrate_from_conf(&text);
+                    let mut file = SettingsFile::new_defaults(path.to_path_buf());
+                    *file.schema_mut() = report.schema;
+
+                    // Back up the legacy file
+                    let backup = path.with_extension("toml.legacy-backup");
+                    if std::fs::rename(path, &backup).is_ok() {
+                        eprintln!("settings  migrated legacy format to {path:?}");
+                        for problem in &report.problems {
+                            eprintln!("settings  migration note: {}", problem.message);
+                        }
+                    } else {
+                        // Backup failed, but we can still save the migrated file
+                        eprintln!("settings  legacy format detected, migrating to new format");
+                    }
+
+                    if let Err(e) = file.save() {
+                        eprintln!("settings  migration save failed: {e}");
+                    }
+
+                    let settings = file.to_settings();
+                    (
+                        settings,
+                        SettingsSource {
+                            path: path.to_owned(),
+                            state: "migrated from legacy format",
+                            problems: report.problems,
+                            first_run: false,
+                        },
+                    )
+                }
+                Err(e) => {
+                    // Other parse error - use defaults
+                    eprintln!("settings  cannot load {path:?}: {e}");
+                    (
+                        Settings::default(),
+                        SettingsSource {
+                            path: path.to_owned(),
+                            state: "parse error, using defaults",
+                            problems: vec![Problem {
+                                line: 0,
+                                message: format!("cannot load settings: {e}"),
+                            }],
+                            first_run: false,
+                        },
+                    )
+                }
+            }
         }
         Err(_) => {
+            // File doesn't exist - create with new TOML format
             let wrote = path
                 .parent()
                 .map(|parent| std::fs::create_dir_all(parent).is_ok())
                 .unwrap_or(false)
-                && std::fs::write(path, settings::TEMPLATE).is_ok();
+                && {
+                    let mut file = lens_settings::SettingsFile::new_defaults(path.to_path_buf());
+                    file.save().is_ok()
+                };
             (
                 Settings::default(),
                 SettingsSource {
@@ -3366,5 +3430,155 @@ mod history_privacy_tests {
         } else {
             println!("  > 1ms per call → consider async/background writer");
         }
+    }
+}
+
+#[cfg(test)]
+mod settings_migration_tests {
+    use super::*;
+    use std::fs;
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("lens-settings-migration-{name}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn first_run_creates_new_toml_format() {
+        // First run: file doesn't exist, should create new TOML format
+        let dir = temp_dir("first_run");
+        let path = dir.join("settings.toml");
+
+        let (settings, source) = load_settings(&path);
+
+        // Should use defaults
+        assert_eq!(settings.language, "Korean");
+        assert!(source.first_run);
+        assert!(source.problems.is_empty());
+
+        // File should exist and be valid new TOML format
+        assert!(path.exists());
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("schema_version = 1"));
+        assert!(content.contains("[general]"));
+        assert!(content.contains("[quick]"));
+        assert!(content.contains("[deep]"));
+
+        // Should be loadable by new parser
+        let file = lens_settings::SettingsFile::load(&path).unwrap();
+        assert_eq!(file.schema().general.language, "Korean");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_flat_format_is_migrated() {
+        // Legacy format (what old code used to write) should be migrated
+        let dir = temp_dir("legacy_migrate");
+        let path = dir.join("settings.toml");
+
+        // Write legacy flat format (unquoted strings, no schema_version)
+        let legacy_content = "language = Japanese
+dwell_ms = 250
+theme = night-lake
+endpoint = 127.0.0.1:11434
+model = gemma3:4b
+";
+        fs::write(&path, legacy_content).unwrap();
+
+        let (settings, source) = load_settings(&path);
+
+        // Should have migrated values
+        assert_eq!(settings.language, "Japanese");
+        assert_eq!(settings.dwell_ms, 250);
+        assert_eq!(settings.theme, "night-lake");
+        assert_eq!(settings.endpoint, "127.0.0.1:11434");
+        assert_eq!(settings.model, Some("gemma3:4b".to_owned()));
+        assert_eq!(source.state, "migrated from legacy format");
+
+        // Backup should exist
+        let backup = path.with_extension("toml.legacy-backup");
+        assert!(backup.exists());
+        let backup_content = fs::read_to_string(&backup).unwrap();
+        assert_eq!(backup_content, legacy_content);
+
+        // File should now be valid new TOML format
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("schema_version = 1"));
+        assert!(content.contains("[general]"));
+
+        // Should be loadable by new parser
+        let file = lens_settings::SettingsFile::load(&path).unwrap();
+        assert_eq!(file.schema().general.language, "Japanese");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn new_toml_format_loads_directly() {
+        // New TOML format should load without migration
+        let dir = temp_dir("new_format");
+        let path = dir.join("settings.toml");
+
+        let new_content = r#"schema_version = 1
+
+[general]
+language = "English"
+dwell_ms = 200
+theme = "forest"
+
+[quick]
+engine = "ollama"
+model = "qwen2.5:3b"
+endpoint = "127.0.0.1:11434"
+
+[deep]
+engine = "ollama"
+model = "auto"
+endpoint = "127.0.0.1:11434"
+"#;
+        fs::write(&path, new_content).unwrap();
+
+        let (settings, source) = load_settings(&path);
+
+        // Should load directly
+        assert_eq!(settings.language, "English");
+        assert_eq!(settings.dwell_ms, 200);
+        assert_eq!(settings.theme, "forest");
+        assert_eq!(source.state, "read");
+        assert!(source.problems.is_empty());
+        assert!(!source.first_run);
+
+        // No backup should exist
+        let backup = path.with_extension("toml.legacy-backup");
+        assert!(!backup.exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restart_after_first_run_succeeds() {
+        // Simulate first run followed by restart - the original bug scenario
+        let dir = temp_dir("restart");
+        let path = dir.join("settings.toml");
+
+        // First run: creates file
+        let (_, source1) = load_settings(&path);
+        assert!(source1.first_run);
+
+        // Restart: should load successfully
+        let (settings2, source2) = load_settings(&path);
+        assert!(!source2.first_run);
+        assert_eq!(source2.state, "read");
+        assert!(source2.problems.is_empty());
+        assert_eq!(settings2.language, "Korean");
+
+        // File should still be valid new TOML format
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("schema_version = 1"));
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
