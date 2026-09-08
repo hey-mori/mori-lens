@@ -198,6 +198,7 @@ impl MacTextAcquirer {
     }
 
     /// Get the position of an element as a CGPoint (logical points).
+    /// Reserved for future overlay positioning; not yet called from product code.
     #[allow(dead_code)]
     fn get_position(&self, element: ffi::AXUIElementRef) -> Option<ffi::CGPoint> {
         let value = self.get_attribute(element, ffi::ax_position())?;
@@ -219,6 +220,7 @@ impl MacTextAcquirer {
     }
 
     /// Get the size of an element as a CGSize (logical points).
+    /// Reserved for future overlay sizing; not yet called from product code.
     #[allow(dead_code)]
     fn get_size(&self, element: ffi::AXUIElementRef) -> Option<ffi::CGSize> {
         let value = self.get_attribute(element, ffi::ax_size())?;
