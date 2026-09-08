@@ -234,6 +234,7 @@ impl SettingsState {
     }
 
     /// Take any pending settings, clearing the slot.
+    #[allow(dead_code)]
     pub fn take_pending(&mut self) -> Option<Settings> {
         self.pending.take()
     }

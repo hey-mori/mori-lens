@@ -371,7 +371,7 @@ fn product_loop(
             result: Result<lens_core::translate::QuickTranslation, String>,
             from_pixels: bool,
             generation: u64,
-            key: CacheKey,
+            _key: CacheKey,
             anchor: ScreenRect,
         },
         Deep {
@@ -454,7 +454,7 @@ fn product_loop(
                         result: result.map_err(|e| e.user_message().to_owned()),
                         from_pixels,
                         generation,
-                        key,
+                        _key: key,
                         anchor,
                     });
                 }
@@ -546,7 +546,7 @@ fn product_loop(
                     result,
                     from_pixels,
                     generation,
-                    key: _,
+                    _key: _,
                     anchor,
                 } => {
                     if generation != current_generation {
