@@ -395,10 +395,14 @@ impl Library {
         if trimmed.is_empty() {
             return self.list(offset);
         }
-        let pattern = format!("%{trimmed}%");
+        let escaped = trimmed
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("%{escaped}%");
         let limit = PAGE_SIZE + 1;
         let mut stmt = self.conn.prepare(
-            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state FROM library WHERE original LIKE ?1 OR answer LIKE ?1 ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3",
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state FROM library WHERE original LIKE ?1 ESCAPE '\\' OR answer LIKE ?1 ESCAPE '\\' ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3",
         )?;
         let items: Vec<Item> = stmt
             .query_map(params![pattern, limit, offset], row_to_item)?
@@ -518,7 +522,7 @@ impl Library {
             .conn
             .prepare("SELECT value FROM meta WHERE key = 'imported'")?
             .query_row([], |row| row.get(0))
-            .optional();
+            .optional()?;
         Ok(val.as_deref() == Some("true"))
     }
 
@@ -1211,15 +1215,15 @@ fn row_to_history_entry(row: &rusqlite::Row) -> rusqlite::Result<HistoryEntry> {
 
 /// Extension trait for optional query results.
 trait OptionalExt {
-    fn optional(self) -> Option<String>;
+    fn optional(self) -> Result<Option<String>, rusqlite::Error>;
 }
 
 impl OptionalExt for Result<String, rusqlite::Error> {
-    fn optional(self) -> Option<String> {
+    fn optional(self) -> Result<Option<String>, rusqlite::Error> {
         match self {
-            Ok(v) => Some(v),
-            Err(rusqlite::Error::QueryReturnedNoRows) => None,
-            Err(e) => panic!("unexpected database error: {e}"),
+            Ok(v) => Ok(Some(v)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e),
         }
     }
 }
@@ -1713,6 +1717,36 @@ mod tests {
 
         let page = lib.search("", 0).unwrap();
         assert_eq!(page.items.len(), 1);
+        cleanup(&path);
+    }
+
+    /// SQL LIKE wildcards (`%`, `_`) in the query are escaped so they
+    /// match literally rather than acting as pattern characters.
+    #[test]
+    fn search_escapes_like_wildcards() {
+        let path = temp_db("search-like");
+        let lib = Library::open(&path).unwrap();
+
+        let mut item = a_translation();
+        item.original = "100% complete".to_owned();
+        lib.insert(&item).unwrap();
+
+        let mut other = a_translation();
+        other.original = "100 things".to_owned();
+        lib.insert(&other).unwrap();
+
+        // Searching for "100%" must match only the literal "100%", not "100 things".
+        let page = lib.search("100%", 0).unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].original, "100% complete");
+
+        // Searching for "_" must not match every single character.
+        let page = lib.search("_", 0).unwrap();
+        assert!(
+            page.items.is_empty(),
+            "underscore must not act as a wildcard"
+        );
+
         cleanup(&path);
     }
 
