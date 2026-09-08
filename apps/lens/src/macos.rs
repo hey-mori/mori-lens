@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use lens_core::acquire::{AcquireContext, AcquireError, TextAcquirer};
 use lens_core::analyse::Analyser;
-use lens_core::cache::{AnalysisCache, CacheKey, TranslationCache};
+use lens_core::cache::{CacheKey, TranslationCache};
 use lens_core::card::{Card, CardBody};
 use lens_core::geometry::{ScreenPoint, ScreenRect};
 use lens_core::hover::{HoverConfig, HoverEvent, HoverMachine, PointerSample};
@@ -62,7 +62,6 @@ OPTIONS
 
 const POINTER_POLL_MS: u64 = 25;
 const CACHE_ENTRIES: usize = 256;
-const ANALYSIS_ENTRIES: usize = 32;
 
 #[derive(Default)]
 struct Flags {
@@ -393,7 +392,6 @@ fn product_loop(
     // Shared cache between product loop and translation threads.
     let cache: Arc<Mutex<TranslationCache>> =
         Arc::new(Mutex::new(TranslationCache::new(CACHE_ENTRIES)));
-    let _analysis_cache = AnalysisCache::new(ANALYSIS_ENTRIES);
 
     // Quick lane: dedicated thread for hover translations.
     // Drains pending jobs and keeps only the latest (stale coalescing).
@@ -511,6 +509,7 @@ fn product_loop(
     let mut machine = HoverMachine::new(hover_config);
     let mut current_card: Option<(Card, String)> = None;
     let mut current_focused_word: Option<String> = None;
+    let mut current_app: Option<String> = None;
     let mut current_anchor = ScreenRect::new(0, 0, 0, 0);
     let mut current_generation: u64 = 0;
     let mut paused = false;
@@ -714,7 +713,13 @@ fn product_loop(
                 }
                 ProductCommand::Save => {
                     if let Some((ref card, ref _sentence)) = current_card {
-                        execute_save(card, &shared_save_path, &language, &model);
+                        execute_save(
+                            card,
+                            current_app.as_deref(),
+                            &shared_save_path,
+                            &language,
+                            &model,
+                        );
                     }
                 }
                 ProductCommand::ManualOcr => {
@@ -731,7 +736,8 @@ fn product_loop(
                                 let sentence = target.segmented.sentence_text().to_owned();
                                 if !sentence.is_empty() {
                                     let request = QuickRequest::new(&sentence, &language);
-                                    let key = CacheKey::of(&request, "", 1);
+                                    let key =
+                                        CacheKey::of(&request, model.as_deref().unwrap_or(""), 1);
                                     current_generation += 1;
                                     if let Some(a) = target.anchor() {
                                         current_anchor = a;
@@ -887,6 +893,7 @@ fn product_loop(
                     }
                     continue;
                 }
+                current_app = process_name.clone();
 
                 // AX acquisition first.
                 let acquire_result = if ax_trusted {
@@ -896,10 +903,13 @@ fn product_loop(
                     Err(AcquireError::Unavailable)
                 };
 
-                // OCR fallback.
+                // OCR fallback — only in Automatic mode.
+                // Manual mode requires explicit user OCR request (ProductCommand::ManualOcr).
+                // Off mode never runs OCR. This matches the core OcrMode contract
+                // and Windows behavior (win.rs:2028).
                 let (target, _from_ocr) = match acquire_result {
                     Ok(target) => (target, false),
-                    Err(e) if e.ocr_can_help() && ocr_mode != OcrMode::Off => {
+                    Err(e) if e.ocr_can_help() && ocr_mode == OcrMode::Automatic => {
                         if let Some(ref ocr) = ocr_acquirer {
                             let ctx = AcquireContext::new(generation);
                             match ocr.acquire(point, &ctx) {
@@ -952,9 +962,7 @@ fn product_loop(
                         let request = QuickRequest::new(&sentence, &language);
                         let key = {
                             let _c = cache.lock().unwrap();
-                            // Check shared cache first.
-                            // We need model name for the key — get it from the request.
-                            CacheKey::of(&request, "", 1)
+                            CacheKey::of(&request, model.as_deref().unwrap_or(""), 1)
                         };
 
                         // Check cache (lock briefly).
@@ -1013,10 +1021,16 @@ fn product_loop(
 /// Delegates to `keeping::save_card()` which enforces eligibility (only
 /// Translation/Analysis), populates metadata, writes both saved.md and
 /// library.db, and serializes concurrent saves.
-fn execute_save(card: &Card, save_path: &std::path::Path, language: &str, model: &Option<String>) {
+fn execute_save(
+    card: &Card,
+    app: Option<&str>,
+    save_path: &std::path::Path,
+    language: &str,
+    model: &Option<String>,
+) {
     match crate::keeping::save_card(
         card,
-        None,
+        app,
         save_path,
         Some(language.to_owned()),
         model.clone(),
