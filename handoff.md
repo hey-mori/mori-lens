@@ -233,6 +233,19 @@ CURRENT-MAIN GITHUB CI:      NOT EXECUTED (billing blocker)
 OLD CI:                      Historical pre-rewrite evidence only
 ```
 
+### Part 12 — macOS hover_scope parity
+
+**PR #352** — feat: macOS hover_scope — word/sentence toggle with Ctrl key
+- Added `lens_ctrl_held()` to overlay.m (NSEventModifierFlagControl polling)
+- Added `overlay::ctrl_held()` safe Rust wrapper in platform-macos
+- Product loop reads `hover_scope` from settings at startup and on live changes
+- Ctrl toggles between word and sentence scope, matching Windows behavior
+- Model always receives the full sentence; card shows word or sentence
+- Manual OCR path uses full sentence as display_text (no scope toggle)
+- Fixed stale comment in keeping.rs and roadmap.md about macOS save path
+
+**History note**: Published history was rewritten twice (Co-authored-by removal). Current main is the canonical baseline. No further rewrites.
+
 ## Automated Evidence
 
 ```
@@ -294,6 +307,14 @@ PACKAGE CURRENT-MAIN CI:      PENDING (billing blocker)
 
 SMOKE ASSETS:                 VALID (PNG/ICO/ICNS CRC verified)
 
+REMAINING REPOSITORY IMPLEMENTATION:
+  None. All repo-local work is complete.
+  (hover_scope on macOS implemented: Ctrl key polling, word/sentence toggle,
+  live settings propagation, matching Windows behavior)
+REMAINING PACKAGING EXECUTION:
+  Package-smoke CI GREEN          BLOCKED BY BILLING
+  (code fixes merged in PR #315; latest blocked run 34131713859 was on old HEAD)
+
 REMAINING WINDOWS WORK:
   Human GUI product smoke     HUMAN GATE (agent cannot perform)
   MSIX signing/publisher      OWNER DECISION
@@ -351,6 +372,7 @@ Do not reopen UIA GetVisibleRanges research without new independent evidence.
 
 ```
 latest merge: PR #356 (test: measure UIA visible-range targeting)
+current work: PR #352 (feat: macOS hover_scope parity) — unmerged
 HEAD:         074844b
 Branches:     clean
 History:      rewritten twice (Co-authored-by removal). Current main is canonical baseline.
