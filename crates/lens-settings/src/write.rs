@@ -43,6 +43,15 @@ pub fn atomic_write(path: &Path, content: &str) -> Result<(), AtomicWriteError> 
         path: temp_path.clone(),
         source: e,
     })?;
+
+    // Restrict permissions on Unix: settings contain endpoint/model info
+    // that should not be world-readable.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600));
+    }
+
     file.write_all(content.as_bytes())
         .map_err(|e| AtomicWriteError::Write {
             path: temp_path.clone(),
