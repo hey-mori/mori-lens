@@ -19,7 +19,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use lens_core::acquire::{AcquireContext, AcquireError, TextAcquirer};
+use lens_core::acquire::{AcquireContext, AcquireError, AcquisitionSource, TextAcquirer};
 use lens_core::analyse::Analyser;
 use lens_core::cache::{CacheKey, TranslationCache};
 use lens_core::card::{Card, CardBody};
@@ -749,7 +749,7 @@ fn product_loop(
                                     let _ = quick_tx.send(QuickJob::Quick {
                                         request,
                                         sentence: sentence.clone(),
-                                        from_pixels: false,
+                                        from_pixels: true,
                                         generation: current_generation,
                                         key,
                                         anchor: current_anchor,
@@ -915,13 +915,13 @@ fn product_loop(
                 // Manual mode requires explicit user OCR request (ProductCommand::ManualOcr).
                 // Off mode never runs OCR. This matches the core OcrMode contract
                 // and Windows behavior (win.rs:2028).
-                let (target, _from_ocr) = match acquire_result {
-                    Ok(target) => (target, false),
+                let target = match acquire_result {
+                    Ok(target) => target,
                     Err(e) if e.ocr_can_help() && ocr_mode == OcrMode::Automatic => {
                         if let Some(ref ocr) = ocr_acquirer {
                             let ctx = AcquireContext::new(generation);
                             match ocr.acquire(point, &ctx) {
-                                Ok(target) => (target, true),
+                                Ok(target) => target,
                                 Err(_) => {
                                     if let Some(ref o) = overlay {
                                         o.hide();
@@ -945,6 +945,10 @@ fn product_loop(
                 };
 
                 let sentence = target.segmented.sentence_text().to_owned();
+                // Derive OCR provenance from the acquisition source.
+                // AX accessibility → from_pixels = false
+                // OCR (manual or automatic fallback) → from_pixels = true
+                let from_pixels = target.source == AcquisitionSource::Ocr;
                 // Carry the focused word through to Deep analysis,
                 // matching Windows behavior (win.rs:2017).
                 current_focused_word = target.segmented.word_text().map(str::to_owned);
@@ -978,7 +982,10 @@ fn product_loop(
                         {
                             let mut c = cache.lock().unwrap();
                             if let Some(cached) = c.get(&key) {
-                                let card = Card::translated(&sentence, &cached);
+                                let mut card = Card::translated(&sentence, &cached);
+                                if from_pixels {
+                                    card = card.read_from_the_screen();
+                                }
                                 show_card(&overlay, &card, &target);
                                 current_app = pending_app.clone();
                                 current_card = Some((card, sentence));
@@ -994,7 +1001,7 @@ fn product_loop(
                         let _ = quick_tx.send(QuickJob::Quick {
                             request,
                             sentence: sentence.clone(),
-                            from_pixels: true,
+                            from_pixels,
                             generation: current_generation,
                             key,
                             anchor: current_anchor,
