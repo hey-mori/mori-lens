@@ -158,6 +158,9 @@ pub fn post_streaming(
     stream
         .set_read_timeout(Some(timeout))
         .map_err(|_| TranslateError::Unavailable)?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(|_| TranslateError::Unavailable)?;
     let mut stream = stream;
 
     let head = format!(
