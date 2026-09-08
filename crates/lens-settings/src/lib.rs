@@ -347,10 +347,24 @@ fn extract_engine(doc: &toml_edit::DocumentMut, section: &str) -> schema::Engine
 
     let model = get_str("model").filter(|m| m != "auto");
 
+    let endpoint = get_str("endpoint").unwrap_or_else(|| defaults.endpoint.clone());
+    // Reject non-loopback endpoints at parse time. The HTTP client also
+    // validates at request time, but early rejection prevents silent
+    // misconfiguration that could send text to a remote server.
+    let endpoint = if is_loopback_endpoint(&endpoint) {
+        endpoint
+    } else {
+        eprintln!(
+            "settings: rejecting non-loopback endpoint {:?}, using default",
+            endpoint
+        );
+        defaults.endpoint.clone()
+    };
+
     schema::EngineConfig {
         engine: get_str("engine").unwrap_or_else(|| "ollama".to_owned()),
         model,
-        endpoint: get_str("endpoint").unwrap_or(defaults.endpoint),
+        endpoint,
     }
 }
 
@@ -375,6 +389,19 @@ fn parse_tier(value: &str) -> Option<lens_core::policy::AppTier> {
         "deny" => Some(lens_core::policy::AppTier::Deny),
         _ => None,
     }
+}
+
+/// Check if an endpoint URL resolves to loopback.
+/// Accepts localhost, 127.x.x.x, and [::1]. Rejects everything else.
+fn is_loopback_endpoint(endpoint: &str) -> bool {
+    let host = endpoint
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .split(':')
+        .next()
+        .unwrap_or(endpoint);
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    host == "localhost" || host.starts_with("127.") || host == "::1"
 }
 
 fn is_valid_theme(s: &str) -> bool {
