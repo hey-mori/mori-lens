@@ -80,6 +80,7 @@ impl NotKept {
     }
 
     /// I/O error detail for logging. Empty for non-I/O variants.
+    #[allow(dead_code)] // Retained for cross-platform parity (used by macOS).
     pub fn detail(&self) -> &str {
         match self {
             Self::NotWritten(ref msg) => msg,
@@ -153,6 +154,7 @@ pub fn append(file: &Path, entry: &Entry, at: SystemTime) -> Result<Option<i64>,
 ///   `append()`, per ADR-0013/ADR-0015.
 ///
 /// Serialization is handled by `append()` itself — no separate lock needed here.
+#[allow(dead_code)] // Used by macOS; Windows calls `append` directly.
 pub fn save_card(
     card: &Card,
     app: Option<&str>,
