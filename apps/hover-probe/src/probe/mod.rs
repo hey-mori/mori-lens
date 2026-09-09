@@ -368,6 +368,9 @@ fn parse_visible_ranges(args: Vec<String>) -> Result<visible_ranges::VisibleRang
             "--only" => {
                 options.only = Some(args.next().ok_or("--only needs some text to match")?);
             }
+            "--ancestors" => {
+                options.ancestors = true;
+            }
             other => return Err(format!("unknown argument: {other}")),
         }
     }
