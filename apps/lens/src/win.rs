@@ -190,9 +190,10 @@ OPTIONS
     --endpoint <addr>   Where Ollama listens. Default 127.0.0.1:11434, and it
                         must be on this machine: 127.0.0.1, localhost or ::1.
                         Lens has no way to send text off this machine safely
-                        and does not try.
-    --model <name>      Ollama model. Default: whichever suitable one is
-                        installed.
+                        and does not try. Applies to both Quick and Deep paths.
+    --model <name>      Ollama model for Quick translation. Default: whichever
+                        suitable one is installed. Deep analysis uses the model
+                        configured in settings.toml [deep] section.
     --dwell <ms>        How long the pointer must rest. Default 320.
     --theme <name>      system, forest, night-lake, or paper. Default system.
     --translucency <t>  clear, balanced, or solid. Default solid: a translucent
@@ -526,14 +527,12 @@ pub fn main() -> std::process::ExitCode {
 
     // ADR-0005: Two separate translators for Quick and Deep paths.
     // Each has its own endpoint and model, configured independently.
-    let mut quick_translator =
-        OllamaTranslator::choosing(&options.ai_config.quick.endpoint);
+    let mut quick_translator = OllamaTranslator::choosing(&options.ai_config.quick.endpoint);
     if let Some(model) = &options.ai_config.quick.model {
         quick_translator = OllamaTranslator::new(&options.ai_config.quick.endpoint, model);
     }
 
-    let mut deep_translator =
-        OllamaTranslator::choosing(&options.ai_config.deep.endpoint);
+    let mut deep_translator = OllamaTranslator::choosing(&options.ai_config.deep.endpoint);
     if let Some(model) = &options.ai_config.deep.model {
         deep_translator = OllamaTranslator::new(&options.ai_config.deep.endpoint, model);
     }
@@ -756,10 +755,12 @@ pub fn main() -> std::process::ExitCode {
     // paths can record which model produced a saved entry.
     // ADR-0005: Quick and Deep have separate models.
     let quick_model_name = quick_translator.model().to_owned();
-    let _deep_model_name = deep_translator.model().to_owned();
+    let deep_model_name = deep_translator.model().to_owned();
     let warm_translator = quick_translator.clone();
-    // Kept for the exit path: the worker takes ownership of the translator.
-    let releaser = quick_translator.clone();
+    // Kept for the exit path: the worker takes ownership of the translators.
+    // ADR-0005: Both Quick and Deep must be released on shutdown.
+    let quick_releaser = quick_translator.clone();
+    let deep_releaser = deep_translator.clone();
     // Off the main thread so the window and the pointer loop come up
     // immediately; a user should not wait on a model to see the app start.
     // Whether the model has finished loading, for the waiting card to say
@@ -1355,11 +1356,19 @@ pub fn main() -> std::process::ExitCode {
                 match on_screen.as_ref().and_then(|(card, anchor)| {
                     card.kept_as(under.as_deref()).map(|mut entry| {
                         // Populate the metadata the library stores alongside
-                        // the entry. The model name was captured before the
-                        // worker took the translator; the target language is
-                        // the reader's own, from settings.
+                        // the entry. The model name comes from the path that
+                        // produced this card: Analysis is Deep, Translation
+                        // is Quick. The target language is the reader's own,
+                        // from settings.
                         entry.target_language = Some(language.clone());
-                        entry.model = Some(quick_model_name.clone());
+                        // Determine which model produced this card based on its body.
+                        // Analysis cards come from the Deep path, Translation cards
+                        // come from the Quick path.
+                        let model_name = match &card.body {
+                            lens_core::card::CardBody::Analysis { .. } => &deep_model_name,
+                            _ => &quick_model_name,
+                        };
+                        entry.model = Some(model_name.clone());
                         (entry, *anchor)
                     })
                 }) {
@@ -1443,7 +1452,14 @@ pub fn main() -> std::process::ExitCode {
                         // Record which model and target language produced this
                         // answer, so the detail save can store them.
                         view.target_language = Some(language.clone());
-                        view.model = Some(quick_model_name.clone());
+                        // Determine which model produced this card based on its body.
+                        // Analysis cards come from the Deep path, Translation cards
+                        // come from the Quick path.
+                        let model_name = match &on_screen.as_ref().unwrap().0.body {
+                            lens_core::card::CardBody::Analysis { .. } => &deep_model_name,
+                            _ => &quick_model_name,
+                        };
+                        view.model = Some(model_name.clone());
                         let explained = view.rows.iter().any(|(_, v)| !v.trim().is_empty());
                         *loop_detail.lock().unwrap() = Some(view);
                         loop_tauri.show_detail_window();
@@ -2240,14 +2256,15 @@ pub fn main() -> std::process::ExitCode {
 
         overlay.hide();
         drop(tray);
-        // Hand the model back. Without this the runtime holds it for the rest of
+        // Hand the models back. Without this the runtime holds them for the rest of
         // the lease, so a tool that has exited goes on occupying gigabytes of
-        // somebody's memory.
+        // somebody's memory. ADR-0005: Both Quick and Deep must be released.
         if let Some(line) = capture_cost.summary() {
             println!("{line}");
         }
-        releaser.release();
-        println!("\nstopped, and the model released");
+        quick_releaser.release();
+        deep_releaser.release();
+        println!("\nstopped, and the models released");
         // Tell Tauri to exit now that the polling loop is done.
         loop_tauri.exit();
     }); // end of polling loop thread
