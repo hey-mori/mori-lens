@@ -1146,4 +1146,179 @@ endpoint = \"127.0.0.1:11434\"
 
         let _ = fs::remove_dir_all(&dir);
     }
+
+    /// Round-trip preservation: load, save, load again must produce identical values.
+    ///
+    /// This test verifies that no validation or transformation drift occurs
+    /// between load and save paths. A value that loads successfully must save
+    /// and reload to the same value.
+    #[test]
+    fn round_trip_preserves_all_field_values() {
+        let dir = temp_dir("roundtrip_all");
+        let path = dir.join("roundtrip_all.toml");
+        let content = "schema_version = 1
+
+[general]
+language = \"Japanese\"
+dwell_ms = 450
+theme = \"night-lake\"
+translucency = \"solid\"
+text_size = \"larger\"
+default_tier = \"allow\"
+ocr = \"automatic\"
+profile = \"developer\"
+hover_scope = \"word\"
+history = true
+history_days = 90
+history_store_app = true
+history_excluded = [\"chrome\", \"code\"]
+
+[quick]
+engine = \"ollama\"
+model = \"qwen2.5:3b\"
+endpoint = \"127.0.0.1:11434\"
+
+[deep]
+engine = \"ollama\"
+model = \"llama3.1:8b\"
+endpoint = \"127.0.0.1:11435\"
+
+[applications]
+chrome = \"allow\"
+code = \"deny\"
+";
+        fs::write(&path, content).unwrap();
+
+        // First load
+        let mut file1 = SettingsFile::load(&path).unwrap();
+        let schema1 = file1.schema().clone();
+
+        // Save
+        file1.save().unwrap();
+
+        // Second load
+        let file2 = SettingsFile::load(&path).unwrap();
+        let schema2 = file2.schema();
+
+        // All fields must be identical
+        assert_eq!(schema2.version, schema1.version);
+        assert_eq!(schema2.general.language, schema1.general.language);
+        assert_eq!(schema2.general.dwell_ms, schema1.general.dwell_ms);
+        assert_eq!(schema2.general.theme, schema1.general.theme);
+        assert_eq!(schema2.general.translucency, schema1.general.translucency);
+        assert_eq!(schema2.general.text_size, schema1.general.text_size);
+        assert_eq!(schema2.general.default_tier, schema1.general.default_tier);
+        assert_eq!(schema2.general.ocr, schema1.general.ocr);
+        assert_eq!(schema2.general.profile, schema1.general.profile);
+        assert_eq!(schema2.general.hover_scope, schema1.general.hover_scope);
+        assert_eq!(schema2.general.history, schema1.general.history);
+        assert_eq!(schema2.general.history_days, schema1.general.history_days);
+        assert_eq!(
+            schema2.general.history_store_app,
+            schema1.general.history_store_app
+        );
+        assert_eq!(
+            schema2.general.history_excluded,
+            schema1.general.history_excluded
+        );
+        assert_eq!(schema2.quick.engine, schema1.quick.engine);
+        assert_eq!(schema2.quick.model, schema1.quick.model);
+        assert_eq!(schema2.quick.endpoint, schema1.quick.endpoint);
+        assert_eq!(schema2.deep.engine, schema1.deep.engine);
+        assert_eq!(schema2.deep.model, schema1.deep.model);
+        assert_eq!(schema2.deep.endpoint, schema1.deep.endpoint);
+        assert_eq!(schema2.applications, schema1.applications);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Validation consistency: non-loopback endpoints are rejected at load time.
+    ///
+    /// This test verifies that the endpoint validation in extract_engine()
+    /// is applied consistently to both quick and deep sections.
+    #[test]
+    fn non_loopback_endpoints_are_rejected_for_both_engines() {
+        let dir = temp_dir("endpoint_validation");
+        let path = dir.join("endpoint_validation.toml");
+        let content = "schema_version = 1
+
+[general]
+language = \"Korean\"
+
+[quick]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"192.168.1.1:11434\"
+
+[deep]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"10.0.0.1:11434\"
+";
+        fs::write(&path, content).unwrap();
+
+        let file = SettingsFile::load(&path).unwrap();
+        let defaults = lens_core::settings::Settings::default();
+
+        // Both endpoints should be rejected and replaced with defaults
+        assert_eq!(
+            file.schema().quick.endpoint,
+            defaults.endpoint,
+            "non-loopback quick endpoint must be rejected"
+        );
+        assert_eq!(
+            file.schema().deep.endpoint,
+            defaults.endpoint,
+            "non-loopback deep endpoint must be rejected"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Validation consistency: range checks are applied at load time.
+    ///
+    /// This test verifies that dwell_ms and history_days are validated
+    /// against their allowed ranges.
+    #[test]
+    fn range_checks_are_applied_at_load_time() {
+        let dir = temp_dir("range_checks");
+        let path = dir.join("range_checks.toml");
+        let content = "schema_version = 1
+
+[general]
+language = \"Korean\"
+dwell_ms = 50
+history_days = 15
+
+[quick]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"127.0.0.1:11434\"
+
+[deep]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"127.0.0.1:11434\"
+";
+        fs::write(&path, content).unwrap();
+
+        let file = SettingsFile::load(&path).unwrap();
+        let defaults = lens_core::settings::Settings::default();
+
+        // dwell_ms = 50 is below the minimum (80), should fall back to default
+        assert_eq!(
+            file.schema().general.dwell_ms,
+            defaults.dwell_ms,
+            "dwell_ms below minimum must fall back to default"
+        );
+
+        // history_days = 15 is not in the allowed set [0, 1, 7, 30, 90]
+        assert_eq!(
+            file.schema().general.history_days,
+            defaults.history_days,
+            "history_days not in allowed set must fall back to default"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
