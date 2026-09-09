@@ -12,6 +12,7 @@
 #![allow(dead_code)]
 
 // -- Platform-neutral shared modules --
+mod ai_runtime;
 mod detail_view;
 mod keeping;
 mod library_service;
