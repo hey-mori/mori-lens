@@ -109,6 +109,12 @@ requirements verified with evidence:
   is configured via settings.toml `[deep]` section.
 - **Live settings:** Model/endpoint changes require restart. The product
   detects changes and displays "restart to use it" message.
+- **Automated evidence:** The `selftest` diagnostic exercises both paths
+  end-to-end: `quick_translator.quick_streaming()` for the quick path,
+  then `deep_translator.deep()` for the deep path, proving both
+  translators are wired and reachable. Running `lens --selftest` with
+  Ollama present produces output showing both stages with their
+  respective models and latencies.
 
 `Ctrl+Alt+D` triggers deep analysis; hover alone triggers quick
 translation only.
