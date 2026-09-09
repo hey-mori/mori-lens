@@ -12,6 +12,7 @@ use lens_core::card::Card;
 use lens_core::geometry::{ScreenPoint, ScreenRect};
 use lens_core::hover::{Generation, HoverConfig};
 
+use crate::ai_runtime::AiRuntimeConfig;
 use crate::detail_view;
 use crate::keeping;
 use crate::library_service;
@@ -212,9 +213,8 @@ struct Options {
     translucency: Translucency,
     text: TextScale,
     language: String,
-    model: Option<String>,
-    /// Where Ollama is. Loopback only; see `Settings::endpoint`.
-    endpoint: String,
+    /// AI runtime configuration with separate Quick and Deep engines.
+    ai_config: AiRuntimeConfig,
     /// When the OCR fallback may run.
     ocr_mode: OcrMode,
     /// Who is reading, which decides what Ctrl+Alt+D spends its lines on.
@@ -352,12 +352,18 @@ fn default_settings_path() -> std::path::PathBuf {
 /// Migration: If the file exists but is in the legacy flat format (no
 /// schema_version), it is migrated to the new TOML format with a fail-safe
 /// backup. If the backup cannot be created, the original file is never modified.
-fn load_settings(path: &std::path::Path) -> (Settings, SettingsSource) {
+///
+/// Returns (Settings, Schema, SettingsSource). The Schema is needed to build
+/// the AiRuntimeConfig with separate Quick and Deep engines.
+fn load_settings(
+    path: &std::path::Path,
+) -> (Settings, lens_settings::schema::Schema, SettingsSource) {
     use lens_settings::{load_or_initialize, LoadDisposition};
 
     match load_or_initialize(path) {
         Ok((file, disposition)) => {
             let settings = file.to_settings();
+            let schema = file.schema().clone();
             let (state, problems, first_run) = match disposition {
                 LoadDisposition::Loaded => ("read", Vec::new(), false),
                 LoadDisposition::Created => (
@@ -379,6 +385,7 @@ fn load_settings(path: &std::path::Path) -> (Settings, SettingsSource) {
             };
             (
                 settings,
+                schema,
                 SettingsSource {
                     path: path.to_owned(),
                     state,
@@ -390,8 +397,10 @@ fn load_settings(path: &std::path::Path) -> (Settings, SettingsSource) {
         Err(e) => {
             // IO or other error
             eprintln!("settings  cannot load {path:?}: {e}");
+            let schema = lens_settings::schema::Schema::default();
             (
                 Settings::default(),
+                schema,
                 SettingsSource {
                     path: path.to_owned(),
                     state: "cannot load settings",
@@ -410,7 +419,36 @@ fn load_settings(path: &std::path::Path) -> (Settings, SettingsSource) {
 fn parse() -> Result<Options, String> {
     let flags = parse_flags()?;
     let path = flags.settings.clone().unwrap_or_else(default_settings_path);
-    let (settings, source) = load_settings(&path);
+    let (settings, schema, source) = load_settings(&path);
+
+    // Build the AI runtime configuration from the schema, which has separate
+    // [quick] and [deep] sections per ADR-0005.
+    let mut ai_config = AiRuntimeConfig::from_schema(&schema);
+
+    // CLI --endpoint applies to both Quick and Deep for backwards compatibility.
+    // A user who needs separate endpoints edits the settings file.
+    if let Some(endpoint) = flags.endpoint {
+        // Validate the endpoint is local before accepting it.
+        if lens_core::translate::engine_for(&endpoint)
+            != lens_core::translate::EngineId::LocalOllama
+        {
+            return Err(format!(
+                // One line, deliberately. A `\`-continuation inside this
+                // literal came back from rustfmt rejoined with its
+                // indentation intact, so the message reached a user with
+                // twenty spaces in the middle of a sentence.
+                "--endpoint {endpoint} is not on this machine, and Lens will not send text off it",
+            ));
+        }
+        ai_config.quick.endpoint = endpoint.clone();
+        ai_config.deep.endpoint = endpoint;
+    }
+
+    // CLI --model applies to Quick only (the default path). Deep is always
+    // configured via the settings file.
+    if let Some(model) = flags.model {
+        ai_config.quick.model = Some(model);
+    }
 
     let mut policy = settings.policy();
     if flags.auto {
@@ -431,27 +469,7 @@ fn parse() -> Result<Options, String> {
         )?,
         text: text_named(flags.text.as_ref().unwrap_or(&settings.text))?,
         language: flags.language.unwrap_or(settings.language),
-        model: flags.model.or(settings.model),
-        endpoint: match flags.endpoint {
-            // The flag goes through the same check the file does, so a command
-            // line cannot reach a host the settings file would refuse.
-            Some(endpoint)
-                if lens_core::translate::engine_for(&endpoint)
-                    == lens_core::translate::EngineId::LocalOllama =>
-            {
-                endpoint
-            }
-            Some(endpoint) => {
-                return Err(format!(
-                    // One line, deliberately. A `\`-continuation inside this
-                    // literal came back from rustfmt rejoined with its
-                    // indentation intact, so the message reached a user with
-                    // twenty spaces in the middle of a sentence.
-                    "--endpoint {endpoint} is not on this machine, and Lens will not send text off it",
-                ));
-            }
-            None => settings.endpoint,
-        },
+        ai_config,
         ocr_mode: flags
             .ocr
             .as_deref()
@@ -506,10 +524,20 @@ pub fn main() -> std::process::ExitCode {
     // wrong above 100% scaling.
     let dpi = declare_dpi_awareness();
 
-    let mut translator = OllamaTranslator::choosing(&options.endpoint);
-    if let Some(model) = &options.model {
-        translator = OllamaTranslator::new(&options.endpoint, model);
+    // ADR-0005: Two separate translators for Quick and Deep paths.
+    // Each has its own endpoint and model, configured independently.
+    let mut quick_translator =
+        OllamaTranslator::choosing(&options.ai_config.quick.endpoint);
+    if let Some(model) = &options.ai_config.quick.model {
+        quick_translator = OllamaTranslator::new(&options.ai_config.quick.endpoint, model);
     }
+
+    let mut deep_translator =
+        OllamaTranslator::choosing(&options.ai_config.deep.endpoint);
+    if let Some(model) = &options.ai_config.deep.model {
+        deep_translator = OllamaTranslator::new(&options.ai_config.deep.endpoint, model);
+    }
+
     // Resolved once at startup rather than per hover, so the first hover does
     // not pay for a listing, and so an absent Ollama is reported now instead of
     // as a mysteriously empty card later.
@@ -518,7 +546,14 @@ pub fn main() -> std::process::ExitCode {
     // would look. Someone who unzipped Lens without Ollama and double-clicked
     // it never sees a terminal, so the tooltip is the only thing standing
     // between them and a product that silently does nothing.
-    let engine_line = match translator.resolve_model() {
+    let engine_line = match quick_translator.resolve_model() {
+        Ok(model) => model.to_owned(),
+        Err(error) => match error.remedy() {
+            Some(remedy) => format!("{} · {remedy}", error.user_message()),
+            None => error.user_message(),
+        },
+    };
+    let deep_engine_line = match deep_translator.resolve_model() {
         Ok(model) => model.to_owned(),
         Err(error) => match error.remedy() {
             Some(remedy) => format!("{} · {remedy}", error.user_message()),
@@ -545,7 +580,7 @@ pub fn main() -> std::process::ExitCode {
     // Built once and printed here, because the same facts go into the tray's
     // 상태 보기 window and a release binary has no console to read this in
     // (#165). Two copies would be two things to keep right.
-    let facts = configuration_facts(&options, &engine_line);
+    let facts = configuration_facts(&options, &engine_line, &deep_engine_line);
     for (label, value) in &facts {
         println!("  {label:<9} {value}");
     }
@@ -688,7 +723,7 @@ pub fn main() -> std::process::ExitCode {
         // Synchronous here, unlike the normal path: the point of the selftest
         // is to measure the chain, and a cold load landing in the middle of it
         // would be reported as translation latency.
-        match translator.prewarm() {
+        match quick_translator.prewarm() {
             Ok(elapsed) => println!(
                 "engine warm after {}ms
 ",
@@ -702,14 +737,14 @@ pub fn main() -> std::process::ExitCode {
         }
         let code = selftest(
             &overlay,
-            &translator,
+            &quick_translator,
             &options.language,
             options.profile,
             theme,
             &facts,
             options.ocr_mode,
         );
-        translator.release();
+        quick_translator.release();
         return code;
     }
 
@@ -719,10 +754,12 @@ pub fn main() -> std::process::ExitCode {
     let mut cache = TranslationCache::new(CACHE_ENTRIES);
     // Captured before the worker takes the translator, so the keep and detail
     // paths can record which model produced a saved entry.
-    let model_name = translator.model().to_owned();
-    let warm_translator = translator.clone();
+    // ADR-0005: Quick and Deep have separate models.
+    let quick_model_name = quick_translator.model().to_owned();
+    let _deep_model_name = deep_translator.model().to_owned();
+    let warm_translator = quick_translator.clone();
     // Kept for the exit path: the worker takes ownership of the translator.
-    let releaser = translator.clone();
+    let releaser = quick_translator.clone();
     // Off the main thread so the window and the pointer loop come up
     // immediately; a user should not wait on a model to see the app start.
     // Whether the model has finished loading, for the waiting card to say
@@ -755,6 +792,10 @@ pub fn main() -> std::process::ExitCode {
     // Copied out before the move, the same way `worker_ocr` is further down.
     let worker_profile = options.profile;
     std::thread::spawn(move || {
+        // ADR-0005: Two translators, one for each path. Quick and Deep are
+        // separate engines with separate models and endpoints.
+        let quick_translator = quick_translator;
+        let deep_translator = deep_translator;
         // The translator lives on the worker, not shared: it holds no state
         // worth sharing and this keeps the loop free of a lock.
         // When the last answer came back. Ollama's lease is thirty minutes and
@@ -798,8 +839,11 @@ pub fn main() -> std::process::ExitCode {
                         request = request.about_the_word(word);
                     }
 
-                    let key =
-                        CacheKey::for_analysis(&request, translator.model(), DEEP_PROMPT_VERSION);
+                    let key = CacheKey::for_analysis(
+                        &request,
+                        deep_translator.model(),
+                        DEEP_PROMPT_VERSION,
+                    );
                     if let Some(hit) = explanations.get(&key) {
                         println!("deep  {} lines from memory", hit.lines().len());
                         let _ = answers_tx.send(Answer {
@@ -812,7 +856,7 @@ pub fn main() -> std::process::ExitCode {
                         continue;
                     }
 
-                    let card = match translator.deep(&request) {
+                    let card = match deep_translator.deep(&request) {
                         Ok(analysis) => {
                             println!(
                                 "deep  {} lines in {}ms",
@@ -854,7 +898,7 @@ pub fn main() -> std::process::ExitCode {
             // application rather than as a machine doing something. Asked only
             // when the lease may have lapsed, because the question costs 8ms.
             let may_have_unloaded = last_answer.is_none_or(|at| at.elapsed() > LEASE_IS_SAFE_FOR);
-            if may_have_unloaded && !translator.is_resident() {
+            if may_have_unloaded && !quick_translator.is_resident() {
                 let _ = answers_tx.send(Answer {
                     generation: job.generation,
                     card: Card::loading_model(&job.display_text),
@@ -864,7 +908,7 @@ pub fn main() -> std::process::ExitCode {
                 });
             }
 
-            let key = CacheKey::of(&request, translator.model(), PROMPT_VERSION);
+            let key = CacheKey::of(&request, quick_translator.model(), PROMPT_VERSION);
             if let Some(hit) = cache.get(&key) {
                 let mut card = Card::translated(&job.display_text, &hit);
                 if job.doubtful {
@@ -903,7 +947,7 @@ pub fn main() -> std::process::ExitCode {
                 });
             };
 
-            let card = match translator.quick_streaming(&request, &mut on_partial) {
+            let card = match quick_translator.quick_streaming(&request, &mut on_partial) {
                 Ok(translation) => {
                     cache.insert(key, translation.clone());
                     Card::translated(&job.display_text, &translation)
@@ -1245,7 +1289,7 @@ pub fn main() -> std::process::ExitCode {
                             // decision problem this does not touch.
                             update_diagnostics(
                                 &loop_diagnostics,
-                                &configuration_facts(&options, &engine_line),
+                                &configuration_facts(&options, &engine_line, &deep_engine_line),
                                 &tally,
                                 worker_ocr.as_str(),
                                 build_stamp(),
@@ -1253,7 +1297,7 @@ pub fn main() -> std::process::ExitCode {
                             loop_tauri.show_window();
                             drop(pinned.take());
                             let panel = lens_core::diagnostics::diagnostics_panel(
-                                &configuration_facts(&options, &engine_line),
+                                &configuration_facts(&options, &engine_line, &deep_engine_line),
                                 &tally,
                                 worker_ocr,
                                 build_stamp(),
@@ -1315,7 +1359,7 @@ pub fn main() -> std::process::ExitCode {
                         // worker took the translator; the target language is
                         // the reader's own, from settings.
                         entry.target_language = Some(language.clone());
-                        entry.model = Some(model_name.clone());
+                        entry.model = Some(quick_model_name.clone());
                         (entry, *anchor)
                     })
                 }) {
@@ -1399,7 +1443,7 @@ pub fn main() -> std::process::ExitCode {
                         // Record which model and target language produced this
                         // answer, so the detail save can store them.
                         view.target_language = Some(language.clone());
-                        view.model = Some(model_name.clone());
+                        view.model = Some(quick_model_name.clone());
                         let explained = view.rows.iter().any(|(_, v)| !v.trim().is_empty());
                         *loop_detail.lock().unwrap() = Some(view);
                         loop_tauri.show_detail_window();
@@ -1625,15 +1669,17 @@ pub fn main() -> std::process::ExitCode {
                     // mode decides whether the acquisition thread is built with a
                     // capture path at all.
                     //
-                    // Only the model was named here, and `ocr` and `endpoint` were
-                    // ignored in silence. A reader who edits a file, saves it, and
-                    // sees nothing concludes the file does not work.
+                    // ADR-0005: Quick and Deep have separate configs. Check both.
                     let mut stale: Vec<&str> = Vec::new();
-                    if settings.model != options.model {
-                        stale.push("model");
-                    }
-                    if settings.endpoint != options.endpoint {
-                        stale.push("endpoint");
+                    // Re-parse the settings file to get the current schema.
+                    if let Ok(file) = lens_settings::SettingsFile::load(&options.source.path) {
+                        let current_ai = AiRuntimeConfig::from_schema(file.schema());
+                        if current_ai.quick != options.ai_config.quick {
+                            stale.push("quick model/endpoint");
+                        }
+                        if current_ai.deep != options.ai_config.deep {
+                            stale.push("deep model/endpoint");
+                        }
                     }
                     if OcrMode::named(&settings.ocr) != Some(options.ocr_mode) {
                         stale.push("ocr");
@@ -2584,19 +2630,30 @@ fn log_card(card: &Card, app: Option<&str>) {
 /// Only the short key-and-value ones. The banner's longer lines explain a
 /// setting rather than state it, and a window that repeated them would be a
 /// manual rather than a diagnostic.
-fn configuration_facts(options: &Options, engine_line: &str) -> Vec<(String, String)> {
+fn configuration_facts(
+    options: &Options,
+    engine_line: &str,
+    deep_engine_line: &str,
+) -> Vec<(String, String)> {
     vec![
         // First, because everything under it is a measurement of *this* build
         // and a reader pasting the lines has no other way to say which one.
         ("build".to_owned(), build_stamp().to_owned()),
         ("target".to_owned(), options.language.clone()),
-        ("engine".to_owned(), engine_line.to_owned()),
-        // Where, as well as what. A reader who has pointed this somewhere else
-        // has no other way to confirm the product agreed, and one who has not
-        // gets a line saying the text is not going anywhere.
+        // ADR-0005: Quick and Deep have separate engines.
         (
-            "address".to_owned(),
-            format!("{} · on this machine", options.endpoint),
+            "quick".to_owned(),
+            format!(
+                "{} · {} · on this machine",
+                engine_line, options.ai_config.quick.endpoint
+            ),
+        ),
+        (
+            "deep".to_owned(),
+            format!(
+                "{} · {} · on this machine",
+                deep_engine_line, options.ai_config.deep.endpoint
+            ),
         ),
         (
             "dwell".to_owned(),
@@ -3405,7 +3462,7 @@ mod settings_migration_tests {
         let dir = temp_dir("first_run");
         let path = dir.join("settings.toml");
 
-        let (settings, source) = load_settings(&path);
+        let (settings, _schema, source) = load_settings(&path);
 
         // Should use defaults
         assert_eq!(settings.language, "Korean");
@@ -3442,7 +3499,7 @@ model = "gemma3:4b"
 "#;
         fs::write(&path, legacy_content).unwrap();
 
-        let (settings, source) = load_settings(&path);
+        let (settings, _schema, source) = load_settings(&path);
 
         // Should have migrated values
         assert_eq!(settings.language, "Japanese");
@@ -3495,7 +3552,7 @@ endpoint = "127.0.0.1:11434"
 "#;
         fs::write(&path, new_content).unwrap();
 
-        let (settings, source) = load_settings(&path);
+        let (settings, _schema, source) = load_settings(&path);
 
         // Should load directly
         assert_eq!(settings.language, "English");
@@ -3525,7 +3582,7 @@ theme = "night-lake"
 "#;
         fs::write(&path, legacy_toml).unwrap();
 
-        let (settings, source) = load_settings(&path);
+        let (settings, _schema, source) = load_settings(&path);
 
         // Should migrate
         assert_eq!(settings.language, "Japanese");
@@ -3557,7 +3614,7 @@ language = "Korean"
 "#;
         fs::write(&path, malformed).unwrap();
 
-        let (_, source) = load_settings(&path);
+        let (_, _schema, source) = load_settings(&path);
 
         // Should NOT migrate as legacy
         assert_eq!(source.state, "invalid file preserved");
@@ -3584,7 +3641,7 @@ engine = "ollama"
 "#;
         fs::write(&path, new_no_version).unwrap();
 
-        let (_, source) = load_settings(&path);
+        let (_, _schema, source) = load_settings(&path);
 
         // Should NOT migrate as legacy (has new sections)
         assert_eq!(source.state, "invalid file preserved");
@@ -3609,7 +3666,7 @@ language = "Korean"
 "#;
         fs::write(&path, future).unwrap();
 
-        let (_, source) = load_settings(&path);
+        let (_, _schema, source) = load_settings(&path);
 
         // Should preserve, not downgrade
         assert_eq!(source.state, "invalid file preserved");
@@ -3645,7 +3702,7 @@ language = "Korean"
             fs::write(&backup_n, "dummy").unwrap();
         }
 
-        let (_, source) = load_settings(&path);
+        let (_, _schema, source) = load_settings(&path);
 
         // Should fail to migrate
         assert_eq!(source.state, "invalid file preserved");
@@ -3672,7 +3729,7 @@ language = "Korean"
         let backup1 = path.with_extension("toml.legacy-backup");
         fs::write(&backup1, "existing backup").unwrap();
 
-        let (settings, source) = load_settings(&path);
+        let (settings, _schema, source) = load_settings(&path);
 
         // Should migrate using numbered backup
         assert_eq!(settings.language, "Japanese");
@@ -3697,11 +3754,11 @@ language = "Korean"
         let path = dir.join("settings.toml");
 
         // First run: creates file
-        let (_, source1) = load_settings(&path);
+        let (_, _schema1, source1) = load_settings(&path);
         assert!(source1.first_run);
 
         // Restart: should load successfully
-        let (settings2, source2) = load_settings(&path);
+        let (settings2, _schema2, source2) = load_settings(&path);
         assert!(!source2.first_run);
         assert_eq!(source2.state, "read");
         assert!(source2.problems.is_empty());
@@ -3734,7 +3791,7 @@ language = "Korean"
         file.save().unwrap();
 
         // Windows startup load
-        let (settings, source) = load_settings(&path);
+        let (settings, _schema, source) = load_settings(&path);
 
         // Semantic values identical
         assert_eq!(settings.language, "Japanese");
