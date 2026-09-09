@@ -256,7 +256,11 @@ pub fn main() -> std::process::ExitCode {
     // Read current settings for the product loop.
     let (language, endpoint, model, dwell_ms, ocr_mode, policy, hover_scope) = {
         let s = shared_settings.lock().unwrap().current().clone();
-        let p = s.policy();
+        let mut p = s.policy();
+        // --auto sets the default policy tier to Allow, matching Windows behavior.
+        if flags.auto {
+            p.set_default(lens_core::policy::AppTier::Allow);
+        }
         let lang = flags.language.unwrap_or(s.language);
         let ep = flags.endpoint.unwrap_or(s.endpoint);
         let m = flags.model.or(s.model);
@@ -305,6 +309,7 @@ pub fn main() -> std::process::ExitCode {
             ocr_mode,
             policy,
             hover_scope,
+            flags.auto,
         );
         // Tell Tauri to exit when the product loop is done.
         // (We can't call this from inside the loop because we need to
@@ -340,6 +345,7 @@ fn product_loop(
     mut ocr_mode: OcrMode,
     mut policy: AppPolicy,
     mut hover_scope: String,
+    auto: bool,
 ) {
     // Translation job types for async dispatch.
     enum QuickJob {
@@ -885,6 +891,10 @@ fn product_loop(
                 let new_ocr = OcrMode::named(&s.ocr).unwrap_or(OcrMode::Manual);
                 let new_policy = {
                     let mut p = s.policy();
+                    // --auto must be re-applied on every reload, matching Windows behavior.
+                    if auto {
+                        p.set_default(lens_core::policy::AppTier::Allow);
+                    }
                     p.deny_self("lens");
                     p
                 };
@@ -935,7 +945,8 @@ fn product_loop(
                 // Policy check: get process name BEFORE any content acquisition.
                 // This is a lightweight metadata lookup — no text is read.
                 let process_name = ax_acquirer.process_name_at(point);
-                if !policy.allows(process_name.as_deref(), false) {
+                // Pass the real Option/Alt modifier state so Modifier tier works correctly.
+                if !policy.allows(process_name.as_deref(), overlay::option_held()) {
                     // Denied by policy: skip both AX and OCR.
                     if let Some(ref o) = overlay {
                         o.hide();
