@@ -26,11 +26,12 @@ use lens_core::acquire::{
     AcquireContext, AcquireError, AcquisitionSource, ExpandedUnit, ProtectedReason, ProviderInfo,
     TextAcquirer, TextTarget,
 };
-use lens_core::geometry::{ScreenPoint, ScreenRect};
+use lens_core::geometry::{line_under, ScreenPoint, ScreenRect};
 use lens_core::text::{self, SegmentedText};
 use windows::core::{Interface, HRESULT};
 use windows::Win32::Foundation::{POINT, RPC_E_TIMEOUT};
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER, SAFEARRAY};
+use windows::Win32::System::Variant::VARIANT;
 // The SafeArray helpers live under Ole, not Com, despite operating on a type
 // declared in Com.
 use windows::Win32::System::Ole::{
@@ -39,8 +40,9 @@ use windows::Win32::System::Ole::{
 };
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationElement,
-    IUIAutomationTextPattern, IUIAutomationTextRange, TextPatternRangeEndpoint_Start,
-    TextUnit_Line, TextUnit_Paragraph, TextUnit_Word, UIA_TextPatternId, UIA_E_TIMEOUT,
+    IUIAutomationTextPattern, IUIAutomationTextRange, IUIAutomationTreeWalker,
+    TextPatternRangeEndpoint_Start, TextUnit_Line, TextUnit_Paragraph, TextUnit_Word,
+    TreeScope_Descendants, UIA_IsTextPatternAvailablePropertyId, UIA_TextPatternId, UIA_E_TIMEOUT,
 };
 
 use crate::com::ComScope;
@@ -812,4 +814,419 @@ impl UiaTextAcquirer {
             bounds,
         })
     }
+}
+
+/// One large text container's GetVisibleRanges measurement.
+///
+/// Returned by [`measure_visible_ranges`] for each of the top containers in a
+/// window. The probe uses this to decide whether GetVisibleRanges exposes
+/// line-level geometry that the normal path (RangeFromPoint) misses.
+#[derive(Debug, Clone)]
+pub struct VisibleRangeSample {
+    /// Height of the container element in physical pixels.
+    pub container_height: i32,
+    /// Number of ranges GetVisibleRanges returned.
+    pub range_count: i32,
+    /// Bounding rectangles extracted from those ranges.
+    pub rects: Vec<ScreenRect>,
+    /// How long GetVisibleRanges took.
+    pub get_visible_ranges_time: Duration,
+    /// Of line-shaped rectangles (height <= 40), how many answered correctly
+    /// when RangeFromPoint was called at the line's own centre.
+    pub point_at_centre_hits: usize,
+    pub point_at_centre_total: usize,
+    /// Grid coverage: how many grid points land inside a line rectangle.
+    pub grid_points: usize,
+    pub grid_points_on_a_line: usize,
+}
+
+/// Measure whether the foreground window's large text containers expose
+/// line-level geometry through GetVisibleRanges.
+///
+/// Returns one sample per container, up to the five largest. This is a
+/// read-only measurement; no text is read.
+pub fn measure_visible_ranges(window_id: i64) -> Vec<VisibleRangeSample> {
+    let _com = ComScope::enter();
+    // SAFETY: read-only COM creation on a freshly initialised apartment.
+    let Ok(automation) = (unsafe {
+        CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+    }) else {
+        return Vec::new();
+    };
+
+    // SAFETY: the handle is a live window the OS just returned.
+    let Ok(element) = (unsafe {
+        automation.ElementFromHandle(windows::Win32::Foundation::HWND(window_id as *mut _))
+    }) else {
+        return Vec::new();
+    };
+
+    // SAFETY: property condition construction, read-only.
+    let Ok(condition) = (unsafe {
+        automation
+            .CreatePropertyCondition(UIA_IsTextPatternAvailablePropertyId, &VARIANT::from(true))
+    }) else {
+        return Vec::new();
+    };
+    // SAFETY: read-only tree walk.
+    let Ok(found) = (unsafe { element.FindAll(TreeScope_Descendants, &condition) }) else {
+        return Vec::new();
+    };
+    // SAFETY: read-only length query on a live element array.
+    let count = unsafe { found.Length().unwrap_or(0) };
+
+    let mut candidates = Vec::new();
+    for index in 0..count.min(200) {
+        // SAFETY: read-only element access on a live array.
+        let Ok(child) = (unsafe { found.GetElement(index) }) else {
+            continue;
+        };
+        // SAFETY: read-only property on a live element.
+        let Ok(rect) = (unsafe { child.CurrentBoundingRectangle() }) else {
+            continue;
+        };
+        let area = (rect.right - rect.left) as i64 * (rect.bottom - rect.top) as i64;
+        candidates.push((area, rect.bottom - rect.top, child));
+    }
+    candidates.sort_by_key(|(area, _, _)| std::cmp::Reverse(*area));
+
+    let mut samples = Vec::new();
+    for (_, height, child) in candidates.into_iter().take(5) {
+        // SAFETY: GetCurrentPattern returns an owned interface or an error.
+        let Ok(pattern) = (unsafe { child.GetCurrentPattern(UIA_TextPatternId) }) else {
+            continue;
+        };
+        let Ok(pattern) = pattern.cast::<IUIAutomationTextPattern>() else {
+            continue;
+        };
+
+        let start = Instant::now();
+        // SAFETY: GetVisibleRanges is a read-only query on a live pattern.
+        let ranges = unsafe { pattern.GetVisibleRanges() }.ok();
+        let range_count = ranges
+            .as_ref()
+            // SAFETY: read-only length query on a live COM array.
+            .and_then(|array| unsafe { array.Length() }.ok())
+            .unwrap_or(0);
+        let rects: Vec<ScreenRect> = match &ranges {
+            Some(array) => {
+                // SAFETY: read-only length on a live COM array.
+                let len = unsafe { array.Length() }.unwrap_or(0);
+                (0..len)
+                    // SAFETY: read-only element access on a live COM array.
+                    .filter_map(|at| unsafe { array.GetElement(at) }.ok())
+                    .flat_map(|range| bounding_rectangles(&range))
+                    .collect()
+            }
+            None => Vec::new(),
+        };
+        let get_visible_ranges_time = start.elapsed();
+
+        // Test RangeFromPoint at each line's own centre.
+        let mut asked = 0usize;
+        let mut answered_with_itself = 0usize;
+        for rect in rects.iter().filter(|rect| rect.height <= 40) {
+            let probe = POINT {
+                x: rect.x + 2,
+                y: rect.y + rect.height / 2,
+            };
+            asked += 1;
+            // SAFETY: RangeFromPoint is a read-only query.
+            let answered = unsafe { pattern.RangeFromPoint(probe) }
+                .ok()
+                .and_then(|range| {
+                    // SAFETY: ExpandToEnclosingUnit is a read-only mutation
+                    // of the range, not the provider.
+                    unsafe { range.ExpandToEnclosingUnit(TextUnit_Line) }
+                        .ok()
+                        .map(|()| range)
+                })
+                .map(|range| {
+                    bounding_rectangles(&range)
+                        .iter()
+                        .any(|got| got.y == rect.y && got.height == rect.height)
+                })
+                .unwrap_or(false);
+            if answered {
+                answered_with_itself += 1;
+            }
+        }
+
+        // Grid coverage.
+        let lines_only: Vec<ScreenRect> = rects
+            .iter()
+            .copied()
+            .filter(|rect| rect.height <= 40)
+            .collect();
+        // SAFETY: read-only property.
+        let area = unsafe { child.CurrentBoundingRectangle() }
+            .map(|rect| {
+                ScreenRect::new(
+                    rect.left,
+                    rect.top,
+                    rect.right - rect.left,
+                    rect.bottom - rect.top,
+                )
+            })
+            .unwrap_or(ScreenRect::new(0, 0, 0, 0));
+        let (mut points, mut on_a_line) = (0usize, 0usize);
+        let mut y = area.y + 4;
+        while y < area.bottom() - 4 {
+            let mut x = area.x + 4;
+            while x < area.right() - 4 {
+                points += 1;
+                if line_under(&lines_only, ScreenPoint::new(x, y)).is_some() {
+                    on_a_line += 1;
+                }
+                x += 24;
+            }
+            y += 24;
+        }
+
+        samples.push(VisibleRangeSample {
+            container_height: height,
+            range_count,
+            rects,
+            get_visible_ranges_time,
+            point_at_centre_hits: answered_with_itself,
+            point_at_centre_total: asked,
+            grid_points: points,
+            grid_points_on_a_line: on_a_line,
+        });
+    }
+
+    samples
+}
+
+/// One ancestor in the chain from `ElementFromPoint` to the window root.
+#[derive(Debug, Clone)]
+pub struct AncestorStep {
+    /// Depth from the starting element (0 = the element itself).
+    pub depth: usize,
+    /// UIA control type id.
+    pub control_type: Option<i32>,
+    /// Bounding rectangle in physical pixels.
+    pub bounds: Option<ScreenRect>,
+    /// Whether this ancestor has a TextPattern.
+    pub has_text_pattern: bool,
+    /// If it has a TextPattern, how many visible ranges it returns.
+    pub visible_range_count: Option<i32>,
+    /// If it has a TextPattern, how many line-shaped rects.
+    pub line_rect_count: Option<usize>,
+    /// Time for GetVisibleRanges on this ancestor.
+    pub get_visible_ranges_time: Option<Duration>,
+    /// If it has a TextPattern, grid coverage from its visible ranges.
+    pub grid_coverage: Option<(usize, usize)>,
+}
+
+/// Result of walking the ancestor chain from one probe point.
+#[derive(Debug, Clone)]
+pub struct AncestorChainSample {
+    /// The probe point used.
+    pub point: ScreenPoint,
+    /// Control type of the element at the point.
+    pub start_control_type: Option<i32>,
+    /// The full ancestor chain, from start to root.
+    pub ancestors: Vec<AncestorStep>,
+    /// Total time to walk the chain.
+    pub chain_time: Duration,
+}
+
+/// Walk the ancestor chain from `ElementFromPoint` at each probe point,
+/// measuring which ancestors expose a useful TextPattern with line geometry.
+///
+/// This is the decisive measurement for whether a production fallback can
+/// discover the right container from the pointer position.
+pub fn measure_ancestor_chain(window_id: i64, points: &[ScreenPoint]) -> Vec<AncestorChainSample> {
+    let _com = ComScope::enter();
+    // SAFETY: read-only COM creation on a freshly initialised apartment.
+    let Ok(automation) = (unsafe {
+        CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+    }) else {
+        return Vec::new();
+    };
+
+    // Verify the window handle is valid.
+    // SAFETY: the handle is a live window the OS just returned.
+    let Ok(_element) = (unsafe {
+        automation.ElementFromHandle(windows::Win32::Foundation::HWND(window_id as *mut _))
+    }) else {
+        return Vec::new();
+    };
+
+    // SAFETY: read-only request for the raw-view walker.
+    let Ok(walker) = (unsafe { automation.RawViewWalker() }) else {
+        return Vec::new();
+    };
+
+    let mut samples = Vec::new();
+
+    for &point in points {
+        let native = POINT {
+            x: point.x,
+            y: point.y,
+        };
+        let point_start = Instant::now();
+        // SAFETY: read-only query.
+        let Ok(start_elem) = (unsafe { automation.ElementFromPoint(native) }) else {
+            continue;
+        };
+        let start_ct = control_type(&start_elem);
+
+        let mut ancestors = Vec::new();
+        // SAFETY: read-only property on a live element.
+        let start_bounds = unsafe { start_elem.CurrentBoundingRectangle() }
+            .ok()
+            .map(|rect| {
+                ScreenRect::new(
+                    rect.left,
+                    rect.top,
+                    rect.right - rect.left,
+                    rect.bottom - rect.top,
+                )
+            });
+
+        // Step 0: the element itself.
+        // SAFETY: GetCurrentPattern returns an owned interface or an error.
+        let start_has_tp = unsafe { start_elem.GetCurrentPattern(UIA_TextPatternId) }
+            .ok()
+            .and_then(|p| p.cast::<IUIAutomationTextPattern>().ok())
+            .is_some();
+        let (start_vr_count, start_lr_count, start_gvr_time, start_coverage) = if start_has_tp {
+            measure_ancestor_text_pattern(&automation, &walker, &start_elem)
+        } else {
+            (None, None, None, None)
+        };
+
+        ancestors.push(AncestorStep {
+            depth: 0,
+            control_type: start_ct,
+            bounds: start_bounds,
+            has_text_pattern: start_has_tp,
+            visible_range_count: start_vr_count,
+            line_rect_count: start_lr_count,
+            get_visible_ranges_time: start_gvr_time,
+            grid_coverage: start_coverage,
+        });
+
+        // Walk up.
+        let mut current = start_elem.clone();
+        let mut found_useful = false;
+        for depth in 1..=20 {
+            // SAFETY: read-only tree walk.
+            let Ok(parent) = (unsafe { walker.GetParentElement(&current) }) else {
+                break;
+            };
+            // Check if we got a valid element by reading its control type.
+            let ct = control_type(&parent);
+            if ct.is_none() {
+                break;
+            }
+
+            // SAFETY: read-only property on a live element.
+            let bounds = unsafe { parent.CurrentBoundingRectangle() }
+                .ok()
+                .map(|rect| {
+                    ScreenRect::new(
+                        rect.left,
+                        rect.top,
+                        rect.right - rect.left,
+                        rect.bottom - rect.top,
+                    )
+                });
+
+            // SAFETY: GetCurrentPattern returns an owned interface or an error.
+            let has_tp = unsafe { parent.GetCurrentPattern(UIA_TextPatternId) }
+                .ok()
+                .and_then(|p| p.cast::<IUIAutomationTextPattern>().ok())
+                .is_some();
+            // Only measure GetVisibleRanges on the first ancestor with a TextPattern.
+            // Subsequent ones are recorded but not measured (to bound the cost).
+            let (vr_count, lr_count, gvr_time, coverage) = if has_tp && !found_useful {
+                let result = measure_ancestor_text_pattern(&automation, &walker, &parent);
+                if result.1.is_some_and(|n| n > 0) {
+                    found_useful = true;
+                }
+                result
+            } else if has_tp {
+                // Just record that it has a TextPattern, without measuring.
+                (Some(-1), None, None, None)
+            } else {
+                (None, None, None, None)
+            };
+
+            ancestors.push(AncestorStep {
+                depth,
+                control_type: ct,
+                bounds,
+                has_text_pattern: has_tp,
+                visible_range_count: vr_count,
+                line_rect_count: lr_count,
+                get_visible_ranges_time: gvr_time,
+                grid_coverage: coverage,
+            });
+
+            current = parent;
+        }
+
+        samples.push(AncestorChainSample {
+            point,
+            start_control_type: start_ct,
+            ancestors,
+            chain_time: point_start.elapsed(),
+        });
+    }
+
+    samples
+}
+
+/// Helper: measure GetVisibleRanges on an element that has a TextPattern.
+///
+/// Returns (range_count, line_rect_count, gvr_time).
+/// All calls are read-only UIA queries on a live element.
+/// Grid coverage is omitted here to isolate the cross-process call cost.
+type TextPatternMeasurement = (
+    Option<i32>,
+    Option<usize>,
+    Option<Duration>,
+    Option<(usize, usize)>,
+);
+
+fn measure_ancestor_text_pattern(
+    _automation: &IUIAutomation,
+    _walker: &IUIAutomationTreeWalker,
+    element: &IUIAutomationElement,
+) -> TextPatternMeasurement {
+    // SAFETY: GetCurrentPattern returns an owned interface or an error.
+    let Ok(pattern) = (unsafe { element.GetCurrentPattern(UIA_TextPatternId) }) else {
+        return (None, None, None, None);
+    };
+    let Ok(pattern) = pattern.cast::<IUIAutomationTextPattern>() else {
+        return (None, None, None, None);
+    };
+
+    let start = Instant::now();
+    // SAFETY: GetVisibleRanges is a read-only query on a live pattern.
+    let ranges = unsafe { pattern.GetVisibleRanges() }.ok();
+    let range_count = ranges
+        .as_ref()
+        // SAFETY: read-only length query on a live COM array.
+        .and_then(|array| unsafe { array.Length() }.ok());
+    let rects: Vec<ScreenRect> = match &ranges {
+        Some(array) => {
+            // SAFETY: read-only length on a live COM array.
+            let len = unsafe { array.Length() }.unwrap_or(0);
+            (0..len)
+                // SAFETY: read-only element access on a live COM array.
+                .filter_map(|at| unsafe { array.GetElement(at) }.ok())
+                .flat_map(|range| bounding_rectangles(&range))
+                .collect()
+        }
+        None => Vec::new(),
+    };
+    let gvr_time = start.elapsed();
+
+    let lr_count = rects.iter().filter(|rect| rect.height <= 40).count();
+
+    (range_count, Some(lr_count), Some(gvr_time), None)
 }
