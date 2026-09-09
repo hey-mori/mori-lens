@@ -372,7 +372,7 @@ Do not reopen UIA GetVisibleRanges research without new independent evidence.
 
 ```
 latest merge: PR #356 (test: measure UIA visible-range targeting)
-current work: PR #352 (feat: macOS hover_scope parity) — unmerged
+current work: PR #365 (feat: macOS hover_scope parity) — open
 HEAD:         074844b
 Branches:     clean
 History:      rewritten twice (Co-authored-by removal). Current main is canonical baseline.
