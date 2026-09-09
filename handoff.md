@@ -38,14 +38,15 @@ Windows-first product validation. macOS deferred items remain.
 - Runtime permissions: IMPLEMENTED (AX + Screen Recording checks)
 
 **macOS deferred items:**
-- modifier/InputState (Ctrl tracking for hover_scope): DEFERRED
-- --auto flag: PARTIAL (parsed but never read)
+- modifier/InputState (Ctrl tracking for hover_scope): PR #365 (Ctrl polling implemented)
+- --auto flag: FIXED (PR #366 — now applies policy.set_default(Allow))
 - --settings flag: PARTIAL (parsed but settings_service ignores it)
 - HoverSession/HoverWorker: DEFERRED (Windows-only, macOS uses inline acquisition)
-- ReadingContext: DEFERRED (scattered state, not bundled)
-- hover_scope (word vs sentence): DEFERRED (setting exists, macOS never reads it)
+- ReadingContext: FIXED (PR #366 — job carries app/focus through async boundary)
+- hover_scope (word vs sentence): PR #365 (Ctrl toggle implemented)
 - Deep cache: DEFERRED (only TranslationCache instantiated, no AnalysisCache)
-- Stale result safety: PARTIAL (generation checks exist, but HoverSession::resolve unused)
+- Stale result safety: FIXED (PR #366 — Hover Left increments generation)
+- Real modifier state: FIXED (PR #366 — overlay::option_held() polls Option/Alt)
 
 **Mori integration (built, unverified):**
 - Process boundary with capability discovery (`.capability.json`)
@@ -321,14 +322,17 @@ REMAINING WINDOWS WORK:
   NSIS local installation     OWNER DECISION
 
 REMAINING MACOS WORK:
-  modifier/InputState         DEFERRED
-  --auto flag                 PARTIAL (parsed, never read)
+  modifier/InputState         PR #365 (Ctrl polling implemented)
+  --auto flag                 FIXED (PR #366)
   --settings flag             PARTIAL (parsed, ignored by settings_service)
-  HoverSession/HoverWorker    DEFERRED
-  ReadingContext              DEFERRED
-  hover_scope                 DEFERRED
+  HoverSession/HoverWorker    DEFERRED (macOS uses inline acquisition, follows core contract)
+  ReadingContext              FIXED (PR #366 — job carries context)
+  hover_scope                 PR #365 (Ctrl toggle implemented)
   Deep cache                  DEFERRED
-  Stale result safety         PARTIAL
+  Stale result safety         FIXED (PR #366 — Hover Left generation invalidation)
+  Real modifier state         FIXED (PR #366 — overlay::option_held())
+  OCR provenance              CORRECT (source-driven from_pixels)
+  Manual OCR app/focus        FIXED (PR #366 — uses target.app, not pending_app)
 
 REMAINING EXTERNAL BLOCKERS:
   GitHub Actions billing      BILLING BLOCKER
@@ -371,9 +375,9 @@ Do not reopen UIA GetVisibleRanges research without new independent evidence.
 ## Git State
 
 ```
-latest merge: PR #356 (test: measure UIA visible-range targeting)
-current work: PR #365 (feat: macOS hover_scope parity) — open
-HEAD:         074844b
+latest merge: PR #365 (feat: macOS hover_scope with Ctrl key toggle)
+HEAD:         7d0f2a6
+Open PR:      #366 (fix: macOS reading context, provenance, policy, --settings)
 Branches:     clean
 History:      rewritten twice (Co-authored-by removal). Current main is canonical baseline.
               No further rewrites.
