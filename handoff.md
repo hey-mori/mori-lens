@@ -1,24 +1,28 @@
 # Mori Lens — Session Handoff
 
-Last updated: 2026-09-07
+Last updated: 2026-09-09
 
 ## Current Goal
 
-macOS native implementation for Mori Lens cross-platform desktop product.
-Windows implementation is complete and stable. macOS implementation is complete.
-**All repository-local implementation and evidence work is complete. Remaining work is CI execution (blocked by billing), external accounts, human gates, or quality research.**
+Windows-first product validation. macOS deferred items remain.
+**Automated evidence is strong. Human GUI product smoke is the remaining gap.**
 
 ## Current Product State
 
-**Windows (stable, production):**
+**Windows (automated PASS, human GUI smoke pending):**
 - Full product loop: hover → UIA acquisition → translation → native overlay
 - Deep Analysis, Copy, Save, Manual OCR, Pause/Resume via global hotkeys
 - Tauri Settings/Library/Detail surfaces with live settings propagation
 - Policy enforcement via HoverSession (per-app deny/allow)
 - NSIS installer + MSIX packaging infrastructure (ADR-0017)
-- Code signing: NOT CONFIGURED (Store account needed for MSIX path)
+- ADR-0005 true two-speed runtime: separate Quick/Deep translators (PR #353)
+- Settings: single canonical TOML format via lens-settings crate (PR #352)
+- Endpoint locality: canonical engine_for() classifier, adversarial tests (PR #354)
+- Settings validation: round-trip consistency proven (PR #355)
+- Code signing: NOT CONFIGURED (Store account or self-signed certificate needed)
+- Ollama + both models available locally (translategemma:latest, qwen2.5:7b)
 
-**macOS (implementation complete, CI passing, real-world validation pending permissions):**
+**macOS (implementation partial, runtime validation pending):**
 - Accessibility acquisition production-wired (`MacTextAcquirer`)
 - Vision OCR with per-word geometry (`boundingBoxForRange` → `VNRectangleObservation`)
 - Typed FFI ABI (`LensOcrWord` struct: float geometry + `uint32_t` offsets)
@@ -30,6 +34,18 @@ Windows implementation is complete and stable. macOS implementation is complete.
 - Overlay exclusion via CGWindowID, shutdown cleanup, diagnostics wired
 - Settings hot-path: generation counter, policy enforcement
 - Graceful degradation without AX permission (no SIGTRAP)
+- Quick focused-word: IMPLEMENTED (PR #340)
+- Runtime permissions: IMPLEMENTED (AX + Screen Recording checks)
+
+**macOS deferred items:**
+- modifier/InputState (Ctrl tracking for hover_scope): DEFERRED
+- --auto flag: PARTIAL (parsed but never read)
+- --settings flag: PARTIAL (parsed but settings_service ignores it)
+- HoverSession/HoverWorker: DEFERRED (Windows-only, macOS uses inline acquisition)
+- ReadingContext: DEFERRED (scattered state, not bundled)
+- hover_scope (word vs sentence): DEFERRED (setting exists, macOS never reads it)
+- Deep cache: DEFERRED (only TranslationCache instantiated, no AnalysisCache)
+- Stale result safety: PARTIAL (generation checks exist, but HoverSession::resolve unused)
 
 **Mori integration (built, unverified):**
 - Process boundary with capability discovery (`.capability.json`)
@@ -52,143 +68,182 @@ Windows implementation is complete and stable. macOS implementation is complete.
 - Product binary fmt + clippy + check + test
 - Clean native rebuild + privacy gates + version consistency
 
-## This Session (two parts)
+## Recent Sessions
 
-### Part 1 — Package-smoke fixes (previous session continuation)
+### PR #352 — fix: make settings.toml a single safe format boundary
+- Eliminated dual-parser split-brain on Windows
+- Both `win.rs` and `settings_service` now use `load_or_initialize()` from lens-settings
+- Fail-safe migration: backup before write, collision handling, future-version preservation
+- Legacy detection by format characteristics, not error type
 
-**PR #315** — fix: MSIX manifest encoding and macOS .icns icon for package-smoke
-**PR #316** — fix: add icon generation to release workflow jobs
-**PR #317** — docs: fix stale capability count (26→28) and installability claims
+### PR #353 — feat: implement true two-speed runtime per ADR-0005
+- Separate `quick_translator` and `deep_translator` with independent models/endpoints
+- `ai_runtime` module bridges settings schema and runtime translators
+- Startup banner shows both Quick and Deep configurations
+- Live settings detection checks quick and deep independently
 
-### Part 2 — M8 gate closure and canonical truth
+### PR #354 — test: harden engine_for() with adversarial endpoint validation
+- 30+ adversarial test cases for endpoint classification
+- Suffix attacks, case variations, private networks, bare IPv6
+- Fix: bare IPv6 `::1` now correctly classified as loopback
 
-**PR #318** — docs: reconcile canonical truth with current code state
-- project-goal.md §2: OCR contract "manual only" → "manual by default; automatic after explicit opt-in"
-- project-goal.md: package-smoke claim downgraded to honest status (infrastructure exists, CI execution pending)
-- privacy-model.md: macOS settings path added from code truth
-- roadmap.md M8: exact test names for all three gate conditions
-- ADR-0004/0005/0007: implementation status annotations appended (body preserved)
+### PR #355 — test: verify settings validation consistency and round-trip preservation
+- Round-trip test: load → save → load preserves all values
+- Endpoint validation consistent across Quick and Deep
+- Range checks (dwell_ms, history_days) applied at load time
 
-**PR #319** — test: close M8 gate evidence gaps
-- `append_creates_both_files_from_nothing`: save boundary test with caller audit
-- `json_export_semantic_round_trip`: JSON export → deserialize → all semantic fields preserved
-- `single_delete_survives_reopen`: delete(id) → drop → reopen → row absent, other items/tags survive
+### PR #356 — test: measure UIA visible-range targeting for large text containers
+- GetVisibleRanges research for VS Code (#14) and KakaoTalk (#34)
+- Container discovery: 100% (25/25 points found TextPattern ancestor)
+- Latency: p50 ~950ms, p95 ~1070ms (400ms chain budget)
+- **Decision: synchronous GetVisibleRanges fallback REJECTED on performance**
+- Measurement-only probe; no production code changed
 
-**PR #320** — fix: remaining settings.conf references
-- SECURITY.md: settings.conf → settings.toml
-- keeping.rs: Windows test paths updated
+### Previous Sessions (PR #303–#351)
+- Various fixes: save serialization, Deep parity, OCR provenance, Copy feedback
+- Pause gate, settings privacy, endpoint locality, cross-platform save contract
+- macOS: OCR provenance, focused-word parity, app provenance timing
+- History note: published history rewritten twice (Co-authored-by removal). Current main is canonical baseline. No further rewrites.
 
-### Part 3 — Implementation improvements and code audit
+## Settings Current Truth
 
-**PR #322** — fix: cross-platform mori_transfer, macOS availability, version source
-- mori_transfer.rs: `HOME` fallback when `USERPROFILE` unset (was silently broken on macOS)
-- capture.m: `@available(macOS 14.0, *)` guard for `setCaptureResolution:` (eliminated CI warning)
-- package-smoke.yml: version source from `apps/lens/Cargo.toml` (was workspace root)
+```
+SETTINGS FORMAT OWNER:       lens-settings crate (canonical TOML loader/writer)
+LEGACY MIGRATION:            Fail-safe + backup, format-based detection
+WINDOWS STARTUP:             Same canonical schema via load_or_initialize()
+SETTINGS UI:                 Same canonical schema via SettingsState
+QUICK / DEEP CONFIG:         Separate [quick] and [deep] sections
+                             Separate endpoint/model/runtime per ADR-0005
+ENDPOINT LOCALITY:           lens_core::translate::engine_for() as single source
+                             Adversarial tests prove locality cannot be bypassed
+```
 
-**PR #323** — fix: mori payload test, package.sh platform guard and version source
-- mori_transfer: `payload_from_item_round_trips_through_json` test (transfer pipeline coverage)
-- package.sh: Windows-only platform guard + version source fix
+Historical split-brain (legacy parser vs new parser) is FIXED (PR #352).
 
-**PR #324** — docs: document reserved AX accessors in platform-macos
-- acquirer.rs: `get_position`/`get_size` doc comments explaining reserved status
+## ADR-0005 Current Truth
 
-**Branch cleanup:** 57 stale remote branches pruned
+```
+ADR-0005 IMPLEMENTATION:     CLOSED (PR #353)
+AUTOMATED EVIDENCE:          CLOSED (separate translator tests)
+WINDOWS STARTUP DIAGNOSTICS: PASS (Quick=translategemma, Deep=qwen2.5)
+BOTH MODELS LOADED:          PASS (engine warm after ~20s)
+GUI HOVER → QUICK:           NOT YET HUMAN-VERIFIED
+GUI CTRL+ALT+D → DEEP:       NOT YET HUMAN-VERIFIED
+SAVE PRODUCER-MODEL:         NOT YET HUMAN-VERIFIED
+```
 
-### Part 4 — Cross-platform save contract
+Unit test evidence does not substitute for GUI smoke evidence.
 
-**PR #331** — fix: cross-platform save contract with shared save_card()
-- macOS `execute_save()` was broken: saved Problem/Waiting cards, no saved.md, all metadata None
-- New `keeping::save_card()`: shared save policy with eligibility, metadata, serialization
-- `SAVE_LOCK` (process-wide Mutex) prevents concurrent preamble duplication
-- Tests: `save_card_refuses_waiting`, `save_card_accepts_translation`, `concurrent_save_card_does_not_duplicate_preamble`
+## Windows Current Validation
 
-### Part 5 — Serialization boundary and Deep/Copy parity
+```
+WINDOWS AUTOMATED/PROBE:     AVAILABLE
+  702 workspace tests PASS
+  141 product tests PASS
+  105 live tests ignored (require real Windows environment)
+  Live UIA sweep executed (13 windows)
+  Local MSIX build executed
+  Ollama + two models available
 
-**PR #333** — fix: move SAVE_LOCK into append() — all persistence serialized
-- SAVE_LOCK was only in `save_card()`, so direct `append()` callers (Windows hotkey, Tauri detail save) bypassed serialization
-- Moved lock into `append()` itself — ALL persistence entry points now serialized
-- New test: `concurrent_direct_append_does_not_duplicate_preamble` (8 threads, direct append)
+WINDOWS HUMAN GUI SMOKE:     PENDING
+  Quick visible hover
+  Deep hotkey (Ctrl+Alt+D)
+  Copy feedback (Ctrl+Alt+C)
+  Save + provenance (Ctrl+Alt+S)
+  Manual OCR (Ctrl+Alt+O)
+  Automatic OCR opt-in
+  Settings UI / restart
+  Library UI
+  Manual Review
+  hover_scope / Ctrl inversion
+  Fullscreen / borderless
+```
 
-**PR #334** — fix: macOS Deep Analysis parity and Copy visual feedback
-- Deep Analysis: now extracts on-screen translation from CardBody::Translation (was always None)
-- Deep Analysis: passes current language setting (was empty string)
-- Deep Analysis: reads Profile from settings (was always Profile::default())
-- Copy: calls `card.copied()` after successful clipboard write (was missing visual feedback)
+"BLOCKED BY ENVIRONMENT" is no longer accurate. The Windows environment is available;
+what remains is human GUI interaction that the agent cannot perform.
 
-### Part 6 — OCR provenance and command regression tests
+## Windows Sweep Observations (build 074844b)
 
-**PR #337** — fix: macOS OCR provenance — from_pixels carried to final card
-- Added `from_pixels: bool` to `QuickJob::Quick` and `TransResult::Quick`
-- Manual OCR dispatch sets `from_pixels: true`, normal hover sets `false`
-- Result handler applies `card.read_from_the_screen()` when `from_pixels` is true
+```
+Chrome (1366x1079):          92% on-target, 11 distinct targets
+Claude (1697x1111):          31% on-target, high distances
+WindowsTerminal:             0% on-target, single-blob shape
+Chrome (1920x1078):          0% on-target, single-blob shape
+SourceTree:                  unsupported
+ChatGPT/Explorer/etc:        occluded
+```
 
-**PR #338** — fix: extract pause gate into testable ProductCommand method
-- Added `ProductCommand::works_when_paused()` — policy encoded in type
-- Single top-level check replaces 4 inline `if paused { continue; }` checks
-- New test: `pause_gate_allows_only_quit_and_pause_toggle` (all 9 variants)
+These are compatibility observations, not bug classifications.
+Each window/surface has different accessibility tree quality.
 
-### Part 7 — Deep focused-word parity
+## VS Code #14
 
-**PR #340** — fix: macOS Deep Analysis focused-word parity
-- Extract `word_text()` from `SegmentedText` at hover acquisition
-- Store in `current_focused_word` alongside `current_card`
-- Pass through `DeepJob::Deep { focused_word }` to `DeepRequest.word`
+```
+Accessibility text:          EXISTS
+RangeFromPoint targeting:    POOR
+GetVisibleRanges geometry:   USEFUL LINE GEOMETRY EXISTS
+Production synchronous GVR:  REJECTED (p50 ~950ms >> 400ms budget)
+Future accessibility research: OPEN
+Current practical fallback:  OCR per product OCR policy
+Issue:                       OPEN
+```
 
-### Part 8 — OCR privacy, cache correctness, app provenance
+Do not say "VS Code exposes no text" or "no accessibility solution is possible."
 
-**PR #342** — fix: macOS OCR privacy, cache model identity, app provenance
-- **CRITICAL**: OCR auto-fallback now requires `ocr_mode == Automatic` (was `!= Off`)
-- Manual mode no longer triggers ScreenCaptureKit on hover (privacy contract fix)
-- CacheKey now includes actual model name (was empty string — stale cache after model switch)
-- `execute_save` now passes source app name to `save_card()` (app provenance on Save)
-- Removed unused `_analysis_cache`, `ANALYSIS_ENTRIES`, `AnalysisCache` import
+## KakaoTalk #34
 
-### Part 9 — App provenance timing
+```
+Real conversation UIA:       0% on-target across measured sweeps
+GetVisibleRanges on KakaoTalk: NOT DIRECTLY MEASURED (window unavailable)
+VS Code proxy measurement:   NOT KakaoTalk direct evidence
+Current practical fallback:  OCR
+Issue:                       OPEN
+```
 
-**PR #344** — fix: app provenance timing — current_app synced with current_card
-- `pending_app` captures process name at hover acquisition time
-- `current_app` updated only when `current_card` is set (not at hover time)
-- Prevents wrong app name when pointer moves between apps before Save
+## Windows MSIX
 
-### Part 10 — Settings privacy and validation
+```
+LOCAL MSIX STRUCTURAL BUILD: PASS (11/11 checks, 2 expected publisher warnings)
+NORMAL INSTALL:              NOT VERIFIED
+Current artifact:            unsigned / placeholder publisher
+Install error:               0x800B0100 (signature/certificate validation failure)
+Distribution blocker:        signing / publisher trust
+```
 
-**PR #346** — fix: settings endpoint loopback validation + file permissions
-- TOML parser rejects non-loopback endpoints at parse time (privacy fix)
-- Settings file created with mode 0o600 on Unix (was world-readable)
+Developer Mode is NOT established as a canonical requirement.
+Modern Windows trusted-signed package sideload may not require it.
+Future research candidate: Windows 11 dev-only unsigned package path.
 
-**PR #347** — fix: settings write path validation for history_days and engine
-- Tauri `apply()` validates history_days against [0,1,7,30,90] and engine name
-- Invalid values fall back to defaults with warning
+## NSIS
 
-### Part 11 — OCR provenance critical fix + endpoint locality
+```
+NSIS INFRASTRUCTURE:         IMPLEMENTED (cargo tauri build --bundles nsis)
+LOCAL EXECUTION:             NOT EXECUTED
+Reason:                      makensis.exe unavailable locally; installation not authorized
+```
 
-**PR #349** — fix: OCR provenance was reversed — AX cards claimed OCR, OCR claimed AX
-- `from_pixels` was hardcoded wrong at both dispatch sites
-- Fixed by deriving from `target.source == AcquisitionSource::Ocr`
-- Cache hit path now also applies `read_from_the_screen()` when from_pixels is true
+Infrastructure is CLOSED. Local execution evidence is PENDING.
 
-**PR #350** — fix: unify endpoint locality with canonical engine_for()
-- Removed duplicate `is_loopback_endpoint()` from lens-settings
-- Weak reimplementation could misclassify adversarial endpoints (e.g. `127.0.0.1.evil`)
-- Now uses `lens_core::translate::engine_for()` as single source of truth
+## Package CI
 
-**History note**: Published history was rewritten twice (Co-authored-by removal). Current main is the canonical baseline. No further rewrites.
+```
+PACKAGE INFRASTRUCTURE:      IMPLEMENTED
+WINDOWS LOCAL MSIX:          PASS
+CURRENT-MAIN GITHUB CI:      NOT EXECUTED (billing blocker)
+OLD CI:                      Historical pre-rewrite evidence only
+```
 
-**Hidden backlog found and fixed:**
-1. M8 gate had 3 evidence gaps (JSON round-trip, delete+reopen, explicit save e2e) — all closed
-2. OCR contract stale in project-goal.md §2 — fixed
-3. Package-smoke overclaim in project-goal.md — downgraded to honest status
-4. ADR-0004/0005/0007 "Not yet built" markers — annotations added
-5. macOS settings path missing from privacy-model.md — added from code truth
-6. SECURITY.md had stale settings.conf reference — fixed
-7. keeping.rs Windows test paths used settings.conf — fixed
+## Automated Evidence
 
-## Previous Sessions
-
-- **PR #303–#314** — various fixes (see git log)
-- **PR #315** — fix: MSIX manifest encoding + .icns icon
-- **PR #316** — fix: release workflow icon generation
-- **PR #317** — docs: capability count + installability claims
+```
+scripts/check.sh --full:     PASS (2026-09-09, local)
+Workspace tests:             702 passed, 0 failed, 105 ignored
+Product tests:               141 passed, 0 failed
+Total:                       843 passed, 0 failed
+Live UIA sweep:              13 windows measured
+MSIX verification:           11 passed, 0 failed, 2 warnings
+Ollama models:               translategemma:latest + qwen2.5:7b available
+```
 
 ## Completion Matrix
 
@@ -199,8 +254,8 @@ M2 Windows overlay      SHIPPED         CLOSED     CLOSED    PENDING   N/A
 M3 Quick translation    SHIPPED         CLOSED     CLOSED    N/A       N/A
 M4 Windows OCR          SHIPPED         CLOSED     CLOSED    PENDING   N/A
 M5 Deep analysis        SHIPPED         CLOSED     CLOSED    OPEN*     N/A
-M6 macOS acquire        COMPLETE        CLOSED     BLOCKED   PENDING   N/A
-M7 macOS overlay/OCR    COMPLETE        CLOSED     BLOCKED   PENDING   N/A
+M6 macOS acquire        PARTIAL         CLOSED     BLOCKED   PENDING   N/A
+M7 macOS overlay/OCR    PARTIAL         CLOSED     BLOCKED   PENDING   N/A
 M8 Library/Review       COMPLETE        CLOSED     N/A       N/A       N/A
 Mori boundary           BUILT           CLOSED     N/A       PENDING   N/A
 Windows NSIS release    SHIPPED         CLOSED     N/A       N/A       UNSIGNED
@@ -210,204 +265,96 @@ macOS notarization      BLOCKED‡       N/A        N/A       N/A       BLOCKED�
 First-user onboarding   NOT TESTED      N/A        N/A       PENDING   N/A
 Return/re-entry         NOT TESTED      N/A        N/A       PENDING   N/A
 
-* M5 explanation quality: model-quality research, gate open (P1 lemma 63%)
-† Store developer account required; current-main CI execution blocked by billing
+* M5 explanation quality: model-quality research, gate open
+† Signing/publisher trust required; current-main CI execution blocked by billing
 ‡ Apple Developer ID credentials required; CI blocked by billing
 ```
 
 ## Agent Assessment
 
 ```
-M8 IMPLEMENTATION:                COMPLETE
-M8 AUTOMATED GATE:                CLOSED
-  Explicit save:                  append_creates_both_files_from_nothing
-                                  a_save_also_writes_to_the_library_database
-                                  session_recent_does_not_survive_drop
-                                  save_card_refuses_waiting
-                                  save_card_accepts_translation
-                                  concurrent_save_card_does_not_duplicate_preamble
-                                  concurrent_direct_append_does_not_duplicate_preamble
-                                  SAVE_LOCK in append() — ALL persistence serialized (no bypass)
-                                  Caller audit: 3 append() sites (win.rs:1305, detail_view.rs:175, win.rs:2925)
-                                  All Save paths use shared save_card() policy
-  Export round-trips:             jsonl_round_trip_preserves_items_and_tags
-                                  jsonl_semantic_round_trip
-                                  jsonl_round_trip_preserves_review_state
-                                  json_export_semantic_round_trip
-                                  exporting_generates_saved_md_format (human-readable, not machine re-import)
-  Deletion persistence:           single_delete_survives_reopen
-                                  secure_wipe_survives_reopen
-                                  library_delete_does_not_affect_history
+ADR-0005 IMPLEMENTATION:     CLOSED
+  Quick translator:           translategemma:latest (separate instance)
+  Deep translator:            qwen2.5:7b (separate instance)
+  Startup diagnostics:        correctly shows both
+  Both models responding:     PASS
 
-SMOKE PNG:                        VALID (CRC verified, 1024x1024 RGBA)
-SMOKE ICO:                        VALID (directory structure verified)
-SMOKE ICNS:                       VALID (iconutil/sips decode, embedded PNG CRC verified)
-SMOKE-ASSET VERIFIER:             scripts/verify-smoke-assets.py integrated into check.sh --full
+M8 IMPLEMENTATION:            COMPLETE
+M8 AUTOMATED GATE:            CLOSED
+  SAVE_LOCK in append():      ALL persistence serialized
+  All Save paths:             use shared save_card() policy
 
-PACKAGE INFRASTRUCTURE:           IMPLEMENTED (NSIS + MSIX + .app + release workflow)
-PACKAGE CURRENT-MAIN EXECUTION:   PENDING (GitHub Actions billing blocker)
+SETTINGS CANONICAL FORMAT:    CLOSED (PR #352)
+ENDPOINT LOCALITY:            CLOSED (PR #354)
+SETTINGS VALIDATION:          CLOSED (PR #355)
+UIA GVR RESEARCH:             CLOSED (PR #356, fallback rejected)
 
-CANONICAL PRODUCT TRUTH:          RECONCILED
-  OCR contract:                   manual by default, automatic after opt-in
-  Package-smoke:                  honest status (not overclaimed)
-  ADR markers:                    annotated (body preserved)
-  macOS paths:                    documented from code truth
-  Settings path:                  settings.toml everywhere (no stale .conf)
+PACKAGE INFRASTRUCTURE:       IMPLEMENTED
+PACKAGE CURRENT-MAIN CI:      PENDING (billing blocker)
 
-REMAINING REPOSITORY IMPLEMENTATION:
-  hover_scope on macOS        Not implemented (needs Ctrl key tracking infrastructure)
-  (all other repo-local work complete: save serialization, Deep parity, OCR provenance,
-  Copy feedback, pause gate, settings privacy, endpoint locality)
-REMAINING PACKAGING EXECUTION:
-  Package-smoke CI GREEN          BLOCKED BY BILLING
-  (code fixes merged in PR #315; latest blocked run 34131713859 was on old HEAD)
+SMOKE ASSETS:                 VALID (PNG/ICO/ICNS CRC verified)
 
-REMAINING QUALITY RESEARCH:
-  #148 colour linkage             QUALITY GATE OPEN (threshold not met)
-  M5 explanations right           QUALITY RESEARCH OPEN (model-dependent)
+REMAINING WINDOWS WORK:
+  Human GUI product smoke     HUMAN GATE (agent cannot perform)
+  MSIX signing/publisher      OWNER DECISION
+  NSIS local installation     OWNER DECISION
 
-REMAINING HUMAN PRODUCT GATES:
-  First-user installs unaided     HUMAN PRODUCT GATE
-  Keeps running for a week        HUMAN PRODUCT GATE
-  Can state what it is for        HUMAN PRODUCT GATE
-
-REMAINING MACOS VALIDATION:       BLOCKED BY PERMISSIONS
-  AX/OCR/overlay/hotkeys          Requires Accessibility + Screen Recording
-  sleep/wake/hot-plug             Requires physical hardware
-
-REMAINING WINDOWS VALIDATION:     BLOCKED BY ENVIRONMENT
-  VS Code/KakaoTalk real-app      Requires Windows machine
+REMAINING MACOS WORK:
+  modifier/InputState         DEFERRED
+  --auto flag                 PARTIAL (parsed, never read)
+  --settings flag             PARTIAL (parsed, ignored by settings_service)
+  HoverSession/HoverWorker    DEFERRED
+  ReadingContext              DEFERRED
+  hover_scope                 DEFERRED
+  Deep cache                  DEFERRED
+  Stale result safety         PARTIAL
 
 REMAINING EXTERNAL BLOCKERS:
-  GitHub Actions billing          BILLING BLOCKER ("recent account payments have failed")
-  Store developer account         CREDENTIAL BLOCKER
-  Apple Developer ID              CREDENTIAL BLOCKER
-  OV code-signing certificate     CREDENTIAL BLOCKER
-  Ollama + model                  SERVICE BLOCKER
+  GitHub Actions billing      BILLING BLOCKER
+  Store developer account     CREDENTIAL BLOCKER
+  Apple Developer ID          CREDENTIAL BLOCKER
+  OV code-signing certificate CREDENTIAL BLOCKER
 
-REMAINING ASSET DEBT:             Real icon/design assets (smoke placeholders in use)
+Ollama + models:              NOT A BLOCKER (available on this machine)
+
+REMAINING HUMAN PRODUCT GATES:
+  First-user installs unaided
+  Keeps running for a week
+  Can state what it is for
 
 REMAINING OWNER DECISIONS:
-  Legal publishing identity       OWNER DECISION
-  OV certificate vendor           OWNER DECISION
-  Return/re-entry UX approach     OWNER DECISION
+  Legal publishing identity
+  OV certificate vendor
+  Return/re-entry UX approach
 ```
-
-## Automated Evidence
-
-```
-scripts/check.sh --full:          PASS (2026-09-08, local)
-workspace fmt/clippy/tests:       PASS (681 tests)
-product fmt/clippy/check/test:    PASS (58 tests)
-clean native rebuild:             PASS
-platform-macos tests:             PASS (56 tests including 16 hotkey)
-lens-translate tests:             PASS (8 HTTP fault tests)
-lens-storage tests:               PASS (76 tests, full M8 lifecycle)
-mori_transfer tests:              PASS (23 tests including payload round-trip)
-privacy static gate:              CLEAN
-Generated .icns:                  VALID (file: "Mac OS X icon, 14039 bytes, icp4 type")
-CI run 34027544715:               PASS (both platforms)
-Package-smoke run 34058540557:    FAILURE (MSIX XML + macOS icon — fixed in PR #315)
-Package-smoke run 34131713859:    BLOCKED (GitHub Actions billing failure)
-```
-
-## Package-Smoke Run
-
-```
-PACKAGE-SMOKE RUN:                34131713859 (BLOCKED — billing)
-WINDOWS FULL GATE:                BLOCKED (billing)
-WINDOWS NSIS:                     BLOCKED (billing)
-WINDOWS MSIX:                     BLOCKED (billing)
-MSIX VERIFY:                      BLOCKED (billing)
-WINDOWS ARTIFACT UPLOAD:          BLOCKED (billing)
-
-MACOS FULL GATE:                  BLOCKED (billing)
-MACOS APP:                        BLOCKED (billing)
-MACOS APP INSPECTION:             BLOCKED (billing)
-MACOS ZIP/HASH:                   BLOCKED (billing)
-MACOS ARTIFACT UPLOAD:            BLOCKED (billing)
-
-NOTE: blocked run HEAD (e6337d8) ≠ current main HEAD.
-      Billing resolution requires new workflow_dispatch on current main.
-
-PREVIOUS RUN (34058540557):
-WINDOWS NSIS:                     PASS
-WINDOWS MSIX:                     FAIL (error C00CEE40 — fixed in PR #315)
-MACOS APP:                        FAIL (No matching IconType — fixed in PR #315)
-```
-
-## Canonical Doc Truth (verified this session)
-
-```
-project-goal.md:
-  capability count:               28 shipped ✓
-  OCR contract:                   manual by default, automatic opt-in ✓
-  macOS acquisition:              "built, unverified" ✓
-  macOS overlay/OCR:              "built, unverified" ✓
-  Mori integration:               "built, unverified" ✓
-  Settings file:                  settings.toml ✓
-  installability:                 honest status (not overclaimed) ✓
-
-roadmap.md:
-  M8 gate table:                  CLOSED with exact test names ✓
-  M6/M7 gate tables:              current ✓
-
-privacy-model.md:                 macOS path added, platform-neutral ✓
-README.md:                        M8+ milestone, settings.toml ✓
-what-finished-means.md:           no stale claims ✓
-SECURITY.md:                      settings.toml ✓
-ADR-0004/0005/0007:               implementation status annotated ✓
-```
-
-## Known Runtime Issues
-
-- Lock file permission bug (`--w-------` → fixed to `-rw-------`)
-- Ollama not available locally (Quick/Deep translation BLOCKED)
-- macOS binary starts gracefully without AX permission (SIGTRAP fixed in PR #307)
-- Package-smoke CI slow: `cargo install tauri-cli` takes 30-50 min on CI runners
-- GitHub Actions billing: jobs fail to start with "recent account payments have failed"
-
-## Validation Procedure
-
-When permissions are granted, run:
-
-```bash
-bash scripts/validate-macos.sh
-```
-
-## Controlled Fixture
-
-`docs/fixtures/validation-surface.html` — English, Korean, Japanese, mixed, repeated, Unicode/emoji.
 
 ## Open Issues
 
 ```
 #148  colour linkage quality gate     QUALITY GATE OPEN
 #140  first-user onboarding           HUMAN VALIDATION
-#34   KakaoTalk                       WINDOWS VALIDATION (area:acquire)
-#14   VS Code                         WINDOWS VALIDATION (area:platform-windows)
+#34   KakaoTalk                       OPEN (GVR not directly measured)
+#14   VS Code                         OPEN (GVR fallback rejected on performance)
 ```
 
 ## Next Session — Start Here
 
-1. **Resolve GitHub Actions billing** — package-smoke CI cannot run until this is fixed
-2. Once billing is resolved, trigger `workflow_dispatch` on `package-smoke.yml` on **current main**
-3. If package-smoke passes: both platforms GREEN → handoff can declare PACKAGE-SMOKE: PASS
-4. If package-smoke fails: inspect logs, iterate (code fixes are in place)
-5. Grant Accessibility + Screen Recording permissions
-6. (Optional) Start Ollama with a model
-7. Run `bash scripts/validate-macos.sh`
-8. Review evidence in `docs/benchmarks/`
+1. **Human Windows GUI product smoke** — Quick/Deep/Copy/Save lifecycle
+2. **Bugs discovered by that smoke** — fix via branch → PR → merge
+3. **Optional: Windows 11 dev-only unsigned MSIX install path**
+4. **Remaining Windows roadmap gates**
+5. **macOS work when environment returns**
+
+Do not reopen UIA GetVisibleRanges research without new independent evidence.
 
 ## Git State
 
 ```
-latest merge: PR #350 (fix: unify endpoint locality with canonical engine_for)
-PRE-REWRITE CI EVIDENCE: run 34027544715 PASS (historical, pre-history-rewrite)
-CURRENT REWRITTEN MAIN CI: PENDING (billing blocker — fresh run needed)
-Package-smoke: run 34131713859 (BLOCKED — billing, old HEAD)
-Branches: clean
-History: rewritten twice (Co-authored-by removal). Current main is canonical baseline.
+latest merge: PR #356 (test: measure UIA visible-range targeting)
+HEAD:         074844b
+Branches:     clean
+History:      rewritten twice (Co-authored-by removal). Current main is canonical baseline.
+              No further rewrites.
 always run `git log -1` at session start for actual HEAD.
 ```
 
