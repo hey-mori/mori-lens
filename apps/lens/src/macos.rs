@@ -348,6 +348,8 @@ fn product_loop(
             sentence: String,
             display_text: String,
             from_pixels: bool,
+            app: Option<String>,
+            focused_word: Option<String>,
             generation: u64,
             key: CacheKey,
             anchor: ScreenRect,
@@ -359,6 +361,7 @@ fn product_loop(
             translation: Option<String>,
             target_language: String,
             profile: lens_core::analyse::Profile,
+            app: Option<String>,
             focused_word: Option<String>,
             generation: u64,
             anchor: ScreenRect,
@@ -370,6 +373,8 @@ fn product_loop(
             display_text: String,
             result: Result<lens_core::translate::QuickTranslation, String>,
             from_pixels: bool,
+            app: Option<String>,
+            focused_word: Option<String>,
             generation: u64,
             _key: CacheKey,
             anchor: ScreenRect,
@@ -377,6 +382,8 @@ fn product_loop(
         Deep {
             sentence: String,
             result: Result<lens_core::analyse::DeepAnalysis, String>,
+            app: Option<String>,
+            focused_word: Option<String>,
             generation: u64,
             anchor: ScreenRect,
         },
@@ -438,6 +445,8 @@ fn product_loop(
                     sentence,
                     display_text,
                     from_pixels,
+                    app,
+                    focused_word,
                     generation,
                     key,
                     anchor,
@@ -453,6 +462,8 @@ fn product_loop(
                         display_text,
                         result: result.map_err(|e| e.user_message().to_owned()),
                         from_pixels,
+                        app,
+                        focused_word,
                         generation,
                         _key: key,
                         anchor,
@@ -488,6 +499,7 @@ fn product_loop(
                     translation,
                     target_language,
                     profile,
+                    app,
                     focused_word,
                     generation,
                     anchor,
@@ -503,6 +515,8 @@ fn product_loop(
                     let _ = deep_result_tx.send(TransResult::Deep {
                         sentence,
                         result: result.map_err(|e| e.user_message().to_owned()),
+                        app,
+                        focused_word: deep_req.word,
                         generation,
                         anchor,
                     });
@@ -545,6 +559,8 @@ fn product_loop(
                     display_text,
                     result,
                     from_pixels,
+                    app,
+                    focused_word,
                     generation,
                     _key: _,
                     anchor,
@@ -552,8 +568,9 @@ fn product_loop(
                     if generation != current_generation {
                         continue;
                     }
-                    // Sync app provenance with the card about to be created.
-                    current_app = pending_app.clone();
+                    // Use the app/focus from the job itself, not global pending state.
+                    current_app = app;
+                    current_focused_word = focused_word;
                     match result {
                         Ok(translation) => {
                             let mut card = Card::translated(&display_text, &translation);
@@ -579,13 +596,17 @@ fn product_loop(
                 TransResult::Deep {
                     sentence,
                     result,
+                    app,
+                    focused_word,
                     generation,
                     anchor,
                 } => {
                     if generation != current_generation {
                         continue;
                     }
-                    current_app = pending_app.clone();
+                    // Use the app/focus from the job itself, not global pending state.
+                    current_app = app;
+                    current_focused_word = focused_word;
                     match result {
                         Ok(analysis) => {
                             let card = Card::analysed(&sentence, &analysis);
@@ -705,6 +726,7 @@ fn product_loop(
                             translation,
                             target_language,
                             profile,
+                            app: current_app.clone(),
                             focused_word: current_focused_word.clone(),
                             generation: current_generation,
                             anchor: current_anchor,
@@ -763,11 +785,16 @@ fn product_loop(
                                         sentence: sentence.clone(),
                                         display_text: sentence.clone(),
                                         from_pixels: true,
+                                        app: target.app.process_name.clone(),
+                                        focused_word: target.segmented.word_text().map(str::to_owned),
                                         generation: current_generation,
                                         key,
                                         anchor: current_anchor,
                                     });
-                                    current_app = pending_app.clone();
+                                    // Manual OCR: use the app from the OCR target itself,
+                                    // not pending_app from a previous hover.
+                                    current_app = target.app.process_name.clone();
+                                    current_focused_word = target.segmented.word_text().map(str::to_owned);
                                     current_card = Some((
                                         Card {
                                             original: sentence.clone(),
@@ -1038,6 +1065,8 @@ fn product_loop(
                             sentence: sentence.clone(),
                             display_text: display_text.clone(),
                             from_pixels,
+                            app: pending_app.clone(),
+                            focused_word: current_focused_word.clone(),
                             generation: current_generation,
                             key,
                             anchor: current_anchor,
