@@ -6,6 +6,7 @@ mod pointer;
 mod printed;
 mod report;
 mod sweep;
+mod visible_ranges;
 mod wake;
 
 use std::process::ExitCode;
@@ -53,6 +54,7 @@ USAGE
     hover-probe inventory [--only x] ask each window what text it holds
     hover-probe ocr [OPTIONS]       read the foreground window with OCR
     hover-probe wake [OPTIONS]      what the accessibility wake costs, and how often
+    hover-probe visible-ranges      GetVisibleRanges line geometry measurement
 
 FOLLOW MODE
     Rest the pointer on text. One line is printed per resolved hover.
@@ -162,6 +164,7 @@ enum Mode {
     },
     Ocr(ocr_probe::OcrOptions),
     Wake(wake::WakeOptions),
+    VisibleRanges(visible_ranges::VisibleRangesOptions),
 }
 
 fn parse_args() -> Result<Mode, String> {
@@ -207,6 +210,10 @@ fn parse_args() -> Result<Mode, String> {
     if args.first().is_some_and(|first| first == "sweep") {
         args.remove(0);
         return parse_sweep(args).map(|(options, only)| Mode::Sweep { options, only });
+    }
+    if args.first().is_some_and(|first| first == "visible-ranges") {
+        args.remove(0);
+        return parse_visible_ranges(args).map(Mode::VisibleRanges);
     }
     parse_options(args).map(Mode::Follow)
 }
@@ -348,6 +355,26 @@ fn parse_sweep(args: Vec<String>) -> Result<(sweep::SweepOptions, Option<String>
     Ok((options, only))
 }
 
+fn parse_visible_ranges(args: Vec<String>) -> Result<visible_ranges::VisibleRangesOptions, String> {
+    let mut options = visible_ranges::VisibleRangesOptions::default();
+    let mut args = args.into_iter();
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-h" | "--help" => {
+                print!("{USAGE}");
+                std::process::exit(0);
+            }
+            "--only" => {
+                options.only = Some(args.next().ok_or("--only needs some text to match")?);
+            }
+            other => return Err(format!("unknown argument: {other}")),
+        }
+    }
+
+    Ok(options)
+}
+
 /// The commit this binary was built from, baked in by `build.rs`.
 ///
 /// Printed on every run because a stale binary produces measurements that look
@@ -441,6 +468,10 @@ pub fn run() -> ExitCode {
             }
             let found = inventory::run(only.as_deref());
             inventory::print_report(&found, titles);
+            ExitCode::SUCCESS
+        }
+        Mode::VisibleRanges(options) => {
+            visible_ranges::run(options);
             ExitCode::SUCCESS
         }
     }
