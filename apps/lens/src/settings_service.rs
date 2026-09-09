@@ -240,6 +240,7 @@ impl SettingsState {
 
     /// The current settings generation. Increments on every `apply`.
     /// The product loop checks this to avoid cloning Settings every tick.
+    #[allow(dead_code)] // Used by macOS; Windows uses `current()` directly.
     pub fn generation(&self) -> u64 {
         self.generation
     }
