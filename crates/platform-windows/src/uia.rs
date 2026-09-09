@@ -26,11 +26,12 @@ use lens_core::acquire::{
     AcquireContext, AcquireError, AcquisitionSource, ExpandedUnit, ProtectedReason, ProviderInfo,
     TextAcquirer, TextTarget,
 };
-use lens_core::geometry::{ScreenPoint, ScreenRect};
+use lens_core::geometry::{line_under, ScreenPoint, ScreenRect};
 use lens_core::text::{self, SegmentedText};
 use windows::core::{Interface, HRESULT};
 use windows::Win32::Foundation::{POINT, RPC_E_TIMEOUT};
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER, SAFEARRAY};
+use windows::Win32::System::Variant::VARIANT;
 // The SafeArray helpers live under Ole, not Com, despite operating on a type
 // declared in Com.
 use windows::Win32::System::Ole::{
@@ -40,7 +41,8 @@ use windows::Win32::System::Ole::{
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationElement,
     IUIAutomationTextPattern, IUIAutomationTextRange, TextPatternRangeEndpoint_Start,
-    TextUnit_Line, TextUnit_Paragraph, TextUnit_Word, UIA_TextPatternId, UIA_E_TIMEOUT,
+    TextUnit_Line, TextUnit_Paragraph, TextUnit_Word, TreeScope_Descendants,
+    UIA_IsTextPatternAvailablePropertyId, UIA_TextPatternId, UIA_E_TIMEOUT,
 };
 
 use crate::com::ComScope;
@@ -812,4 +814,186 @@ impl UiaTextAcquirer {
             bounds,
         })
     }
+}
+
+/// One large text container's GetVisibleRanges measurement.
+///
+/// Returned by [`measure_visible_ranges`] for each of the top containers in a
+/// window. The probe uses this to decide whether GetVisibleRanges exposes
+/// line-level geometry that the normal path (RangeFromPoint) misses.
+#[derive(Debug, Clone)]
+pub struct VisibleRangeSample {
+    /// Height of the container element in physical pixels.
+    pub container_height: i32,
+    /// Number of ranges GetVisibleRanges returned.
+    pub range_count: i32,
+    /// Bounding rectangles extracted from those ranges.
+    pub rects: Vec<ScreenRect>,
+    /// How long GetVisibleRanges took.
+    pub get_visible_ranges_time: Duration,
+    /// Of line-shaped rectangles (height <= 40), how many answered correctly
+    /// when RangeFromPoint was called at the line's own centre.
+    pub point_at_centre_hits: usize,
+    pub point_at_centre_total: usize,
+    /// Grid coverage: how many grid points land inside a line rectangle.
+    pub grid_points: usize,
+    pub grid_points_on_a_line: usize,
+}
+
+/// Measure whether the foreground window's large text containers expose
+/// line-level geometry through GetVisibleRanges.
+///
+/// Returns one sample per container, up to the five largest. This is a
+/// read-only measurement; no text is read.
+pub fn measure_visible_ranges(window_id: i64) -> Vec<VisibleRangeSample> {
+    let _com = ComScope::enter();
+    // SAFETY: read-only COM creation on a freshly initialised apartment.
+    let Ok(automation) = (unsafe {
+        CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+    }) else {
+        return Vec::new();
+    };
+
+    // SAFETY: the handle is a live window the OS just returned.
+    let Ok(element) = (unsafe {
+        automation.ElementFromHandle(windows::Win32::Foundation::HWND(window_id as *mut _))
+    }) else {
+        return Vec::new();
+    };
+
+    // SAFETY: property condition construction, read-only.
+    let Ok(condition) = (unsafe {
+        automation
+            .CreatePropertyCondition(UIA_IsTextPatternAvailablePropertyId, &VARIANT::from(true))
+    }) else {
+        return Vec::new();
+    };
+    // SAFETY: read-only tree walk.
+    let Ok(found) = (unsafe { element.FindAll(TreeScope_Descendants, &condition) }) else {
+        return Vec::new();
+    };
+    // SAFETY: read-only length query on a live element array.
+    let count = unsafe { found.Length().unwrap_or(0) };
+
+    let mut candidates = Vec::new();
+    for index in 0..count.min(200) {
+        // SAFETY: read-only element access on a live array.
+        let Ok(child) = (unsafe { found.GetElement(index) }) else {
+            continue;
+        };
+        // SAFETY: read-only property on a live element.
+        let Ok(rect) = (unsafe { child.CurrentBoundingRectangle() }) else {
+            continue;
+        };
+        let area = (rect.right - rect.left) as i64 * (rect.bottom - rect.top) as i64;
+        candidates.push((area, rect.bottom - rect.top, child));
+    }
+    candidates.sort_by_key(|(area, _, _)| std::cmp::Reverse(*area));
+
+    let mut samples = Vec::new();
+    for (_, height, child) in candidates.into_iter().take(5) {
+        // SAFETY: GetCurrentPattern returns an owned interface or an error.
+        let Ok(pattern) = (unsafe { child.GetCurrentPattern(UIA_TextPatternId) }) else {
+            continue;
+        };
+        let Ok(pattern) = pattern.cast::<IUIAutomationTextPattern>() else {
+            continue;
+        };
+
+        let start = Instant::now();
+        // SAFETY: GetVisibleRanges is a read-only query on a live pattern.
+        let ranges = unsafe { pattern.GetVisibleRanges() }.ok();
+        let range_count = ranges
+            .as_ref()
+            // SAFETY: read-only length query on a live COM array.
+            .and_then(|array| unsafe { array.Length() }.ok())
+            .unwrap_or(0);
+        let rects: Vec<ScreenRect> = match &ranges {
+            Some(array) => {
+                // SAFETY: read-only length on a live COM array.
+                let len = unsafe { array.Length() }.unwrap_or(0);
+                (0..len)
+                    // SAFETY: read-only element access on a live COM array.
+                    .filter_map(|at| unsafe { array.GetElement(at) }.ok())
+                    .flat_map(|range| bounding_rectangles(&range))
+                    .collect()
+            }
+            None => Vec::new(),
+        };
+        let get_visible_ranges_time = start.elapsed();
+
+        // Test RangeFromPoint at each line's own centre.
+        let mut asked = 0usize;
+        let mut answered_with_itself = 0usize;
+        for rect in rects.iter().filter(|rect| rect.height <= 40) {
+            let probe = POINT {
+                x: rect.x + 2,
+                y: rect.y + rect.height / 2,
+            };
+            asked += 1;
+            // SAFETY: RangeFromPoint is a read-only query.
+            let answered = unsafe { pattern.RangeFromPoint(probe) }
+                .ok()
+                .and_then(|range| {
+                    // SAFETY: ExpandToEnclosingUnit is a read-only mutation
+                    // of the range, not the provider.
+                    unsafe { range.ExpandToEnclosingUnit(TextUnit_Line) }
+                        .ok()
+                        .map(|()| range)
+                })
+                .map(|range| {
+                    bounding_rectangles(&range)
+                        .iter()
+                        .any(|got| got.y == rect.y && got.height == rect.height)
+                })
+                .unwrap_or(false);
+            if answered {
+                answered_with_itself += 1;
+            }
+        }
+
+        // Grid coverage.
+        let lines_only: Vec<ScreenRect> = rects
+            .iter()
+            .copied()
+            .filter(|rect| rect.height <= 40)
+            .collect();
+        // SAFETY: read-only property.
+        let area = unsafe { child.CurrentBoundingRectangle() }
+            .map(|rect| {
+                ScreenRect::new(
+                    rect.left,
+                    rect.top,
+                    rect.right - rect.left,
+                    rect.bottom - rect.top,
+                )
+            })
+            .unwrap_or(ScreenRect::new(0, 0, 0, 0));
+        let (mut points, mut on_a_line) = (0usize, 0usize);
+        let mut y = area.y + 4;
+        while y < area.bottom() - 4 {
+            let mut x = area.x + 4;
+            while x < area.right() - 4 {
+                points += 1;
+                if line_under(&lines_only, ScreenPoint::new(x, y)).is_some() {
+                    on_a_line += 1;
+                }
+                x += 24;
+            }
+            y += 24;
+        }
+
+        samples.push(VisibleRangeSample {
+            container_height: height,
+            range_count,
+            rects,
+            get_visible_ranges_time,
+            point_at_centre_hits: answered_with_itself,
+            point_at_centre_total: asked,
+            grid_points: points,
+            grid_points_on_a_line: on_a_line,
+        });
+    }
+
+    samples
 }
