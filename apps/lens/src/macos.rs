@@ -155,9 +155,14 @@ pub fn main() -> std::process::ExitCode {
     };
     let _ = std::fs::create_dir_all(&data_dir);
 
+    // Settings file path: data_dir/settings.toml
+    // (macOS doesn't have --settings wired up yet, but the pattern matches Windows)
+    let settings_path = data_dir.join("settings.toml");
+
     // Shared settings (via settings_service — same as Windows).
-    let shared_settings: SharedSettings =
-        Arc::new(Mutex::new(settings_service::load_or_migrate(&data_dir)));
+    let shared_settings: SharedSettings = Arc::new(Mutex::new(settings_service::load_or_migrate(
+        &settings_path,
+    )));
 
     // Shared library (via library_service — same as Windows).
     let shared_library: SharedLibrary = Arc::new(Mutex::new(library_service::open(&data_dir)));
