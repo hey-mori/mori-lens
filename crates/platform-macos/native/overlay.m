@@ -279,3 +279,10 @@ bool lens_ctrl_held(void) {
         return (flags & NSEventModifierFlagControl) != 0;
     }
 }
+
+bool lens_option_held(void) {
+    @autoreleasepool {
+        NSEventModifierFlags modifiers = [NSEvent modifierFlags];
+        return (modifiers & NSEventModifierFlagOption) != 0;
+    }
+}
