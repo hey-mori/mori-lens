@@ -31,6 +31,7 @@ extern "C" {
     fn lens_display_scale_at_physical(px: f64, py: f64) -> f64;
     fn lens_process_appkit_events();
     fn lens_ctrl_held() -> bool;
+    fn lens_option_held() -> bool;
 }
 
 /// Get the current mouse position in global screen points (top-left origin).
@@ -80,6 +81,17 @@ pub fn process_appkit_events() {
 pub fn ctrl_held() -> bool {
     // SAFETY: lens_ctrl_held is a pure query that reads modifier flags.
     unsafe { lens_ctrl_held() }
+}
+
+/// Whether the Option (Alt) modifier key is currently held.
+///
+/// Used by the product loop to implement the Modifier tier policy:
+/// when the default tier is Modifier, acquisition only runs while
+/// Option is held.
+pub fn option_held() -> bool {
+    // SAFETY: lens_option_held is a pure query that reads NSEvent modifier
+    // flags. No side effects, no memory safety concerns.
+    unsafe { lens_option_held() }
 }
 
 /// The macOS overlay window.
