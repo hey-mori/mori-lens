@@ -76,8 +76,8 @@ pub struct SettingsView {
 ///
 /// A corrupt or future-version file is preserved without modification.
 /// The reader's own configuration is not lost.
-pub fn load_or_migrate(data_dir: &std::path::Path) -> SettingsState {
-    let toml_path = data_dir.join("settings.toml");
+pub fn load_or_migrate(settings_path: &std::path::Path) -> SettingsState {
+    let toml_path = settings_path.to_path_buf();
 
     // Use canonical loader
     match lens_settings::load_or_initialize(&toml_path) {
@@ -367,7 +367,7 @@ mod tests {
     #[test]
     fn load_or_migrate_creates_defaults_when_no_file() {
         let dir = temp_dir();
-        let state = load_or_migrate(&dir);
+        let state = load_or_migrate(&dir.join("settings.toml"));
         assert!(state.pending.is_none());
         let view = state.view();
         assert_eq!(view.language, "Korean");
@@ -379,9 +379,9 @@ mod tests {
     fn load_or_migrate_loads_existing_file() {
         let dir = temp_dir();
         // Create defaults first.
-        let _ = load_or_migrate(&dir);
+        let _ = load_or_migrate(&dir.join("settings.toml"));
         // Load again — should read the file.
-        let state = load_or_migrate(&dir);
+        let state = load_or_migrate(&dir.join("settings.toml"));
         assert_eq!(state.view().language, "Korean");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn apply_sets_pending_and_persists() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir);
+        let mut state = load_or_migrate(&dir.join("settings.toml"));
         assert!(state.take_pending().is_none());
 
         let mut view = default_view();
@@ -409,7 +409,7 @@ mod tests {
         assert_eq!(state.current().language, "Japanese");
 
         // File persists: reload and check.
-        let reloaded = load_or_migrate(&dir);
+        let reloaded = load_or_migrate(&dir.join("settings.toml"));
         assert_eq!(reloaded.current().language, "Japanese");
         assert_eq!(reloaded.current().dwell_ms, 500);
         let _ = std::fs::remove_dir_all(&dir);
@@ -418,7 +418,7 @@ mod tests {
     #[test]
     fn apply_clamps_dwell_ms() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir);
+        let mut state = load_or_migrate(&dir.join("settings.toml"));
         let mut view = default_view();
         view.dwell_ms = 10; // Below minimum (80).
         state.apply(view).unwrap();
@@ -434,7 +434,7 @@ mod tests {
     #[test]
     fn apply_invalid_tier_falls_back_to_default() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir);
+        let mut state = load_or_migrate(&dir.join("settings.toml"));
         let mut view = default_view();
         view.default_tier = "bogus".into();
         state.apply(view).unwrap();
@@ -449,7 +449,7 @@ mod tests {
     #[test]
     fn view_roundtrip_preserves_values() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir);
+        let mut state = load_or_migrate(&dir.join("settings.toml"));
         let mut view = default_view();
         view.language = "Spanish".into();
         view.hover_scope = "word".into();
@@ -473,7 +473,7 @@ mod tests {
     #[test]
     fn apply_invalid_theme_falls_back_to_default() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir);
+        let mut state = load_or_migrate(&dir.join("settings.toml"));
         let mut view = default_view();
         view.theme = "purple".into();
         state.apply(view).unwrap();
@@ -484,7 +484,7 @@ mod tests {
     #[test]
     fn apply_invalid_translucency_falls_back_to_default() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir);
+        let mut state = load_or_migrate(&dir.join("settings.toml"));
         let mut view = default_view();
         view.translucency = "invisible".into();
         state.apply(view).unwrap();
@@ -498,7 +498,7 @@ mod tests {
     #[test]
     fn apply_invalid_text_size_falls_back_to_default() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir);
+        let mut state = load_or_migrate(&dir.join("settings.toml"));
         let mut view = default_view();
         view.text_size = "huge".into();
         state.apply(view).unwrap();
@@ -509,7 +509,7 @@ mod tests {
     #[test]
     fn apply_invalid_ocr_falls_back_to_default() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir);
+        let mut state = load_or_migrate(&dir.join("settings.toml"));
         let mut view = default_view();
         view.ocr = "always".into();
         state.apply(view).unwrap();
@@ -520,7 +520,7 @@ mod tests {
     #[test]
     fn apply_invalid_hover_scope_falls_back_to_default() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir);
+        let mut state = load_or_migrate(&dir.join("settings.toml"));
         let mut view = default_view();
         view.hover_scope = "paragraph".into();
         state.apply(view).unwrap();
@@ -531,7 +531,7 @@ mod tests {
     #[test]
     fn apply_invalid_endpoint_falls_back_to_default() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir);
+        let mut state = load_or_migrate(&dir.join("settings.toml"));
         let mut view = default_view();
         view.quick_endpoint = "192.168.1.100:11434".into();
         state.apply(view).unwrap();
@@ -542,7 +542,7 @@ mod tests {
     #[test]
     fn apply_valid_enum_values_are_kept() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir);
+        let mut state = load_or_migrate(&dir.join("settings.toml"));
         let mut view = default_view();
         view.theme = "night-lake".into();
         view.translucency = "solid".into();
@@ -557,6 +557,36 @@ mod tests {
         assert_eq!(state.current().ocr, "automatic");
         assert_eq!(state.current().profile, "developer");
         assert_eq!(state.current().hover_scope, "word");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_or_migrate_respects_custom_settings_file_name() {
+        // Regression test: --settings custom-profile.toml should NOT rename to settings.toml
+        let dir = temp_dir();
+        let custom_path = dir.join("custom-profile.toml");
+
+        // Load from custom path
+        let state = load_or_migrate(&custom_path);
+        assert_eq!(state.view().language, "Korean");
+
+        // Verify the file was created with the custom name, not "settings.toml"
+        assert!(custom_path.exists(), "custom-profile.toml should exist");
+        assert!(
+            !dir.join("settings.toml").exists(),
+            "settings.toml should NOT be created when custom name is used"
+        );
+
+        // Modify and save — should write to custom path
+        let mut view = default_view();
+        view.language = "Japanese".into();
+        let mut state = state;
+        state.apply(view).unwrap();
+
+        // Reload from the same custom path — should see the change
+        let reloaded = load_or_migrate(&custom_path);
+        assert_eq!(reloaded.view().language, "Japanese");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
