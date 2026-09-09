@@ -79,7 +79,13 @@ Rules that follow:
 
 ---
 
-*Implementation status (updated 2026-09-07):* Implemented. Quick
-translation and deep analysis are separate paths with separate cache
-keys, separate prompts, and separate model resolution. `Ctrl+Alt+D`
-triggers deep analysis; hover alone triggers quick translation only.
+*Implementation status (updated 2026-09-09):* Implemented. Quick
+translation and deep analysis are separate paths with separate models,
+separate endpoints, separate cache keys, and separate prompts.
+`AiRuntimeConfig` bridges the settings schema (which has separate
+`[quick]` and `[deep]` sections) and the actual translator instances.
+The worker thread uses `quick_translator` for Quick jobs and
+`deep_translator` for Deep jobs, ensuring that changing Deep's model
+or endpoint in settings.toml has a real effect at runtime.
+`Ctrl+Alt+D` triggers deep analysis; hover alone triggers quick
+translation only.
