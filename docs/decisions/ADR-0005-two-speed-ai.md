@@ -79,7 +79,36 @@ Rules that follow:
 
 ---
 
-*Implementation status (updated 2026-09-07):* Implemented. Quick
-translation and deep analysis are separate paths with separate cache
-keys, separate prompts, and separate model resolution. `Ctrl+Alt+D`
-triggers deep analysis; hover alone triggers quick translation only.
+*Implementation status (updated 2026-09-09):* **IMPLEMENTED.** All
+requirements verified with evidence:
+
+- **Separate models:** `AiRuntimeConfig` holds separate `RuntimeEngine`
+  for Quick and Deep, each with its own model. Settings schema has
+  separate `[quick]` and `[deep]` sections.
+- **Separate endpoints:** Each `RuntimeEngine` has its own endpoint.
+  The worker creates `quick_translator` and `deep_translator` with
+  independent endpoints.
+- **Separate translators:** Two `OllamaTranslator` instances, one for
+  each path. Quick jobs use `quick_translator.quick_streaming()`, Deep
+  jobs use `deep_translator.deep()`.
+- **Separate prompts:** `PROMPT_VERSION` for Quick, `DEEP_PROMPT_VERSION`
+  for Deep (existed prior to this implementation).
+- **Separate caches:** `TranslationCache` for Quick, `AnalysisCache`
+  for Deep. Cache keys include the model name, ensuring different models
+  produce different keys even for the same request.
+- **Separate timeouts:** `QUICK_TIMEOUT` (20s) for Quick, `DEEP_TIMEOUT`
+  (60s) for Deep. The `deep()` method uses `DEEP_TIMEOUT` explicitly,
+  not the translator's default timeout.
+- **Model provenance:** Save and Detail paths record the actual model
+  that produced the result by checking the card body type (Analysis vs
+  Translation).
+- **Shutdown semantics:** Both `quick_releaser` and `deep_releaser` are
+  released on shutdown, ensuring both models are unloaded from memory.
+- **CLI semantics:** `--model` applies to Quick only (documented in help
+  text). `--endpoint` applies to both for backwards compatibility. Deep
+  is configured via settings.toml `[deep]` section.
+- **Live settings:** Model/endpoint changes require restart. The product
+  detects changes and displays "restart to use it" message.
+
+`Ctrl+Alt+D` triggers deep analysis; hover alone triggers quick
+translation only.
