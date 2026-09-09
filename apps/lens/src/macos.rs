@@ -145,19 +145,31 @@ pub fn main() -> std::process::ExitCode {
         }
     };
 
-    // Data directory: ~/Library/Application Support/Mori Lens
-    let data_dir = {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        std::path::PathBuf::from(home)
-            .join("Library")
-            .join("Application Support")
-            .join("Mori Lens")
+    // Data directory: derive from --settings flag if provided, otherwise use default.
+    // This matches Windows behavior where data_dir = settings.parent().
+    let (data_dir, settings_path) = if let Some(ref custom_path) = flags.settings {
+        let dir = custom_path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| {
+                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+                std::path::PathBuf::from(home)
+                    .join("Library")
+                    .join("Application Support")
+                    .join("Mori Lens")
+            });
+        (dir, custom_path.clone())
+    } else {
+        let data_dir = {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+            std::path::PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("Mori Lens")
+        };
+        (data_dir.clone(), data_dir.join("settings.toml"))
     };
     let _ = std::fs::create_dir_all(&data_dir);
-
-    // Settings file path: data_dir/settings.toml
-    // (macOS doesn't have --settings wired up yet, but the pattern matches Windows)
-    let settings_path = data_dir.join("settings.toml");
 
     // Shared settings (via settings_service — same as Windows).
     let shared_settings: SharedSettings = Arc::new(Mutex::new(settings_service::load_or_migrate(
