@@ -1191,16 +1191,25 @@ pub fn main() -> std::process::ExitCode {
     // Build the Tauri application. This must happen before the polling loop
     // starts, because the polling loop will run on a worker thread and the
     // main thread needs to run Tauri's event loop.
-    // Initialize the settings service first. It reads settings.toml (or
-    // migrates from settings.conf if needed).
-    let data_dir = {
-        let base = std::env::var("APPDATA")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| std::path::PathBuf::from("."));
-        base.join("Mori Lens")
-    };
+    // Initialize the settings service first. It reads the settings file (or
+    // migrates from legacy format if needed).
+    // Derive data_dir from the settings file's parent directory.
+    // This ensures library.db, saved.md, etc. are beside the actual settings file,
+    // whether it's the default %APPDATA%/Mori Lens/settings.toml or a custom --settings path.
+    let data_dir = options
+        .source
+        .path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| {
+            // Fallback: if parent() returns None (shouldn't happen), use %APPDATA%/Mori Lens
+            let base = std::env::var("APPDATA")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::path::PathBuf::from("."));
+            base.join("Mori Lens")
+        });
     let shared_settings = std::sync::Arc::new(std::sync::Mutex::new(
-        settings_service::load_or_migrate(&data_dir),
+        settings_service::load_or_migrate(&options.source.path),
     ));
     println!(
         "  settings  {:?}",
