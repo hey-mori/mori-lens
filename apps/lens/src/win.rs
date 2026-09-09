@@ -757,21 +757,21 @@ pub fn main() -> std::process::ExitCode {
         // Synchronous here, unlike the normal path: the point of the selftest
         // is to measure the chain, and a cold load landing in the middle of it
         // would be reported as translation latency.
+        // Prewarm both Quick and Deep translators for selftest.
+        // Selftest is a diagnostic, so it's worth the time to verify both engines.
         match quick_translator.prewarm() {
-            Ok(elapsed) => println!(
-                "engine warm after {}ms
-",
-                elapsed.as_millis()
-            ),
-            Err(error) => eprintln!(
-                "could not warm the engine: {}
-",
-                error.reason()
-            ),
+            Ok(elapsed) => println!("quick warm after {}ms", elapsed.as_millis()),
+            Err(error) => eprintln!("could not warm quick engine: {}", error.reason()),
         }
+        match deep_translator.prewarm() {
+            Ok(elapsed) => println!("deep warm after {}ms", elapsed.as_millis()),
+            Err(error) => eprintln!("could not warm deep engine: {}", error.reason()),
+        }
+        println!();
         let code = selftest(
             &overlay,
             &quick_translator,
+            &deep_translator,
             &options.language,
             options.profile,
             theme,
@@ -779,6 +779,7 @@ pub fn main() -> std::process::ExitCode {
             options.ocr_mode,
         );
         quick_translator.release();
+        deep_translator.release();
         return code;
     }
 
@@ -2754,9 +2755,11 @@ fn configuration_facts(
 /// product does nothing: the acquirer has its own tests, the translator has
 /// its own, the overlay has its own, and none of them prove the three are
 /// wired together.
+#[allow(clippy::too_many_arguments)]
 fn selftest(
     overlay: &Overlay,
-    translator: &OllamaTranslator,
+    quick_translator: &OllamaTranslator,
+    deep_translator: &OllamaTranslator,
     language: &str,
     profile: Profile,
     theme: Theme,
@@ -2785,7 +2788,7 @@ fn selftest(
     // sentence, skipped the translation correctly, and printed
     // `selftest passed`. The reader's whole reason for running it was to find
     // out whether the thing works.
-    if let Err(error) = translator.installed_models() {
+    if let Err(error) = quick_translator.installed_models() {
         println!(
             "0. no engine  {} ({})",
             error.user_message(),
@@ -2947,11 +2950,11 @@ language you do not read and run it again."
     };
 
     let mut cache = TranslationCache::new(CACHE_ENTRIES);
-    let key = CacheKey::of(&request, translator.model(), PROMPT_VERSION);
+    let key = CacheKey::of(&request, quick_translator.model(), PROMPT_VERSION);
     // Kept, because step 4 explains what step 2 translated rather than
     // translating it again. That grounding is the deep path's whole shape.
     let mut translated: Option<String> = None;
-    let card = match translator.quick_streaming(&request, &mut on_partial) {
+    let card = match quick_translator.quick_streaming(&request, &mut on_partial) {
         Ok(translation) => {
             println!(
                 "2. translated {} chars in {}ms via {}",
@@ -3027,7 +3030,7 @@ total {}ms from acquisition to card",
             "4. explaining  word={} structure={}",
             answerable.the_word, answerable.the_structure
         );
-        match translator.deep(&deep) {
+        match deep_translator.deep(&deep) {
             Ok(analysis) => {
                 println!(
                     "   analysed   {} lines in {}ms via {}",
@@ -3045,7 +3048,8 @@ total {}ms from acquisition to card",
                 // card and pressed the key a second time produces. Its own
                 // cache, its own key (ADR-0005), and four seconds either way.
                 let mut explanations = AnalysisCache::new(ANALYSIS_ENTRIES);
-                let key = CacheKey::for_analysis(&deep, translator.model(), DEEP_PROMPT_VERSION);
+                let key =
+                    CacheKey::for_analysis(&deep, deep_translator.model(), DEEP_PROMPT_VERSION);
                 explanations.insert(key.clone(), analysis.clone());
                 let again = Instant::now();
                 match explanations.get(&key) {
