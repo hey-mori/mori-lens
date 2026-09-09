@@ -145,19 +145,31 @@ pub fn main() -> std::process::ExitCode {
         }
     };
 
-    // Data directory: ~/Library/Application Support/Mori Lens
-    let data_dir = {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        std::path::PathBuf::from(home)
-            .join("Library")
-            .join("Application Support")
-            .join("Mori Lens")
+    // Data directory: derive from --settings flag if provided, otherwise use default.
+    // This matches Windows behavior where data_dir = settings.parent().
+    let (data_dir, settings_path) = if let Some(ref custom_path) = flags.settings {
+        let dir = custom_path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| {
+                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+                std::path::PathBuf::from(home)
+                    .join("Library")
+                    .join("Application Support")
+                    .join("Mori Lens")
+            });
+        (dir, custom_path.clone())
+    } else {
+        let data_dir = {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+            std::path::PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("Mori Lens")
+        };
+        (data_dir.clone(), data_dir.join("settings.toml"))
     };
     let _ = std::fs::create_dir_all(&data_dir);
-
-    // Settings file path: data_dir/settings.toml
-    // (macOS doesn't have --settings wired up yet, but the pattern matches Windows)
-    let settings_path = data_dir.join("settings.toml");
 
     // Shared settings (via settings_service — same as Windows).
     let shared_settings: SharedSettings = Arc::new(Mutex::new(settings_service::load_or_migrate(
@@ -256,7 +268,11 @@ pub fn main() -> std::process::ExitCode {
     // Read current settings for the product loop.
     let (language, endpoint, model, dwell_ms, ocr_mode, policy, hover_scope) = {
         let s = shared_settings.lock().unwrap().current().clone();
-        let p = s.policy();
+        let mut p = s.policy();
+        // --auto sets the default policy tier to Allow, matching Windows behavior.
+        if flags.auto {
+            p.set_default(lens_core::policy::AppTier::Allow);
+        }
         let lang = flags.language.unwrap_or(s.language);
         let ep = flags.endpoint.unwrap_or(s.endpoint);
         let m = flags.model.or(s.model);
@@ -305,6 +321,7 @@ pub fn main() -> std::process::ExitCode {
             ocr_mode,
             policy,
             hover_scope,
+            flags.auto,
         );
         // Tell Tauri to exit when the product loop is done.
         // (We can't call this from inside the loop because we need to
@@ -340,6 +357,7 @@ fn product_loop(
     mut ocr_mode: OcrMode,
     mut policy: AppPolicy,
     mut hover_scope: String,
+    auto: bool,
 ) {
     // Translation job types for async dispatch.
     enum QuickJob {
@@ -348,6 +366,8 @@ fn product_loop(
             sentence: String,
             display_text: String,
             from_pixels: bool,
+            app: Option<String>,
+            focused_word: Option<String>,
             generation: u64,
             key: CacheKey,
             anchor: ScreenRect,
@@ -359,6 +379,7 @@ fn product_loop(
             translation: Option<String>,
             target_language: String,
             profile: lens_core::analyse::Profile,
+            app: Option<String>,
             focused_word: Option<String>,
             generation: u64,
             anchor: ScreenRect,
@@ -370,6 +391,8 @@ fn product_loop(
             display_text: String,
             result: Result<lens_core::translate::QuickTranslation, String>,
             from_pixels: bool,
+            app: Option<String>,
+            focused_word: Option<String>,
             generation: u64,
             _key: CacheKey,
             anchor: ScreenRect,
@@ -377,6 +400,8 @@ fn product_loop(
         Deep {
             sentence: String,
             result: Result<lens_core::analyse::DeepAnalysis, String>,
+            app: Option<String>,
+            focused_word: Option<String>,
             generation: u64,
             anchor: ScreenRect,
         },
@@ -438,6 +463,8 @@ fn product_loop(
                     sentence,
                     display_text,
                     from_pixels,
+                    app,
+                    focused_word,
                     generation,
                     key,
                     anchor,
@@ -453,6 +480,8 @@ fn product_loop(
                         display_text,
                         result: result.map_err(|e| e.user_message().to_owned()),
                         from_pixels,
+                        app,
+                        focused_word,
                         generation,
                         _key: key,
                         anchor,
@@ -488,6 +517,7 @@ fn product_loop(
                     translation,
                     target_language,
                     profile,
+                    app,
                     focused_word,
                     generation,
                     anchor,
@@ -503,6 +533,8 @@ fn product_loop(
                     let _ = deep_result_tx.send(TransResult::Deep {
                         sentence,
                         result: result.map_err(|e| e.user_message().to_owned()),
+                        app,
+                        focused_word: deep_req.word,
                         generation,
                         anchor,
                     });
@@ -545,6 +577,8 @@ fn product_loop(
                     display_text,
                     result,
                     from_pixels,
+                    app,
+                    focused_word,
                     generation,
                     _key: _,
                     anchor,
@@ -552,8 +586,9 @@ fn product_loop(
                     if generation != current_generation {
                         continue;
                     }
-                    // Sync app provenance with the card about to be created.
-                    current_app = pending_app.clone();
+                    // Use the app/focus from the job itself, not global pending state.
+                    current_app = app;
+                    current_focused_word = focused_word;
                     match result {
                         Ok(translation) => {
                             let mut card = Card::translated(&display_text, &translation);
@@ -579,13 +614,17 @@ fn product_loop(
                 TransResult::Deep {
                     sentence,
                     result,
+                    app,
+                    focused_word,
                     generation,
                     anchor,
                 } => {
                     if generation != current_generation {
                         continue;
                     }
-                    current_app = pending_app.clone();
+                    // Use the app/focus from the job itself, not global pending state.
+                    current_app = app;
+                    current_focused_word = focused_word;
                     match result {
                         Ok(analysis) => {
                             let card = Card::analysed(&sentence, &analysis);
@@ -705,6 +744,7 @@ fn product_loop(
                             translation,
                             target_language,
                             profile,
+                            app: current_app.clone(),
                             focused_word: current_focused_word.clone(),
                             generation: current_generation,
                             anchor: current_anchor,
@@ -763,11 +803,16 @@ fn product_loop(
                                         sentence: sentence.clone(),
                                         display_text: sentence.clone(),
                                         from_pixels: true,
+                                        app: target.app.process_name.clone(),
+                                        focused_word: target.segmented.word_text().map(str::to_owned),
                                         generation: current_generation,
                                         key,
                                         anchor: current_anchor,
                                     });
-                                    current_app = pending_app.clone();
+                                    // Manual OCR: use the app from the OCR target itself,
+                                    // not pending_app from a previous hover.
+                                    current_app = target.app.process_name.clone();
+                                    current_focused_word = target.segmented.word_text().map(str::to_owned);
                                     current_card = Some((
                                         Card {
                                             original: sentence.clone(),
@@ -858,6 +903,10 @@ fn product_loop(
                 let new_ocr = OcrMode::named(&s.ocr).unwrap_or(OcrMode::Manual);
                 let new_policy = {
                     let mut p = s.policy();
+                    // --auto must be re-applied on every reload, matching Windows behavior.
+                    if auto {
+                        p.set_default(lens_core::policy::AppTier::Allow);
+                    }
                     p.deny_self("lens");
                     p
                 };
@@ -908,7 +957,8 @@ fn product_loop(
                 // Policy check: get process name BEFORE any content acquisition.
                 // This is a lightweight metadata lookup — no text is read.
                 let process_name = ax_acquirer.process_name_at(point);
-                if !policy.allows(process_name.as_deref(), false) {
+                // Pass the real Option/Alt modifier state so Modifier tier works correctly.
+                if !policy.allows(process_name.as_deref(), overlay::option_held()) {
                     // Denied by policy: skip both AX and OCR.
                     if let Some(ref o) = overlay {
                         o.hide();
@@ -1038,6 +1088,8 @@ fn product_loop(
                             sentence: sentence.clone(),
                             display_text: display_text.clone(),
                             from_pixels,
+                            app: pending_app.clone(),
+                            focused_word: current_focused_word.clone(),
                             generation: current_generation,
                             key,
                             anchor: current_anchor,
@@ -1060,6 +1112,10 @@ fn product_loop(
                     o.hide();
                 }
                 current_card = None;
+                // Invalidate any in-flight translation results.
+                // Without this, a late-arriving result would re-show the card
+                // after the pointer already left.
+                current_generation = current_generation.saturating_add(1);
             }
             None => {}
         }
