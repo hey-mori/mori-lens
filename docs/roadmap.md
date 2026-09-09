@@ -322,7 +322,7 @@ Standing, 2026-09-08:
 
 | Condition | State |
 |---|---|
-| Nothing stored without user action | CLOSED: Save is explicit. `keeping::append()` has exactly 3 callers: win.rs:1305 (Ctrl+Alt+S), detail_view.rs:175 (Tauri Save button), win.rs:2925 (self-test, temp file). No hover/Quick/Deep/SessionRecent path calls append. `append_creates_both_files_from_nothing` proves dual-write. `session_recent_does_not_survives_drop` proves SessionRecent is memory-only. macOS `execute_save()` writes to library.db only (no saved.md). |
+| Nothing stored without user action | CLOSED: Save is explicit. `keeping::append()` has exactly 3 callers: win.rs:1305 (Ctrl+Alt+S), detail_view.rs:175 (Tauri Save button), win.rs:2925 (self-test, temp file). No hover/Quick/Deep/SessionRecent path calls append. `append_creates_both_files_from_nothing` proves dual-write. `session_recent_does_not_survives_drop` proves SessionRecent is memory-only. macOS `execute_save()` uses `save_card()`, writing to both saved.md and library.db. |
 | Export round-trips | CLOSED: JSONL: `jsonl_round_trip_preserves_items_and_tags`, `jsonl_semantic_round_trip`, `jsonl_round_trip_preserves_review_state`. JSON: `json_export_semantic_round_trip` (all fields + tags + review_state). Markdown: `exporting_generates_saved_md_format` (export→parse; human-readable format, not machine re-import). |
 | Deletion is real | CLOSED: `single_delete_survives_reopen` proves delete(id)→drop→reopen→absent with surviving items and tags. `secure_wipe_survives_reopen` covers bulk. `library_delete_does_not_affect_history` confirms isolation. Archive is a review_state value, not a separate operation. |
 

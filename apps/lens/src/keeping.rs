@@ -47,6 +47,7 @@ static SAVE_LOCK: Mutex<()> = Mutex::new(());
 ///
 /// Beside it because a reader who has found one has found the other, and the
 /// settings file's path is printed at startup and reachable from the tray.
+#[allow(dead_code)]
 pub fn path_beside(settings: &Path) -> PathBuf {
     settings
         .parent()
@@ -72,6 +73,7 @@ impl NotKept {
         }
     }
 
+    #[allow(dead_code)]
     pub fn reason(&self) -> &'static str {
         match self {
             Self::NothingToKeep => "nothing-to-keep",
@@ -433,7 +435,7 @@ mod tests {
     /// - win.rs:2925 — self-test diagnostic (temp file, not user data)
     ///
     /// No other code path (hover, Quick, Deep, SessionRecent) calls append().
-    /// macOS execute_save() writes to library.db only (no saved.md).
+    /// macOS execute_save() also uses save_card(), writing to both files.
     #[test]
     fn append_creates_both_files_from_nothing() {
         let dir = std::env::temp_dir().join("mori-lens-keep-no-persist");

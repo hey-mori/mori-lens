@@ -254,7 +254,7 @@ pub fn main() -> std::process::ExitCode {
     };
 
     // Read current settings for the product loop.
-    let (language, endpoint, model, dwell_ms, ocr_mode, policy) = {
+    let (language, endpoint, model, dwell_ms, ocr_mode, policy, hover_scope) = {
         let s = shared_settings.lock().unwrap().current().clone();
         let p = s.policy();
         let lang = flags.language.unwrap_or(s.language);
@@ -267,7 +267,7 @@ pub fn main() -> std::process::ExitCode {
             .and_then(OcrMode::named)
             .or_else(|| OcrMode::named(&s.ocr))
             .unwrap_or(OcrMode::Manual);
-        (lang, ep, m, d, o, p)
+        (lang, ep, m, d, o, p, s.hover_scope)
     };
     let mut policy = policy;
     policy.deny_self("lens");
@@ -304,6 +304,7 @@ pub fn main() -> std::process::ExitCode {
             dwell_ms,
             ocr_mode,
             policy,
+            hover_scope,
         );
         // Tell Tauri to exit when the product loop is done.
         // (We can't call this from inside the loop because we need to
@@ -338,12 +339,14 @@ fn product_loop(
     mut dwell_ms: u64,
     mut ocr_mode: OcrMode,
     mut policy: AppPolicy,
+    mut hover_scope: String,
 ) {
     // Translation job types for async dispatch.
     enum QuickJob {
         Quick {
             request: QuickRequest,
             sentence: String,
+            display_text: String,
             from_pixels: bool,
             generation: u64,
             key: CacheKey,
@@ -364,10 +367,11 @@ fn product_loop(
     enum TransResult {
         Quick {
             sentence: String,
+            display_text: String,
             result: Result<lens_core::translate::QuickTranslation, String>,
             from_pixels: bool,
             generation: u64,
-            key: CacheKey,
+            _key: CacheKey,
             anchor: ScreenRect,
         },
         Deep {
@@ -432,6 +436,7 @@ fn product_loop(
                 QuickJob::Quick {
                     request,
                     sentence,
+                    display_text,
                     from_pixels,
                     generation,
                     key,
@@ -445,10 +450,11 @@ fn product_loop(
                     }
                     let _ = quick_result_tx.send(TransResult::Quick {
                         sentence,
+                        display_text,
                         result: result.map_err(|e| e.user_message().to_owned()),
                         from_pixels,
                         generation,
-                        key,
+                        _key: key,
                         anchor,
                     });
                 }
@@ -536,10 +542,11 @@ fn product_loop(
             match result {
                 TransResult::Quick {
                     sentence,
+                    display_text,
                     result,
                     from_pixels,
                     generation,
-                    key: _,
+                    _key: _,
                     anchor,
                 } => {
                     if generation != current_generation {
@@ -549,7 +556,7 @@ fn product_loop(
                     current_app = pending_app.clone();
                     match result {
                         Ok(translation) => {
-                            let mut card = Card::translated(&sentence, &translation);
+                            let mut card = Card::translated(&display_text, &translation);
                             if from_pixels {
                                 card = card.read_from_the_screen();
                             }
@@ -559,7 +566,7 @@ fn product_loop(
                         }
                         Err(msg) => {
                             let card = Card {
-                                original: sentence.clone(),
+                                original: display_text.clone(),
                                 body: CardBody::Problem(msg),
                                 footer: String::new(),
                             };
@@ -754,6 +761,7 @@ fn product_loop(
                                     let _ = quick_tx.send(QuickJob::Quick {
                                         request,
                                         sentence: sentence.clone(),
+                                        display_text: sentence.clone(),
                                         from_pixels: true,
                                         generation: current_generation,
                                         key,
@@ -881,6 +889,10 @@ fn product_loop(
                 if new_policy != policy {
                     policy = new_policy;
                 }
+                // Hover scope change → affects whether the card shows a word or sentence.
+                if s.hover_scope != hover_scope {
+                    hover_scope = s.hover_scope.clone();
+                }
             }
         }
 
@@ -964,11 +976,29 @@ fn product_loop(
                     continue;
                 }
 
+                // Scope: which text the card shows. The model always
+                // receives the sentence. Ctrl toggles the setting's default.
+                let word_scope = match hover_scope.as_str() {
+                    "word" => !overlay::ctrl_held(),
+                    _ => overlay::ctrl_held(),
+                };
+                let display_text = if word_scope {
+                    target
+                        .segmented
+                        .word_text()
+                        .map(str::trim)
+                        .filter(|w| !w.is_empty())
+                        .unwrap_or(&sentence)
+                        .to_owned()
+                } else {
+                    sentence.clone()
+                };
+
                 // Language decision + translation.
                 match decide(&sentence, &language) {
                     lens_core::language::Decision::AlreadyInTarget => {
                         let card = Card {
-                            original: sentence.clone(),
+                            original: display_text.clone(),
                             body: CardBody::Problem("already in your language".to_owned()),
                             footer: String::new(),
                         };
@@ -987,7 +1017,7 @@ fn product_loop(
                         {
                             let mut c = cache.lock().unwrap();
                             if let Some(cached) = c.get(&key) {
-                                let mut card = Card::translated(&sentence, &cached);
+                                let mut card = Card::translated(&display_text, &cached);
                                 if from_pixels {
                                     card = card.read_from_the_screen();
                                 }
@@ -1006,6 +1036,7 @@ fn product_loop(
                         let _ = quick_tx.send(QuickJob::Quick {
                             request,
                             sentence: sentence.clone(),
+                            display_text: display_text.clone(),
                             from_pixels,
                             generation: current_generation,
                             key,
@@ -1015,7 +1046,7 @@ fn product_loop(
                         current_app = pending_app.clone();
                         current_card = Some((
                             Card {
-                                original: sentence.clone(),
+                                original: display_text,
                                 body: CardBody::Waiting("translating...".to_owned()),
                                 footer: String::new(),
                             },
