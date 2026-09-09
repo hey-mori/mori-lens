@@ -38,18 +38,27 @@ pub fn atomic_write(path: &Path, content: &str) -> Result<(), AtomicWriteError> 
 
     let temp_path = path.with_extension("toml.tmp");
 
-    // Write to the temporary file, flush, and sync.
+    // Write to the temporary file and flush. The rename below is atomic
+    // on most filesystems, which protects against truncation from a crash.
     let mut file = fs::File::create(&temp_path).map_err(|e| AtomicWriteError::Create {
         path: temp_path.clone(),
         source: e,
     })?;
 
     // Restrict permissions on Unix: settings contain endpoint/model info
-    // that should not be world-readable.
+    // that should not be world-readable. This is called immediately after
+    // file creation to minimize the window where the file has default
+    // permissions.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600));
+        fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600)).map_err(|e| {
+            let _ = fs::remove_file(&temp_path);
+            AtomicWriteError::Permissions {
+                path: temp_path.clone(),
+                source: e,
+            }
+        })?;
     }
 
     file.write_all(content.as_bytes())
@@ -106,6 +115,11 @@ pub enum AtomicWriteError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[cfg(unix)]
+    Permissions {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     Write {
         path: PathBuf,
         source: std::io::Error,
@@ -136,6 +150,10 @@ impl std::fmt::Display for AtomicWriteError {
             Self::Create { path, source } => {
                 write!(f, "cannot create {}: {source}", path.display())
             }
+            #[cfg(unix)]
+            Self::Permissions { path, source } => {
+                write!(f, "cannot set permissions on {}: {source}", path.display())
+            }
             Self::Write { path, source } => {
                 write!(f, "cannot write {}: {source}", path.display())
             }
@@ -161,6 +179,8 @@ impl std::error::Error for AtomicWriteError {
             | Self::Create { source, .. }
             | Self::Write { source, .. }
             | Self::Rename { source, .. } => Some(source),
+            #[cfg(unix)]
+            Self::Permissions { source, .. } => Some(source),
             _ => None,
         }
     }
