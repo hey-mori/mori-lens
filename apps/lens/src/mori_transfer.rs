@@ -191,6 +191,7 @@ fn status_from_capability(cap: Option<CapabilityFile>) -> MoriStatus {
 ///
 /// Returns true only when the capability marker exists and includes
 /// schema version 1.
+#[allow(dead_code)] // Used by tests; production call path is platform-specific.
 pub fn is_mori_available() -> bool {
     matches!(check_mori_status(), MoriStatus::Supported { .. })
 }
