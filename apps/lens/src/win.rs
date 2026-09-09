@@ -225,6 +225,8 @@ struct Options {
     /// Where the settings came from, and anything wrong with them. Printed at
     /// startup: a file the product silently ignored is worse than no file.
     source: SettingsSource,
+    /// CLI overrides that must survive settings reload.
+    cli_overrides: CliOverrides,
 }
 
 /// Where the settings were read from, for the startup banner.
@@ -257,6 +259,31 @@ struct Flags {
     theme: Option<String>,
     translucency: Option<String>,
     text: Option<String>,
+}
+
+/// CLI overrides that must survive settings reload.
+///
+/// When the user launches with `--auto` or `--language Japanese`, those flags
+/// should remain in effect even after a settings reload (triggered by Settings
+/// UI save or external file edit). This struct stores the relevant CLI values
+/// so they can be re-applied after `settings.policy()` is called.
+#[derive(Clone, Default)]
+struct CliOverrides {
+    /// `--auto` sets the default policy tier to Allow.
+    auto: bool,
+    /// `--language` overrides the file's language setting.
+    language: Option<String>,
+    /// `--dwell` overrides the file's dwell_ms setting.
+    dwell_ms: Option<u64>,
+}
+
+impl CliOverrides {
+    /// Re-apply CLI overrides to a reloaded policy.
+    fn apply_to_policy(&self, policy: &mut lens_core::policy::AppPolicy) {
+        if self.auto {
+            policy.set_default(lens_core::policy::AppTier::Allow);
+        }
+    }
 }
 
 fn preset_named(name: &str) -> Result<Preset, String> {
@@ -459,6 +486,13 @@ fn parse() -> Result<Options, String> {
         policy.set_default(AppTier::Allow);
     }
 
+    // Capture CLI overrides that must survive settings reload.
+    let cli_overrides = CliOverrides {
+        auto: flags.auto,
+        language: flags.language.clone(),
+        dwell_ms: flags.dwell_ms,
+    };
+
     Ok(Options {
         selftest: flags.selftest,
         preset: preset_named(flags.theme.as_ref().unwrap_or(&settings.theme))?,
@@ -484,6 +518,7 @@ fn parse() -> Result<Options, String> {
         dwell: Duration::from_millis(flags.dwell_ms.unwrap_or(settings.dwell_ms)),
         policy,
         source,
+        cli_overrides,
     })
 }
 
@@ -1012,6 +1047,9 @@ pub fn main() -> std::process::ExitCode {
     let mut policy = options.policy.clone();
     // Without this Lens reads its own card and translates its own translation.
     policy.deny_self("lens");
+
+    // CLI overrides are kept so they can be re-applied after settings reload.
+    let cli_overrides = options.cli_overrides.clone();
 
     // Last, after every fact about how this run is configured. It is the line
     // a first-time user acts on, and it sat in the middle of the banner with
@@ -1650,12 +1688,18 @@ pub fn main() -> std::process::ExitCode {
             // over external edits, because the service just wrote them.
             let pending_settings = loop_settings.lock().unwrap().take_pending();
             if let Some(settings) = pending_settings {
-                language = settings.language.clone();
+                // CLI overrides take precedence over file values.
+                language = cli_overrides
+                    .language
+                    .clone()
+                    .unwrap_or_else(|| settings.language.clone());
                 hover_scope = settings.hover_scope.clone();
                 let mut reloaded = settings.policy();
+                cli_overrides.apply_to_policy(&mut reloaded);
                 reloaded.deny_self("lens");
+                let dwell = cli_overrides.dwell_ms.unwrap_or(settings.dwell_ms);
                 hover_config = HoverConfig {
-                    dwell: Duration::from_millis(settings.dwell_ms),
+                    dwell: Duration::from_millis(dwell),
                     ..HoverConfig::default()
                 };
                 policy = reloaded;
@@ -1676,12 +1720,18 @@ pub fn main() -> std::process::ExitCode {
                 }
 
                 if let Some(settings) = &settings {
-                    language = settings.language.clone();
+                    // CLI overrides take precedence over file values.
+                    language = cli_overrides
+                        .language
+                        .clone()
+                        .unwrap_or_else(|| settings.language.clone());
                     hover_scope = settings.hover_scope.clone();
                     let mut reloaded = settings.policy();
+                    cli_overrides.apply_to_policy(&mut reloaded);
                     reloaded.deny_self("lens");
+                    let dwell = cli_overrides.dwell_ms.unwrap_or(settings.dwell_ms);
                     hover_config = HoverConfig {
-                        dwell: Duration::from_millis(settings.dwell_ms),
+                        dwell: Duration::from_millis(dwell),
                         ..HoverConfig::default()
                     };
                     policy = reloaded;
@@ -3839,5 +3889,72 @@ language = "Korean"
         assert!(!backup.exists());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod cli_override_tests {
+    use super::*;
+    use lens_core::policy::{AppPolicy, AppTier};
+
+    #[test]
+    fn cli_overrides_apply_to_policy() {
+        // --auto should set default tier to Allow
+        let overrides = CliOverrides {
+            auto: true,
+            language: None,
+            dwell_ms: None,
+        };
+
+        let mut policy = AppPolicy::new(AppTier::Modifier);
+        overrides.apply_to_policy(&mut policy);
+        assert_eq!(policy.default_tier(), AppTier::Allow);
+    }
+
+    #[test]
+    fn cli_overrides_no_auto_does_not_change_policy() {
+        // Without --auto, policy should remain unchanged
+        let overrides = CliOverrides {
+            auto: false,
+            language: None,
+            dwell_ms: None,
+        };
+
+        let mut policy = AppPolicy::new(AppTier::Modifier);
+        overrides.apply_to_policy(&mut policy);
+        assert_eq!(policy.default_tier(), AppTier::Modifier);
+    }
+
+    #[test]
+    fn cli_overrides_survive_reload_scenario() {
+        // Simulate the reload scenario:
+        // 1. Launch with --auto → policy = Allow
+        // 2. Settings file has default_tier = Modifier
+        // 3. Reload fires → should re-apply --auto → policy = Allow
+
+        let overrides = CliOverrides {
+            auto: true,
+            language: Some("Japanese".to_owned()),
+            dwell_ms: Some(500),
+        };
+
+        // Simulate file reload: policy from file
+        let mut reloaded = AppPolicy::new(AppTier::Modifier);
+
+        // Apply CLI overrides
+        overrides.apply_to_policy(&mut reloaded);
+
+        // Verify overrides took effect
+        assert_eq!(reloaded.default_tier(), AppTier::Allow);
+
+        // Verify language and dwell overrides
+        let language = overrides
+            .language
+            .clone()
+            .unwrap_or_else(|| "Korean".to_owned());
+        assert_eq!(language, "Japanese");
+
+        let dwell = overrides.dwell_ms.unwrap_or(320);
+        assert_eq!(dwell, 500);
     }
 }
