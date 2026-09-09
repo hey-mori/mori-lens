@@ -40,7 +40,7 @@ Windows-first product validation. macOS deferred items remain.
 **macOS deferred items:**
 - modifier/InputState (Ctrl tracking for hover_scope): PR #365 (Ctrl polling implemented)
 - --auto flag: FIXED (PR #366 — now applies policy.set_default(Allow))
-- --settings flag: PARTIAL (parsed but settings_service ignores it)
+- --settings flag: FIXED (PR #366 — data_dir derived from settings parent)
 - HoverSession/HoverWorker: DEFERRED (Windows-only, macOS uses inline acquisition)
 - ReadingContext: FIXED (PR #366 — job carries app/focus through async boundary)
 - hover_scope (word vs sentence): PR #365 (Ctrl toggle implemented)
@@ -324,7 +324,7 @@ REMAINING WINDOWS WORK:
 REMAINING MACOS WORK:
   modifier/InputState         PR #365 (Ctrl polling implemented)
   --auto flag                 FIXED (PR #366)
-  --settings flag             PARTIAL (parsed, ignored by settings_service)
+  --settings flag             FIXED (PR #366)
   HoverSession/HoverWorker    DEFERRED (macOS uses inline acquisition, follows core contract)
   ReadingContext              FIXED (PR #366 — job carries context)
   hover_scope                 PR #365 (Ctrl toggle implemented)
