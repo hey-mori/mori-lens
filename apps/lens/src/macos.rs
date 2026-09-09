@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use lens_core::acquire::{AcquireContext, AcquireError, AcquisitionSource, TextAcquirer};
 use lens_core::analyse::Analyser;
-use lens_core::cache::{CacheKey, TranslationCache};
+use lens_core::cache::{AnalysisCache, CacheKey, TranslationCache};
 use lens_core::card::{Card, CardBody};
 use lens_core::geometry::{ScreenPoint, ScreenRect};
 use lens_core::hover::{HoverConfig, HoverEvent, HoverMachine, PointerSample};
@@ -62,6 +62,8 @@ OPTIONS
 
 const POINTER_POLL_MS: u64 = 25;
 const CACHE_ENTRIES: usize = 256;
+const ANALYSIS_ENTRIES: usize = 32;
+const DEEP_PROMPT_VERSION: u32 = 1;
 
 #[derive(Default)]
 struct Flags {
@@ -502,6 +504,8 @@ fn product_loop(
     std::thread::spawn(move || {
         let mut translator = deep_translator;
         let _ = translator.resolve_model();
+        // Deep analysis cache — separate from translation cache per ADR-0005.
+        let mut explanations = AnalysisCache::new(ANALYSIS_ENTRIES);
         while let Ok(job) = deep_rx.recv() {
             // Check for config updates (non-blocking).
             while let Ok((ep, m)) = deep_config_rx.try_recv() {
@@ -529,7 +533,29 @@ fn product_loop(
                         translation,
                         profile,
                     };
+                    // Cache key uses model + prompt version for ADR-0005 separation.
+                    let key = CacheKey::for_analysis(
+                        &deep_req,
+                        translator.model(),
+                        DEEP_PROMPT_VERSION,
+                    );
+                    // Check cache first — avoid re-generating the same analysis.
+                    if let Some(hit) = explanations.get(&key) {
+                        let _ = deep_result_tx.send(TransResult::Deep {
+                            sentence,
+                            result: Ok(hit),
+                            app,
+                            focused_word: deep_req.word,
+                            generation,
+                            anchor,
+                        });
+                        continue;
+                    }
                     let result = translator.deep(&deep_req);
+                    // Cache successful results for future reuse.
+                    if let Ok(ref analysis) = result {
+                        explanations.insert(key, analysis.clone());
+                    }
                     let _ = deep_result_tx.send(TransResult::Deep {
                         sentence,
                         result: result.map_err(|e| e.user_message().to_owned()),
