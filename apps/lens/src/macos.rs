@@ -1089,6 +1089,10 @@ fn product_loop(
                     o.hide();
                 }
                 current_card = None;
+                // Invalidate any in-flight translation results.
+                // Without this, a late-arriving result would re-show the card
+                // after the pointer already left.
+                current_generation = current_generation.saturating_add(1);
             }
             None => {}
         }
