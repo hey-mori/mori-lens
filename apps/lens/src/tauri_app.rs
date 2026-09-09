@@ -149,6 +149,7 @@ impl AppHandle {
     }
 
     /// Show the pinned detail window.
+    #[allow(dead_code)]
     pub fn show_detail_window(&self) {
         if let Some(window) = self.0.get_webview_window("detail") {
             let _ = window.show();
