@@ -272,3 +272,10 @@ void lens_process_appkit_events(void) {
                                  beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.001]];
     }
 }
+
+bool lens_ctrl_held(void) {
+    @autoreleasepool {
+        NSEventModifierFlags flags = [NSEvent modifierFlags];
+        return (flags & NSEventModifierFlagControl) != 0;
+    }
+}
