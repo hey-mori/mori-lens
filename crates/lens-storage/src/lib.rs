@@ -211,36 +211,56 @@ impl Library {
     /// The parent directory must exist. Runs all pending migrations before
     /// returning, so a caller always sees the current schema.
     pub fn open(path: &Path) -> Result<Self, Error> {
-        #[cfg(unix)]
-        let is_new = !path.exists();
         let conn = Connection::open(path)?;
         conn.execute_batch("PRAGMA journal_mode = WAL;")?;
-        // Restrict permissions on Unix: the library contains text captured
-        // from the screen and must not be world-readable. Skip for in-memory
-        // databases (path is ":memory:").
-        #[cfg(unix)]
-        let is_memory = path == Path::new(":memory:");
-        #[cfg(unix)]
-        if is_new && !is_memory {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-        }
-        // WAL and SHM files are created by SQLite in WAL mode. Restrict
-        // their permissions too since they contain the same data.
-        #[cfg(unix)]
-        if !is_memory {
-            use std::os::unix::fs::PermissionsExt;
-            let wal_path = path.with_extension("db-wal");
-            if wal_path.exists() {
-                let _ = std::fs::set_permissions(&wal_path, std::fs::Permissions::from_mode(0o600));
-            }
-            let shm_path = path.with_extension("db-shm");
-            if shm_path.exists() {
-                let _ = std::fs::set_permissions(&shm_path, std::fs::Permissions::from_mode(0o600));
-            }
-        }
         let lib = Self { conn };
         lib.migrate()?;
+        // Restrict permissions on Unix after all writes (including migrations)
+        // are done. WAL and SHM files may be created by the migrate() call,
+        // so permissions must be set AFTER migrate, not before.
+        // Skip for in-memory databases (path is ":memory:").
+        #[cfg(unix)]
+        {
+            let is_memory = path == Path::new(":memory:");
+            if !is_memory {
+                use std::os::unix::fs::PermissionsExt;
+                // Tighten the main database file. Existing files created by
+                // older builds may have group/other read bits.
+                if let Ok(meta) = std::fs::metadata(path) {
+                    let mode = meta.permissions().mode() & 0o777;
+                    if mode & 0o077 != 0 {
+                        let _ =
+                            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+                    }
+                }
+                // WAL and SHM files are created by SQLite in WAL mode.
+                // They contain the same data as the main database.
+                let wal_path = path.with_extension("db-wal");
+                if wal_path.exists() {
+                    if let Ok(meta) = std::fs::metadata(&wal_path) {
+                        let mode = meta.permissions().mode() & 0o777;
+                        if mode & 0o077 != 0 {
+                            let _ = std::fs::set_permissions(
+                                &wal_path,
+                                std::fs::Permissions::from_mode(0o600),
+                            );
+                        }
+                    }
+                }
+                let shm_path = path.with_extension("db-shm");
+                if shm_path.exists() {
+                    if let Ok(meta) = std::fs::metadata(&shm_path) {
+                        let mode = meta.permissions().mode() & 0o777;
+                        if mode & 0o077 != 0 {
+                            let _ = std::fs::set_permissions(
+                                &shm_path,
+                                std::fs::Permissions::from_mode(0o600),
+                            );
+                        }
+                    }
+                }
+            }
+        }
         Ok(lib)
     }
 
