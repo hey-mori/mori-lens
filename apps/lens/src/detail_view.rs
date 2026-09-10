@@ -175,7 +175,12 @@ pub(crate) fn detail_save(
     drop(guard);
 
     let lib_guard = library.lock().unwrap();
-    let result = keeping::append(save_path.as_ref(), &entry, std::time::SystemTime::now(), lib_guard.library());
+    let result = keeping::append(
+        save_path.as_ref(),
+        &entry,
+        std::time::SystemTime::now(),
+        lib_guard.library(),
+    );
     match result {
         Ok(item_id) => {
             // Store the item id so the note and open-in-library can find it.
@@ -244,52 +249,50 @@ pub fn new_shared() -> (SharedDetail, ExplainFlag) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lens_core::card::{Card, CardBody};
+    use lens_core::analyse::DeepAnalysis;
+    use lens_core::card::Card;
+    use lens_core::translate::{EngineId, QuickTranslation, TranslateError};
+
+    fn quick_translation(text: &str) -> QuickTranslation {
+        QuickTranslation {
+            text: text.to_owned(),
+            engine: EngineId::LocalOllama,
+            model: "qwen2.5:3b".to_owned(),
+            latency_ms: 1600,
+            cached: false,
+            part_was_removed: false,
+            name_changed: false,
+        }
+    }
 
     fn translation_card(original: &str, text: &str) -> Card {
-        Card {
-            original: original.to_owned(),
-            body: CardBody::Translation(text.to_owned()),
-            footer: "Ollama · 1.6s".to_owned(),
-            metadata: None,
-        }
+        Card::translated(original, &quick_translation(text))
     }
 
-    fn problem_card(msg: &str) -> Card {
-        Card {
-            original: "some text".to_owned(),
-            body: CardBody::Problem(msg.to_owned()),
-            footer: "Ollama".to_owned(),
-            metadata: None,
-        }
+    fn problem_card() -> Card {
+        Card::not_translated("some text", &TranslateError::Unavailable)
     }
 
-    fn waiting_card(msg: &str) -> Card {
-        Card {
-            original: "some text".to_owned(),
-            body: CardBody::Waiting(msg.to_owned()),
-            footer: "".to_owned(),
-            metadata: None,
-        }
+    fn waiting_card() -> Card {
+        Card::waiting("some text")
     }
 
-    fn analysis_card(
-        original: &str,
-        translation: Option<&str>,
-        rows: Vec<(String, String)>,
-    ) -> Card {
-        Card {
-            original: original.to_owned(),
-            body: CardBody::Analysis {
-                translation: translation.map(|s| s.to_owned()),
-                word_at: None,
-                counterpart_at: None,
-                links: vec![],
-                rows,
-            },
-            footer: "Ollama · 4.4s".to_owned(),
-            metadata: None,
-        }
+    fn analysis_card(original: &str, translation: Option<&str>) -> Card {
+        let analysis = DeepAnalysis {
+            lemma: "run".to_owned(),
+            part_of_speech: "verb".to_owned(),
+            sense: String::new(),
+            structure: String::new(),
+            note: String::new(),
+            word: None,
+            translation: translation.map(|s| s.to_owned()),
+            counterpart: None,
+            model: "qwen2.5:3b".to_owned(),
+            latency_ms: 4400,
+            cached: false,
+            links: vec![],
+        };
+        Card::analysed(original, &analysis)
     }
 
     #[test]
@@ -298,55 +301,46 @@ mod tests {
         let view = view_from_card(&card).expect("should produce a view");
         assert_eq!(view.original, "Hello");
         assert_eq!(view.translation.as_deref(), Some("안녕"));
-        assert_eq!(view.footer, "Ollama · 1.6s");
+        assert!(view.footer.contains("qwen2.5:3b"));
         assert!(view.rows.is_empty());
         assert!(view.item_id.is_none());
     }
 
     #[test]
     fn view_from_analysis_card_carries_rows() {
-        let rows = vec![
-            ("Lemma".to_owned(), "run".to_owned()),
-            ("POS".to_owned(), "verb".to_owned()),
-        ];
-        let card = analysis_card("running", Some("달리고"), rows.clone());
+        let card = analysis_card("running", Some("달리고"));
         let view = view_from_card(&card).expect("should produce a view");
         assert_eq!(view.original, "running");
         assert_eq!(view.translation.as_deref(), Some("달리고"));
-        assert_eq!(view.rows.len(), 2);
-        assert_eq!(view.rows[0], ("Lemma".to_owned(), "run".to_owned()));
+        assert!(view.rows.len() >= 2);
+        assert_eq!(view.rows[0], ("원형".to_owned(), "run".to_owned()));
+        assert_eq!(view.rows[1], ("품사".to_owned(), "verb".to_owned()));
     }
 
     #[test]
     fn view_from_problem_card_is_none() {
-        let card = problem_card("Ollama is not running");
+        let card = problem_card();
         assert!(view_from_card(&card).is_none());
     }
 
     #[test]
     fn view_from_waiting_card_is_none() {
-        let card = waiting_card("asking Ollama...");
+        let card = waiting_card();
         assert!(view_from_card(&card).is_none());
     }
 
     #[test]
     fn view_from_empty_original_is_none() {
-        let card = Card {
-            original: "   ".to_owned(),
-            body: CardBody::Translation("should not appear".to_owned()),
-            footer: "".to_owned(),
-            metadata: None,
-        };
+        let card = translation_card("   ", "should not appear");
         assert!(view_from_card(&card).is_none());
     }
 
     #[test]
     fn view_from_analysis_without_translation_has_none_translation() {
-        let rows = vec![("Sense".to_owned(), "the feeling".to_owned())];
-        let card = analysis_card("feeling", None, rows);
+        let card = analysis_card("feeling", None);
         let view = view_from_card(&card).expect("should produce a view");
         assert!(view.translation.is_none());
-        assert_eq!(view.rows.len(), 1);
+        assert!(view.rows.len() >= 2);
     }
 
     #[test]
