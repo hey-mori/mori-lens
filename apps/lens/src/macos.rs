@@ -534,11 +534,8 @@ fn product_loop(
                         profile,
                     };
                     // Cache key uses model + prompt version for ADR-0005 separation.
-                    let key = CacheKey::for_analysis(
-                        &deep_req,
-                        translator.model(),
-                        DEEP_PROMPT_VERSION,
-                    );
+                    let key =
+                        CacheKey::for_analysis(&deep_req, translator.model(), DEEP_PROMPT_VERSION);
                     // Check cache first — avoid re-generating the same analysis.
                     if let Some(hit) = explanations.get(&key) {
                         let _ = deep_result_tx.send(TransResult::Deep {
@@ -830,7 +827,10 @@ fn product_loop(
                                         display_text: sentence.clone(),
                                         from_pixels: true,
                                         app: target.app.process_name.clone(),
-                                        focused_word: target.segmented.word_text().map(str::to_owned),
+                                        focused_word: target
+                                            .segmented
+                                            .word_text()
+                                            .map(str::to_owned),
                                         generation: current_generation,
                                         key,
                                         anchor: current_anchor,
@@ -838,7 +838,8 @@ fn product_loop(
                                     // Manual OCR: use the app from the OCR target itself,
                                     // not pending_app from a previous hover.
                                     current_app = target.app.process_name.clone();
-                                    current_focused_word = target.segmented.word_text().map(str::to_owned);
+                                    current_focused_word =
+                                        target.segmented.word_text().map(str::to_owned);
                                     current_card = Some((
                                         Card {
                                             original: sentence.clone(),
