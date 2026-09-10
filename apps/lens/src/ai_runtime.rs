@@ -9,7 +9,6 @@ use lens_settings::schema::EngineConfig;
 
 /// One engine's runtime configuration: where it is, and which model to use.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct RuntimeEngine {
     pub endpoint: String,
     pub model: Option<String>,
@@ -17,7 +16,6 @@ pub struct RuntimeEngine {
 
 impl RuntimeEngine {
     /// Build from a schema engine config.
-    #[allow(dead_code)]
     pub fn from_schema(config: &EngineConfig) -> Self {
         Self {
             endpoint: config.endpoint.clone(),
@@ -31,7 +29,6 @@ impl RuntimeEngine {
 /// Quick and Deep are separate per ADR-0005: separate models, separate
 /// endpoints, separate caches, separate timeouts.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct AiRuntimeConfig {
     pub quick: RuntimeEngine,
     pub deep: RuntimeEngine,
@@ -39,7 +36,6 @@ pub struct AiRuntimeConfig {
 
 impl AiRuntimeConfig {
     /// Build from the settings schema.
-    #[allow(dead_code)]
     pub fn from_schema(schema: &lens_settings::schema::Schema) -> Self {
         Self {
             quick: RuntimeEngine::from_schema(&schema.quick),
