@@ -26,12 +26,23 @@ extern "C" {
         out_scale: *mut f64,
     ) -> bool;
     fn lens_capture_available() -> bool;
+    fn lens_capture_request() -> bool;
 }
 
 /// Whether screen capture is available (Screen Recording permission granted).
 pub fn is_available() -> bool {
     // SAFETY: lens_capture_available is a pure query.
     unsafe { lens_capture_available() }
+}
+
+/// Request Screen Recording permission from the user.
+///
+/// Returns true if permission is already granted. If not, presents the
+/// system dialog and returns false; after the user grants permission in
+/// System Settings, the application must be restarted.
+pub fn request() -> bool {
+    // SAFETY: lens_capture_request is a pure side-effect (shows system dialog).
+    unsafe { lens_capture_request() }
 }
 
 /// A captured screen region with metadata for coordinate reconstruction.
