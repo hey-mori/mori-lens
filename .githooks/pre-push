@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#
+# Reject any push to refs/heads/main.
+#
+# All changes to main go through pull requests. Autonomous agents
+# must never push directly to main, including documentation-only
+# changes. See docs/git-workflow.md §6.
+#
+# Install via: scripts/setup-git-hooks.sh
+set -euo pipefail
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    echo "ERROR: direct pushes to main are forbidden."
+    echo "All changes to main go through a pull request."
+    echo "See docs/git-workflow.md §6."
+    exit 1
+  fi
+done
+
+exit 0
