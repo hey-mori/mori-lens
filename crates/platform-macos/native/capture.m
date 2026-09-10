@@ -22,12 +22,14 @@
 extern int32_t lens_overlay_window_id(void);
 
 // Delegate that captures a single frame. The caller owns the stop lifecycle.
+// Properties are atomic because the SCStreamOutput callback writes them on
+// the capture queue while the caller reads them on the main thread.
 @interface LensCaptureDelegate : NSObject <SCStreamDelegate, SCStreamOutput>
-@property (nonatomic, assign) uint8_t *pixelData;
-@property (nonatomic, assign) int32_t pixelWidth;
-@property (nonatomic, assign) int32_t pixelHeight;
-@property (nonatomic, assign) int32_t pixelStride;
-@property (nonatomic, assign) BOOL done;
+@property (atomic, assign) uint8_t *pixelData;
+@property (atomic, assign) int32_t pixelWidth;
+@property (atomic, assign) int32_t pixelHeight;
+@property (atomic, assign) int32_t pixelStride;
+@property (atomic, assign) BOOL done;
 @end
 
 @implementation LensCaptureDelegate
