@@ -163,25 +163,24 @@ Self-merge is normal here, and is not a substitute for review: the
 review step is the author re-reading the diff against the issue plus a
 green verification run.
 
-## 6. The direct-to-`main` exception (narrow)
+## 6. No direct pushes to `main`
 
-Direct commits to `main` are allowed for exactly two cases:
+**All changes to `main` go through pull requests.** No exceptions for
+documentation-only changes, typo fixes, or autonomous agent work.
 
-- A non-executing documentation fix: a typo, a broken link, a stale
-  path.
-- Restoring an already-broken `main`, where opening a pull request would
-  leave the branch broken for longer.
+The pre-push hook in `.githooks/pre-push` rejects any push where the
+remote ref is `refs/heads/main`. Install it via
+`scripts/setup-git-hooks.sh`, which sets `core.hooksPath`.
 
-Everything else goes through a pull request, **including work by an
-autonomous agent**. An agent whose work nobody reviewed needs more
-isolation than a human contributor, not less.
+Autonomous agents must never push directly to `main`, including
+documentation-only changes. An agent whose work nobody reviewed needs
+more isolation than a human contributor, not less. The one
+bootstrapping exception, recorded so it is not mistaken for the rule:
+the initial commit that creates the repository skeleton has no `main`
+to branch from.
 
-The one bootstrapping exception, recorded so it is not mistaken for the
-rule: the initial commit that creates the repository skeleton has no
-`main` to branch from.
-
-`main` is protected by convention and by the verification gate rather
-than by a hard branch-protection rule, because the repository is
+`main` is protected by the pre-push hook and by the verification gate
+rather than by a hard branch-protection rule, because the repository is
 private on a plan where protection rules are not available. That is a
 platform limitation, not a preference: when the constraint lifts, turn
 protection on.
