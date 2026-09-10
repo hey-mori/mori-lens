@@ -125,7 +125,8 @@ sessions safe.
 The cost is a busier graph. That is accepted.
 
 Never force-push a branch that others, or another machine, may have
-pulled. Never rewrite `main`.
+pulled. Never rewrite `main`. The pre-push hook enforces both rules
+(§6).
 
 ## 5. Pull requests
 
@@ -163,21 +164,35 @@ Self-merge is normal here, and is not a substitute for review: the
 review step is the author re-reading the diff against the issue plus a
 green verification run.
 
-## 6. No direct pushes to `main`
+## 6. No direct pushes to `main`; no force-pushes anywhere
 
 **All changes to `main` go through pull requests.** No exceptions for
 documentation-only changes, typo fixes, or autonomous agent work.
 
-The pre-push hook in `.githooks/pre-push` rejects any push where the
-remote ref is `refs/heads/main`. Install it via
-`scripts/setup-git-hooks.sh`, which sets `core.hooksPath`.
+**Non-fast-forward pushes to any branch are forbidden.** An autonomous
+agent must never force-push a branch that has already been pushed to a
+remote. A force-push rewrites published SHAs, breaking every citation
+to those commits (agent memory files, issue bodies, hand-off notes) and
+discarding work that other machines may have already pulled. The
+pre-push hook enforces this with `git merge-base --is-ancestor`.
+
+The pre-push hook in `.githooks/pre-push` rejects two kinds of pushes:
+any push where the remote ref is `refs/heads/main`, and any push where
+the remote SHA is not an ancestor of the local SHA (non-fast-forward).
+New-branch pushes (remote SHA is all zeros) and branch deletions are
+exempt. Install it via `scripts/setup-git-hooks.sh`, which sets
+`core.hooksPath`.
 
 Autonomous agents must never push directly to `main`, including
 documentation-only changes. An agent whose work nobody reviewed needs
-more isolation than a human contributor, not less. The one
-bootstrapping exception, recorded so it is not mistaken for the rule:
-the initial commit that creates the repository skeleton has no `main`
-to branch from.
+more isolation than a human contributor, not less. If an agent
+discovers a mistake after pushing, the correct response is a new commit
+that fixes the mistake, not a force-push that erases it. If the
+mistake is severe enough that the branch history itself is wrong, close
+the pull request, delete the remote branch, and start a new branch from
+a clean `main`. The one bootstrapping exception, recorded so it is not
+mistaken for the rule: the initial commit that creates the repository
+skeleton has no `main` to branch from.
 
 `main` is protected by the pre-push hook and by the verification gate
 rather than by a hard branch-protection rule, because the repository is
