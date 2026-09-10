@@ -9,6 +9,17 @@
 
 use std::os::raw::{c_int, c_void};
 
+/// Compute stride * height with overflow checking.
+///
+/// Returns None if the multiplication would overflow. Both stride and height
+/// must be positive; otherwise returns None.
+fn checked_frame_len(stride: i32, height: i32) -> Option<usize> {
+    if stride <= 0 || height <= 0 {
+        return None;
+    }
+    (stride as usize).checked_mul(height as usize)
+}
+
 extern "C" {
     fn lens_capture_screen(
         req_x: f64,
@@ -112,17 +123,31 @@ pub fn capture_region(
         )
     };
 
-    if !ok || pixels.is_null() || w <= 0 || h <= 0 {
+    if !ok {
         return None;
     }
 
-    // Take ownership of the C-allocated buffer.
-    // Checked arithmetic: stride * h could overflow c_int on very large
-    // displays. Cast to usize first and use checked_mul.
-    let len = match (stride as usize).checked_mul(h as usize) {
+    // Defensive checks: the C bridge only sets pixels on success, but guard
+    // against future changes. If we reject after a successful return, free
+    // the buffer to avoid leaking it.
+    if pixels.is_null() || w <= 0 || h <= 0 {
+        if !pixels.is_null() {
+            // SAFETY: pixels was allocated by malloc in the C bridge.
+            unsafe {
+                extern "C" {
+                    fn free(ptr: *mut c_void);
+                }
+                free(pixels as *mut c_void);
+            }
+        }
+        return None;
+    }
+
+    // Checked arithmetic: stride * h could overflow on very large displays.
+    let len = match checked_frame_len(stride, h) {
         Some(n) => n,
         None => {
-            // Free the C buffer to avoid leaking it.
+            // SAFETY: pixels was allocated by malloc in the C bridge.
             unsafe {
                 extern "C" {
                     fn free(ptr: *mut c_void);
@@ -155,4 +180,56 @@ pub fn capture_region(
         origin_y,
         scale,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checked_frame_len_normal_case() {
+        // 1920x1080 at 4 bytes/pixel = 7680 stride
+        assert_eq!(checked_frame_len(7680, 1080), Some(8294400));
+    }
+
+    #[test]
+    fn checked_frame_len_zero_stride() {
+        assert_eq!(checked_frame_len(0, 100), None);
+    }
+
+    #[test]
+    fn checked_frame_len_zero_height() {
+        assert_eq!(checked_frame_len(100, 0), None);
+    }
+
+    #[test]
+    fn checked_frame_len_negative_stride() {
+        // Negative stride could result from int32 overflow in C bridge
+        assert_eq!(checked_frame_len(-1, 100), None);
+    }
+
+    #[test]
+    fn checked_frame_len_negative_height() {
+        assert_eq!(checked_frame_len(100, -1), None);
+    }
+
+    #[test]
+    fn checked_frame_len_overflow() {
+        // i32::MAX * 2 should overflow usize on 32-bit, but succeed on 64-bit
+        // Test with values that overflow even on 64-bit
+        let large_stride = i32::MAX / 2;
+        let large_height = i32::MAX;
+        // On 64-bit: (i32::MAX/2) * i32::MAX ~= 2^62, which fits in usize
+        // On 32-bit: this would overflow
+        #[cfg(target_pointer_width = "64")]
+        assert!(checked_frame_len(large_stride, large_height).is_some());
+        #[cfg(target_pointer_width = "32")]
+        assert_eq!(checked_frame_len(large_stride, large_height), None);
+    }
+
+    #[test]
+    fn checked_frame_len_small_capture() {
+        // Minimum sensible capture: 1x1 pixel at 4 bytes/pixel
+        assert_eq!(checked_frame_len(4, 1), Some(4));
+    }
 }
