@@ -27,6 +27,51 @@ fn whole_words(text: &str) -> String {
     }
 }
 
+/// Whether the text on a card was read from pixels rather than handed over
+/// by the operating system.
+///
+/// Typed, because the persistence layer used to derive this by searching the
+/// footer for the Korean string `Card::FROM_PIXELS`. If UI copy changed, the
+/// database provenance changed with it. The type is the invariant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardProvenance {
+    /// The operating system's accessibility tree handed the text over.
+    Accessibility,
+    /// The text was read off a screenshot.
+    Ocr,
+}
+
+/// Whether the engine that produced the answer runs on this machine or
+/// across the network.
+///
+/// Typed, for the same reason as [`CardProvenance`]: the footer used to be
+/// parsed for "외부" and "로컬", and a UI reword would have rewritten the
+/// database column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardProviderScope {
+    /// The engine runs on this machine.
+    Local,
+    /// The engine runs across the network.
+    External,
+}
+
+/// Typed provenance for the persistence layer.
+///
+/// Carries the information that `record_presented_reading` writes to the
+/// history database. Set by card constructors from the structured types
+/// ([`QuickTranslation`], [`AcquisitionSource`]) that carry the same facts
+/// before the footer renders them into a display string.
+///
+/// `None` on cards that were not produced by a translation or analysis:
+/// error cards, waiting cards, refusal cards. These never reach the
+/// persistence path (`PresentationKind::Feedback` is not recorded).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CardMetadata {
+    pub provenance: CardProvenance,
+    pub provider_scope: Option<CardProviderScope>,
+    pub model: Option<String>,
+}
+
 /// The contents of one card.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Card {
@@ -43,6 +88,10 @@ pub struct Card {
     /// Engine, model, latency. Small, and always present: the user can tell at
     /// a glance whether what they are reading left the machine.
     pub footer: String,
+    /// Typed provenance for the persistence layer. `None` on cards that never
+    /// reach history (error cards, waiting cards, feedback cards). Read by
+    /// `record_presented_reading` instead of parsing the footer string.
+    pub(crate) metadata: Option<CardMetadata>,
 }
 
 /// Either an answer or an honest failure.
@@ -159,6 +208,10 @@ impl CardBody {
 impl Card {
     /// A card for a finished translation.
     pub fn translated(original: impl Into<String>, translation: &QuickTranslation) -> Self {
+        let provider_scope = match translation.engine {
+            crate::translate::EngineId::LocalOllama => Some(CardProviderScope::Local),
+            crate::translate::EngineId::External => Some(CardProviderScope::External),
+        };
         let card = Self {
             original: original.into(),
             body: CardBody::Translation(translation.text.clone()),
@@ -193,6 +246,11 @@ impl Card {
                 },
                 translation.model,
             ),
+            metadata: Some(CardMetadata {
+                provenance: CardProvenance::Accessibility,
+                provider_scope,
+                model: Some(translation.model.clone()),
+            }),
         };
         // Said on the card the reader ends up looking at, for the same reason
         // the other two caveats are: a warning that is not on the answer is a
@@ -220,6 +278,7 @@ impl Card {
             original: original.into(),
             body: CardBody::Translation(whole_words(&so_far.into())),
             footer: "번역 중".to_owned(),
+            metadata: None,
         }
     }
 
@@ -240,6 +299,7 @@ impl Card {
                 None => error.user_message(),
             }),
             footer: error.reason().to_owned(),
+            metadata: None,
         }
     }
 
@@ -322,6 +382,11 @@ impl Card {
                     format!("{}ms", analysis.latency_ms)
                 },
             ),
+            metadata: Some(CardMetadata {
+                provenance: CardProvenance::Accessibility,
+                provider_scope: None,
+                model: Some(analysis.model.clone()),
+            }),
         }
     }
 
@@ -330,6 +395,7 @@ impl Card {
             original: original.into(),
             body: CardBody::Waiting(status.to_owned()),
             footer: String::new(),
+            metadata: None,
         }
     }
 
@@ -369,6 +435,7 @@ impl Card {
             original: String::new(),
             body: CardBody::Problem(message.into()),
             footer: String::new(),
+            metadata: None,
         }
     }
 
@@ -390,11 +457,13 @@ impl Card {
                 original: "이 앱은 글자를 내주지 않습니다".to_owned(),
                 body: CardBody::Problem(format!("{key} 를 누르면 화면을 읽습니다")),
                 footer: "화면 읽기".to_owned(),
+                metadata: None,
             },
             None => Self {
                 original: String::new(),
                 body: CardBody::Problem("이 앱은 글자를 내주지 않습니다".to_owned()),
                 footer: "화면 읽기를 쓸 수 없습니다".to_owned(),
+                metadata: None,
             },
         }
     }
@@ -412,6 +481,7 @@ impl Card {
             original: String::new(),
             body: CardBody::Problem("읽을 수 있는 언어라 번역하지 않았습니다".to_owned()),
             footer: format!("{key} 를 누르면 뜻을 설명합니다"),
+            metadata: None,
         }
     }
 
@@ -429,6 +499,7 @@ impl Card {
             original: "지금은 읽지 않고 있습니다".to_owned(),
             body: CardBody::Problem(format!("{key}를 누른 채 문장 위에 올려두세요")),
             footer: "설정에서 항상 읽도록 바꿀 수 있습니다".to_owned(),
+            metadata: None,
         }
     }
 
@@ -442,6 +513,7 @@ impl Card {
                 _ => "읽을 수 없었습니다".to_owned(),
             }),
             footer: error.reason().to_owned(),
+            metadata: None,
         }
     }
 
@@ -502,9 +574,12 @@ impl Card {
     /// from pixels *and* look wrong, so a card that says both spends the
     /// footer's width saying one thing twice, on the line that sets the card's
     /// minimum width.
-    pub fn read_from_the_screen(self) -> Self {
+    pub fn read_from_the_screen(mut self) -> Self {
         if self.footer.contains(Self::DOUBTFUL) {
             return self;
+        }
+        if let Some(ref mut meta) = self.metadata {
+            meta.provenance = CardProvenance::Ocr;
         }
         self.say(Self::FROM_PIXELS)
     }
@@ -654,6 +729,7 @@ impl Card {
             original: String::new(),
             body: CardBody::Problem("문장이 너무 길어 카드에 담을 수 없습니다".to_owned()),
             footer: "문장 나누기 실패".to_owned(),
+            metadata: None,
         }
     }
 
@@ -676,6 +752,7 @@ impl Card {
             original: keys.to_owned(),
             body: CardBody::Problem("다시 실행해야 적용됩니다".to_owned()),
             footer: "설정 변경".to_owned(),
+            metadata: None,
         }
     }
 
@@ -690,6 +767,7 @@ impl Card {
             original: String::new(),
             body: CardBody::Problem("이미 실행 중입니다".to_owned()),
             footer: "알림 영역에 아이콘이 있습니다".to_owned(),
+            metadata: None,
         }
     }
 
@@ -835,6 +913,15 @@ impl Card {
             CardBody::Analysis { rows, .. } => !rows.is_empty() && !self.original.trim().is_empty(),
         }
     }
+
+    /// Typed provenance for the persistence layer.
+    ///
+    /// `Some` on cards produced by a translation or analysis, `None` on every
+    /// other card. Read by `record_presented_reading` instead of parsing the
+    /// footer string.
+    pub fn metadata(&self) -> Option<&CardMetadata> {
+        self.metadata.as_ref()
+    }
 }
 
 /// How far the pointer may stray from the text a card explains before the card
@@ -965,6 +1052,25 @@ mod tests {
         assert!(card.is_showable());
         assert!(card.footer.contains("로컬"), "{}", card.footer);
         assert!(card.footer.contains("qwen2.5:3b"));
+    }
+
+    #[test]
+    fn a_translation_carries_typed_metadata() {
+        let card = Card::translated("something", &translation("무엇인가"));
+        let meta = card.metadata().expect("translation carries metadata");
+        assert_eq!(meta.provenance, CardProvenance::Accessibility);
+        assert_eq!(meta.provider_scope, Some(CardProviderScope::Local));
+        assert_eq!(meta.model.as_deref(), Some("qwen2.5:3b"));
+    }
+
+    #[test]
+    fn read_from_the_screen_sets_ocr_provenance_in_metadata() {
+        let card = Card::translated("something", &translation("무엇인가")).read_from_the_screen();
+        let meta = card
+            .metadata()
+            .expect("still carries metadata after OCR mark");
+        assert_eq!(meta.provenance, CardProvenance::Ocr);
+        assert_eq!(meta.model.as_deref(), Some("qwen2.5:3b"));
     }
 
     #[test]
@@ -1376,6 +1482,7 @@ mod footer_tests {
             original: "x".to_owned(),
             body: CardBody::Translation("y".to_owned()),
             footer: "timeout".to_owned(),
+            metadata: None,
         }
         .read_from_the_screen();
         assert_eq!(failed.footer, format!("timeout · {}", Card::FROM_PIXELS));

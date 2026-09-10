@@ -249,6 +249,7 @@ mod tests {
             original: original.to_owned(),
             body: CardBody::Translation(text.to_owned()),
             footer: "Ollama · 1.6s".to_owned(),
+            metadata: None,
         }
     }
 
@@ -257,6 +258,7 @@ mod tests {
             original: "some text".to_owned(),
             body: CardBody::Problem(msg.to_owned()),
             footer: "Ollama".to_owned(),
+            metadata: None,
         }
     }
 
@@ -265,6 +267,7 @@ mod tests {
             original: "some text".to_owned(),
             body: CardBody::Waiting(msg.to_owned()),
             footer: "".to_owned(),
+            metadata: None,
         }
     }
 
@@ -283,6 +286,7 @@ mod tests {
                 rows,
             },
             footer: "Ollama · 4.4s".to_owned(),
+            metadata: None,
         }
     }
 
@@ -329,6 +333,7 @@ mod tests {
             original: "   ".to_owned(),
             body: CardBody::Translation("should not appear".to_owned()),
             footer: "".to_owned(),
+            metadata: None,
         };
         assert!(view_from_card(&card).is_none());
     }
