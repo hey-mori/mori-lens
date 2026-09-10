@@ -15,12 +15,31 @@ use lens_storage::{parse_saved_md, Item, Library};
 /// Shared library state, accessed by Tauri commands.
 pub type SharedLibrary = Arc<Mutex<LibraryState>>;
 
-/// The service's state: the database handle and its path.
+/// How the library database is backed.
+///
+/// The persistent case is the normal path: SQLite on disk. The in-memory
+/// case is a degraded fallback when the disk database could not be opened
+/// (corrupt, locked, permission denied, or future schema from a newer
+/// build). UI and diagnostics should distinguish these so operators do
+/// not assume persistence when writes are going nowhere durable.
+pub enum LibraryBacking {
+    /// The library lives on disk at the given path. Writes survive restarts.
+    Persistent(PathBuf),
+    /// The library is an ephemeral in-memory database. The intended path
+    /// is recorded so diagnostics can tell the operator where data _would_
+    /// have gone, and the reason explains why the fallback was chosen.
+    InMemoryFallback {
+        intended_path: PathBuf,
+        reason: String,
+    },
+}
+
+/// The service's state: the database handle and its backing.
 pub struct LibraryState {
     /// The database handle.
     library: Library,
-    /// The database path, kept for diagnostics.
-    path: PathBuf,
+    /// Where the database lives (disk or in-memory fallback).
+    backing: LibraryBacking,
 }
 
 impl LibraryState {
@@ -29,9 +48,20 @@ impl LibraryState {
         &self.library
     }
 
-    /// The database path.
+    /// The backing mode. Use this to distinguish persistent storage from
+    /// a degraded in-memory fallback.
+    pub fn backing(&self) -> &LibraryBacking {
+        &self.backing
+    }
+
+    /// The database path. For persistent backing this is where the file
+    /// lives. For in-memory fallback this is where it _would_ have been
+    /// opened (useful for diagnostics and log messages).
     pub fn path(&self) -> &Path {
-        &self.path
+        match &self.backing {
+            LibraryBacking::Persistent(p) => p,
+            LibraryBacking::InMemoryFallback { intended_path, .. } => intended_path,
+        }
     }
 }
 
@@ -49,25 +79,38 @@ impl LibraryState {
 /// needs to upgrade Lens, not repair the database.
 pub fn open(data_dir: &Path) -> LibraryState {
     let db_path = data_dir.join("library.db");
-    let library = match Library::open(&db_path) {
-        Ok(lib) => lib,
+    let (library, backing) = match Library::open(&db_path) {
+        Ok(lib) => (lib, LibraryBacking::Persistent(db_path.clone())),
         Err(lens_storage::Error::FutureSchema { have, understand }) => {
+            let reason = format!(
+                "written by newer Lens (schema {have}, this build understands {understand})"
+            );
             eprintln!(
                 "library   {db_path:?} was written by a newer Lens (schema {have}, this build understands {understand}); using in-memory database until you upgrade"
             );
-            Library::open(Path::new(":memory:")).expect("in-memory library")
+            (
+                Library::open(Path::new(":memory:")).expect("in-memory library"),
+                LibraryBacking::InMemoryFallback {
+                    intended_path: db_path.clone(),
+                    reason,
+                },
+            )
         }
         Err(e) => {
+            let reason = format!("cannot open: {e}");
             eprintln!("library   cannot open {db_path:?}: {e}");
             // Fall back to a temporary database so the UI still works.
-            Library::open(Path::new(":memory:")).expect("in-memory library")
+            (
+                Library::open(Path::new(":memory:")).expect("in-memory library"),
+                LibraryBacking::InMemoryFallback {
+                    intended_path: db_path.clone(),
+                    reason,
+                },
+            )
         }
     };
     import_saved_md(&library, data_dir);
-    LibraryState {
-        library,
-        path: db_path,
-    }
+    LibraryState { library, backing }
 }
 
 /// Import an existing `saved.md` into the library database, if not done yet.
@@ -140,5 +183,67 @@ fn import_saved_md(library: &Library, data_dir: &Path) {
     }
     if imported > 0 {
         println!("library   imported {imported} entries from saved.md");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("lens-library-test-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    /// Opening against a fresh temp directory produces a persistent backing.
+    #[test]
+    fn open_with_valid_data_dir_is_persistent() {
+        let dir = temp_dir("persistent");
+        let state = open(&dir);
+        assert!(
+            matches!(state.backing(), LibraryBacking::Persistent(p) if *p == dir.join("library.db"))
+        );
+        assert_eq!(state.path(), dir.join("library.db"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Opening against a path where the database file cannot be created
+    /// (because a directory already exists at that name) produces an
+    /// in-memory fallback with the intended path recorded.
+    #[test]
+    fn open_with_blocked_db_path_falls_back_to_in_memory() {
+        let dir = temp_dir("fallback");
+        // Create a directory where the DB file should go, so SQLite cannot
+        // open it as a file.
+        let db_path = dir.join("library.db");
+        std::fs::create_dir(&db_path).expect("create blocking dir");
+
+        let state = open(&dir);
+        match state.backing() {
+            LibraryBacking::InMemoryFallback {
+                intended_path,
+                reason,
+            } => {
+                assert_eq!(*intended_path, db_path);
+                assert!(!reason.is_empty());
+            }
+            LibraryBacking::Persistent(_) => {
+                panic!("expected in-memory fallback when DB path is a directory");
+            }
+        }
+        assert_eq!(state.path(), db_path);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// path() returns the intended disk path regardless of backing.
+    #[test]
+    fn path_always_returns_disk_path() {
+        let dir = temp_dir("path");
+        let state = open(&dir);
+        assert_eq!(state.path(), dir.join("library.db"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
