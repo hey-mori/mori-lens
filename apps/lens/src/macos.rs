@@ -310,6 +310,7 @@ pub fn main() -> std::process::ExitCode {
     let loop_diagnostics = shared_diagnostics.clone();
     let loop_settings = shared_settings.clone();
     let loop_library = shared_library.clone();
+    let loop_recent = shared_recent.clone();
 
     std::thread::spawn(move || {
         product_loop(
@@ -317,6 +318,7 @@ pub fn main() -> std::process::ExitCode {
             loop_diagnostics,
             loop_settings,
             loop_library,
+            loop_recent,
             shared_save_path.clone(),
             overlay,
             menubar,
@@ -352,7 +354,8 @@ fn product_loop(
     tauri_handle: AppHandle,
     shared_diagnostics: SharedDiagnostics,
     shared_settings: SharedSettings,
-    _shared_library: SharedLibrary,
+    shared_library: SharedLibrary,
+    shared_recent: SharedRecent,
     shared_save_path: SharedSavePath,
     overlay: Option<Overlay>,
     menubar: Option<MenuBar>,
@@ -628,7 +631,16 @@ fn product_loop(
                             if from_pixels {
                                 card = card.read_from_the_screen();
                             }
-                            show_card_at(&overlay, &card, &anchor);
+                            show_card_at(
+                                &overlay,
+                                &card,
+                                &anchor,
+                                PresentationKind::Reading,
+                                app.as_deref(),
+                                &shared_recent,
+                                &shared_library,
+                                &shared_settings,
+                            );
                             current_card = Some((card, sentence));
                             tally.card();
                         }
@@ -638,7 +650,16 @@ fn product_loop(
                                 body: CardBody::Problem(msg),
                                 footer: String::new(),
                             };
-                            show_card_at(&overlay, &card, &anchor);
+                            show_card_at(
+                                &overlay,
+                                &card,
+                                &anchor,
+                                PresentationKind::Feedback,
+                                None,
+                                &shared_recent,
+                                &shared_library,
+                                &shared_settings,
+                            );
                             current_card = Some((card, sentence));
                             tally.card();
                         }
@@ -661,7 +682,16 @@ fn product_loop(
                     match result {
                         Ok(analysis) => {
                             let card = Card::analysed(&sentence, &analysis);
-                            show_card_at(&overlay, &card, &anchor);
+                            show_card_at(
+                                &overlay,
+                                &card,
+                                &anchor,
+                                PresentationKind::Reading,
+                                app.as_deref(),
+                                &shared_recent,
+                                &shared_library,
+                                &shared_settings,
+                            );
                             current_card = Some((card, sentence));
                             tally.card();
                         }
@@ -671,7 +701,16 @@ fn product_loop(
                                 body: CardBody::Problem(format!("analysis failed: {}", msg)),
                                 footer: String::new(),
                             };
-                            show_card_at(&overlay, &card, &anchor);
+                            show_card_at(
+                                &overlay,
+                                &card,
+                                &anchor,
+                                PresentationKind::Feedback,
+                                None,
+                                &shared_recent,
+                                &shared_library,
+                                &shared_settings,
+                            );
                             current_card = Some((card, sentence));
                             tally.card();
                         }
@@ -790,13 +829,31 @@ fn product_loop(
                             if !clipboard::put_text(&text) {
                                 eprintln!("copy  the clipboard would not open");
                                 let err_card = Card::not_readable("클립보드를 열지 못했습니다");
-                                show_card_at(&overlay, &err_card, &current_anchor);
+                                show_card_at(
+                                    &overlay,
+                                    &err_card,
+                                    &current_anchor,
+                                    PresentationKind::Feedback,
+                                    None,
+                                    &shared_recent,
+                                    &shared_library,
+                                    &shared_settings,
+                                );
                                 continue;
                             }
                             // Visual feedback: mark the card as copied,
                             // matching Windows behavior.
                             let copied_card = card.clone().copied();
-                            show_card_at(&overlay, &copied_card, &current_anchor);
+                            show_card_at(
+                                &overlay,
+                                &copied_card,
+                                &current_anchor,
+                                PresentationKind::Feedback,
+                                None,
+                                &shared_recent,
+                                &shared_library,
+                                &shared_settings,
+                            );
                         }
                     }
                 }
@@ -863,7 +920,16 @@ fn product_loop(
                             Err(refusal) => {
                                 eprintln!("ocr   no reading [{}]", refusal.reason());
                                 let card = Card::not_readable(refusal.reason());
-                                show_card_at(&overlay, &card, &current_anchor);
+                                show_card_at(
+                                    &overlay,
+                                    &card,
+                                    &current_anchor,
+                                    PresentationKind::Feedback,
+                                    None,
+                                    &shared_recent,
+                                    &shared_library,
+                                    &shared_settings,
+                                );
                             }
                         }
                     }
@@ -1089,7 +1155,16 @@ fn product_loop(
                             body: CardBody::Problem("already in your language".to_owned()),
                             footer: String::new(),
                         };
-                        show_card(&overlay, &card, &target);
+                        show_card(
+                            &overlay,
+                            &card,
+                            &target,
+                            PresentationKind::Feedback,
+                            None,
+                            &shared_recent,
+                            &shared_library,
+                            &shared_settings,
+                        );
                         current_app = pending_app.clone();
                         current_card = Some((card, sentence));
                     }
@@ -1108,7 +1183,16 @@ fn product_loop(
                                 if from_pixels {
                                     card = card.read_from_the_screen();
                                 }
-                                show_card(&overlay, &card, &target);
+                                show_card(
+                                    &overlay,
+                                    &card,
+                                    &target,
+                                    PresentationKind::Reading,
+                                    pending_app.as_deref(),
+                                    &shared_recent,
+                                    &shared_library,
+                                    &shared_settings,
+                                );
                                 current_app = pending_app.clone();
                                 current_card = Some((card, sentence));
                                 continue;
@@ -1191,15 +1275,52 @@ fn execute_save(
     }
 }
 
-fn show_card(overlay: &Option<Overlay>, card: &Card, target: &lens_core::acquire::TextTarget) {
+/// Whether a card is a new reading or a feedback card.
+///
+/// Reading cards (translation/analysis results) are recorded to session-recent
+/// and persistent history. Feedback cards (copy/save confirmations, error
+/// messages, waiting indicators) are not.
+enum PresentationKind {
+    Reading,
+    Feedback,
+}
+
+fn show_card(
+    overlay: &Option<Overlay>,
+    card: &Card,
+    target: &lens_core::acquire::TextTarget,
+    kind: PresentationKind,
+    source_app: Option<&str>,
+    shared_recent: &SharedRecent,
+    shared_library: &SharedLibrary,
+    shared_settings: &SharedSettings,
+) {
     let anchor = match target.anchor() {
         Some(a) => a,
         None => return,
     };
-    show_card_at(overlay, card, &anchor);
+    show_card_at(
+        &overlay,
+        card,
+        &anchor,
+        kind,
+        source_app,
+        shared_recent,
+        shared_library,
+        shared_settings,
+    );
 }
 
-fn show_card_at(overlay: &Option<Overlay>, card: &Card, anchor: &ScreenRect) {
+fn show_card_at(
+    overlay: &Option<Overlay>,
+    card: &Card,
+    anchor: &ScreenRect,
+    kind: PresentationKind,
+    source_app: Option<&str>,
+    shared_recent: &SharedRecent,
+    shared_library: &SharedLibrary,
+    shared_settings: &SharedSettings,
+) {
     let Some(overlay) = overlay else { return };
     let (x, y, _scale) = physical_to_logical(ScreenPoint::new(anchor.x, anchor.bottom() + 8));
     let width = {
@@ -1215,6 +1336,106 @@ fn show_card_at(overlay: &Option<Overlay>, card: &Card, anchor: &ScreenRect) {
         width,
         height,
     );
+    match kind {
+        PresentationKind::Reading => {
+            record_presented_reading(
+                card,
+                source_app,
+                shared_recent,
+                shared_library,
+                shared_settings,
+            );
+        }
+        PresentationKind::Feedback => {}
+    }
+}
+
+/// Record a presented reading to session-recent and persistent history.
+///
+/// Called when `PresentationKind::Reading`. Feedback cards should not call this.
+fn record_presented_reading(
+    card: &Card,
+    source_app: Option<&str>,
+    recent: &SharedRecent,
+    library: &SharedLibrary,
+    settings: &SharedSettings,
+) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let app_name = source_app.map(str::to_owned);
+    let answer_text = match &card.body {
+        CardBody::Translation(t) => t.clone(),
+        CardBody::Analysis {
+            translation: Some(t),
+            ..
+        } => t.clone(),
+        _ => String::new(),
+    };
+    if !answer_text.is_empty() {
+        let recent_card = lens_core::recent::RecentCard {
+            original: card.original.clone(),
+            answer: answer_text.clone(),
+            shown_at: now,
+            app: app_name.clone(),
+        };
+        recent.lock().unwrap().record(recent_card);
+    }
+
+    // Record to persistent history (ADR-0014 Tier 3).
+    {
+        let current = settings.lock().unwrap().current().clone();
+        if current.history {
+            let excluded = app_name
+                .as_ref()
+                .map(|name| {
+                    current
+                        .history_excluded
+                        .iter()
+                        .any(|ex| name.to_lowercase().contains(&ex.to_lowercase()))
+                })
+                .unwrap_or(false);
+            if !excluded && !answer_text.is_empty() {
+                let kind = match &card.body {
+                    CardBody::Analysis { .. } => "analysis",
+                    _ => "translation",
+                };
+                let provenance = if card.footer.contains(Card::FROM_PIXELS) {
+                    "ocr"
+                } else {
+                    "accessibility"
+                };
+                let provider_scope = if card.footer.contains("외부") {
+                    "external"
+                } else if card.footer.contains("로컬") {
+                    "local"
+                } else {
+                    "unknown"
+                };
+                let stored_app = if current.history_store_app {
+                    app_name
+                } else {
+                    None
+                };
+                let entry = lens_storage::HistoryEntry {
+                    id: 0,
+                    original: card.original.clone(),
+                    answer: answer_text,
+                    kind: kind.to_owned(),
+                    source_language: None,
+                    target_language: None,
+                    model: None,
+                    app: stored_app,
+                    provenance: provenance.to_owned(),
+                    provider_scope: provider_scope.to_owned(),
+                    created_at: now,
+                };
+                let lib = library.lock().unwrap();
+                let _ = lib.library().record_history(&entry);
+            }
+        }
+    }
 }
 
 fn card_body_to_text(body: &CardBody) -> String {
