@@ -110,7 +110,12 @@ impl NotKept {
 /// caller — `save_card()`, direct `append()` from Windows hotkey, Tauri
 /// detail save, self-test — passes through this single lock. No production
 /// path can bypass it.
-pub fn append(file: &Path, entry: &Entry, at: SystemTime) -> Result<Option<i64>, NotKept> {
+pub fn append(
+    file: &Path,
+    entry: &Entry,
+    at: SystemTime,
+    library: &Library,
+) -> Result<Option<i64>, NotKept> {
     let _guard = SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     if let Some(folder) = file.parent() {
@@ -141,7 +146,7 @@ pub fn append(file: &Path, entry: &Entry, at: SystemTime) -> Result<Option<i64>,
 
     // The structured store. If the database write fails, the file has
     // already succeeded, and the entry is not lost.
-    Ok(write_to_library(file, entry, at))
+    Ok(write_to_library(library, entry, at))
 }
 
 /// Cross-platform save policy: eligibility check and metadata population.
@@ -163,15 +168,16 @@ pub fn save_card(
     save_path: &Path,
     target_language: Option<String>,
     model: Option<String>,
+    library: &Library,
 ) -> Result<Option<i64>, NotKept> {
     let mut entry = card.kept_as(app).ok_or(NotKept::NothingToKeep)?;
     entry.target_language = target_language;
     entry.model = model;
 
-    append(save_path, &entry, SystemTime::now())
+    append(save_path, &entry, SystemTime::now(), library)
 }
 
-/// Insert the entry into `library.db` beside the saved.md file.
+/// Insert the entry into the shared library database.
 ///
 /// Returns the new row id on success, or `None` on failure or duplicate.
 /// The caller (append) has already written the file, so a database error
@@ -181,15 +187,7 @@ pub fn save_card(
 /// ADR-0013) is silently skipped: the file still gets the entry because
 /// it is append-only, but the database does not store the same sentence
 /// twice with the same provenance.
-fn write_to_library(md_path: &Path, entry: &Entry, at: SystemTime) -> Option<i64> {
-    let db_path = md_path
-        .parent()
-        .map(|folder| folder.join("library.db"))
-        .unwrap_or_else(|| PathBuf::from("library.db"));
-
-    let Ok(lib) = Library::open(&db_path) else {
-        return None;
-    };
+fn write_to_library(lib: &Library, entry: &Entry, at: SystemTime) -> Option<i64> {
     let seconds = at
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or(std::time::Duration::ZERO)
@@ -244,6 +242,15 @@ mod tests {
         folder.join("saved.md")
     }
 
+    /// Create a Library backed by the library.db next to the scratch file.
+    fn scratch_library(md_path: &Path) -> Library {
+        let db_path = md_path
+            .parent()
+            .unwrap()
+            .join("library.db");
+        Library::open(&db_path).expect("in-memory or disk library")
+    }
+
     fn an_entry(original: &str) -> Entry {
         Entry {
             original: original.to_owned(),
@@ -260,9 +267,10 @@ mod tests {
     fn the_heading_is_written_once_and_entries_accumulate() {
         let file = scratch("accumulate");
         let at = UNIX_EPOCH + Duration::from_secs(1_786_075_140);
+        let lib = scratch_library(&file);
 
-        append(&file, &an_entry("first"), at).expect("kept");
-        append(&file, &an_entry("second"), at).expect("kept");
+        append(&file, &an_entry("first"), at, &lib).expect("kept");
+        append(&file, &an_entry("second"), at, &lib).expect("kept");
         let written = std::fs::read_to_string(&file).expect("a file");
 
         assert_eq!(written.matches("# Saved from Mori Lens").count(), 1);
@@ -283,7 +291,8 @@ mod tests {
     fn a_readers_own_notes_survive_an_append() {
         let file = scratch("notes");
         let at = UNIX_EPOCH;
-        append(&file, &an_entry("first"), at).expect("kept");
+        let lib = scratch_library(&file);
+        append(&file, &an_entry("first"), at, &lib).expect("kept");
 
         let mine = "\n<!-- my own note, do not eat -->\n";
         let mut handle = std::fs::OpenOptions::new()
@@ -293,7 +302,7 @@ mod tests {
         handle.write_all(mine.as_bytes()).expect("write");
         drop(handle);
 
-        append(&file, &an_entry("second"), at).expect("kept");
+        append(&file, &an_entry("second"), at, &lib).expect("kept");
         let written = std::fs::read_to_string(&file).expect("a file");
         assert!(written.contains("my own note, do not eat"), "{written}");
         let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
@@ -357,14 +366,15 @@ mod tests {
     fn a_save_also_writes_to_the_library_database() {
         let file = scratch("library-write");
         let at = UNIX_EPOCH + Duration::from_secs(1_786_075_140);
-        append(&file, &an_entry("hello"), at).expect("kept");
+        let lib = scratch_library(&file);
+        append(&file, &an_entry("hello"), at, &lib).expect("kept");
 
         let db_path = file.parent().unwrap().join("library.db");
         assert!(db_path.exists(), "library.db was created");
 
-        let lib = Library::open(&db_path).unwrap();
-        assert_eq!(lib.count().unwrap(), 1);
-        let item = lib.get(1).unwrap().unwrap();
+        let verify = Library::open(&db_path).unwrap();
+        assert_eq!(verify.count().unwrap(), 1);
+        let item = verify.get(1).unwrap().unwrap();
         assert_eq!(item.original, "hello");
         assert_eq!(item.kind, "translation");
         let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
@@ -375,6 +385,7 @@ mod tests {
     fn an_analysis_entry_is_kind_analysis_in_the_database() {
         let file = scratch("library-analysis");
         let at = UNIX_EPOCH;
+        let lib = scratch_library(&file);
         let entry = Entry {
             original: "멱등성".to_owned(),
             answer: "원형 · 멱등성".to_owned(),
@@ -384,11 +395,11 @@ mod tests {
             target_language: None,
             model: None,
         };
-        append(&file, &entry, at).expect("kept");
+        append(&file, &entry, at, &lib).expect("kept");
 
         let db_path = file.parent().unwrap().join("library.db");
-        let lib = Library::open(&db_path).unwrap();
-        let item = lib.get(1).unwrap().unwrap();
+        let verify = Library::open(&db_path).unwrap();
+        let item = verify.get(1).unwrap().unwrap();
         assert_eq!(item.kind, "analysis");
         assert!(item.caveat.is_some());
         let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
@@ -399,14 +410,15 @@ mod tests {
     fn append_returns_the_library_item_id() {
         let file = scratch("append-returns-id");
         let at = UNIX_EPOCH + Duration::from_secs(1_786_075_140);
+        let lib = scratch_library(&file);
 
-        let id = append(&file, &an_entry("hello"), at)
+        let id = append(&file, &an_entry("hello"), at, &lib)
             .expect("kept")
             .expect("an id");
         assert!(id > 0, "id is a positive row id");
 
         // A duplicate returns None (file succeeds, database skips).
-        let dup = append(&file, &an_entry("hello"), at).expect("kept");
+        let dup = append(&file, &an_entry("hello"), at, &lib).expect("kept");
         assert!(dup.is_none(), "duplicate returns None");
         let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
     }
@@ -417,9 +429,10 @@ mod tests {
         let file = scratch("library-duplicate");
         let at = UNIX_EPOCH + Duration::from_secs(1_786_075_140);
         let entry = an_entry("the same sentence");
+        let lib = scratch_library(&file);
 
-        append(&file, &entry, at).expect("first keep");
-        append(&file, &entry, at).expect("second keep");
+        append(&file, &entry, at, &lib).expect("first keep");
+        append(&file, &entry, at, &lib).expect("second keep");
 
         // The file has both entries (append-only).
         let written = std::fs::read_to_string(&file).expect("a file");
@@ -431,13 +444,13 @@ mod tests {
 
         // The database has only one (deduplicated).
         let db_path = file.parent().unwrap().join("library.db");
-        let lib = Library::open(&db_path).unwrap();
-        assert_eq!(lib.count().unwrap(), 1, "database deduplicates");
+        let verify = Library::open(&db_path).unwrap();
+        assert_eq!(verify.count().unwrap(), 1, "database deduplicates");
         let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
     }
 
-    /// `append()` is the sole persistence function. It creates both
-    /// saved.md and library.db on first call; neither exists before.
+    /// `append()` writes to both saved.md and the shared library database.
+    /// The caller creates the library before calling append.
     ///
     /// Caller audit (the M8 "nothing stored without user action" contract):
     ///
@@ -448,7 +461,7 @@ mod tests {
     /// No other code path (hover, Quick, Deep, SessionRecent) calls append().
     /// macOS execute_save() also uses save_card(), writing to both files.
     #[test]
-    fn append_creates_both_files_from_nothing() {
+    fn append_writes_both_file_and_library() {
         let dir = std::env::temp_dir().join("mori-lens-keep-no-persist");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -456,10 +469,10 @@ mod tests {
         let db = dir.join("library.db");
 
         assert!(!file.exists(), "saved.md must not exist before save");
-        assert!(!db.exists(), "library.db must not exist before save");
 
         let at = UNIX_EPOCH + Duration::from_secs(1_786_075_140);
-        append(&file, &an_entry("hello"), at).expect("kept");
+        let lib = scratch_library(&file);
+        append(&file, &an_entry("hello"), at, &lib).expect("kept");
 
         assert!(file.exists(), "saved.md exists after save");
         assert!(db.exists(), "library.db exists after save");
@@ -467,7 +480,6 @@ mod tests {
         let written = std::fs::read_to_string(&file).unwrap();
         assert!(written.contains("> hello"));
 
-        let lib = Library::open(&db).unwrap();
         assert_eq!(lib.count().unwrap(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -477,6 +489,7 @@ mod tests {
     fn language_and_model_metadata_are_stored_in_the_database() {
         let file = scratch("library-metadata");
         let at = UNIX_EPOCH + Duration::from_secs(1_786_075_140);
+        let lib = scratch_library(&file);
         let entry = Entry {
             original: "The pointer must rest.".to_owned(),
             answer: "포인터가 멈춘 뒤에야 읽습니다.".to_owned(),
@@ -486,11 +499,11 @@ mod tests {
             target_language: Some("Korean".to_owned()),
             model: Some("qwen2.5:7b".to_owned()),
         };
-        append(&file, &entry, at).expect("kept");
+        append(&file, &entry, at, &lib).expect("kept");
 
         let db_path = file.parent().unwrap().join("library.db");
-        let lib = Library::open(&db_path).unwrap();
-        let item = lib.get(1).unwrap().unwrap();
+        let verify = Library::open(&db_path).unwrap();
+        let item = verify.get(1).unwrap().unwrap();
         assert_eq!(item.source_language.as_deref(), Some("English"));
         assert_eq!(item.target_language.as_deref(), Some("Korean"));
         assert_eq!(item.model.as_deref(), Some("qwen2.5:7b"));
@@ -522,9 +535,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("saved.md");
+        let lib = Library::open(Path::new(":memory:")).unwrap();
 
         let card = Card::waiting("번역 중");
-        let result = save_card(&card, None, &file, Some("ko".into()), Some("model".into()));
+        let result = save_card(&card, None, &file, Some("ko".into()), Some("model".into()), &lib);
         assert!(
             matches!(result, Err(NotKept::NothingToKeep)),
             "Waiting card must be refused"
@@ -540,6 +554,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("saved.md");
+        let db_path = dir.join("library.db");
+        let lib = Library::open(&db_path).unwrap();
 
         let card = a_translation_card();
         let result = save_card(
@@ -548,14 +564,14 @@ mod tests {
             &file,
             Some("ko".into()),
             Some("qwen".into()),
+            &lib,
         );
         assert!(result.is_ok(), "Translation card must be savable");
         assert!(file.exists(), "saved.md must exist after save");
 
-        let db_path = dir.join("library.db");
-        let lib = Library::open(&db_path).unwrap();
-        assert_eq!(lib.count().unwrap(), 1);
-        let item = lib.get(1).unwrap().unwrap();
+        let verify = Library::open(&db_path).unwrap();
+        assert_eq!(verify.count().unwrap(), 1);
+        let item = verify.get(1).unwrap().unwrap();
         assert_eq!(item.original, "Hello world");
         assert_eq!(item.target_language.as_deref(), Some("ko"));
         assert_eq!(item.model.as_deref(), Some("qwen"));
@@ -578,12 +594,15 @@ mod tests {
                 let file = file.clone();
                 thread::spawn(move || {
                     let card = a_translation_card();
+                    let db_path = file.parent().unwrap().join("library.db");
+                    let lib = Library::open(&db_path).unwrap();
                     let _ = save_card(
                         &card,
                         Some("ConcurrentTest"),
                         &file,
                         Some("ko".into()),
                         Some("model".into()),
+                        &lib,
                     );
                 })
             })
@@ -631,7 +650,8 @@ mod tests {
                 let file = file.clone();
                 thread::spawn(move || {
                     let entry = an_entry(&format!("concurrent item {i}"));
-                    let _ = append(&file, &entry, at);
+                    let lib = scratch_library(&file);
+                    let _ = append(&file, &entry, at, &lib);
                 })
             })
             .collect();
