@@ -2740,7 +2740,9 @@ fn record_presented_reading(
                     created_at: now,
                 };
                 let lib = library.lock().unwrap();
-                let _ = lib.library().record_history(&entry);
+                if let Err(e) = lib.library().record_history(&entry) {
+                    eprintln!("  history   record failed: {e}");
+                }
             }
         }
     }
