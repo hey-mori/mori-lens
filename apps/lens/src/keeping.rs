@@ -139,6 +139,13 @@ pub fn append(
         handle
             .write_all(PREAMBLE.as_bytes())
             .map_err(|e| NotKept::NotWritten(e.to_string()))?;
+        // Restrict permissions on Unix: saved.md contains text captured
+        // from the screen and must not be world-readable.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600));
+        }
     }
     handle
         .write_all(block(entry, at).as_bytes())

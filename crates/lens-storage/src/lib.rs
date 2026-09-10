@@ -211,8 +211,17 @@ impl Library {
     /// The parent directory must exist. Runs all pending migrations before
     /// returning, so a caller always sees the current schema.
     pub fn open(path: &Path) -> Result<Self, Error> {
+        #[cfg(unix)]
+        let is_new = !path.exists();
         let conn = Connection::open(path)?;
         conn.execute_batch("PRAGMA journal_mode = WAL;")?;
+        // Restrict permissions on Unix: the library contains text captured
+        // from the screen and must not be world-readable.
+        #[cfg(unix)]
+        if is_new {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        }
         let lib = Self { conn };
         lib.migrate()?;
         Ok(lib)
