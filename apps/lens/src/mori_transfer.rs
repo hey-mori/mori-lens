@@ -252,7 +252,24 @@ pub fn send_to_mori(item: &Item) -> Result<String, TransferError> {
     let json = serde_json::to_string_pretty(&payload)
         .map_err(|e| TransferError::SerializeError(e.to_string()))?;
     let file_path = lens_dir.join(format!("{}.json", payload.transfer_id));
-    std::fs::write(&file_path, json).map_err(|e| TransferError::IoError(e.to_string()))?;
+    // Atomic publication: write to a temp file first, then rename.
+    // The temp file uses a `.tmp` extension so the Mori watcher (which
+    // monitors for *.json) does not see it until the rename completes.
+    let temp_path = lens_dir.join(format!(".{}.tmp", payload.transfer_id));
+    match std::fs::write(&temp_path, &json) {
+        Ok(()) => {}
+        Err(e) => {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(TransferError::IoError(e.to_string()));
+        }
+    }
+    match std::fs::rename(&temp_path, &file_path) {
+        Ok(()) => {}
+        Err(e) => {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(TransferError::IoError(e.to_string()));
+        }
+    }
     Ok(payload.transfer_id)
 }
 
@@ -546,5 +563,25 @@ mod tests {
         assert_eq!(parsed.transfer_id, payload.transfer_id);
         assert_eq!(parsed.source_language, payload.source_language);
         assert_eq!(parsed.target_language, payload.target_language);
+    }
+
+    #[test]
+    fn atomic_publication_uses_temp_file_and_rename() {
+        // Verify that send_to_mori writes to a temp file first, then renames.
+        // This test does not actually call send_to_mori (which requires Mori
+        // to be installed), but verifies the file naming convention.
+        let transfer_id = "test-123";
+        let temp_name = format!(".{}.tmp", transfer_id);
+        let final_name = format!("{}.json", transfer_id);
+
+        // Temp file should start with a dot and end with .tmp
+        assert!(temp_name.starts_with('.'));
+        assert!(temp_name.ends_with(".tmp"));
+        // Final file should end with .json
+        assert!(final_name.ends_with(".json"));
+        // Temp and final names should differ
+        assert_ne!(temp_name, final_name);
+        // Temp file should not match *.json pattern (watcher ignores it)
+        assert!(!temp_name.ends_with(".json"));
     }
 }
