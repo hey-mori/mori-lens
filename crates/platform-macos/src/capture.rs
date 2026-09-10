@@ -9,12 +9,19 @@
 
 use std::os::raw::{c_int, c_void};
 
-/// Compute stride * height with overflow checking.
+/// Validate frame dimensions and compute stride * height.
 ///
-/// Returns None if the multiplication would overflow. Both stride and height
-/// must be positive; otherwise returns None.
-fn checked_frame_len(stride: i32, height: i32) -> Option<usize> {
-    if stride <= 0 || height <= 0 {
+/// Returns None if:
+/// - width, height, or stride are not positive
+/// - width * 4 overflows (minimum bytes per row for BGRA)
+/// - stride < width * 4 (stride must cover at least one full row of pixels)
+/// - stride * height overflows
+fn checked_frame_layout(width: i32, height: i32, stride: i32) -> Option<usize> {
+    if width <= 0 || height <= 0 || stride <= 0 {
+        return None;
+    }
+    let min_stride = (width as usize).checked_mul(4)?;
+    if (stride as usize) < min_stride {
         return None;
     }
     (stride as usize).checked_mul(height as usize)
@@ -144,7 +151,8 @@ pub fn capture_region(
     }
 
     // Checked arithmetic: stride * h could overflow on very large displays.
-    let len = match checked_frame_len(stride, h) {
+    // Also validates that stride covers at least width * 4 bytes (BGRA).
+    let len = match checked_frame_layout(w, h, stride) {
         Some(n) => n,
         None => {
             // SAFETY: pixels was allocated by malloc in the C bridge.
@@ -187,49 +195,73 @@ mod tests {
     use super::*;
 
     #[test]
-    fn checked_frame_len_normal_case() {
+    fn checked_frame_layout_normal_case() {
         // 1920x1080 at 4 bytes/pixel = 7680 stride
-        assert_eq!(checked_frame_len(7680, 1080), Some(8294400));
+        assert_eq!(checked_frame_layout(1920, 1080, 7680), Some(8294400));
     }
 
     #[test]
-    fn checked_frame_len_zero_stride() {
-        assert_eq!(checked_frame_len(0, 100), None);
+    fn checked_frame_layout_zero_stride() {
+        assert_eq!(checked_frame_layout(100, 100, 0), None);
     }
 
     #[test]
-    fn checked_frame_len_zero_height() {
-        assert_eq!(checked_frame_len(100, 0), None);
+    fn checked_frame_layout_zero_height() {
+        assert_eq!(checked_frame_layout(100, 0, 400), None);
     }
 
     #[test]
-    fn checked_frame_len_negative_stride() {
-        // Negative stride could result from int32 overflow in C bridge
-        assert_eq!(checked_frame_len(-1, 100), None);
+    fn checked_frame_layout_zero_width() {
+        assert_eq!(checked_frame_layout(0, 100, 400), None);
     }
 
     #[test]
-    fn checked_frame_len_negative_height() {
-        assert_eq!(checked_frame_len(100, -1), None);
+    fn checked_frame_layout_negative_stride() {
+        assert_eq!(checked_frame_layout(100, 100, -1), None);
     }
 
     #[test]
-    fn checked_frame_len_overflow() {
-        // i32::MAX * 2 should overflow usize on 32-bit, but succeed on 64-bit
-        // Test with values that overflow even on 64-bit
+    fn checked_frame_layout_negative_height() {
+        assert_eq!(checked_frame_layout(100, -1, 400), None);
+    }
+
+    #[test]
+    fn checked_frame_layout_negative_width() {
+        assert_eq!(checked_frame_layout(-1, 100, 400), None);
+    }
+
+    #[test]
+    fn checked_frame_layout_stride_too_small_for_width() {
+        // width=100 needs at least 400 bytes/row (4 bytes/pixel)
+        // stride=399 is less than width*4
+        assert_eq!(checked_frame_layout(100, 100, 399), None);
+    }
+
+    #[test]
+    fn checked_frame_layout_stride_exactly_width_times_four() {
+        // Minimum valid: stride = width * 4 (no padding)
+        assert_eq!(checked_frame_layout(100, 50, 400), Some(20000));
+    }
+
+    #[test]
+    fn checked_frame_layout_stride_with_padding() {
+        // Stride can be larger than width*4 (row padding)
+        assert_eq!(checked_frame_layout(100, 50, 512), Some(25600));
+    }
+
+    #[test]
+    fn checked_frame_layout_overflow() {
         let large_stride = i32::MAX / 2;
         let large_height = i32::MAX;
-        // On 64-bit: (i32::MAX/2) * i32::MAX ~= 2^62, which fits in usize
-        // On 32-bit: this would overflow
         #[cfg(target_pointer_width = "64")]
-        assert!(checked_frame_len(large_stride, large_height).is_some());
+        assert!(checked_frame_layout(1, large_height, large_stride).is_some());
         #[cfg(target_pointer_width = "32")]
-        assert_eq!(checked_frame_len(large_stride, large_height), None);
+        assert_eq!(checked_frame_layout(1, large_height, large_stride), None);
     }
 
     #[test]
-    fn checked_frame_len_small_capture() {
+    fn checked_frame_layout_small_capture() {
         // Minimum sensible capture: 1x1 pixel at 4 bytes/pixel
-        assert_eq!(checked_frame_len(4, 1), Some(4));
+        assert_eq!(checked_frame_layout(1, 1, 4), Some(4));
     }
 }
