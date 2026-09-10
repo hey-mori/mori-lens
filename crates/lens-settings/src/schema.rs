@@ -110,9 +110,10 @@ impl Schema {
 
     /// Convert the schema back to the in-memory settings type.
     ///
-    /// Only the quick engine section feeds into the current product,
-    /// because it does not yet use the deep engine's endpoint or model
-    /// independently. When it does, this function changes.
+    /// The flat [`Settings`] view carries only the quick engine's
+    /// endpoint and model. Callers that need per-lane configuration
+    /// should use [`AiRuntimeConfig::from_schema`] instead
+    /// (ADR-0005).
     pub fn to_settings(&self) -> lens_core::settings::Settings {
         lens_core::settings::Settings {
             language: self.general.language.clone(),
