@@ -49,7 +49,7 @@ extern int32_t lens_overlay_window_id(void);
     size_t bufWidth = CVPixelBufferGetWidth(pixelBuffer);
     size_t bufHeight = CVPixelBufferGetHeight(pixelBuffer);
 
-    if (!baseAddr || bufWidth == 0 || bufHeight == 0) {
+    if (!baseAddr || bufWidth == 0 || bufHeight == 0 || bytesPerRow == 0) {
         CVPixelBufferUnlockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
         return;
     }
@@ -60,9 +60,8 @@ extern int32_t lens_overlay_window_id(void);
         return;
     }
 
-    // Reject strides that don't fit in int32_t (the FFI contract).
-    // This can happen on very high-resolution displays.
-    if (bytesPerRow > INT32_MAX) {
+    // Reject dimensions that don't fit in int32_t (the FFI contract).
+    if (bytesPerRow > INT32_MAX || bufWidth > INT32_MAX || bufHeight > INT32_MAX) {
         CVPixelBufferUnlockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
         return;
     }
@@ -266,7 +265,16 @@ bool lens_capture_screen(double req_x, double req_y,
             (void)error;
             dispatch_semaphore_signal(sema3);
         }];
-        dispatch_semaphore_wait(sema3, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
+        long stopResult = dispatch_semaphore_wait(sema3, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
+
+        // If stop timed out, the stream's callbacks may still be in flight.
+        // Treat this as failure and free the pixel data to avoid returning
+        // an inconsistent frame.
+        if (stopResult != 0 && delegate.pixelData) {
+            free(delegate.pixelData);
+            delegate.pixelData = nil;
+            return false;
+        }
 
         if (!delegate.pixelData) return false;
 
