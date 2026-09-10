@@ -450,13 +450,15 @@ fn product_loop(
                 .unwrap_or_default()
                 .as_secs() as i64;
             let lib = shared_library.lock().unwrap();
-            if let Ok(pruned) = lib.library().history_prune(now, retention_secs) {
-                if pruned > 0 {
+            match lib.library().history_prune(now, retention_secs) {
+                Ok(pruned) if pruned > 0 => {
                     println!(
                         "  history   pruned {pruned} entries older than {} days",
                         current.history_days
                     );
                 }
+                Ok(_) => {}
+                Err(e) => eprintln!("  history   prune failed: {e}"),
             }
         }
     }
