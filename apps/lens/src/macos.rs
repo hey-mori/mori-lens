@@ -180,7 +180,17 @@ pub fn main() -> std::process::ExitCode {
 
     // Shared library (via library_service — same as Windows).
     let shared_library: SharedLibrary = Arc::new(Mutex::new(library_service::open(&data_dir)));
-    println!("  library   {:?}", shared_library.lock().unwrap().path());
+    {
+        let lib = shared_library.lock().unwrap();
+        match lib.backing() {
+            library_service::LibraryBacking::Persistent(_) => {
+                println!("  library   {:?} (persistent)", lib.path());
+            }
+            library_service::LibraryBacking::InMemoryFallback { reason, .. } => {
+                println!("  library   in-memory fallback: {reason}");
+            }
+        }
+    }
 
     // Shared detail, recent.
     let (shared_detail, explain_flag) = detail_view::new_shared();
