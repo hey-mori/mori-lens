@@ -3448,4 +3448,62 @@ mod tests {
 
         cleanup(&path);
     }
+
+    #[test]
+    fn duplicate_originals_with_different_answers_are_both_imported() {
+        // Migration is preservation-first. If a historical saved.md contains
+        // the same original with different answers (e.g., from different model
+        // generations), both entries must be imported, not deduplicated.
+        let path = temp_db("duplicate_originals_preserved");
+        let lib = Library::open(&path).unwrap();
+
+        let content = concat!(
+            "---\n",
+            "\n",
+            "## 2026-08-07 03:59\n",
+            "\n",
+            "> same sentence\n",
+            "\n",
+            "> first answer\n",
+            "\n",
+            "---\n",
+            "\n",
+            "## 2026-08-07 04:00\n",
+            "\n",
+            "> same sentence\n",
+            "\n",
+            "> second answer\n",
+        );
+
+        let entries = parse_saved_md(content);
+        assert_eq!(entries.len(), 2, "parser finds both entries");
+
+        // Import both entries without deduplication
+        for entry in &entries {
+            let kind = if entry.caveat.is_some() {
+                "analysis"
+            } else {
+                "translation"
+            };
+            let item = Item {
+                id: 0,
+                original: entry.original.clone(),
+                answer: entry.answer.clone(),
+                caveat: entry.caveat.clone(),
+                app: entry.app.clone(),
+                created_at: entry.timestamp,
+                kind: kind.to_owned(),
+                source_language: None,
+                target_language: None,
+                model: None,
+                note: None,
+                tags: None,
+                review_state: None,
+            };
+            lib.insert(&item).unwrap();
+        }
+
+        assert_eq!(lib.count().unwrap(), 2, "both entries imported");
+        cleanup(&path);
+    }
 }
