@@ -64,6 +64,7 @@ OPTIONS
 const POINTER_POLL_MS: u64 = 25;
 const CACHE_ENTRIES: usize = 256;
 const ANALYSIS_ENTRIES: usize = 32;
+const QUICK_PROMPT_VERSION: u32 = 1;
 const DEEP_PROMPT_VERSION: u32 = 1;
 
 #[derive(Default)]
@@ -401,7 +402,6 @@ fn product_loop(
             app: Option<String>,
             focused_word: Option<String>,
             generation: u64,
-            key: CacheKey,
             anchor: ScreenRect,
         },
     }
@@ -426,7 +426,6 @@ fn product_loop(
             app: Option<String>,
             focused_word: Option<String>,
             generation: u64,
-            _key: CacheKey,
             anchor: ScreenRect,
         },
         Deep {
@@ -477,13 +476,6 @@ fn product_loop(
     // Config update channels: (endpoint, model) sent when settings change.
     let (quick_config_tx, quick_config_rx) = mpsc::channel::<(String, Option<String>)>();
     let (deep_config_tx, deep_config_rx) = mpsc::channel::<(String, Option<String>)>();
-    // Resolved-model channel: the quick translator thread reports the model name
-    // it actually uses (after auto-resolution) so the hover loop can build
-    // cache keys that match. Without this, the cache key used the user's
-    // settings string (or "" for auto), while the translator used a different
-    // name from `choose_model`; the same text cached under one model would
-    // not be found when looking up under the resolved name.
-    let (quick_model_tx, quick_model_rx) = mpsc::channel::<String>();
 
     // Shared cache between product loop and translation threads.
     let cache: Arc<Mutex<TranslationCache>> =
@@ -503,20 +495,16 @@ fn product_loop(
     std::thread::spawn(move || {
         let mut translator = quick_translator;
         let _ = translator.resolve_model();
-        // Send the resolved model name so the hover loop can use it in cache
-        // keys. This fires even if resolve_model() failed: translator.model()
-        // returns the default/user string in that case, which is the correct
-        // cache key (the same model name that the API request will carry).
-        let _ = quick_model_tx.send(translator.model().to_owned());
         while let Ok(job) = quick_rx.recv() {
-            // Check for config updates (non-blocking).
+            // Check for config updates (non-blocking) BEFORE any cache operation.
+            // After this drain, translator.model() is authoritative for the
+            // cache key: no stale model name can reach cache lookup or insert.
             while let Ok((ep, m)) = quick_config_rx.try_recv() {
                 translator = match m {
                     Some(ref model) => OllamaTranslator::new(&ep, model),
                     None => OllamaTranslator::choosing(&ep),
                 };
                 let _ = translator.resolve_model();
-                let _ = quick_model_tx.send(translator.model().to_owned());
             }
             // Drain pending Quick jobs — keep only the latest.
             let mut current = job;
@@ -535,13 +523,34 @@ fn product_loop(
                     app,
                     focused_word,
                     generation,
-                    key,
                     anchor,
                 } => {
+                    // Cache key is computed here, where translator.model() is
+                    // authoritative. The hover loop never builds cache keys;
+                    // it cannot know the resolved model without a race.
+                    let key = CacheKey::of(&request, translator.model(), QUICK_PROMPT_VERSION);
+                    // Check cache before paying for translation.
+                    {
+                        if let Ok(mut c) = quick_cache.lock() {
+                            if let Some(cached) = c.get(&key) {
+                                let _ = quick_result_tx.send(TransResult::Quick {
+                                    sentence,
+                                    display_text,
+                                    result: Ok(cached),
+                                    from_pixels,
+                                    app,
+                                    focused_word,
+                                    generation,
+                                    anchor,
+                                });
+                                continue;
+                            }
+                        }
+                    }
                     let result = translator.quick(&request);
                     if let Ok(ref t) = result {
                         if let Ok(mut c) = quick_cache.lock() {
-                            c.insert(key.clone(), t.clone());
+                            c.insert(key, t.clone());
                         }
                     }
                     let _ = quick_result_tx.send(TransResult::Quick {
@@ -552,7 +561,6 @@ fn product_loop(
                         app,
                         focused_word,
                         generation,
-                        _key: key,
                         anchor,
                     });
                 }
@@ -654,11 +662,6 @@ fn product_loop(
     let mut quit_requested = false;
     let mut tally = Tally::default();
     let mut settings_gen: u64 = 0;
-    // The resolved quick-model name, reported by the quick translator thread.
-    // Used in cache keys so they match the model that actually produced the
-    // translation. Updated non-blockingly on each loop tick; falls behind by
-    // at most one HTTP round-trip after a config change.
-    let mut resolved_quick_model = String::new();
 
     // Ctrl+C handler.
     let (tx, rx) = mpsc::channel::<()>();
@@ -668,12 +671,6 @@ fn product_loop(
     let start = Instant::now();
 
     loop {
-        // Pick up resolved model name from the quick translator thread.
-        // Non-blocking: if the thread hasn't reported yet, the previous value
-        // (or the empty-string default) is used for one more tick.
-        while let Ok(m) = quick_model_rx.try_recv() {
-            resolved_quick_model = m;
-        }
         // Receive translation results (non-blocking).
         while let Ok(result) = result_rx.try_recv() {
             match result {
@@ -685,7 +682,6 @@ fn product_loop(
                     app,
                     focused_word,
                     generation,
-                    _key: _,
                     anchor,
                 } => {
                     if generation != current_generation {
@@ -979,12 +975,12 @@ fn product_loop(
                             Ok(target) => {
                                 let sentence = target.segmented.sentence_text().to_owned();
                                 if !sentence.is_empty() {
-                                    let mut request = QuickRequest::new(&sentence, &language);
-                                    if let Some(word) = target.segmented.word_text() {
-                                        request = request.with_focus(word);
-                                    }
-                                    let key =
-                                        CacheKey::of(&request, &resolved_quick_model, 1);
+                                    let request = QuickRequest::new(&sentence, &language);
+                                    let request = if let Some(word) = target.segmented.word_text() {
+                                        request.with_focus(word)
+                                    } else {
+                                        request
+                                    };
                                     current_generation += 1;
                                     if let Some(a) = target.anchor() {
                                         current_anchor = a;
@@ -1000,7 +996,6 @@ fn product_loop(
                                             .word_text()
                                             .map(str::to_owned),
                                         generation: current_generation,
-                                        key,
                                         anchor: current_anchor,
                                     });
                                     // Manual OCR: use the app from the OCR target itself,
@@ -1313,34 +1308,6 @@ fn product_loop(
                         if let Some(word) = target.segmented.word_text() {
                             request = request.with_focus(word);
                         }
-                        let key = {
-                            let _c = cache.lock().unwrap();
-                            CacheKey::of(&request, &resolved_quick_model, 1)
-                        };
-
-                        // Check cache (lock briefly).
-                        {
-                            let mut c = cache.lock().unwrap();
-                            if let Some(cached) = c.get(&key) {
-                                let mut card = Card::translated(&display_text, &cached);
-                                if from_pixels {
-                                    card = card.read_from_the_screen();
-                                }
-                                show_card(
-                                    &overlay,
-                                    &card,
-                                    &target,
-                                    PresentationKind::Reading,
-                                    pending_app.as_deref(),
-                                    &shared_recent,
-                                    &shared_library,
-                                    &shared_settings,
-                                );
-                                current_app = pending_app.clone();
-                                current_card = Some((card, sentence));
-                                continue;
-                            }
-                        }
 
                         // Dispatch async translation job.
                         current_generation += 1;
@@ -1355,7 +1322,6 @@ fn product_loop(
                             app: pending_app.clone(),
                             focused_word: current_focused_word.clone(),
                             generation: current_generation,
-                            key,
                             anchor: current_anchor,
                         });
                         // Store target for when result arrives.
