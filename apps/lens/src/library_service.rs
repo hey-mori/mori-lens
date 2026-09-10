@@ -104,23 +104,16 @@ fn import_saved_md(library: &Library, data_dir: &Path) {
     }
 
     let mut imported = 0u32;
-    let mut skipped = 0u32;
     for entry in &entries {
         let kind = if entry.caveat.is_some() {
             "analysis"
         } else {
             "translation"
         };
-        // Skip duplicates: the database does not store the same sentence twice.
-        // saved.md entries have no model or target language, so the duplicate
-        // check uses None for both (ADR-0013).
-        if library
-            .has_duplicate(&entry.original, kind, None, None)
-            .unwrap_or(false)
-        {
-            skipped += 1;
-            continue;
-        }
+        // Migration is preservation-first, not merge. Historical entries may
+        // have the same original with different answers (e.g., from different
+        // model generations or prompt versions). Import all of them; the live
+        // dedup policy applies to new saves, not to historical migration.
         let item = Item {
             id: 0,
             original: entry.original.clone(),
@@ -146,8 +139,6 @@ fn import_saved_md(library: &Library, data_dir: &Path) {
         eprintln!("library   import mark failed: {e}");
     }
     if imported > 0 {
-        println!(
-            "library   imported {imported} entries from saved.md ({skipped} duplicates skipped)"
-        );
+        println!("library   imported {imported} entries from saved.md");
     }
 }
