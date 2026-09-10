@@ -1439,6 +1439,7 @@ pub fn main() -> std::process::ExitCode {
                                         &mut on_screen,
                                         card.kept(),
                                         anchor,
+                                        PresentationKind::Feedback,
                                         under.as_deref(),
                                         &shared_recent,
                                         &loop_library,
@@ -1453,6 +1454,7 @@ pub fn main() -> std::process::ExitCode {
                                     &mut on_screen,
                                     Card::not_readable(refusal.user_message()),
                                     anchor,
+                                    PresentationKind::Feedback,
                                     under.as_deref(),
                                     &shared_recent,
                                     &loop_library,
@@ -1469,6 +1471,7 @@ pub fn main() -> std::process::ExitCode {
                             &mut on_screen,
                             Card::not_readable(keeping::NotKept::NothingToKeep.user_message()),
                             ScreenRect::new(at.x, at.y, 1, 1),
+                            PresentationKind::Feedback,
                             under.as_deref(),
                             &shared_recent,
                             &loop_library,
@@ -1560,6 +1563,7 @@ pub fn main() -> std::process::ExitCode {
                                     &mut on_screen,
                                     card.copied(),
                                     anchor,
+                                    PresentationKind::Feedback,
                                     None,
                                     &shared_recent,
                                     &loop_library,
@@ -1577,6 +1581,7 @@ pub fn main() -> std::process::ExitCode {
                                 &mut on_screen,
                                 Card::not_readable("클립보드를 열지 못했습니다"),
                                 anchor,
+                                PresentationKind::Feedback,
                                 None,
                                 &shared_recent,
                                 &loop_library,
@@ -1592,6 +1597,7 @@ pub fn main() -> std::process::ExitCode {
                             &mut on_screen,
                             Card::not_readable("복사할 내용이 아직 없습니다"),
                             ScreenRect::new(at.x, at.y, 1, 1),
+                            PresentationKind::Feedback,
                             None,
                             &shared_recent,
                             &loop_library,
@@ -1620,6 +1626,7 @@ pub fn main() -> std::process::ExitCode {
                                     &mut on_screen,
                                     Card::explaining(&showing.original),
                                     showing.anchor,
+                                    PresentationKind::Feedback,
                                     showing.app.as_deref(),
                                     &shared_recent,
                                     &loop_library,
@@ -1651,6 +1658,7 @@ pub fn main() -> std::process::ExitCode {
                             &mut on_screen,
                             Card::not_readable("설명할 문장이 아직 없습니다"),
                             ScreenRect::new(at.x, at.y, 1, 1),
+                            PresentationKind::Feedback,
                             None,
                             &shared_recent,
                             &loop_library,
@@ -1782,6 +1790,7 @@ pub fn main() -> std::process::ExitCode {
                             &mut on_screen,
                             Card::needs_a_restart(&keys),
                             ScreenRect::new(at.x, at.y, 1, 1),
+                            PresentationKind::Feedback,
                             None,
                             &shared_recent,
                             &loop_library,
@@ -1871,6 +1880,7 @@ pub fn main() -> std::process::ExitCode {
                                 &mut on_screen,
                                 Card::already_readable("Ctrl+Alt+D"),
                                 reading.anchor,
+                                PresentationKind::Feedback,
                                 ocr_app.as_deref(),
                                 &shared_recent,
                                 &loop_library,
@@ -1912,6 +1922,7 @@ pub fn main() -> std::process::ExitCode {
                             &mut on_screen,
                             Card::not_readable(refusal.user_message()),
                             ScreenRect::new(at.x, at.y, 1, 1),
+                            PresentationKind::Feedback,
                             None,
                             &shared_recent,
                             &loop_library,
@@ -1947,6 +1958,7 @@ pub fn main() -> std::process::ExitCode {
                     &mut on_screen,
                     Card::not_readable("읽기가 멈췄습니다 · 다시 실행해 주세요"),
                     ScreenRect::new(at.x, at.y, 1, 1),
+                    PresentationKind::Feedback,
                     None,
                     &shared_recent,
                     &loop_library,
@@ -2010,6 +2022,7 @@ pub fn main() -> std::process::ExitCode {
                         &mut on_screen,
                         Card::hold_the_modifier(pointer::MODIFIER_NAME),
                         anchor,
+                        PresentationKind::Feedback,
                         process_name.as_deref(),
                         &shared_recent,
                         &loop_library,
@@ -2128,6 +2141,7 @@ pub fn main() -> std::process::ExitCode {
                                     &mut on_screen,
                                     Card::already_readable("Ctrl+Alt+D"),
                                     anchor,
+                                    PresentationKind::Feedback,
                                     process_name.as_deref(),
                                     &shared_recent,
                                     &loop_library,
@@ -2239,6 +2253,7 @@ pub fn main() -> std::process::ExitCode {
                                     &mut on_screen,
                                     card,
                                     anchor,
+                                    PresentationKind::Feedback,
                                     process_name.as_deref(),
                                     &shared_recent,
                                     &loop_library,
@@ -2268,6 +2283,7 @@ pub fn main() -> std::process::ExitCode {
                     &mut on_screen,
                     card,
                     anchor,
+                    PresentationKind::Feedback,
                     pending_app.as_deref(),
                     &shared_recent,
                     &loop_library,
@@ -2324,6 +2340,7 @@ pub fn main() -> std::process::ExitCode {
                         &mut on_screen,
                         answer.card,
                         answer.anchor,
+                        PresentationKind::Reading,
                         answer.app.as_deref(),
                         &shared_recent,
                         &loop_library,
@@ -2582,6 +2599,136 @@ fn korean_how_to(policy: &AppPolicy) -> String {
 /// than one shape.
 ///
 /// `source_app` is the application the text came from at acquisition time,
+/// What kind of card is being presented to the reader.
+///
+/// Rendering and persistence are separate concerns. A function that renders
+/// a card should not also decide whether to record it. This enum makes the
+/// semantic intent explicit: `Reading` is a new reading to record, `Feedback`
+/// is a copy/save confirmation or error message that should not create a
+/// history entry.
+enum PresentationKind {
+    /// A new reading to record in session-recent and persistent history.
+    Reading,
+    /// A copy/save confirmation or error message. Do not record.
+    Feedback,
+}
+
+/// Render a card on the overlay and update the on-screen state.
+///
+/// This function handles rendering only. Callers that want to record the
+/// reading to history should call `record_presented_reading()` separately.
+#[allow(clippy::too_many_arguments)]
+fn render_card(
+    overlay: &Overlay,
+    on_screen: &mut Option<(Card, ScreenRect)>,
+    card: Card,
+    anchor: ScreenRect,
+) -> bool {
+    let drawn = overlay.show(card.clone(), anchor);
+    if drawn {
+        *on_screen = Some((card, anchor));
+    }
+    drawn
+}
+
+/// Record a presented reading to session-recent and persistent history.
+///
+/// Called explicitly by callers when `PresentationKind::Reading`. Feedback
+/// cards (copy/save confirmations, error messages) should not call this.
+#[allow(clippy::too_many_arguments)]
+fn record_presented_reading(
+    card: &Card,
+    source_app: Option<&str>,
+    recent: &tauri_app::SharedRecent,
+    library: &library_service::SharedLibrary,
+    settings: &settings_service::SharedSettings,
+) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let app_name = source_app.map(str::to_owned);
+    let answer_text = match &card.body {
+        lens_core::card::CardBody::Translation(t) => t.clone(),
+        lens_core::card::CardBody::Analysis { translation, .. } => {
+            translation.clone().unwrap_or_default()
+        }
+        _ => String::new(),
+    };
+    if !answer_text.is_empty() {
+        let recent_card = lens_core::recent::RecentCard {
+            original: card.original.clone(),
+            answer: answer_text.clone(),
+            shown_at: now,
+            app: app_name.clone(),
+        };
+        recent.lock().unwrap().record(recent_card);
+    }
+
+    // Record to persistent history (ADR-0014 Tier 3).
+    // Only when the reader has turned it on; off means nothing is written.
+    {
+        let current = settings.lock().unwrap().current().clone();
+        if current.history {
+            let excluded = app_name
+                .as_ref()
+                .map(|name| {
+                    current
+                        .history_excluded
+                        .iter()
+                        .any(|ex| name.to_lowercase().contains(&ex.to_lowercase()))
+                })
+                .unwrap_or(false);
+            if !excluded && !answer_text.is_empty() {
+                let kind = match &card.body {
+                    lens_core::card::CardBody::Analysis { .. } => "analysis",
+                    _ => "translation",
+                };
+                let provenance = if card.footer.contains(lens_core::card::Card::FROM_PIXELS) {
+                    "ocr"
+                } else {
+                    "accessibility"
+                };
+                let provider_scope = if card.footer.contains("외부") {
+                    "external"
+                } else if card.footer.contains("로컬") {
+                    "local"
+                } else {
+                    "unknown"
+                };
+                let stored_app = if current.history_store_app {
+                    app_name
+                } else {
+                    None
+                };
+                let entry = lens_storage::HistoryEntry {
+                    id: 0,
+                    original: card.original.clone(),
+                    answer: answer_text,
+                    kind: kind.to_owned(),
+                    source_language: None,
+                    target_language: None,
+                    model: None,
+                    app: stored_app,
+                    provenance: provenance.to_owned(),
+                    provider_scope: provider_scope.to_owned(),
+                    created_at: now,
+                };
+                let lib = library.lock().unwrap();
+                let _ = lib.library().record_history(&entry);
+            }
+        }
+    }
+}
+
+/// Show a card on the overlay with the specified presentation kind.
+///
+/// Renders the card and, if `kind` is `PresentationKind::Reading`, records
+/// it to session-recent and persistent history. Feedback cards (copy/save
+/// confirmations, error messages) use `PresentationKind::Feedback` to skip
+/// recording.
+///
+/// `source_app` is the application the text came from at acquisition time,
 /// not the current pointer position. A reading that started in App A must
 /// remain attributed to A even if the pointer moved to App B before the
 /// result arrived. Callers pass `None` for feedback cards (copy confirmation,
@@ -2592,100 +2739,22 @@ fn show_card(
     on_screen: &mut Option<(Card, ScreenRect)>,
     card: Card,
     anchor: ScreenRect,
+    kind: PresentationKind,
     source_app: Option<&str>,
     recent: &tauri_app::SharedRecent,
     library: &library_service::SharedLibrary,
     settings: &settings_service::SharedSettings,
 ) -> bool {
-    let drawn = overlay.show(card.clone(), anchor);
+    let drawn = render_card(overlay, on_screen, card.clone(), anchor);
     if drawn {
-        // Copy and save redraws are not new readings. A card whose footer
-        // carries the copied or kept marker was already recorded when it was
-        // first shown; recording again would create a duplicate history row
-        // and a duplicate session-recent entry.
-        let is_feedback = card.footer.contains(Card::COPIED) || card.footer.contains(Card::KEPT);
-        if !is_feedback {
-            // Record to session-recent (ADR-0014 Tier 1).
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
-            let app_name = source_app.map(str::to_owned);
-            let answer_text = match &card.body {
-                lens_core::card::CardBody::Translation(t) => t.clone(),
-                lens_core::card::CardBody::Analysis { translation, .. } => {
-                    translation.clone().unwrap_or_default()
-                }
-                _ => String::new(),
-            };
-            if !answer_text.is_empty() {
-                let recent_card = lens_core::recent::RecentCard {
-                    original: card.original.clone(),
-                    answer: answer_text.clone(),
-                    shown_at: now,
-                    app: app_name.clone(),
-                };
-                recent.lock().unwrap().record(recent_card);
+        match kind {
+            PresentationKind::Reading => {
+                record_presented_reading(&card, source_app, recent, library, settings);
             }
-
-            // Record to persistent history (ADR-0014 Tier 3).
-            // Only when the reader has turned it on; off means nothing is written.
-            {
-                let current = settings.lock().unwrap().current().clone();
-                if current.history {
-                    let excluded = app_name
-                        .as_ref()
-                        .map(|name| {
-                            current
-                                .history_excluded
-                                .iter()
-                                .any(|ex| name.to_lowercase().contains(&ex.to_lowercase()))
-                        })
-                        .unwrap_or(false);
-                    if !excluded && !answer_text.is_empty() {
-                        let kind = match &card.body {
-                            lens_core::card::CardBody::Analysis { .. } => "analysis",
-                            _ => "translation",
-                        };
-                        let provenance = if card.footer.contains(lens_core::card::Card::FROM_PIXELS)
-                        {
-                            "ocr"
-                        } else {
-                            "accessibility"
-                        };
-                        let provider_scope = if card.footer.contains("외부") {
-                            "external"
-                        } else if card.footer.contains("로컬") {
-                            "local"
-                        } else {
-                            "unknown"
-                        };
-                        let stored_app = if current.history_store_app {
-                            app_name
-                        } else {
-                            None
-                        };
-                        let entry = lens_storage::HistoryEntry {
-                            id: 0,
-                            original: card.original.clone(),
-                            answer: answer_text,
-                            kind: kind.to_owned(),
-                            source_language: None,
-                            target_language: None,
-                            model: None,
-                            app: stored_app,
-                            provenance: provenance.to_owned(),
-                            provider_scope: provider_scope.to_owned(),
-                            created_at: now,
-                        };
-                        let lib = library.lock().unwrap();
-                        let _ = lib.library().record_history(&entry);
-                    }
-                }
+            PresentationKind::Feedback => {
+                // Do not record feedback cards to history.
             }
         }
-
-        *on_screen = Some((card, anchor));
     }
     drawn
 }
