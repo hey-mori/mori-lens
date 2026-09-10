@@ -139,6 +139,23 @@ struct Answer {
     app: Option<String>,
 }
 
+/// The outstanding reading's context, held as a single atomic unit.
+///
+/// When a new hover starts, all fields are set together. When the answer
+/// arrives, all fields are read together. Parallel globals (pending_original,
+/// pending_word, etc.) could drift, allowing fields from reading A to mix with
+/// fields from reading B. A single struct prevents that.
+struct PendingReading {
+    /// The sentence being translated.
+    sentence: String,
+    /// The focused word within the sentence, if any.
+    focused_word: Option<String>,
+    /// The region of the text on screen.
+    anchor: ScreenRect,
+    /// The application the text came from, at acquisition time.
+    app: Option<String>,
+}
+
 /// Bumped whenever the quick prompt changes, so a cache filled by the old
 /// wording is not served under the new one.
 const PROMPT_VERSION: u32 = 1;
@@ -1185,7 +1202,7 @@ pub fn main() -> std::process::ExitCode {
     // can show it. One at a time: a second hover replaces the first.
     // Said once, the first time a hover lands on the staged lesson.
     let mut lesson_landed = false;
-    let mut pending_original = String::new();
+    let mut pending: Option<PendingReading> = None;
     // What the reader is looking at, filled in when a translation finishes.
     // Not cleared when the card is retired: somebody who presses the key a
     // moment after the card faded meant the sentence they were just reading,
@@ -1200,11 +1217,6 @@ pub fn main() -> std::process::ExitCode {
     // **One at a time**, which ADR-0012 says and this enforces by holding one.
     // Opening a second closes the first, so the screen cannot fill with panels.
     let mut pinned: Option<lens_platform_windows::PanelWindow> = None;
-    // The word and the region of the outstanding translation, so the pair
-    // above can be completed when the answer comes back.
-    let mut pending_word: Option<String> = None;
-    let mut pending_anchor = ScreenRect::new(0, 0, 1, 1);
-    let mut pending_app: Option<String> = None;
     // Why no card appeared, said once per distinct reason. Holding the
     // modifier over a window that exposes no text used to look exactly like a
     // product that had crashed.
@@ -1888,10 +1900,12 @@ pub fn main() -> std::process::ExitCode {
                             );
                         } else {
                             life.job_dispatched(generation, reading.anchor, started.elapsed());
-                            pending_original = reading.sentence.clone();
-                            pending_word = Some(reading.word.clone());
-                            pending_anchor = reading.anchor;
-                            pending_app = pointer::process_name_at(at);
+                            pending = Some(PendingReading {
+                                sentence: reading.sentence.clone(),
+                                focused_word: Some(reading.word.clone()),
+                                anchor: reading.anchor,
+                                app: pointer::process_name_at(at),
+                            });
                             // A failed send means the translation worker has
                             // gone. Recorded rather than discarded, for the same
                             // reason the acquisition thread's death is: a product
@@ -2169,10 +2183,12 @@ pub fn main() -> std::process::ExitCode {
                             // Remembered before the job is sent, so the loop can
                             // tell the reader it was heard if the answer is slow.
                             life.job_dispatched(generation, anchor, now);
-                            pending_original = display_text.to_owned();
-                            pending_word = target.segmented.word_text().map(str::to_owned);
-                            pending_anchor = anchor;
-                            pending_app = target.app.process_name.clone();
+                            pending = Some(PendingReading {
+                                sentence: display_text.to_owned(),
+                                focused_word: target.segmented.word_text().map(str::to_owned),
+                                anchor,
+                                app: target.app.process_name.clone(),
+                            });
                             // A failed send means the translation worker has
                             // gone. Recorded rather than discarded, for the same
                             // reason the acquisition thread's death is: a product
@@ -2274,9 +2290,9 @@ pub fn main() -> std::process::ExitCode {
                 // called, so the one wait a reader cannot explain to themselves
                 // was the one the card described wrongly.
                 let card = if engine_warm.load(std::sync::atomic::Ordering::Relaxed) {
-                    Card::waiting(&pending_original)
+                    Card::waiting(pending.as_ref().map(|p| p.sentence.as_str()).unwrap_or(""))
                 } else {
-                    Card::loading_model(&pending_original)
+                    Card::loading_model(pending.as_ref().map(|p| p.sentence.as_str()).unwrap_or(""))
                 };
                 show_card(
                     &overlay,
@@ -2284,7 +2300,7 @@ pub fn main() -> std::process::ExitCode {
                     card,
                     anchor,
                     PresentationKind::Feedback,
-                    pending_app.as_deref(),
+                    pending.as_ref().and_then(|p| p.app.as_deref()),
                     &shared_recent,
                     &loop_library,
                     &loop_settings,
@@ -2323,8 +2339,8 @@ pub fn main() -> std::process::ExitCode {
                     if let lens_core::card::CardBody::Translation(text) = &answer.card.body {
                         explainable = Some(Explainable {
                             original: answer.card.original.clone(),
-                            focused_word: pending_word.clone(),
-                            anchor: pending_anchor,
+                            focused_word: pending.as_ref().and_then(|p| p.focused_word.clone()),
+                            anchor: pending.as_ref().map(|p| p.anchor).unwrap_or(answer.anchor),
                             translation: Some(text.clone()),
                             app: answer.app.clone(),
                         });
