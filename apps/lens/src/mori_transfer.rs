@@ -13,7 +13,7 @@
 
 use lens_storage::Item;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// The schema version this Lens build writes.
@@ -249,12 +249,23 @@ pub fn send_to_mori(item: &Item) -> Result<String, TransferError> {
         std::fs::create_dir_all(&lens_dir).map_err(|e| TransferError::IoError(e.to_string()))?;
     }
     let payload = payload_from_item(item);
+    atomic_write_payload(&payload, &lens_dir)
+}
+
+/// Write a payload atomically to a lens connector directory.
+///
+/// Writes to a temp file first, then renames to the final `{transfer_id}.json`
+/// path. The temp file uses a `.tmp` extension so the Mori watcher (which
+/// monitors for `*.json`) does not see it until the rename completes.
+///
+/// Returns the transfer_id on success.
+pub(crate) fn atomic_write_payload(
+    payload: &TransferPayload,
+    lens_dir: &Path,
+) -> Result<String, TransferError> {
     let json = serde_json::to_string_pretty(&payload)
         .map_err(|e| TransferError::SerializeError(e.to_string()))?;
     let file_path = lens_dir.join(format!("{}.json", payload.transfer_id));
-    // Atomic publication: write to a temp file first, then rename.
-    // The temp file uses a `.tmp` extension so the Mori watcher (which
-    // monitors for *.json) does not see it until the rename completes.
     let temp_path = lens_dir.join(format!(".{}.tmp", payload.transfer_id));
     match std::fs::write(&temp_path, &json) {
         Ok(()) => {}
@@ -270,7 +281,7 @@ pub fn send_to_mori(item: &Item) -> Result<String, TransferError> {
             return Err(TransferError::IoError(e.to_string()));
         }
     }
-    Ok(payload.transfer_id)
+    Ok(payload.transfer_id.clone())
 }
 
 #[cfg(test)]
@@ -565,23 +576,39 @@ mod tests {
         assert_eq!(parsed.target_language, payload.target_language);
     }
 
+    /// atomic_write_payload writes a valid JSON file and removes the temp file.
     #[test]
-    fn atomic_publication_uses_temp_file_and_rename() {
-        // Verify that send_to_mori writes to a temp file first, then renames.
-        // This test does not actually call send_to_mori (which requires Mori
-        // to be installed), but verifies the file naming convention.
-        let transfer_id = "test-123";
-        let temp_name = format!(".{}.tmp", transfer_id);
-        let final_name = format!("{}.json", transfer_id);
+    fn atomic_write_payload_creates_valid_json_and_cleans_up_temp() {
+        let dir = std::env::temp_dir().join("mori-lens-atomic-write-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
 
-        // Temp file should start with a dot and end with .tmp
-        assert!(temp_name.starts_with('.'));
-        assert!(temp_name.ends_with(".tmp"));
-        // Final file should end with .json
-        assert!(final_name.ends_with(".json"));
-        // Temp and final names should differ
-        assert_ne!(temp_name, final_name);
-        // Temp file should not match *.json pattern (watcher ignores it)
-        assert!(!temp_name.ends_with(".json"));
+        let item = sample_item();
+        let payload = payload_from_item(&item);
+        let transfer_id = payload.transfer_id.clone();
+
+        let result = atomic_write_payload(&payload, &dir);
+        assert!(result.is_ok(), "atomic_write_payload succeeded");
+        assert_eq!(result.unwrap(), transfer_id);
+
+        // The final JSON file exists
+        let json_path = dir.join(format!("{transfer_id}.json"));
+        assert!(json_path.exists(), "JSON file was created");
+
+        // The content is valid JSON matching the payload
+        let content = std::fs::read_to_string(&json_path).unwrap();
+        let parsed: TransferPayload = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed.transfer_id, transfer_id);
+        assert_eq!(parsed.original, item.original);
+        assert_eq!(parsed.answer, item.answer);
+        assert_eq!(parsed.kind, item.kind);
+        assert_eq!(parsed.source_language, "en");
+        assert_eq!(parsed.target_language, "ko");
+
+        // No temp file remains
+        let temp_path = dir.join(format!(".{transfer_id}.tmp"));
+        assert!(!temp_path.exists(), "temp file was removed");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
