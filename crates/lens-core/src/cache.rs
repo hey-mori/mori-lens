@@ -414,6 +414,45 @@ mod tests {
             .is_none());
     }
 
+    /// The model-switch isolation guarantee.
+    ///
+    /// A reader changes the Quick model in settings. The same sentence is
+    /// hovered again. The cache must NOT serve the old model's answer: the
+    /// new model may produce different wording, different emphasis, or a
+    /// different language register. Serving a stale answer would look like
+    /// it worked (the card appears instantly) but would be the wrong model's
+    /// output. This test proves the cache miss forces a fresh model call.
+    #[test]
+    fn switching_the_quick_model_invalidates_the_cache_for_the_same_sentence() {
+        let mut cache = TranslationCache::new(8);
+        let sentence = "The pointer must rest before anything is read.";
+
+        // Model A translates the sentence.
+        let model_a_key = CacheKey::of(&QuickRequest::new(sentence, "Korean"), "qwen2.5:3b", 1);
+        cache.insert(model_a_key, answer("포인터가 멈춰야 합니다.", 2400));
+
+        // The reader switches to model B. Same sentence, same prompt version.
+        let model_b_key = CacheKey::of(&QuickRequest::new(sentence, "Korean"), "gemma4:e4b", 1);
+
+        // Cache miss: model B's answer must come from a fresh model call.
+        assert!(
+            cache.get(&model_b_key).is_none(),
+            "switching models must not serve the previous model's cached answer",
+        );
+
+        // Model B produces its own answer, which is now cached.
+        cache.insert(model_b_key.clone(), answer("포인터가 쉬어야 합니다.", 1800));
+        let hit = cache.get(&model_b_key).expect("model B answer is cached");
+        assert_eq!(hit.text, "포인터가 쉬어야 합니다.");
+
+        // Model A's answer is still in the cache (not overwritten).
+        let model_a_again = CacheKey::of(&QuickRequest::new(sentence, "Korean"), "qwen2.5:3b", 1);
+        let hit_a = cache
+            .get(&model_a_again)
+            .expect("model A answer still cached");
+        assert_eq!(hit_a.text, "포인터가 멈춰야 합니다.");
+    }
+
     #[test]
     fn a_different_target_language_is_a_different_question() {
         let mut cache = TranslationCache::new(8);
@@ -556,6 +595,31 @@ mod two_path_tests {
         assert_ne!(
             CacheKey::for_analysis(&request, "m", 1),
             CacheKey::for_analysis(&request, "m", 2),
+        );
+    }
+
+    /// Switching the Deep model invalidates the cache for the same sentence
+    /// and focus word. Same guarantee as the quick path, different key
+    /// construction (the focus word IS part of the deep key).
+    #[test]
+    fn switching_the_deep_model_invalidates_the_cache_for_the_same_word() {
+        let mut cache = AnalysisCache::new(8);
+        let request = a_deep_request(Some("rest"));
+
+        let key_a = CacheKey::for_analysis(&request, "qwen2.5:7b", 1);
+        cache.insert(
+            key_a,
+            DeepAnalysis {
+                lemma: "rest".to_owned(),
+                latency_ms: 4400,
+                ..DeepAnalysis::default()
+            },
+        );
+
+        let key_b = CacheKey::for_analysis(&request, "gemma3:12b", 1);
+        assert!(
+            cache.get(&key_b).is_none(),
+            "switching deep models must not serve the previous model's cached analysis",
         );
     }
 }
