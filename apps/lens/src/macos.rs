@@ -80,6 +80,7 @@ fn parse_flags() -> Result<Flags, String> {
     let mut flags = Flags::default();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
+        let mut value = |name: &str| args.next().ok_or(format!("{name} needs a value"));
         match arg.as_str() {
             "-h" | "--help" => {
                 print!("{USAGE}");
@@ -90,17 +91,15 @@ fn parse_flags() -> Result<Flags, String> {
                 std::process::exit(0);
             }
             "--auto" => flags.auto = true,
-            "--settings" => flags.settings = args.next().map(std::path::PathBuf::from),
-            "--language" => flags.language = args.next(),
-            "--model" => flags.model = args.next(),
-            "--endpoint" => flags.endpoint = args.next(),
-            "--ocr" => flags.ocr = args.next(),
+            "--settings" => flags.settings = Some(value("--settings")?.into()),
+            "--language" => flags.language = Some(value("--language")?),
+            "--model" => flags.model = Some(value("--model")?),
+            "--endpoint" => flags.endpoint = Some(value("--endpoint")?),
+            "--ocr" => flags.ocr = Some(value("--ocr")?),
             "--dwell" => {
-                let ms = args
-                    .next()
-                    .ok_or("--dwell needs milliseconds")?
+                let ms = value("--dwell")?
                     .parse()
-                    .map_err(|_| "--dwell needs milliseconds")?;
+                    .map_err(|_| "--dwell needs milliseconds".to_string())?;
                 flags.dwell_ms = Some(ms);
             }
             other => return Err(format!("unknown argument: {other}")),
