@@ -454,6 +454,13 @@ fn product_loop(
     // Config update channels: (endpoint, model) sent when settings change.
     let (quick_config_tx, quick_config_rx) = mpsc::channel::<(String, Option<String>)>();
     let (deep_config_tx, deep_config_rx) = mpsc::channel::<(String, Option<String>)>();
+    // Resolved-model channel: the quick translator thread reports the model name
+    // it actually uses (after auto-resolution) so the hover loop can build
+    // cache keys that match. Without this, the cache key used the user's
+    // settings string (or "" for auto), while the translator used a different
+    // name from `choose_model`; the same text cached under one model would
+    // not be found when looking up under the resolved name.
+    let (quick_model_tx, quick_model_rx) = mpsc::channel::<String>();
 
     // Shared cache between product loop and translation threads.
     let cache: Arc<Mutex<TranslationCache>> =
@@ -473,6 +480,11 @@ fn product_loop(
     std::thread::spawn(move || {
         let mut translator = quick_translator;
         let _ = translator.resolve_model();
+        // Send the resolved model name so the hover loop can use it in cache
+        // keys. This fires even if resolve_model() failed: translator.model()
+        // returns the default/user string in that case, which is the correct
+        // cache key (the same model name that the API request will carry).
+        let _ = quick_model_tx.send(translator.model().to_owned());
         while let Ok(job) = quick_rx.recv() {
             // Check for config updates (non-blocking).
             while let Ok((ep, m)) = quick_config_rx.try_recv() {
@@ -481,6 +493,7 @@ fn product_loop(
                     None => OllamaTranslator::choosing(&ep),
                 };
                 let _ = translator.resolve_model();
+                let _ = quick_model_tx.send(translator.model().to_owned());
             }
             // Drain pending Quick jobs — keep only the latest.
             let mut current = job;
@@ -618,6 +631,11 @@ fn product_loop(
     let mut quit_requested = false;
     let mut tally = Tally::default();
     let mut settings_gen: u64 = 0;
+    // The resolved quick-model name, reported by the quick translator thread.
+    // Used in cache keys so they match the model that actually produced the
+    // translation. Updated non-blockingly on each loop tick; falls behind by
+    // at most one HTTP round-trip after a config change.
+    let mut resolved_quick_model = String::new();
 
     // Ctrl+C handler.
     let (tx, rx) = mpsc::channel::<()>();
@@ -627,6 +645,12 @@ fn product_loop(
     let start = Instant::now();
 
     loop {
+        // Pick up resolved model name from the quick translator thread.
+        // Non-blocking: if the thread hasn't reported yet, the previous value
+        // (or the empty-string default) is used for one more tick.
+        while let Ok(m) = quick_model_rx.try_recv() {
+            resolved_quick_model = m;
+        }
         // Receive translation results (non-blocking).
         while let Ok(result) = result_rx.try_recv() {
             match result {
@@ -937,7 +961,7 @@ fn product_loop(
                                         request = request.with_focus(word);
                                     }
                                     let key =
-                                        CacheKey::of(&request, ai_config.quick.model.as_deref().unwrap_or(""), 1);
+                                        CacheKey::of(&request, &resolved_quick_model, 1);
                                     current_generation += 1;
                                     if let Some(a) = target.anchor() {
                                         current_anchor = a;
@@ -1268,7 +1292,7 @@ fn product_loop(
                         }
                         let key = {
                             let _c = cache.lock().unwrap();
-                            CacheKey::of(&request, ai_config.quick.model.as_deref().unwrap_or(""), 1)
+                            CacheKey::of(&request, &resolved_quick_model, 1)
                         };
 
                         // Check cache (lock briefly).
