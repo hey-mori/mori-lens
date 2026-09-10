@@ -247,30 +247,27 @@ mod tests {
     use lens_core::card::{Card, CardBody};
 
     fn translation_card(original: &str, text: &str) -> Card {
-        Card {
-            original: original.to_owned(),
-            body: CardBody::Translation(text.to_owned()),
-            footer: "Ollama · 1.6s".to_owned(),
-            metadata: None,
-        }
+        Card::new(
+            original.to_owned(),
+            CardBody::Translation(text.to_owned()),
+            "Ollama · 1.6s".to_owned(),
+        )
     }
 
     fn problem_card(msg: &str) -> Card {
-        Card {
-            original: "some text".to_owned(),
-            body: CardBody::Problem(msg.to_owned()),
-            footer: "Ollama".to_owned(),
-            metadata: None,
-        }
+        Card::new(
+            "some text".to_owned(),
+            CardBody::Problem(msg.to_owned()),
+            "Ollama".to_owned(),
+        )
     }
 
     fn waiting_card(msg: &str) -> Card {
-        Card {
-            original: "some text".to_owned(),
-            body: CardBody::Waiting(msg.to_owned()),
-            footer: "".to_owned(),
-            metadata: None,
-        }
+        Card::new(
+            "some text".to_owned(),
+            CardBody::Waiting(msg.to_owned()),
+            "".to_owned(),
+        )
     }
 
     fn analysis_card(
@@ -278,18 +275,17 @@ mod tests {
         translation: Option<&str>,
         rows: Vec<(String, String)>,
     ) -> Card {
-        Card {
-            original: original.to_owned(),
-            body: CardBody::Analysis {
+        Card::new(
+            original.to_owned(),
+            CardBody::Analysis {
                 translation: translation.map(|s| s.to_owned()),
                 word_at: None,
                 counterpart_at: None,
                 links: vec![],
                 rows,
             },
-            footer: "Ollama · 4.4s".to_owned(),
-            metadata: None,
-        }
+            "Ollama · 4.4s".to_owned(),
+        )
     }
 
     #[test]
@@ -331,12 +327,11 @@ mod tests {
 
     #[test]
     fn view_from_empty_original_is_none() {
-        let card = Card {
-            original: "   ".to_owned(),
-            body: CardBody::Translation("should not appear".to_owned()),
-            footer: "".to_owned(),
-            metadata: None,
-        };
+        let card = Card::new(
+            "   ".to_owned(),
+            CardBody::Translation("should not appear".to_owned()),
+            "".to_owned(),
+        );
         assert!(view_from_card(&card).is_none());
     }
 
