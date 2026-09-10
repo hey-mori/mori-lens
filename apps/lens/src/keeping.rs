@@ -124,11 +124,26 @@ pub fn append(
         // one yet.
         let _ = std::fs::create_dir_all(folder);
     }
-    let mut handle = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(file)
-        .map_err(|e| NotKept::NotWritten(e.to_string()))?;
+    let mut handle = {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .mode(0o600)
+                .open(file)
+                .map_err(|e| NotKept::NotWritten(e.to_string()))?
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(file)
+                .map_err(|e| NotKept::NotWritten(e.to_string()))?
+        }
+    };
 
     // The heading is written once, with the first entry rather than at
     // startup: a reader who never saves anything should not find a file
@@ -139,12 +154,20 @@ pub fn append(
         handle
             .write_all(PREAMBLE.as_bytes())
             .map_err(|e| NotKept::NotWritten(e.to_string()))?;
-        // Restrict permissions on Unix: saved.md contains text captured
-        // from the screen and must not be world-readable.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600));
+    }
+
+    // Tighten permissions on existing files that were created before the
+    // mode(0o600) guard. A file with group/other read bits is tightened
+    // to owner-only. Errors are ignored because the file is still usable
+    // even if chmod fails (e.g. on a filesystem without Unix permissions).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = file.metadata() {
+            let mode = meta.permissions().mode() & 0o777;
+            if mode & 0o077 != 0 {
+                let _ = std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600));
+            }
         }
     }
     handle
