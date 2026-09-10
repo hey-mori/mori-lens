@@ -112,8 +112,10 @@ fn import_saved_md(library: &Library, data_dir: &Path) {
             "translation"
         };
         // Skip duplicates: the database does not store the same sentence twice.
+        // saved.md entries have no model or target language, so the duplicate
+        // check uses None for both (ADR-0013).
         if library
-            .has_duplicate(&entry.original, kind)
+            .has_duplicate(&entry.original, kind, None, None)
             .unwrap_or(false)
         {
             skipped += 1;
