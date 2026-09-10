@@ -94,22 +94,6 @@ pub struct Card {
     pub(crate) metadata: Option<CardMetadata>,
 }
 
-impl Card {
-    /// Create a card without persistence metadata.
-    ///
-    /// Use this for cards that never reach history (error cards, waiting
-    /// cards, feedback cards). The production paths set `metadata` through
-    /// the crate-internal field after constructing the card.
-    pub fn new(original: String, body: CardBody, footer: String) -> Self {
-        Self {
-            original,
-            body,
-            footer,
-            metadata: None,
-        }
-    }
-}
-
 /// Either an answer or an honest failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CardBody {
