@@ -274,6 +274,13 @@ pub(crate) fn atomic_write_payload(
             return Err(TransferError::IoError(e.to_string()));
         }
     }
+    // Restrict permissions on Unix: the payload contains captured text
+    // and must not be world-readable.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o600));
+    }
     match std::fs::rename(&temp_path, &file_path) {
         Ok(()) => {}
         Err(e) => {

@@ -216,11 +216,28 @@ impl Library {
         let conn = Connection::open(path)?;
         conn.execute_batch("PRAGMA journal_mode = WAL;")?;
         // Restrict permissions on Unix: the library contains text captured
-        // from the screen and must not be world-readable.
+        // from the screen and must not be world-readable. Skip for in-memory
+        // databases (path is ":memory:").
         #[cfg(unix)]
-        if is_new {
+        let is_memory = path == Path::new(":memory:");
+        #[cfg(unix)]
+        if is_new && !is_memory {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        }
+        // WAL and SHM files are created by SQLite in WAL mode. Restrict
+        // their permissions too since they contain the same data.
+        #[cfg(unix)]
+        if !is_memory {
+            use std::os::unix::fs::PermissionsExt;
+            let wal_path = path.with_extension("db-wal");
+            if wal_path.exists() {
+                let _ = std::fs::set_permissions(&wal_path, std::fs::Permissions::from_mode(0o600));
+            }
+            let shm_path = path.with_extension("db-shm");
+            if shm_path.exists() {
+                let _ = std::fs::set_permissions(&shm_path, std::fs::Permissions::from_mode(0o600));
+            }
         }
         let lib = Self { conn };
         lib.migrate()?;
