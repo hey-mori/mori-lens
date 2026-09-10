@@ -267,19 +267,46 @@ pub(crate) fn atomic_write_payload(
         .map_err(|e| TransferError::SerializeError(e.to_string()))?;
     let file_path = lens_dir.join(format!("{}.json", payload.transfer_id));
     let temp_path = lens_dir.join(format!(".{}.tmp", payload.transfer_id));
-    match std::fs::write(&temp_path, &json) {
-        Ok(()) => {}
-        Err(e) => {
-            let _ = std::fs::remove_file(&temp_path);
-            return Err(TransferError::IoError(e.to_string()));
-        }
-    }
-    // Restrict permissions on Unix: the payload contains captured text
-    // and must not be world-readable.
-    #[cfg(unix)]
+    // Create the temp file with private permissions from byte zero.
+    // Using OpenOptions + mode(0o600) avoids a window where the file
+    // exists with default (world-readable) permissions.
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o600));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            match std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&temp_path)
+            {
+                Ok(mut f) => {
+                    use std::io::Write;
+                    match f.write_all(json.as_bytes()) {
+                        Ok(()) => {}
+                        Err(e) => {
+                            let _ = std::fs::remove_file(&temp_path);
+                            return Err(TransferError::IoError(e.to_string()));
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = std::fs::remove_file(&temp_path);
+                    return Err(TransferError::IoError(e.to_string()));
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            match std::fs::write(&temp_path, &json) {
+                Ok(()) => {}
+                Err(e) => {
+                    let _ = std::fs::remove_file(&temp_path);
+                    return Err(TransferError::IoError(e.to_string()));
+                }
+            }
+        }
     }
     match std::fs::rename(&temp_path, &file_path) {
         Ok(()) => {}
