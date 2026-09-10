@@ -1270,7 +1270,17 @@ pub fn main() -> std::process::ExitCode {
 
     let shared_library =
         std::sync::Arc::new(std::sync::Mutex::new(library_service::open(&data_dir)));
-    println!("  library   {:?}", shared_library.lock().unwrap().path());
+    {
+        let lib = shared_library.lock().unwrap();
+        match lib.backing() {
+            library_service::LibraryBacking::Persistent(_) => {
+                println!("  library   {:?} (persistent)", lib.path());
+            }
+            library_service::LibraryBacking::InMemoryFallback { reason, .. } => {
+                println!("  library   in-memory fallback: {reason}");
+            }
+        }
+    }
 
     // Prune old history entries on startup, if history retention is configured.
     {
