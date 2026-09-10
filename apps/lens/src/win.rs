@@ -1447,7 +1447,12 @@ pub fn main() -> std::process::ExitCode {
                 }) {
                     Some((entry, anchor)) => {
                         let lib_guard = loop_library.lock().unwrap();
-                        match keeping::append(&saved_to, &entry, std::time::SystemTime::now(), lib_guard.library()) {
+                        match keeping::append(
+                            &saved_to,
+                            &entry,
+                            std::time::SystemTime::now(),
+                            lib_guard.library(),
+                        ) {
                             Ok(_item_id) => {
                                 // Lengths and lines, never the text
                                 // (`docs/privacy-model.md` §3). The path is not
@@ -2714,7 +2719,7 @@ fn record_presented_reading(
                     _ => "translation",
                 };
                 let meta = card.metadata();
-                let provenance = match meta.and_then(|m| Some(m.provenance)) {
+                let provenance = match meta.map(|m| m.provenance) {
                     Some(lens_core::card::CardProvenance::Ocr) => "ocr",
                     _ => "accessibility",
                 };
@@ -3216,9 +3221,15 @@ total {}ms from acquisition to card",
                     .kept_as(Some("selftest"))
                     .ok_or(keeping::NotKept::NothingToKeep)
                     .and_then(|entry| {
-                        let selftest_lib = lens_storage::Library::open(std::path::Path::new(":memory:"))
-                            .expect("in-memory library for selftest");
-                        keeping::append(&scratch, &entry, std::time::SystemTime::now(), &selftest_lib)
+                        let selftest_lib =
+                            lens_storage::Library::open(std::path::Path::new(":memory:"))
+                                .expect("in-memory library for selftest");
+                        keeping::append(
+                            &scratch,
+                            &entry,
+                            std::time::SystemTime::now(),
+                            &selftest_lib,
+                        )
                     }) {
                     Ok(_item_id) => {
                         let written = std::fs::read_to_string(&scratch).unwrap_or_default();
