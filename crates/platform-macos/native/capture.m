@@ -16,6 +16,7 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <CoreVideo/CoreVideo.h>
 #import <stdlib.h>
+#import <stdint.h>
 #import <string.h>
 
 // From overlay.m — the overlay panel's CGWindowID, or 0 if not created.
@@ -55,6 +56,13 @@ extern int32_t lens_overlay_window_id(void);
 
     // Overflow guard: bytesPerRow * bufHeight must not overflow size_t.
     if (bufHeight > SIZE_MAX / bytesPerRow) {
+        CVPixelBufferUnlockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
+        return;
+    }
+
+    // Reject strides that don't fit in int32_t (the FFI contract).
+    // This can happen on very high-resolution displays.
+    if (bytesPerRow > INT32_MAX) {
         CVPixelBufferUnlockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
         return;
     }
