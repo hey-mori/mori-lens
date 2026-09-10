@@ -230,6 +230,7 @@ mod tests {
             original: "   ".to_owned(),
             body: CardBody::Translation("무언가".to_owned()),
             footer: String::new(),
+            metadata: None,
         };
         assert!(Detail::from_card(&empty).is_none());
     }
@@ -248,6 +249,7 @@ mod tests {
                 rows: vec![("원형".to_owned(), "lease".to_owned())],
             },
             footer: "AI 설명 · 사실 확인 필요".to_owned(),
+            metadata: None,
         };
         let detail = Detail::from_card(&card).expect("a detail");
         assert_eq!(detail.translation.as_deref(), Some("임대는 갱신됩니다."));

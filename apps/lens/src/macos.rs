@@ -671,6 +671,7 @@ fn product_loop(
                                 original: display_text.clone(),
                                 body: CardBody::Problem(msg),
                                 footer: String::new(),
+                                metadata: None,
                             };
                             show_card_at(
                                 &overlay,
@@ -722,6 +723,7 @@ fn product_loop(
                                 original: sentence.clone(),
                                 body: CardBody::Problem(format!("analysis failed: {}", msg)),
                                 footer: String::new(),
+                                metadata: None,
                             };
                             show_card_at(
                                 &overlay,
@@ -909,6 +911,7 @@ fn product_loop(
                                     "Screen Recording permission required. Grant in System Settings, then restart Mori Lens.".to_owned(),
                                 ),
                                 footer: String::new(),
+                                metadata: None,
                             };
                             show_card_at(
                                 &overlay,
@@ -963,6 +966,7 @@ fn product_loop(
                                             original: sentence.clone(),
                                             body: CardBody::Waiting("reading...".to_owned()),
                                             footer: String::new(),
+                                            metadata: None,
                                         },
                                         sentence,
                                     ));
@@ -1242,6 +1246,7 @@ fn product_loop(
                             original: display_text.clone(),
                             body: CardBody::Problem("already in your language".to_owned()),
                             footer: String::new(),
+                            metadata: None,
                         };
                         show_card(
                             &overlay,
@@ -1313,6 +1318,7 @@ fn product_loop(
                                 original: display_text,
                                 body: CardBody::Waiting("translating...".to_owned()),
                                 footer: String::new(),
+                                metadata: None,
                             },
                             sentence,
                         ));
@@ -1492,18 +1498,17 @@ fn record_presented_reading(
                     CardBody::Analysis { .. } => "analysis",
                     _ => "translation",
                 };
-                let provenance = if card.footer.contains(Card::FROM_PIXELS) {
-                    "ocr"
-                } else {
-                    "accessibility"
+                let meta = card.metadata();
+                let provenance = match meta.map(|m| m.provenance) {
+                    Some(lens_core::card::CardProvenance::Ocr) => "ocr",
+                    _ => "accessibility",
                 };
-                let provider_scope = if card.footer.contains("외부") {
-                    "external"
-                } else if card.footer.contains("로컬") {
-                    "local"
-                } else {
-                    "unknown"
+                let provider_scope = match meta.and_then(|m| m.provider_scope) {
+                    Some(lens_core::card::CardProviderScope::External) => "external",
+                    Some(lens_core::card::CardProviderScope::Local) => "local",
+                    None => "unknown",
                 };
+                let model = meta.and_then(|m| m.model.clone());
                 let stored_app = if current.history_store_app {
                     app_name
                 } else {
@@ -1516,7 +1521,7 @@ fn record_presented_reading(
                     kind: kind.to_owned(),
                     source_language: None,
                     target_language: None,
-                    model: None,
+                    model,
                     app: stored_app,
                     provenance: provenance.to_owned(),
                     provider_scope: provider_scope.to_owned(),
