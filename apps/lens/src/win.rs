@@ -1204,6 +1204,7 @@ pub fn main() -> std::process::ExitCode {
     // above can be completed when the answer comes back.
     let mut pending_word: Option<String> = None;
     let mut pending_anchor = ScreenRect::new(0, 0, 1, 1);
+    let mut pending_app: Option<String> = None;
     // Why no card appeared, said once per distinct reason. Holding the
     // modifier over a window that exposes no text used to look exactly like a
     // product that had crashed.
@@ -1880,6 +1881,7 @@ pub fn main() -> std::process::ExitCode {
                             pending_original = reading.sentence.clone();
                             pending_word = Some(reading.word.clone());
                             pending_anchor = reading.anchor;
+                            pending_app = pointer::process_name_at(at);
                             // A failed send means the translation worker has
                             // gone. Recorded rather than discarded, for the same
                             // reason the acquisition thread's death is: a product
@@ -2156,6 +2158,7 @@ pub fn main() -> std::process::ExitCode {
                             pending_original = display_text.to_owned();
                             pending_word = target.segmented.word_text().map(str::to_owned);
                             pending_anchor = anchor;
+                            pending_app = target.app.process_name.clone();
                             // A failed send means the translation worker has
                             // gone. Recorded rather than discarded, for the same
                             // reason the acquisition thread's death is: a product
@@ -2265,7 +2268,7 @@ pub fn main() -> std::process::ExitCode {
                     &mut on_screen,
                     card,
                     anchor,
-                    process_name.as_deref(),
+                    pending_app.as_deref(),
                     &shared_recent,
                     &loop_library,
                     &loop_settings,
