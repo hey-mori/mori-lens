@@ -138,4 +138,7 @@ if [[ "$FULL" == "1" ]]; then
   cargo test -p lens-platform-macos
 fi
 
+step "commit message policy"
+bash "$(dirname "$0")/check-commit-policy.sh"
+
 printf '\nverified\n'
