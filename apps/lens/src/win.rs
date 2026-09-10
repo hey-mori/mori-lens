@@ -1438,6 +1438,7 @@ pub fn main() -> std::process::ExitCode {
                                         &mut on_screen,
                                         card.kept(),
                                         anchor,
+                                        under.as_deref(),
                                         &shared_recent,
                                         &loop_library,
                                         &loop_settings,
@@ -1451,6 +1452,7 @@ pub fn main() -> std::process::ExitCode {
                                     &mut on_screen,
                                     Card::not_readable(refusal.user_message()),
                                     anchor,
+                                    under.as_deref(),
                                     &shared_recent,
                                     &loop_library,
                                     &loop_settings,
@@ -1466,6 +1468,7 @@ pub fn main() -> std::process::ExitCode {
                             &mut on_screen,
                             Card::not_readable(keeping::NotKept::NothingToKeep.user_message()),
                             ScreenRect::new(at.x, at.y, 1, 1),
+                            under.as_deref(),
                             &shared_recent,
                             &loop_library,
                             &loop_settings,
@@ -1556,6 +1559,7 @@ pub fn main() -> std::process::ExitCode {
                                     &mut on_screen,
                                     card.copied(),
                                     anchor,
+                                    None,
                                     &shared_recent,
                                     &loop_library,
                                     &loop_settings,
@@ -1572,6 +1576,7 @@ pub fn main() -> std::process::ExitCode {
                                 &mut on_screen,
                                 Card::not_readable("클립보드를 열지 못했습니다"),
                                 anchor,
+                                None,
                                 &shared_recent,
                                 &loop_library,
                                 &loop_settings,
@@ -1586,6 +1591,7 @@ pub fn main() -> std::process::ExitCode {
                             &mut on_screen,
                             Card::not_readable("복사할 내용이 아직 없습니다"),
                             ScreenRect::new(at.x, at.y, 1, 1),
+                            None,
                             &shared_recent,
                             &loop_library,
                             &loop_settings,
@@ -1613,6 +1619,7 @@ pub fn main() -> std::process::ExitCode {
                                     &mut on_screen,
                                     Card::explaining(&showing.original),
                                     showing.anchor,
+                                    showing.app.as_deref(),
                                     &shared_recent,
                                     &loop_library,
                                     &loop_settings,
@@ -1643,6 +1650,7 @@ pub fn main() -> std::process::ExitCode {
                             &mut on_screen,
                             Card::not_readable("설명할 문장이 아직 없습니다"),
                             ScreenRect::new(at.x, at.y, 1, 1),
+                            None,
                             &shared_recent,
                             &loop_library,
                             &loop_settings,
@@ -1773,6 +1781,7 @@ pub fn main() -> std::process::ExitCode {
                             &mut on_screen,
                             Card::needs_a_restart(&keys),
                             ScreenRect::new(at.x, at.y, 1, 1),
+                            None,
                             &shared_recent,
                             &loop_library,
                             &loop_settings,
@@ -1848,18 +1857,20 @@ pub fn main() -> std::process::ExitCode {
                             // end of what Lens can do with this sentence. The card
                             // that reported a dead end now names the key that is
                             // not one.
+                            let ocr_app = pointer::process_name_at(at);
                             explainable = Some(Explainable {
                                 original: reading.sentence.clone(),
                                 focused_word: Some(reading.word.clone()),
                                 anchor: reading.anchor,
                                 translation: None,
-                                app: pointer::process_name_at(at),
+                                app: ocr_app.clone(),
                             });
                             show_card(
                                 &overlay,
                                 &mut on_screen,
                                 Card::already_readable("Ctrl+Alt+D"),
                                 reading.anchor,
+                                ocr_app.as_deref(),
                                 &shared_recent,
                                 &loop_library,
                                 &loop_settings,
@@ -1899,6 +1910,7 @@ pub fn main() -> std::process::ExitCode {
                             &mut on_screen,
                             Card::not_readable(refusal.user_message()),
                             ScreenRect::new(at.x, at.y, 1, 1),
+                            None,
                             &shared_recent,
                             &loop_library,
                             &loop_settings,
@@ -1933,6 +1945,7 @@ pub fn main() -> std::process::ExitCode {
                     &mut on_screen,
                     Card::not_readable("읽기가 멈췄습니다 · 다시 실행해 주세요"),
                     ScreenRect::new(at.x, at.y, 1, 1),
+                    None,
                     &shared_recent,
                     &loop_library,
                     &loop_settings,
@@ -1995,6 +2008,7 @@ pub fn main() -> std::process::ExitCode {
                         &mut on_screen,
                         Card::hold_the_modifier(pointer::MODIFIER_NAME),
                         anchor,
+                        process_name.as_deref(),
                         &shared_recent,
                         &loop_library,
                         &loop_settings,
@@ -2112,6 +2126,7 @@ pub fn main() -> std::process::ExitCode {
                                     &mut on_screen,
                                     Card::already_readable("Ctrl+Alt+D"),
                                     anchor,
+                                    process_name.as_deref(),
                                     &shared_recent,
                                     &loop_library,
                                     &loop_settings,
@@ -2221,6 +2236,7 @@ pub fn main() -> std::process::ExitCode {
                                     &mut on_screen,
                                     card,
                                     anchor,
+                                    process_name.as_deref(),
                                     &shared_recent,
                                     &loop_library,
                                     &loop_settings,
@@ -2249,6 +2265,7 @@ pub fn main() -> std::process::ExitCode {
                     &mut on_screen,
                     card,
                     anchor,
+                    process_name.as_deref(),
                     &shared_recent,
                     &loop_library,
                     &loop_settings,
@@ -2304,6 +2321,7 @@ pub fn main() -> std::process::ExitCode {
                         &mut on_screen,
                         answer.card,
                         answer.anchor,
+                        answer.app.as_deref(),
                         &shared_recent,
                         &loop_library,
                         &loop_settings,
@@ -2559,91 +2577,107 @@ fn korean_how_to(policy: &AppPolicy) -> String {
 /// Nothing is recorded when the overlay refuses to draw. A card that was not
 /// shown is not the card on the screen, and `Card::is_showable` refuses more
 /// than one shape.
+///
+/// `source_app` is the application the text came from at acquisition time,
+/// not the current pointer position. A reading that started in App A must
+/// remain attributed to A even if the pointer moved to App B before the
+/// result arrived. Callers pass `None` for feedback cards (copy confirmation,
+/// save confirmation, error messages) that are not new readings.
+#[allow(clippy::too_many_arguments)]
 fn show_card(
     overlay: &Overlay,
     on_screen: &mut Option<(Card, ScreenRect)>,
     card: Card,
     anchor: ScreenRect,
+    source_app: Option<&str>,
     recent: &tauri_app::SharedRecent,
     library: &library_service::SharedLibrary,
     settings: &settings_service::SharedSettings,
 ) -> bool {
     let drawn = overlay.show(card.clone(), anchor);
     if drawn {
-        // Record to session-recent (ADR-0014 Tier 1).
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        let app_name = pointer::position().and_then(pointer::process_name_at);
-        let answer_text = match &card.body {
-            lens_core::card::CardBody::Translation(t) => t.clone(),
-            lens_core::card::CardBody::Analysis { translation, .. } => {
-                translation.clone().unwrap_or_default()
-            }
-            _ => String::new(),
-        };
-        if !answer_text.is_empty() {
-            let recent_card = lens_core::recent::RecentCard {
-                original: card.original.clone(),
-                answer: answer_text.clone(),
-                shown_at: now,
-                app: app_name.clone(),
+        // Copy and save redraws are not new readings. A card whose footer
+        // carries the copied or kept marker was already recorded when it was
+        // first shown; recording again would create a duplicate history row
+        // and a duplicate session-recent entry.
+        let is_feedback = card.footer.contains(Card::COPIED) || card.footer.contains(Card::KEPT);
+        if !is_feedback {
+            // Record to session-recent (ADR-0014 Tier 1).
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            let app_name = source_app.map(str::to_owned);
+            let answer_text = match &card.body {
+                lens_core::card::CardBody::Translation(t) => t.clone(),
+                lens_core::card::CardBody::Analysis { translation, .. } => {
+                    translation.clone().unwrap_or_default()
+                }
+                _ => String::new(),
             };
-            recent.lock().unwrap().record(recent_card);
-        }
+            if !answer_text.is_empty() {
+                let recent_card = lens_core::recent::RecentCard {
+                    original: card.original.clone(),
+                    answer: answer_text.clone(),
+                    shown_at: now,
+                    app: app_name.clone(),
+                };
+                recent.lock().unwrap().record(recent_card);
+            }
 
-        // Record to persistent history (ADR-0014 Tier 3).
-        // Only when the reader has turned it on; off means nothing is written.
-        {
-            let current = settings.lock().unwrap().current().clone();
-            if current.history {
-                let excluded = app_name
-                    .as_ref()
-                    .map(|name| {
-                        current
-                            .history_excluded
-                            .iter()
-                            .any(|ex| name.to_lowercase().contains(&ex.to_lowercase()))
-                    })
-                    .unwrap_or(false);
-                if !excluded && !answer_text.is_empty() {
-                    let kind = match &card.body {
-                        lens_core::card::CardBody::Analysis { .. } => "analysis",
-                        _ => "translation",
-                    };
-                    let provenance = if card.footer.contains(lens_core::card::Card::FROM_PIXELS) {
-                        "ocr"
-                    } else {
-                        "accessibility"
-                    };
-                    let provider_scope = if card.footer.contains("외부") {
-                        "external"
-                    } else if card.footer.contains("로컬") {
-                        "local"
-                    } else {
-                        "unknown"
-                    };
-                    let stored_app = if current.history_store_app {
-                        app_name
-                    } else {
-                        None
-                    };
-                    let entry = lens_storage::HistoryEntry {
-                        id: 0,
-                        original: card.original.clone(),
-                        answer: answer_text,
-                        kind: kind.to_owned(),
-                        source_language: None,
-                        target_language: None,
-                        model: None,
-                        app: stored_app,
-                        provenance: provenance.to_owned(),
-                        provider_scope: provider_scope.to_owned(),
-                        created_at: now,
-                    };
-                    let lib = library.lock().unwrap();
-                    let _ = lib.library().record_history(&entry);
+            // Record to persistent history (ADR-0014 Tier 3).
+            // Only when the reader has turned it on; off means nothing is written.
+            {
+                let current = settings.lock().unwrap().current().clone();
+                if current.history {
+                    let excluded = app_name
+                        .as_ref()
+                        .map(|name| {
+                            current
+                                .history_excluded
+                                .iter()
+                                .any(|ex| name.to_lowercase().contains(&ex.to_lowercase()))
+                        })
+                        .unwrap_or(false);
+                    if !excluded && !answer_text.is_empty() {
+                        let kind = match &card.body {
+                            lens_core::card::CardBody::Analysis { .. } => "analysis",
+                            _ => "translation",
+                        };
+                        let provenance = if card.footer.contains(lens_core::card::Card::FROM_PIXELS)
+                        {
+                            "ocr"
+                        } else {
+                            "accessibility"
+                        };
+                        let provider_scope = if card.footer.contains("외부") {
+                            "external"
+                        } else if card.footer.contains("로컬") {
+                            "local"
+                        } else {
+                            "unknown"
+                        };
+                        let stored_app = if current.history_store_app {
+                            app_name
+                        } else {
+                            None
+                        };
+                        let entry = lens_storage::HistoryEntry {
+                            id: 0,
+                            original: card.original.clone(),
+                            answer: answer_text,
+                            kind: kind.to_owned(),
+                            source_language: None,
+                            target_language: None,
+                            model: None,
+                            app: stored_app,
+                            provenance: provenance.to_owned(),
+                            provider_scope: provider_scope.to_owned(),
+                            created_at: now,
+                        };
+                        let lib = library.lock().unwrap();
+                        let _ = lib.library().record_history(&entry);
+                    }
                 }
             }
         }
