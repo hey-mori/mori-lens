@@ -246,15 +246,13 @@ mod tests {
     fn scratch(name: &str) -> PathBuf {
         let folder = std::env::temp_dir().join(format!("mori-lens-keep-{name}"));
         let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("create scratch directory");
         folder.join("saved.md")
     }
 
     /// Create a Library backed by the library.db next to the scratch file.
     fn scratch_library(md_path: &Path) -> Library {
-        let db_path = md_path
-            .parent()
-            .unwrap()
-            .join("library.db");
+        let db_path = md_path.parent().unwrap().join("library.db");
         Library::open(&db_path).expect("in-memory or disk library")
     }
 
@@ -545,7 +543,14 @@ mod tests {
         let lib = Library::open(Path::new(":memory:")).unwrap();
 
         let card = Card::waiting("번역 중");
-        let result = save_card(&card, None, &file, Some("ko".into()), Some("model".into()), &lib);
+        let result = save_card(
+            &card,
+            None,
+            &file,
+            Some("ko".into()),
+            Some("model".into()),
+            &lib,
+        );
         assert!(
             matches!(result, Err(NotKept::NothingToKeep)),
             "Waiting card must be refused"
@@ -595,13 +600,18 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let file = Arc::new(dir.join("saved.md"));
+        let db_path = dir.join("library.db");
+
+        // Initialize the database before spawning threads so that
+        // concurrent Library::open calls do not race on migrations.
+        Library::open(&db_path).unwrap();
 
         let threads: Vec<_> = (0..4)
             .map(|_| {
                 let file = file.clone();
+                let db_path = db_path.clone();
                 thread::spawn(move || {
                     let card = a_translation_card();
-                    let db_path = file.parent().unwrap().join("library.db");
                     let lib = Library::open(&db_path).unwrap();
                     let _ = save_card(
                         &card,
@@ -632,7 +642,6 @@ mod tests {
             "all 4 saves must be present, got {block_count}"
         );
 
-        let db_path = dir.join("library.db");
         let lib = Library::open(&db_path).unwrap();
         assert!(lib.count().unwrap() >= 1, "library must have rows");
         let _ = std::fs::remove_dir_all(&dir);
@@ -650,14 +659,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let file = Arc::new(dir.join("saved.md"));
+        let db_path = dir.join("library.db");
         let at = UNIX_EPOCH + Duration::from_secs(1_786_075_140);
+
+        // Initialize the database before spawning threads so that
+        // concurrent Library::open calls do not race on migrations.
+        Library::open(&db_path).unwrap();
 
         let threads: Vec<_> = (0..8)
             .map(|i| {
                 let file = file.clone();
+                let db_path = db_path.clone();
                 thread::spawn(move || {
                     let entry = an_entry(&format!("concurrent item {i}"));
-                    let lib = scratch_library(&file);
+                    let lib = Library::open(&db_path).unwrap();
                     let _ = append(&file, &entry, at, &lib);
                 })
             })
@@ -681,7 +696,6 @@ mod tests {
             );
         }
 
-        let db_path = dir.join("library.db");
         let lib = Library::open(&db_path).unwrap();
         assert_eq!(
             lib.count().unwrap(),

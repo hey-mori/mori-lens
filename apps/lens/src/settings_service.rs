@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use lens_core::policy::AppTier;
 use lens_core::settings::Settings;
-use lens_settings::schema::{EngineConfig, Schema};
+use lens_settings::schema::EngineConfig;
 use lens_settings::SettingsFile;
 use serde::{Deserialize, Serialize};
 
@@ -249,13 +249,6 @@ impl SettingsState {
     /// The current in-memory settings.
     pub fn current(&self) -> &Settings {
         &self.current
-    }
-
-    /// The structured schema, with separate `[quick]` and `[deep]` engine
-    /// sections. Use this when a caller needs per-lane configuration
-    /// (ADR-0005) rather than the flat [`current()`] view.
-    pub fn schema(&self) -> &Schema {
-        self.file.schema()
     }
 }
 
