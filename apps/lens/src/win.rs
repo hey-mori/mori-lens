@@ -3038,7 +3038,10 @@ fn selftest(
         "   anchor     {}x{} at ({}, {})",
         anchor.width, anchor.height, anchor.x, anchor.y
     );
-    println!("   focused    {}", word.as_deref().unwrap_or("(none)"));
+    println!(
+        "   focused    {} chars",
+        word.as_ref().map(|w| w.chars().count()).unwrap_or(0)
+    );
 
     let decision = decide(&sentence, language);
     println!(
