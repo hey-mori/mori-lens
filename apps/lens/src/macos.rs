@@ -439,6 +439,29 @@ fn product_loop(
         },
     }
 
+    // Prune old history entries on startup, if history retention is configured.
+    // Matches the Windows startup path (win.rs).
+    {
+        let settings = shared_settings.lock().unwrap();
+        let current = settings.current();
+        if current.history && current.history_days > 0 {
+            let retention_secs = current.history_days as i64 * 86400;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let lib = shared_library.lock().unwrap();
+            if let Ok(pruned) = lib.library().history_prune(now, retention_secs) {
+                if pruned > 0 {
+                    println!(
+                        "  history   pruned {pruned} entries older than {} days",
+                        current.history_days
+                    );
+                }
+            }
+        }
+    }
+
     let (quick_tx, quick_rx): (
         std::sync::mpsc::Sender<QuickJob>,
         std::sync::mpsc::Receiver<QuickJob>,
@@ -1552,7 +1575,9 @@ fn record_presented_reading(
                     created_at: now,
                 };
                 let lib = library.lock().unwrap();
-                let _ = lib.library().record_history(&entry);
+                if let Err(e) = lib.library().record_history(&entry) {
+                    eprintln!("  history   record failed: {e}");
+                }
             }
         }
     }
