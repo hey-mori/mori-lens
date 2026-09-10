@@ -290,15 +290,26 @@ impl Library {
         }
     }
 
-    /// Check whether an item with the same original text and kind already exists.
+    /// Check whether an item with the same original text, kind, model, and
+    /// target language already exists.
     ///
-    /// Used by the keep flow to avoid storing the same sentence twice. The
-    /// file remains append-only; this is for the database only.
-    pub fn has_duplicate(&self, original: &str, kind: &str) -> Result<bool, Error> {
+    /// ADR-0013 requires that the library can store more than one answer for
+    /// the same sentence when they come from different models or target
+    /// different languages. Duplicate identity is therefore
+    /// `original + kind + model + target_language`, not `original + kind` alone.
+    pub fn has_duplicate(
+        &self,
+        original: &str,
+        kind: &str,
+        model: Option<&str>,
+        target_language: Option<&str>,
+    ) -> Result<bool, Error> {
         let exists: bool = self
             .conn
-            .prepare("SELECT 1 FROM library WHERE original = ?1 AND kind = ?2")?
-            .exists(params![original, kind])?;
+            .prepare(
+                "SELECT 1 FROM library WHERE original = ?1 AND kind = ?2 AND model IS ?3 AND target_language IS ?4",
+            )?
+            .exists(params![original, kind, model, target_language])?;
         Ok(exists)
     }
 
@@ -696,7 +707,12 @@ impl Library {
 
             // Skip duplicates.
             if self
-                .has_duplicate(&item.original, &item.kind)
+                .has_duplicate(
+                    &item.original,
+                    &item.kind,
+                    item.model.as_deref(),
+                    item.target_language.as_deref(),
+                )
                 .unwrap_or(false)
             {
                 continue;
@@ -2230,16 +2246,38 @@ mod tests {
     }
 
     #[test]
-    fn has_duplicate_finds_matching_original_and_kind() {
+    fn has_duplicate_finds_matching_original_kind_model_and_language() {
         let path = temp_db("has-duplicate");
         let lib = Library::open(&path).unwrap();
 
         let item = a_translation();
         lib.insert(&item).unwrap();
 
-        assert!(lib.has_duplicate(&item.original, "translation").unwrap());
-        assert!(!lib.has_duplicate(&item.original, "analysis").unwrap());
-        assert!(!lib.has_duplicate("different text", "translation").unwrap());
+        // Same original + kind + model(None) + target_language(Some("ko")) is a duplicate.
+        assert!(lib
+            .has_duplicate(&item.original, "translation", None, Some("ko"))
+            .unwrap());
+        // Different kind is not a duplicate.
+        assert!(!lib
+            .has_duplicate(&item.original, "analysis", None, Some("ko"))
+            .unwrap());
+        // Different original is not a duplicate.
+        assert!(!lib
+            .has_duplicate("different text", "translation", None, Some("ko"))
+            .unwrap());
+        // Different model is not a duplicate (ADR-0013).
+        assert!(!lib
+            .has_duplicate(
+                &item.original,
+                "translation",
+                Some("qwen2.5:7b"),
+                Some("ko")
+            )
+            .unwrap());
+        // Different target language is not a duplicate (ADR-0013).
+        assert!(!lib
+            .has_duplicate(&item.original, "translation", None, Some("ja"))
+            .unwrap());
         cleanup(&path);
     }
 
