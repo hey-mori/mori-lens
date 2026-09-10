@@ -177,9 +177,10 @@ pub fn save_card(
 /// The caller (append) has already written the file, so a database error
 /// here does not prevent the save from completing.
 ///
-/// A duplicate (same original text and kind) is silently skipped: the file
-/// still gets the entry because it is append-only, but the database does not
-/// store the same sentence twice.
+/// A duplicate (same original text, kind, model, and target language per
+/// ADR-0013) is silently skipped: the file still gets the entry because
+/// it is append-only, but the database does not store the same sentence
+/// twice with the same provenance.
 fn write_to_library(md_path: &Path, entry: &Entry, at: SystemTime) -> Option<i64> {
     let db_path = md_path
         .parent()
