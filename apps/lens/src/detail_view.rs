@@ -157,6 +157,7 @@ pub(crate) fn detail_copy(state: tauri::State<'_, SharedDetail>) -> bool {
 pub(crate) fn detail_save(
     state: tauri::State<'_, SharedDetail>,
     save_path: tauri::State<'_, SharedSavePath>,
+    library: tauri::State<'_, SharedLibrary>,
 ) -> Result<Option<i64>, String> {
     let guard = state.lock().unwrap();
     let Some(view) = guard.as_ref() else {
@@ -173,7 +174,8 @@ pub(crate) fn detail_save(
     };
     drop(guard);
 
-    let result = keeping::append(save_path.as_ref(), &entry, std::time::SystemTime::now());
+    let lib_guard = library.lock().unwrap();
+    let result = keeping::append(save_path.as_ref(), &entry, std::time::SystemTime::now(), lib_guard.library());
     match result {
         Ok(item_id) => {
             // Store the item id so the note and open-in-library can find it.

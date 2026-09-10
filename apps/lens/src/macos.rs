@@ -925,12 +925,14 @@ fn product_loop(
                 }
                 ProductCommand::Save => {
                     if let Some((ref card, ref _sentence)) = current_card {
+                        let lib_guard = shared_library.lock().unwrap();
                         execute_save(
                             card,
                             current_app.as_deref(),
                             &shared_save_path,
                             &language,
                             &ai_config.quick.model,
+                            lib_guard.library(),
                         );
                     }
                 }
@@ -1368,6 +1370,7 @@ fn execute_save(
     save_path: &std::path::Path,
     language: &str,
     model: &Option<String>,
+    library: &lens_storage::Library,
 ) {
     match crate::keeping::save_card(
         card,
@@ -1375,6 +1378,7 @@ fn execute_save(
         save_path,
         Some(language.to_owned()),
         model.clone(),
+        library,
     ) {
         Ok(Some(id)) => eprintln!("  save      saved as library item #{id}"),
         Ok(None) => eprintln!("  save      nothing to keep (duplicate)"),
