@@ -36,6 +36,7 @@ use lens_platform_macos::{
 };
 use lens_translate::OllamaTranslator;
 
+use crate::ai_runtime::AiRuntimeConfig;
 use crate::detail_view::{self, SharedSavePath};
 use crate::library_service::{self, SharedLibrary};
 use crate::settings_service::{self, SharedSettings};
@@ -215,11 +216,16 @@ pub fn main() -> std::process::ExitCode {
 
     // Print startup banner.
     {
-        let settings = shared_settings.lock().unwrap().current().clone();
+        let guard = shared_settings.lock().unwrap();
+        let settings = guard.current().clone();
+        let ai_config = AiRuntimeConfig::from_schema(guard.schema());
+        drop(guard);
         println!("Mori Lens · macOS");
         println!("  settings  {:?}", data_dir);
         println!("  language  {}", settings.language);
-        println!("  endpoint  {}", settings.endpoint);
+        // ADR-0005: Quick and Deep have separate engines.
+        println!("  quick     {}", ai_config.quick.endpoint);
+        println!("  deep      {}", ai_config.deep.endpoint);
     }
 
     // AX permission — not fatal. Check without prompt on startup to avoid
@@ -277,16 +283,30 @@ pub fn main() -> std::process::ExitCode {
     };
 
     // Read current settings for the product loop.
-    let (language, endpoint, model, dwell_ms, ocr_mode, policy, hover_scope) = {
-        let s = shared_settings.lock().unwrap().current().clone();
+    // ADR-0005: Quick and Deep have separate engines. Build from Schema,
+    // not from the flat Settings view that only carries the quick lane.
+    let (language, ai_config, dwell_ms, ocr_mode, policy, hover_scope) = {
+        let guard = shared_settings.lock().unwrap();
+        let s = guard.current().clone();
+        let mut ai_config = AiRuntimeConfig::from_schema(guard.schema());
+        drop(guard);
         let mut p = s.policy();
         // --auto sets the default policy tier to Allow, matching Windows behavior.
         if flags.auto {
             p.set_default(lens_core::policy::AppTier::Allow);
         }
         let lang = flags.language.unwrap_or(s.language);
-        let ep = flags.endpoint.unwrap_or(s.endpoint);
-        let m = flags.model.or(s.model);
+        // CLI --endpoint applies to both Quick and Deep for backwards compatibility.
+        // A user who needs separate endpoints edits the settings file.
+        if let Some(endpoint) = flags.endpoint {
+            ai_config.quick.endpoint = endpoint.clone();
+            ai_config.deep.endpoint = endpoint;
+        }
+        // CLI --model applies to Quick only (the default path). Deep is always
+        // configured via the settings file.
+        if let Some(model) = flags.model {
+            ai_config.quick.model = Some(model);
+        }
         let d = flags.dwell_ms.unwrap_or(s.dwell_ms);
         let o = flags
             .ocr
@@ -294,7 +314,7 @@ pub fn main() -> std::process::ExitCode {
             .and_then(OcrMode::named)
             .or_else(|| OcrMode::named(&s.ocr))
             .unwrap_or(OcrMode::Manual);
-        (lang, ep, m, d, o, p, s.hover_scope)
+        (lang, ai_config, d, o, p, s.hover_scope)
     };
     let mut policy = policy;
     policy.deny_self("lens");
@@ -328,8 +348,7 @@ pub fn main() -> std::process::ExitCode {
             screen_recording,
             hotkeys_available,
             language,
-            endpoint,
-            model,
+            ai_config,
             dwell_ms,
             ocr_mode,
             policy,
@@ -365,8 +384,7 @@ fn product_loop(
     _screen_recording: bool,
     hotkeys_available: bool,
     mut language: String,
-    mut endpoint: String,
-    mut model: Option<String>,
+    mut ai_config: AiRuntimeConfig,
     mut dwell_ms: u64,
     mut ocr_mode: OcrMode,
     mut policy: AppPolicy,
@@ -444,10 +462,11 @@ fn product_loop(
     // Quick lane: dedicated thread for hover translations.
     // Drains pending jobs and keeps only the latest (stale coalescing).
     // This ensures Deep never blocks Quick hover latency.
-    let quick_translator = if let Some(ref m) = model {
-        OllamaTranslator::new(&endpoint, m)
+    // ADR-0005: Quick translator uses the quick lane's own config.
+    let quick_translator = if let Some(ref m) = ai_config.quick.model {
+        OllamaTranslator::new(&ai_config.quick.endpoint, m)
     } else {
-        OllamaTranslator::choosing(&endpoint)
+        OllamaTranslator::choosing(&ai_config.quick.endpoint)
     };
     let quick_cache = cache.clone();
     let quick_result_tx = result_tx.clone();
@@ -507,10 +526,11 @@ fn product_loop(
 
     // Deep lane: dedicated thread for deep analysis.
     // Single-flight: processes one Deep at a time, in order.
-    let deep_translator = if let Some(ref m) = model {
-        OllamaTranslator::new(&endpoint, m)
+    // ADR-0005: Deep translator uses the deep lane's own config.
+    let deep_translator = if let Some(ref m) = ai_config.deep.model {
+        OllamaTranslator::new(&ai_config.deep.endpoint, m)
     } else {
-        OllamaTranslator::choosing(&endpoint)
+        OllamaTranslator::choosing(&ai_config.deep.endpoint)
     };
     let deep_result_tx = result_tx;
     std::thread::spawn(move || {
@@ -725,8 +745,7 @@ fn product_loop(
             &tally,
             &ocr_mode,
             &language,
-            &endpoint,
-            &model,
+            &ai_config,
         );
 
         // Drain commands from menu bar and global hotkeys.
@@ -863,7 +882,7 @@ fn product_loop(
                             current_app.as_deref(),
                             &shared_save_path,
                             &language,
-                            &model,
+                            &ai_config.quick.model,
                         );
                     }
                 }
@@ -882,7 +901,7 @@ fn product_loop(
                                 if !sentence.is_empty() {
                                     let request = QuickRequest::new(&sentence, &language);
                                     let key =
-                                        CacheKey::of(&request, model.as_deref().unwrap_or(""), 1);
+                                        CacheKey::of(&request, ai_config.quick.model.as_deref().unwrap_or(""), 1);
                                     current_generation += 1;
                                     if let Some(a) = target.anchor() {
                                         current_anchor = a;
@@ -955,10 +974,11 @@ fn product_loop(
             }
             // Release the Ollama model so it doesn't stay resident after exit.
             // Best-effort: if Ollama is unreachable this is silently skipped.
-            let release_translator = if let Some(ref m) = model {
-                OllamaTranslator::new(&endpoint, m)
+            // ADR-0005: release the quick lane's model (the primary hover path).
+            let release_translator = if let Some(ref m) = ai_config.quick.model {
+                OllamaTranslator::new(&ai_config.quick.endpoint, m)
             } else {
-                OllamaTranslator::choosing(&endpoint)
+                OllamaTranslator::choosing(&ai_config.quick.endpoint)
             };
             release_translator.release();
 
@@ -996,11 +1016,11 @@ fn product_loop(
             } else {
                 settings_gen = gen;
                 let s = guard.current().clone();
+                // ADR-0005: read per-lane config from the schema.
+                let new_ai_config = AiRuntimeConfig::from_schema(guard.schema());
                 drop(guard);
 
                 let new_lang = s.language.clone();
-                let new_ep = s.endpoint.clone();
-                let new_model = s.model.clone();
                 let new_dwell = s.dwell_ms;
                 let new_ocr = OcrMode::named(&s.ocr).unwrap_or(OcrMode::Manual);
                 let new_policy = {
@@ -1013,13 +1033,22 @@ fn product_loop(
                     p
                 };
 
-                // Endpoint/model change → rebuild translators on both lanes.
-                if new_ep != endpoint || new_model != model {
-                    let _ = quick_config_tx.send((new_ep.clone(), new_model.clone()));
-                    let _ = deep_config_tx.send((new_ep.clone(), new_model.clone()));
-                    endpoint = new_ep;
-                    model = new_model;
+                // ADR-0005: compare quick and deep independently.
+                // Each lane gets its own config update only when its
+                // endpoint or model changed.
+                if new_ai_config.quick != ai_config.quick {
+                    let _ = quick_config_tx.send((
+                        new_ai_config.quick.endpoint.clone(),
+                        new_ai_config.quick.model.clone(),
+                    ));
                 }
+                if new_ai_config.deep != ai_config.deep {
+                    let _ = deep_config_tx.send((
+                        new_ai_config.deep.endpoint.clone(),
+                        new_ai_config.deep.model.clone(),
+                    ));
+                }
+                ai_config = new_ai_config;
                 // Language change → affects translation target for new requests.
                 if new_lang != language {
                     language = new_lang;
@@ -1171,7 +1200,7 @@ fn product_loop(
                         let request = QuickRequest::new(&sentence, &language);
                         let key = {
                             let _c = cache.lock().unwrap();
-                            CacheKey::of(&request, model.as_deref().unwrap_or(""), 1)
+                            CacheKey::of(&request, ai_config.quick.model.as_deref().unwrap_or(""), 1)
                         };
 
                         // Check cache (lock briefly).
@@ -1493,17 +1522,28 @@ fn update_diagnostics(
     tally: &Tally,
     ocr_mode: &OcrMode,
     language: &str,
-    endpoint: &str,
-    model: &Option<String>,
+    ai_config: &AiRuntimeConfig,
 ) {
     let mut snapshot = shared.lock().unwrap();
     snapshot.build = format!("{} macOS", env!("CARGO_PKG_VERSION"));
+    // ADR-0005: Quick and Deep have separate engines.
     snapshot.configuration = vec![
         ("language".into(), language.into()),
-        ("endpoint".into(), endpoint.into()),
         (
-            "model".into(),
-            model.clone().unwrap_or_else(|| "(auto)".into()),
+            "quick".into(),
+            format!(
+                "{} · {}",
+                ai_config.quick.endpoint,
+                ai_config.quick.model.as_deref().unwrap_or("(auto)"),
+            ),
+        ),
+        (
+            "deep".into(),
+            format!(
+                "{} · {}",
+                ai_config.deep.endpoint,
+                ai_config.deep.model.as_deref().unwrap_or("(auto)"),
+            ),
         ),
     ];
     snapshot.cards = tally.cards();
