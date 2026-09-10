@@ -899,7 +899,10 @@ fn product_loop(
                             Ok(target) => {
                                 let sentence = target.segmented.sentence_text().to_owned();
                                 if !sentence.is_empty() {
-                                    let request = QuickRequest::new(&sentence, &language);
+                                    let mut request = QuickRequest::new(&sentence, &language);
+                                    if let Some(word) = target.segmented.word_text() {
+                                        request = request.with_focus(word);
+                                    }
                                     let key =
                                         CacheKey::of(&request, ai_config.quick.model.as_deref().unwrap_or(""), 1);
                                     current_generation += 1;
@@ -1197,7 +1200,10 @@ fn product_loop(
                         current_card = Some((card, sentence));
                     }
                     _ => {
-                        let request = QuickRequest::new(&sentence, &language);
+                        let mut request = QuickRequest::new(&sentence, &language);
+                        if let Some(word) = target.segmented.word_text() {
+                            request = request.with_focus(word);
+                        }
                         let key = {
                             let _c = cache.lock().unwrap();
                             CacheKey::of(&request, ai_config.quick.model.as_deref().unwrap_or(""), 1)
