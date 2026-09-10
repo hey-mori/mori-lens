@@ -80,7 +80,10 @@ extern int32_t lens_overlay_window_id(void);
 
 bool lens_capture_available(void) {
     if (@available(macOS 12.3, *)) {
-        return true;
+        // Check the actual Screen Recording permission, not just the OS
+        // version. CGPreflightScreenCaptureAccess returns true only when
+        // the app has been granted permission to capture the screen.
+        return CGPreflightScreenCaptureAccess();
     }
     return false;
 }
