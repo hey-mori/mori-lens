@@ -276,11 +276,11 @@ pub fn main() -> std::process::ExitCode {
 
     // Acquirers.
     let ax_acquirer = MacTextAcquirer::new();
-    let ocr_acquirer = if screen_recording {
-        Some(OcrTextAcquirer::new())
-    } else {
-        None
-    };
+    // Always create the OCR acquirer. Permission is checked at use time,
+    // not at startup. This lets the user grant Screen Recording permission
+    // after launch and use OCR without restarting (once granted, the next
+    // OCR attempt rechecks via CGPreflightScreenCaptureAccess).
+    let ocr_acquirer = Some(OcrTextAcquirer::new());
 
     // Read current settings for the product loop.
     // ADR-0005: Quick and Deep have separate engines. Build from Schema,
@@ -612,6 +612,9 @@ fn product_loop(
     let mut current_anchor = ScreenRect::new(0, 0, 0, 0);
     let mut current_generation: u64 = 0;
     let mut paused = false;
+    // Track whether we have already requested Screen Recording permission
+    // during this process. Avoids showing the system dialog more than once.
+    let mut screen_recording_requested = false;
     let mut quit_requested = false;
     let mut tally = Tally::default();
     let mut settings_gen: u64 = 0;
@@ -892,6 +895,33 @@ fn product_loop(
                             o.hide();
                         }
                         let point = mouse_position();
+                        // Check Screen Recording permission before OCR.
+                        // Manual OCR is an explicit user action, so this is
+                        // the right moment to request permission if needed.
+                        if !lens_platform_macos::capture::is_available() {
+                            if !screen_recording_requested {
+                                lens_platform_macos::capture::request();
+                                screen_recording_requested = true;
+                            }
+                            let card = Card {
+                                original: String::new(),
+                                body: CardBody::Problem(
+                                    "Screen Recording permission required. Grant in System Settings, then restart Mori Lens.".to_owned(),
+                                ),
+                                footer: String::new(),
+                            };
+                            show_card_at(
+                                &overlay,
+                                &card,
+                                &current_anchor,
+                                PresentationKind::Feedback,
+                                None,
+                                &shared_recent,
+                                &shared_library,
+                                &shared_settings,
+                            );
+                            continue;
+                        }
                         current_generation += 1;
                         let gen = lens_core::hover::Generation(current_generation);
                         let ctx = AcquireContext::new(gen);
@@ -1120,6 +1150,33 @@ fn product_loop(
                     Ok(target) => target,
                     Err(e) if e.ocr_can_help() && ocr_mode == OcrMode::Automatic => {
                         if let Some(ref ocr) = ocr_acquirer {
+                            // Check Screen Recording permission before OCR.
+                            // If not granted, request once and show a card
+                            // explaining the user must restart after granting.
+                            if !lens_platform_macos::capture::is_available() {
+                                if !screen_recording_requested {
+                                    lens_platform_macos::capture::request();
+                                    screen_recording_requested = true;
+                                }
+                                let card = Card {
+                                    original: String::new(),
+                                    body: CardBody::Problem(
+                                        "Screen Recording permission required. Grant in System Settings, then restart Mori Lens.".to_owned(),
+                                    ),
+                                    footer: String::new(),
+                                };
+                                show_card_at(
+                                    &overlay,
+                                    &card,
+                                    &ScreenRect::new(point.x, point.y, 1, 1),
+                                    PresentationKind::Feedback,
+                                    None,
+                                    &shared_recent,
+                                    &shared_library,
+                                    &shared_settings,
+                                );
+                                continue;
+                            }
                             let ctx = AcquireContext::new(generation);
                             match ocr.acquire(point, &ctx) {
                                 Ok(target) => target,
