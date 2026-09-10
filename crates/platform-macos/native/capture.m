@@ -88,6 +88,21 @@ bool lens_capture_available(void) {
     return false;
 }
 
+bool lens_capture_request(void) {
+    if (@available(macOS 12.3, *)) {
+        // Already granted — no dialog needed.
+        if (CGPreflightScreenCaptureAccess()) {
+            return true;
+        }
+        // Request permission. This presents a system dialog directing the
+        // user to System Settings. After granting, the application must be
+        // restarted for the permission to take effect (Apple design).
+        CGRequestScreenCaptureAccess();
+        return false;
+    }
+    return false;
+}
+
 /// Find the SCDisplay containing the given global point.
 /// Returns nil if no display contains the point.
 static SCDisplay *find_display_for_point(SCShareableContent *content, double gx, double gy) {

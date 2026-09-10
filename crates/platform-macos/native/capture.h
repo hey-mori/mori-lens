@@ -45,6 +45,14 @@ bool lens_capture_screen(double req_x, double req_y,
 /// Check whether screen capture is available (Screen Recording permission).
 bool lens_capture_available(void);
 
+/// Request Screen Recording permission from the user.
+///
+/// On macOS 12.3+, this calls CGRequestScreenCaptureAccess which presents
+/// a system dialog. After the user grants permission in System Settings,
+/// the application must be restarted for the permission to take effect.
+/// Returns true if permission was already granted, false otherwise.
+bool lens_capture_request(void);
+
 #ifdef __cplusplus
 }
 #endif
