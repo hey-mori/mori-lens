@@ -117,7 +117,21 @@ pub fn capture_region(
     }
 
     // Take ownership of the C-allocated buffer.
-    let len = (stride * h) as usize;
+    // Checked arithmetic: stride * h could overflow c_int on very large
+    // displays. Cast to usize first and use checked_mul.
+    let len = match (stride as usize).checked_mul(h as usize) {
+        Some(n) => n,
+        None => {
+            // Free the C buffer to avoid leaking it.
+            unsafe {
+                extern "C" {
+                    fn free(ptr: *mut c_void);
+                }
+                free(pixels as *mut c_void);
+            }
+            return None;
+        }
+    };
     // SAFETY: pixels was allocated by malloc in the C bridge with at least
     // stride * h bytes. We copy into a Vec and free the original.
     let vec = unsafe {
