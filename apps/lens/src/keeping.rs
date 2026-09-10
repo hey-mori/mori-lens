@@ -199,8 +199,18 @@ fn write_to_library(md_path: &Path, entry: &Entry, at: SystemTime) -> Option<i64
         "translation"
     };
 
-    // Skip duplicates: a sentence kept twice produces one database row.
-    if lib.has_duplicate(&entry.original, kind).unwrap_or(false) {
+    // Skip duplicates: a sentence kept twice with the same model and target
+    // language produces one database row. ADR-0013 requires that a different
+    // model or a different target language for the same sentence is a new row.
+    if lib
+        .has_duplicate(
+            &entry.original,
+            kind,
+            entry.model.as_deref(),
+            entry.target_language.as_deref(),
+        )
+        .unwrap_or(false)
+    {
         return None;
     }
 
