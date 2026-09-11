@@ -219,45 +219,20 @@ impl Library {
         // are done. WAL and SHM files may be created by the migrate() call,
         // so permissions must be set AFTER migrate, not before.
         // Skip for in-memory databases (path is ":memory:").
+        // A hardening failure is an error: the caller (library_service) falls
+        // back to in-memory backing rather than claiming persistence is healthy.
         #[cfg(unix)]
         {
             let is_memory = path == Path::new(":memory:");
             if !is_memory {
-                use std::os::unix::fs::PermissionsExt;
-                // Tighten the main database file. Existing files created by
-                // older builds may have group/other read bits.
-                if let Ok(meta) = std::fs::metadata(path) {
-                    let mode = meta.permissions().mode() & 0o777;
-                    if mode & 0o077 != 0 {
-                        let _ =
-                            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-                    }
-                }
-                // WAL and SHM files are created by SQLite in WAL mode.
-                // They contain the same data as the main database.
+                harden_unix(path)?;
                 let wal_path = path.with_extension("db-wal");
                 if wal_path.exists() {
-                    if let Ok(meta) = std::fs::metadata(&wal_path) {
-                        let mode = meta.permissions().mode() & 0o777;
-                        if mode & 0o077 != 0 {
-                            let _ = std::fs::set_permissions(
-                                &wal_path,
-                                std::fs::Permissions::from_mode(0o600),
-                            );
-                        }
-                    }
+                    harden_unix(&wal_path)?;
                 }
                 let shm_path = path.with_extension("db-shm");
                 if shm_path.exists() {
-                    if let Ok(meta) = std::fs::metadata(&shm_path) {
-                        let mode = meta.permissions().mode() & 0o777;
-                        if mode & 0o077 != 0 {
-                            let _ = std::fs::set_permissions(
-                                &shm_path,
-                                std::fs::Permissions::from_mode(0o600),
-                            );
-                        }
-                    }
+                    harden_unix(&shm_path)?;
                 }
             }
         }
@@ -1260,6 +1235,25 @@ impl Library {
         )?;
         Ok(max)
     }
+}
+
+/// Tighten a file's Unix permissions to owner-only (0o600) if group/other
+/// bits are set. Returns an error if the chmod itself fails, so callers
+/// can distinguish "hardening succeeded or was unnecessary" from "could
+/// not establish the intended privacy mode".
+///
+/// The file must already exist; callers check existence before calling
+/// for auxiliary files (WAL, SHM).
+#[cfg(unix)]
+fn harden_unix(path: &Path) -> Result<(), Error> {
+    use std::os::unix::fs::PermissionsExt;
+    let meta = std::fs::metadata(path).map_err(Error::Io)?;
+    let mode = meta.permissions().mode() & 0o777;
+    if mode & 0o077 != 0 {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .map_err(Error::Io)?;
+    }
+    Ok(())
 }
 
 /// Map a result row to an [`Item`].
@@ -3610,6 +3604,85 @@ mod tests {
         }
 
         assert_eq!(lib.count().unwrap(), 2, "both entries imported");
+        cleanup(&path);
+    }
+
+    // ─── Unix permission hardening ───────────────────────────────────────────
+
+    /// An existing database with broad permissions is tightened to 0o600.
+    #[test]
+    #[cfg(unix)]
+    fn existing_broad_database_is_tightened() {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let path = temp_db("harden-broad");
+        // Create a DB file with 0o644 (group/other readable).
+        {
+            let f = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .mode(0o644)
+                .open(&path)
+                .expect("create broad file");
+            drop(f);
+        }
+        let mode_before = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode_before, 0o644, "test setup: file starts broad");
+
+        let lib = Library::open(&path).expect("open succeeds with hardening");
+        drop(lib);
+
+        let mode_after = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode_after, 0o600, "hardening tightened to owner-only");
+        cleanup(&path);
+    }
+
+    /// An existing WAL file with broad permissions is tightened.
+    #[test]
+    #[cfg(unix)]
+    fn existing_broad_wal_is_tightened() {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let path = temp_db("harden-wal");
+        // Create the main DB normally first.
+        let lib = Library::open(&path).expect("open");
+        drop(lib);
+
+        // Create a broad-permission WAL file alongside.
+        let wal_path = path.with_extension("db-wal");
+        {
+            let f = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .mode(0o644)
+                .open(&wal_path)
+                .expect("create broad WAL");
+            drop(f);
+        }
+        let mode_before = std::fs::metadata(&wal_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode_before, 0o644, "test setup: WAL starts broad");
+
+        let lib = Library::open(&path).expect("reopen succeeds");
+        drop(lib);
+
+        let mode_after = std::fs::metadata(&wal_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode_after, 0o600, "WAL tightened to owner-only");
+        cleanup(&path);
+    }
+
+    /// A fresh database is created with private permissions from the start.
+    #[test]
+    #[cfg(unix)]
+    fn fresh_database_has_private_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = temp_db("harden-fresh");
+        assert!(!path.exists(), "test setup: no file yet");
+
+        let lib = Library::open(&path).expect("open fresh");
+        drop(lib);
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        // SQLite creates files with whatever umask allows. After hardening,
+        // group/other bits must be zero.
+        assert_eq!(mode & 0o077, 0, "fresh DB must have no group/other bits");
         cleanup(&path);
     }
 }
