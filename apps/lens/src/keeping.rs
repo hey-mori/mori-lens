@@ -151,9 +151,27 @@ pub fn append(
     if let Some(folder) = file.parent() {
         // The settings folder already exists by the time anything is saved,
         // but a reader who pointed `--settings` somewhere new has not created
-        // one yet.
-        let _ = std::fs::create_dir_all(folder);
+        // one yet. A failure here means the entry cannot be stored; propagate
+        // rather than relying on a later open failure for the truth.
+        std::fs::create_dir_all(folder).map_err(|e| NotKept::NotWritten(e.to_string()))?;
     }
+
+    // On Unix, harden an existing file BEFORE opening for write. A file
+    // created by an older build may have group/other read bits. If the
+    // tightening fails, do not append new screen-derived content: the
+    // reader's privacy intent cannot be established.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = file.metadata() {
+            let mode = meta.permissions().mode() & 0o777;
+            if mode & 0o077 != 0 {
+                std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600))
+                    .map_err(|e| NotKept::NotWritten(e.to_string()))?;
+            }
+        }
+    }
+
     let mut handle = {
         #[cfg(unix)]
         {
@@ -186,20 +204,7 @@ pub fn append(
             .map_err(|e| NotKept::NotWritten(e.to_string()))?;
     }
 
-    // Tighten permissions on existing files that were created before the
-    // mode(0o600) guard. A file with group/other read bits is tightened
-    // to owner-only. Errors are ignored because the file is still usable
-    // even if chmod fails (e.g. on a filesystem without Unix permissions).
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = file.metadata() {
-            let mode = meta.permissions().mode() & 0o777;
-            if mode & 0o077 != 0 {
-                let _ = std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600));
-            }
-        }
-    }
+    // The entry block, after hardening (if needed) and preamble.
     handle
         .write_all(block(entry, at).as_bytes())
         .map_err(|e| NotKept::NotWritten(e.to_string()))?;
@@ -832,6 +837,86 @@ mod tests {
             lib.count().unwrap(),
             8,
             "all 8 items must be in the database"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ─── Unix permission hardening ─────────────────────────────────────────
+
+    /// An existing saved.md with broad permissions is tightened to 0o600
+    /// before the new entry is appended.
+    #[test]
+    #[cfg(unix)]
+    fn existing_broad_saved_md_is_tightened_before_append() {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let dir = std::env::temp_dir().join("mori-lens-keep-harden-broad");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("saved.md");
+
+        // Pre-create the file with 0o644 (group/other readable).
+        {
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .mode(0o644)
+                .open(&file)
+                .expect("create broad file");
+            use std::io::Write;
+            f.write_all(b"existing content\n").unwrap();
+        }
+        let mode_before = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode_before, 0o644, "test setup: file starts broad");
+
+        let at = UNIX_EPOCH + Duration::from_secs(1_786_075_140);
+        let lib = scratch_library(&file);
+        append(&file, &an_entry("after hardening"), at, &lib).expect("kept after hardening");
+
+        let mode_after = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode_after, 0o600, "tightened to owner-only before append");
+
+        // The entry was written despite starting broad.
+        let content = std::fs::read_to_string(&file).unwrap();
+        assert!(content.contains("> after hardening"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A newly created saved.md has owner-only permissions from byte zero.
+    #[test]
+    #[cfg(unix)]
+    fn new_saved_md_has_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let file = scratch("new-mode");
+        let at = UNIX_EPOCH + Duration::from_secs(1_786_075_140);
+        let lib = scratch_library(&file);
+
+        append(&file, &an_entry("first entry"), at, &lib).expect("kept");
+
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode & 0o077, 0, "new file must have no group/other bits");
+        let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
+    }
+
+    /// create_dir_all failure propagates as NotKept::NotWritten.
+    /// We simulate this by making the parent path point through a file
+    /// (not a directory), so directory creation cannot succeed.
+    #[test]
+    fn create_dir_all_failure_propagates_as_not_written() {
+        let dir = std::env::temp_dir().join("mori-lens-keep-dir-fail");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Create a regular file where we need a parent directory.
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, b"i am a file, not a directory").unwrap();
+        // The saved.md path is under the blocker file, which cannot be a dir.
+        let file = blocker.join("sub").join("saved.md");
+        let at = UNIX_EPOCH;
+        let lib = Library::open(Path::new(":memory:")).unwrap();
+
+        let result = append(&file, &an_entry("should fail"), at, &lib);
+        assert!(
+            matches!(result, Err(NotKept::NotWritten(_))),
+            "create_dir_all failure must propagate, got {result:?}"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
