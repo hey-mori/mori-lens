@@ -3,7 +3,7 @@
 Last updated: 2026-09-11
 
 Current canonical main:
-2793b71caf5b04a56ac9482cc7b60bb290edd456
+94b3012
 
 This is the SHA at which handoff content was written.
 The docs PR merge commit will differ; that is natural.
@@ -32,6 +32,10 @@ Repository-local bounded diagnostics follow-up remains.
 - Save uses shared Library handle, split-brain removed (PR #401)
 - Library degraded mode: explicit backing state (PR #382)
 - saved.md migration preserves repeated entries (PR #376)
+- Save provenance bound to acquisition-time app and model (PR #428)
+- StructuredSave truth propagated to detail/hotkey callers (PR #429)
+- History entries persist target_language from settings (PR #430)
+- StructuredSave enum distinguishes Inserted/Duplicate/Failed (PR #426)
 - Code signing: NOT CONFIGURED (Store account or self-signed certificate needed)
 - Ollama + both models available locally (translategemma:latest, qwen2.5:7b)
 
@@ -307,7 +311,6 @@ Return/re-entry         NOT TESTED      N/A        N/A       PENDING   N/A
 ```
 REMAINING REPOSITORY AUDIT:
   Permission failure handling:      set_permissions errors silently ignored
-  Storage result diagnostics:       duplicate/query-failure/insert conflation
   Capture late-callback lifetime:   code hardened, real macOS/TSan pending
 
 REMAINING WINDOWS WORK:
@@ -380,18 +383,17 @@ Unit test evidence does not substitute for GUI smoke evidence.
 ## Next Session — Start Here
 
 1. **Permission failure semantics** — decide hard-fail vs degraded vs diagnostic
-2. **Storage result diagnostics** — typed outcome for duplicate/query/insert
-3. **Human Windows GUI product smoke** — Quick/Deep/Copy/Save lifecycle
-4. **Bugs discovered by that smoke** — fix via branch -> PR -> merge
-5. **macOS work when environment returns**
+2. **Human Windows GUI product smoke** — Quick/Deep/Copy/Save lifecycle
+3. **Bugs discovered by that smoke** — fix via branch -> PR -> merge
+4. **macOS work when environment returns**
 
 Do not reopen UIA GetVisibleRanges research without new independent evidence.
 
 ## Git State
 
 ```
-Content baseline:    2793b71 (PR #420)
-Handoff reconciled:  PR #422
+Content baseline:    94b3012 (PR #430)
+Handoff reconciled:  PR #431
 Branches:            clean
 History:             rewritten twice (Co-authored-by removal). Current main is
                      canonical. No further rewrites.
