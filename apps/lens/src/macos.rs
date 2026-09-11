@@ -472,60 +472,30 @@ fn product_loop(
                     Err(_) => break,
                 }
             }
-            match current {
-                QuickJob::Quick {
-                    request,
-                    sentence,
-                    display_text,
-                    from_pixels,
-                    app,
-                    focused_word,
-                    generation,
-                    anchor,
-                    target_language,
-                } => {
-                    // Cache key is computed here, where translator.model() is
-                    // authoritative. The hover loop never builds cache keys;
-                    // it cannot know the resolved model without a race.
-                    let key = CacheKey::of(&request, translator.model(), QUICK_PROMPT_VERSION);
-                    // Check cache before paying for translation.
-                    {
-                        if let Ok(mut c) = quick_cache.lock() {
-                            if let Some(cached) = c.get(&key) {
-                                let _ = quick_result_tx.send(TransResult::Quick {
-                                    sentence,
-                                    display_text,
-                                    result: Ok(cached),
-                                    from_pixels,
-                                    app,
-                                    focused_word,
-                                    generation,
-                                    anchor,
-                                    target_language,
-                                });
-                                continue;
-                            }
-                        }
+            // Use the production seam: into_result derives target_language
+            // from the job's request, ensuring dispatch-time provenance.
+            let QuickJob::Quick { ref request, .. } = current;
+            // Cache key is computed here, where translator.model() is
+            // authoritative. The hover loop never builds cache keys;
+            // it cannot know the resolved model without a race.
+            let key = CacheKey::of(request, translator.model(), QUICK_PROMPT_VERSION);
+            // Check cache before paying for translation.
+            {
+                if let Ok(mut c) = quick_cache.lock() {
+                    if let Some(cached) = c.get(&key) {
+                        let _ = quick_result_tx.send(current.into_result(Ok(cached)));
+                        continue;
                     }
-                    let result = translator.quick(&request);
-                    if let Ok(ref t) = result {
-                        if let Ok(mut c) = quick_cache.lock() {
-                            c.insert(key, t.clone());
-                        }
-                    }
-                    let _ = quick_result_tx.send(TransResult::Quick {
-                        sentence,
-                        display_text,
-                        result: result.map_err(|e| e.user_message().to_owned()),
-                        from_pixels,
-                        app,
-                        focused_word,
-                        generation,
-                        anchor,
-                        target_language,
-                    });
                 }
             }
+            let result = translator.quick(request);
+            if let Ok(ref t) = result {
+                if let Ok(mut c) = quick_cache.lock() {
+                    c.insert(key, t.clone());
+                }
+            }
+            let _ = quick_result_tx
+                .send(current.into_result(result.map_err(|e| e.user_message().to_owned())));
         }
     });
 
@@ -552,56 +522,24 @@ fn product_loop(
                 };
                 let _ = translator.resolve_model();
             }
-            match job {
-                DeepJob::Deep {
-                    sentence,
-                    translation,
-                    target_language,
-                    profile,
-                    app,
-                    focused_word,
-                    generation,
-                    anchor,
-                } => {
-                    let deep_req = lens_core::analyse::DeepRequest {
-                        sentence: sentence.clone(),
-                        word: focused_word,
-                        target_language: target_language.clone(),
-                        translation,
-                        profile,
-                    };
-                    // Cache key uses model + prompt version for ADR-0005 separation.
-                    let key =
-                        CacheKey::for_analysis(&deep_req, translator.model(), DEEP_PROMPT_VERSION);
-                    // Check cache first — avoid re-generating the same analysis.
-                    if let Some(hit) = explanations.get(&key) {
-                        let _ = deep_result_tx.send(TransResult::Deep {
-                            sentence,
-                            result: Ok(hit),
-                            app,
-                            focused_word: deep_req.word,
-                            generation,
-                            anchor,
-                            target_language,
-                        });
-                        continue;
-                    }
-                    let result = translator.deep(&deep_req);
-                    // Cache successful results for future reuse.
-                    if let Ok(ref analysis) = result {
-                        explanations.insert(key, analysis.clone());
-                    }
-                    let _ = deep_result_tx.send(TransResult::Deep {
-                        sentence,
-                        result: result.map_err(|e| e.user_message().to_owned()),
-                        app,
-                        focused_word: deep_req.word,
-                        generation,
-                        anchor,
-                        target_language,
-                    });
-                }
+            // Use the production seam: build_request creates the DeepRequest
+            // from the job's fields, and into_result produces TransResult
+            // with the job's dispatch-time target_language.
+            let (deep_req, _result_word) = job.build_request();
+            // Cache key uses model + prompt version for ADR-0005 separation.
+            let key = CacheKey::for_analysis(&deep_req, translator.model(), DEEP_PROMPT_VERSION);
+            // Check cache first — avoid re-generating the same analysis.
+            if let Some(hit) = explanations.get(&key) {
+                let _ = deep_result_tx.send(job.into_result(Ok(hit)));
+                continue;
             }
+            let result = translator.deep(&deep_req);
+            // Cache successful results for future reuse.
+            if let Ok(ref analysis) = result {
+                explanations.insert(key, analysis.clone());
+            }
+            let _ = deep_result_tx
+                .send(job.into_result(result.map_err(|e| e.user_message().to_owned())));
         }
     });
 
@@ -970,7 +908,6 @@ fn product_loop(
                                             .map(str::to_owned),
                                         generation: current_generation,
                                         anchor: current_anchor,
-                                        target_language: language.clone(),
                                     });
                                     // Manual OCR: use the app from the OCR target itself,
                                     // not pending_app from a previous hover.
@@ -1301,7 +1238,6 @@ fn product_loop(
                             focused_word: current_focused_word.clone(),
                             generation: current_generation,
                             anchor: current_anchor,
-                            target_language: language.clone(),
                         });
                         // Store target for when result arrives.
                         current_app = pending_app.clone();

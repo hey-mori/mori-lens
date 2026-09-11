@@ -21,7 +21,7 @@
 
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
 };
 
@@ -36,8 +36,19 @@ use crate::library_service::SharedLibrary;
 /// Populated by the polling loop from a `Card` and read by the webview
 /// through `detail_read`. Carries enough to save to the library without
 /// reaching back to the card.
+///
+/// # Revision
+///
+/// Each new pin gets a monotonically increasing `revision`. The revision
+/// uniquely identifies the pinned detail instance and is used to ensure
+/// save results only apply to the same detail they were initiated for.
+/// Without this, a slow save for detail A could corrupt detail B if B
+/// was pinned while A's save was in flight.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct DetailView {
+    /// A stable identity for this pinned detail. Monotonically increasing,
+    /// assigned when the detail is pinned. Contains no screen text.
+    pub revision: u64,
     /// The sentence the reader pointed at.
     pub original: String,
     /// The translation, when there is one.
@@ -65,6 +76,18 @@ pub struct DetailView {
 /// Shared detail state, written by the polling loop and read by Tauri commands.
 pub type SharedDetail = Arc<Mutex<Option<DetailView>>>;
 
+/// Global revision counter for detail views.
+///
+/// Each new pin increments this counter and assigns the value to the
+/// DetailView's revision field. Atomic to avoid lock contention with
+/// the detail state mutex.
+static DETAIL_REVISION: AtomicU64 = AtomicU64::new(1);
+
+/// Get the next revision for a new detail pin.
+pub fn next_revision() -> u64 {
+    DETAIL_REVISION.fetch_add(1, Ordering::SeqCst)
+}
+
 /// A flag the detail window sets to ask the polling loop for an explanation.
 ///
 /// Atomic rather than behind the Mutex, because the polling loop checks it
@@ -81,6 +104,8 @@ pub type SharedSavePath = Arc<PathBuf>;
 ///
 /// Returns `None` when the card has nothing worth pinning (a problem or a
 /// half-arrived answer), matching [`lens_core::detail::Detail::from_card`].
+///
+/// Assigns a fresh revision from the global counter.
 #[allow(dead_code)]
 pub fn view_from_card(card: &lens_core::card::Card) -> Option<DetailView> {
     use lens_core::card::CardBody;
@@ -96,6 +121,7 @@ pub fn view_from_card(card: &lens_core::card::Card) -> Option<DetailView> {
         CardBody::Problem(_) | CardBody::Waiting(_) => return None,
     };
     Some(DetailView {
+        revision: next_revision(),
         original: card.original.clone(),
         translation,
         rows,
@@ -154,12 +180,19 @@ pub(crate) fn detail_copy(state: tauri::State<'_, SharedDetail>) -> bool {
 /// the row. Returns a structured outcome that distinguishes a real insert
 /// from a duplicate or a failure. On Duplicate, the existing row id is
 /// stored in the shared state so Note and Open-in-Library work.
+///
+/// # Stale-save safety
+///
+/// The save captures the detail's revision before releasing the lock.
+/// After IO completes, the result is applied only if the current detail's
+/// revision matches. This prevents a slow save for detail A from corrupting
+/// detail B if B was pinned while A's save was in flight.
 #[derive(Serialize)]
 #[serde(tag = "outcome")]
 pub(crate) enum DetailSaveOutcome {
-    Inserted { id: i64 },
-    Duplicate { id: i64 },
-    Failed { reason: String },
+    Inserted { id: i64, revision: u64 },
+    Duplicate { id: i64, revision: u64 },
+    Failed { reason: String, revision: u64 },
 }
 
 #[tauri::command]
@@ -168,20 +201,24 @@ pub(crate) fn detail_save(
     save_path: tauri::State<'_, SharedSavePath>,
     library: tauri::State<'_, SharedLibrary>,
 ) -> Result<DetailSaveOutcome, String> {
-    let guard = state.lock().unwrap();
-    let Some(view) = guard.as_ref() else {
-        return Err("nothing to save".to_owned());
+    // Capture revision and entry while holding the lock.
+    let (revision, entry) = {
+        let guard = state.lock().unwrap();
+        let Some(view) = guard.as_ref() else {
+            return Err("nothing to save".to_owned());
+        };
+        let entry = lens_core::keep::Entry {
+            original: view.original.clone(),
+            answer: view.translation.clone().unwrap_or_default(),
+            caveat: view.caveat.clone(),
+            app: view.app.clone(),
+            source_language: view.source_language.clone(),
+            target_language: view.target_language.clone(),
+            model: view.model.clone(),
+        };
+        (view.revision, entry)
     };
-    let entry = lens_core::keep::Entry {
-        original: view.original.clone(),
-        answer: view.translation.clone().unwrap_or_default(),
-        caveat: view.caveat.clone(),
-        app: view.app.clone(),
-        source_language: view.source_language.clone(),
-        target_language: view.target_language.clone(),
-        model: view.model.clone(),
-    };
-    drop(guard);
+    // Lock released; IO happens without holding the detail state.
 
     let lib_guard = library.lock().unwrap();
     let result = keeping::append(
@@ -192,20 +229,16 @@ pub(crate) fn detail_save(
     );
     match result {
         Ok(keeping::StructuredSave::Inserted(id)) => {
-            let mut guard = state.lock().unwrap();
-            if let Some(view) = guard.as_mut() {
-                view.item_id = Some(id);
-            }
-            Ok(DetailSaveOutcome::Inserted { id })
+            // Apply item_id only if the current detail is still the one we saved.
+            apply_item_id_if_current(&state, revision, id);
+            Ok(DetailSaveOutcome::Inserted { id, revision })
         }
         Ok(keeping::StructuredSave::Duplicate(id)) => {
             // The row already exists. Set item_id so Note and Open-in-Library
             // can find it, even though this save did not create a new row.
-            let mut guard = state.lock().unwrap();
-            if let Some(view) = guard.as_mut() {
-                view.item_id = Some(id);
-            }
-            Ok(DetailSaveOutcome::Duplicate { id })
+            // Only apply if the current detail is still the one we saved.
+            apply_item_id_if_current(&state, revision, id);
+            Ok(DetailSaveOutcome::Duplicate { id, revision })
         }
         Ok(keeping::StructuredSave::Failed(_detail)) => {
             // Sanitize: do not leak raw database errors to the webview.
@@ -213,9 +246,24 @@ pub(crate) fn detail_save(
             // failed. The user sees a stable Korean-friendly label.
             Ok(DetailSaveOutcome::Failed {
                 reason: "library-db".to_owned(),
+                revision,
             })
         }
         Err(not_kept) => Err(not_kept.user_message().to_owned()),
+    }
+}
+
+/// Apply item_id to the current detail only if its revision matches.
+///
+/// This is the stale-save race fix: a save that started for revision N
+/// must not mutate a detail with revision M > N (a newer pin).
+fn apply_item_id_if_current(state: &SharedDetail, expected_revision: u64, id: i64) {
+    let mut guard = state.lock().unwrap();
+    if let Some(view) = guard.as_mut() {
+        if view.revision == expected_revision {
+            view.item_id = Some(id);
+        }
+        // Otherwise, a newer detail was pinned; do not mutate it.
     }
 }
 
@@ -373,5 +421,80 @@ mod tests {
         let (detail, flag) = new_shared();
         assert!(detail.lock().unwrap().is_none());
         assert!(!flag.load(Ordering::Relaxed));
+    }
+
+    /// Each view_from_card call gets a fresh, monotonically increasing revision.
+    #[test]
+    fn view_from_card_assigns_unique_revision() {
+        let card1 = translation_card("first", "첫 번째");
+        let card2 = translation_card("second", "두 번째");
+        let view1 = view_from_card(&card1).unwrap();
+        let view2 = view_from_card(&card2).unwrap();
+        assert!(view2.revision > view1.revision);
+    }
+
+    /// apply_item_id_if_current sets item_id when revision matches.
+    #[test]
+    fn apply_item_id_sets_when_revision_matches() {
+        let state: SharedDetail = Arc::new(Mutex::new(Some(DetailView {
+            revision: 42,
+            original: "test".to_owned(),
+            ..Default::default()
+        })));
+
+        apply_item_id_if_current(&state, 42, 123);
+
+        let view = state.lock().unwrap();
+        assert_eq!(view.as_ref().unwrap().item_id, Some(123));
+    }
+
+    /// apply_item_id_if_current does NOT set item_id when revision differs.
+    /// This is the stale-save race fix: a save for revision N must not
+    /// mutate a detail with revision M > N.
+    #[test]
+    fn apply_item_id_does_not_set_when_revision_differs() {
+        let state: SharedDetail = Arc::new(Mutex::new(Some(DetailView {
+            revision: 100, // Newer detail
+            original: "newer".to_owned(),
+            ..Default::default()
+        })));
+
+        // Try to apply item_id for an older revision (simulating a slow save
+        // that started when revision was lower).
+        apply_item_id_if_current(&state, 42, 123);
+
+        let view = state.lock().unwrap();
+        // item_id should NOT be set because revision doesn't match.
+        assert_eq!(view.as_ref().unwrap().item_id, None);
+    }
+
+    /// The stale-save race scenario: detail A starts saving, detail B gets
+    /// pinned, A's save completes. B must NOT get A's item_id.
+    #[test]
+    fn stale_save_does_not_corrupt_newer_detail() {
+        let state: SharedDetail = Arc::new(Mutex::new(Some(DetailView {
+            revision: 1,
+            original: "detail A".to_owned(),
+            ..Default::default()
+        })));
+
+        // Capture revision before "IO" (simulating detail_save's first phase).
+        let captured_revision = state.lock().unwrap().as_ref().unwrap().revision;
+        assert_eq!(captured_revision, 1);
+
+        // Simulate: detail B gets pinned while A's save is in flight.
+        *state.lock().unwrap() = Some(DetailView {
+            revision: 2,
+            original: "detail B".to_owned(),
+            ..Default::default()
+        });
+
+        // A's save completes and tries to apply item_id.
+        apply_item_id_if_current(&state, captured_revision, 999);
+
+        // Detail B must NOT have A's item_id.
+        let view = state.lock().unwrap();
+        assert_eq!(view.as_ref().unwrap().original, "detail B");
+        assert_eq!(view.as_ref().unwrap().item_id, None);
     }
 }
