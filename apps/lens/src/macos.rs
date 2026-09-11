@@ -651,7 +651,7 @@ fn product_loop(
         ..HoverConfig::default()
     };
     let mut machine = HoverMachine::new(hover_config);
-    let mut current_card: Option<(Card, String)> = None;
+    let mut current_card: Option<(Card, String, String)> = None;
     let mut current_focused_word: Option<String> = None;
     let mut current_app: Option<String> = None;
     let mut pending_app: Option<String> = None;
@@ -704,11 +704,12 @@ fn product_loop(
                                 &anchor,
                                 PresentationKind::Reading,
                                 app.as_deref(),
+                                &language,
                                 &shared_recent,
                                 &shared_library,
                                 &shared_settings,
                             );
-                            current_card = Some((card, sentence));
+                            current_card = Some((card, sentence, language.clone()));
                             tally.card();
                         }
                         Err(msg) => {
@@ -724,11 +725,12 @@ fn product_loop(
                                 &anchor,
                                 PresentationKind::Feedback,
                                 None,
+                                &language,
                                 &shared_recent,
                                 &shared_library,
                                 &shared_settings,
                             );
-                            current_card = Some((card, sentence));
+                            current_card = Some((card, sentence, language.clone()));
                             tally.card();
                         }
                     }
@@ -756,11 +758,12 @@ fn product_loop(
                                 &anchor,
                                 PresentationKind::Reading,
                                 app.as_deref(),
+                                &language,
                                 &shared_recent,
                                 &shared_library,
                                 &shared_settings,
                             );
-                            current_card = Some((card, sentence));
+                            current_card = Some((card, sentence, language.clone()));
                             tally.card();
                         }
                         Err(msg) => {
@@ -776,11 +779,12 @@ fn product_loop(
                                 &anchor,
                                 PresentationKind::Feedback,
                                 None,
+                                &language,
                                 &shared_recent,
                                 &shared_library,
                                 &shared_settings,
                             );
-                            current_card = Some((card, sentence));
+                            current_card = Some((card, sentence, language.clone()));
                             tally.card();
                         }
                     }
@@ -860,7 +864,7 @@ fn product_loop(
                     }
                 }
                 ProductCommand::Deep => {
-                    if let Some((ref card, ref sentence)) = current_card {
+                    if let Some((ref card, ref sentence, ref _target_lang)) = current_card {
                         // Extract the on-screen translation if the current card
                         // is a finished translation. This grounds the deep
                         // analysis in what the reader is actually looking at
@@ -892,7 +896,7 @@ fn product_loop(
                     }
                 }
                 ProductCommand::Copy => {
-                    if let Some((ref card, _)) = current_card {
+                    if let Some((ref card, ref _sentence, ref _target_lang)) = current_card {
                         if let Some(text) = card.for_the_clipboard() {
                             if !clipboard::put_text(&text) {
                                 eprintln!("copy  the clipboard would not open");
@@ -903,6 +907,7 @@ fn product_loop(
                                     &current_anchor,
                                     PresentationKind::Feedback,
                                     None,
+                                    &language,
                                     &shared_recent,
                                     &shared_library,
                                     &shared_settings,
@@ -918,6 +923,7 @@ fn product_loop(
                                 &current_anchor,
                                 PresentationKind::Feedback,
                                 None,
+                                &language,
                                 &shared_recent,
                                 &shared_library,
                                 &shared_settings,
@@ -926,22 +932,13 @@ fn product_loop(
                     }
                 }
                 ProductCommand::Save => {
-                    if let Some((ref card, ref _sentence)) = current_card {
-                        // Select the model that produced this card: Analysis
-                        // cards come from the Deep path, everything else from
-                        // the Quick path. Using the wrong model would record
-                        // incorrect provenance in the library.
-                        let model = match &card.body {
-                            lens_core::card::CardBody::Analysis { .. } => &ai_config.deep.model,
-                            _ => &ai_config.quick.model,
-                        };
+                    if let Some((ref card, ref _sentence, ref target_lang)) = current_card {
                         let lib_guard = shared_library.lock().unwrap();
                         execute_save(
                             card,
                             current_app.as_deref(),
                             &shared_save_path,
-                            &language,
-                            model,
+                            target_lang,
                             lib_guard.library(),
                         );
                     }
@@ -974,6 +971,7 @@ fn product_loop(
                                 &current_anchor,
                                 PresentationKind::Feedback,
                                 None,
+                                &language,
                                 &shared_recent,
                                 &shared_library,
                                 &shared_settings,
@@ -1023,6 +1021,7 @@ fn product_loop(
                                             metadata: None,
                                         },
                                         sentence,
+                                        language.clone(),
                                     ));
                                 }
                             }
@@ -1035,6 +1034,7 @@ fn product_loop(
                                     &current_anchor,
                                     PresentationKind::Feedback,
                                     None,
+                                    &language,
                                     &shared_recent,
                                     &shared_library,
                                     &shared_settings,
@@ -1229,6 +1229,7 @@ fn product_loop(
                                     &ScreenRect::new(point.x, point.y, 1, 1),
                                     PresentationKind::Feedback,
                                     None,
+                                    &language,
                                     &shared_recent,
                                     &shared_library,
                                     &shared_settings,
@@ -1308,12 +1309,13 @@ fn product_loop(
                             &target,
                             PresentationKind::Feedback,
                             None,
+                            &language,
                             &shared_recent,
                             &shared_library,
                             &shared_settings,
                         );
                         current_app = pending_app.clone();
-                        current_card = Some((card, sentence));
+                        current_card = Some((card, sentence, language.clone()));
                     }
                     _ => {
                         let mut request = QuickRequest::new(&sentence, &language);
@@ -1346,6 +1348,7 @@ fn product_loop(
                                 metadata: None,
                             },
                             sentence,
+                            language.clone(),
                         ));
                     }
                 }
@@ -1374,22 +1377,17 @@ fn product_loop(
 /// Delegates to `keeping::save_card()` which enforces eligibility (only
 /// Translation/Analysis), populates metadata, writes both saved.md and
 /// library.db, and serializes concurrent saves.
+///
+/// The model name comes from the card's metadata (set at construction time
+/// from the actual translation result), not from the current configuration.
 fn execute_save(
     card: &Card,
     app: Option<&str>,
     save_path: &std::path::Path,
     language: &str,
-    model: &Option<String>,
     library: &lens_storage::Library,
 ) {
-    match crate::keeping::save_card(
-        card,
-        app,
-        save_path,
-        Some(language.to_owned()),
-        model.clone(),
-        library,
-    ) {
+    match crate::keeping::save_card(card, app, save_path, Some(language.to_owned()), library) {
         Ok(crate::keeping::StructuredSave::Inserted(id)) => {
             eprintln!("  save      saved as library item #{id}")
         }
@@ -1422,6 +1420,7 @@ fn show_card(
     target: &lens_core::acquire::TextTarget,
     kind: PresentationKind,
     source_app: Option<&str>,
+    target_language: &str,
     shared_recent: &SharedRecent,
     shared_library: &SharedLibrary,
     shared_settings: &SharedSettings,
@@ -1436,6 +1435,7 @@ fn show_card(
         &anchor,
         kind,
         source_app,
+        target_language,
         shared_recent,
         shared_library,
         shared_settings,
@@ -1448,6 +1448,7 @@ fn show_card_at(
     anchor: &ScreenRect,
     kind: PresentationKind,
     source_app: Option<&str>,
+    target_language: &str,
     shared_recent: &SharedRecent,
     shared_library: &SharedLibrary,
     shared_settings: &SharedSettings,
@@ -1472,6 +1473,7 @@ fn show_card_at(
             record_presented_reading(
                 card,
                 source_app,
+                target_language,
                 shared_recent,
                 shared_library,
                 shared_settings,
@@ -1487,6 +1489,7 @@ fn show_card_at(
 fn record_presented_reading(
     card: &Card,
     source_app: Option<&str>,
+    target_language: &str,
     recent: &SharedRecent,
     library: &SharedLibrary,
     settings: &SharedSettings,
@@ -1554,7 +1557,7 @@ fn record_presented_reading(
                     answer: answer_text,
                     kind: kind.to_owned(),
                     source_language: None,
-                    target_language: Some(current.language.clone()),
+                    target_language: Some(target_language.to_owned()),
                     model,
                     app: stored_app,
                     provenance: provenance.to_owned(),
