@@ -42,6 +42,8 @@ Repository-local bounded diagnostics follow-up remains.
 - Windows Copy preserves source_app through feedback card (PR #437)
 - Detail frontend surfaces StructuredSave::Failed with degraded status (PR #437)
 - Detail degraded-save warning survives 2-second polling refresh (saveStatus variable persists across render())
+- Detail save status DOM mutation guarded by currentDetailRevision: stale async
+  responses for a previous detail never write to or clear the current detail's UI
 - Code signing: NOT CONFIGURED (Store account or self-signed certificate needed)
 - Ollama + both models available locally (translategemma:latest, qwen2.5:7b)
 
@@ -113,6 +115,9 @@ Real macOS product build/run verification: PENDING.
 - Selftest focused word privacy: length logged, not content (PR #389)
 - History metadata typed fields replace footer parsing (PR #397)
 - Async result target_language bound at dispatch time (PR #437)
+- Production provenance seam: QuickJob/DeepJob into_result() called by macOS
+  workers; unit regression tests are cross-platform (dispatch_carrier module)
+  and pass on Windows. Real macOS app runtime: PENDING.
 
 **macOS deferred:**
 - HoverSession/HoverWorker: DEFERRED (macOS uses inline acquisition, follows core contract)
@@ -176,9 +181,9 @@ scripts/check.sh --full:     PASS (2026-09-11, local Windows host)
   lens-storage:              72 passed
   lens-translate:            51 passed, 51 ignored
   lens-platform-macos:       0 tests (cfg macOS, not compiled on Windows)
-  apps/lens:                 157 passed
+  apps/lens:                 161 passed
   no_console_window:         1 passed
-Total:                       866 passed, 105 ignored
+Total:                       870 passed, 105 ignored
 ```
 
 ### Full-gate scope truth
