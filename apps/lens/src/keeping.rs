@@ -55,6 +55,34 @@ pub fn path_beside(settings: &Path) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("saved.md"))
 }
 
+/// Outcome of writing to the structured store (library.db).
+///
+/// The markdown file (saved.md) is the durable safety net and is always
+/// written before the structured store. This type distinguishes what
+/// happened on the structured-store side so callers can tell a legitimate
+/// duplicate from a query or insert failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StructuredSave {
+    /// The item was inserted. Carries the new row id.
+    Inserted(i64),
+    /// The item is a duplicate (same original, kind, model, target_language
+    /// per ADR-0013). The database already has this item.
+    Duplicate,
+    /// The structured store write failed. The markdown file already has
+    /// the entry. Carries the error detail for diagnostics.
+    Failed(String),
+}
+
+impl StructuredSave {
+    /// The inserted row id, if any.
+    pub fn item_id(&self) -> Option<i64> {
+        match self {
+            Self::Inserted(id) => Some(*id),
+            Self::Duplicate | Self::Failed(_) => None,
+        }
+    }
+}
+
 /// Why an entry was not kept, in words a card can show.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NotKept {
@@ -100,9 +128,9 @@ impl NotKept {
 /// Creates the file and its heading on first use, and opens (or creates) the
 /// database and runs any pending migrations.
 ///
-/// Returns the library item id when the database insert succeeds, or `None`
-/// when the database write was skipped (duplicate or error). The file write
-/// always succeeds independently.
+/// Returns a [`StructuredSave`] that distinguishes a real insert from a
+/// duplicate or a database failure. The file write always succeeds
+/// independently.
 ///
 /// # Concurrency
 ///
@@ -115,7 +143,7 @@ pub fn append(
     entry: &Entry,
     at: SystemTime,
     library: &Library,
-) -> Result<Option<i64>, NotKept> {
+) -> Result<StructuredSave, NotKept> {
     let _guard = SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     if let Some(folder) = file.parent() {
@@ -185,7 +213,7 @@ pub fn append(
 /// this function when they have a `Card` to save. It enforces:
 ///
 /// - **Eligibility**: only Translation and Analysis cards are savable.
-///   Problem and Waiting cards return `Ok(None)` (nothing to keep).
+///   Problem and Waiting cards return `Err(NotKept::NothingToKeep)`.
 /// - **Metadata**: target_language and model are populated on the Entry.
 /// - **Storage contract**: both saved.md and library.db are written via
 ///   `append()`, per ADR-0013/ADR-0015.
@@ -199,7 +227,7 @@ pub fn save_card(
     target_language: Option<String>,
     model: Option<String>,
     library: &Library,
-) -> Result<Option<i64>, NotKept> {
+) -> Result<StructuredSave, NotKept> {
     let mut entry = card.kept_as(app).ok_or(NotKept::NothingToKeep)?;
     entry.target_language = target_language;
     entry.model = model;
@@ -209,15 +237,20 @@ pub fn save_card(
 
 /// Insert the entry into the shared library database.
 ///
-/// Returns the new row id on success, or `None` on failure or duplicate.
-/// The caller (append) has already written the file, so a database error
-/// here does not prevent the save from completing.
+/// Returns a [`StructuredSave`] that distinguishes a real insert from a
+/// legitimate duplicate and from a query or insert failure. The caller
+/// (`append`) has already written the file, so a database error here does
+/// not prevent the save from completing.
 ///
 /// A duplicate (same original text, kind, model, and target language per
 /// ADR-0013) is silently skipped: the file still gets the entry because
 /// it is append-only, but the database does not store the same sentence
 /// twice with the same provenance.
-fn write_to_library(lib: &Library, entry: &Entry, at: SystemTime) -> Option<i64> {
+///
+/// A `has_duplicate` query failure is reported as [`StructuredSave::Failed`]
+/// rather than silently treated as "not duplicate" — a SELECT error is not
+/// evidence that the item is new.
+fn write_to_library(lib: &Library, entry: &Entry, at: SystemTime) -> StructuredSave {
     let seconds = at
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or(std::time::Duration::ZERO)
@@ -231,16 +264,20 @@ fn write_to_library(lib: &Library, entry: &Entry, at: SystemTime) -> Option<i64>
     // Skip duplicates: a sentence kept twice with the same model and target
     // language produces one database row. ADR-0013 requires that a different
     // model or a different target language for the same sentence is a new row.
-    if lib
-        .has_duplicate(
-            &entry.original,
-            kind,
-            entry.model.as_deref(),
-            entry.target_language.as_deref(),
-        )
-        .unwrap_or(false)
-    {
-        return None;
+    let duplicate_check = lib.has_duplicate(
+        &entry.original,
+        kind,
+        entry.model.as_deref(),
+        entry.target_language.as_deref(),
+    );
+    match duplicate_check {
+        Ok(true) => return StructuredSave::Duplicate,
+        Err(e) => {
+            // A SELECT failure is not evidence that the item is new. Return
+            // Failed rather than proceeding to insert and creating a duplicate.
+            return StructuredSave::Failed(format!("has_duplicate: {e}"));
+        }
+        Ok(false) => {}
     }
 
     let item = Item {
@@ -258,7 +295,10 @@ fn write_to_library(lib: &Library, entry: &Entry, at: SystemTime) -> Option<i64>
         tags: None,
         review_state: None,
     };
-    lib.insert(&item).ok()
+    match lib.insert(&item) {
+        Ok(id) => StructuredSave::Inserted(id),
+        Err(e) => StructuredSave::Failed(format!("insert: {e}")),
+    }
 }
 
 #[cfg(test)]
@@ -440,14 +480,45 @@ mod tests {
         let at = UNIX_EPOCH + Duration::from_secs(1_786_075_140);
         let lib = scratch_library(&file);
 
-        let id = append(&file, &an_entry("hello"), at, &lib)
-            .expect("kept")
-            .expect("an id");
-        assert!(id > 0, "id is a positive row id");
+        let save = append(&file, &an_entry("hello"), at, &lib).expect("kept");
+        assert!(matches!(save, StructuredSave::Inserted(id) if id > 0));
 
-        // A duplicate returns None (file succeeds, database skips).
+        // A duplicate returns Duplicate (file succeeds, database skips).
         let dup = append(&file, &an_entry("hello"), at, &lib).expect("kept");
-        assert!(dup.is_none(), "duplicate returns None");
+        assert_eq!(dup, StructuredSave::Duplicate, "duplicate returns Duplicate");
+        let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
+    }
+
+    /// StructuredSave::item_id() returns Some only for Inserted.
+    #[test]
+    fn structured_save_item_id_variants() {
+        assert_eq!(StructuredSave::Inserted(42).item_id(), Some(42));
+        assert_eq!(StructuredSave::Duplicate.item_id(), None);
+        assert_eq!(StructuredSave::Failed("err".into()).item_id(), None);
+    }
+
+    /// A different model for the same sentence is a new row, not a duplicate.
+    #[test]
+    fn different_model_is_not_a_duplicate() {
+        let file = scratch("diff-model-not-dup");
+        let at = UNIX_EPOCH + Duration::from_secs(1_786_075_140);
+        let lib = scratch_library(&file);
+
+        let mut entry_a = an_entry("same sentence");
+        entry_a.model = Some("model-a".to_owned());
+        let mut entry_b = an_entry("same sentence");
+        entry_b.model = Some("model-b".to_owned());
+
+        let save_a = append(&file, &entry_a, at, &lib).expect("first keep");
+        assert!(matches!(save_a, StructuredSave::Inserted(_)));
+
+        let save_b = append(&file, &entry_b, at, &lib).expect("second keep");
+        assert!(matches!(save_b, StructuredSave::Inserted(_)));
+
+        // Different models produce two rows even for the same original text.
+        let db_path = file.parent().unwrap().join("library.db");
+        let verify = Library::open(&db_path).unwrap();
+        assert_eq!(verify.count().unwrap(), 2, "different model is not duplicate");
         let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
     }
 
