@@ -132,13 +132,16 @@ REAL Mori watcher end-to-end: not human/runtime verified
 
 ### Git workflow safety (PR #372, #412)
 
-- All main changes via PR (enforced by pre-push hook, PR #372)
-- Non-fast-forward published branch push rejected (pre-push hook, PR #412)
+- All main changes via PR (enforced by local pre-push hook, PR #372)
+- Non-fast-forward published branch push rejected (local pre-push hook, PR #412)
 - Commit attribution guard (PR #370)
+- Server branch protection: OFF (no GitHub ruleset; enforcement is local only)
 - Historical fact: published history was rewritten twice in old sessions
   (Co-authored-by removal). Current main is canonical baseline.
-- CURRENT POLICY: NO FUTURE HISTORY REWRITE
-- CURRENT SESSION: NO FORCE PUSHES, NO DIRECT MAIN PUSHES
+- CURRENT POLICY: direct-main and non-fast-forward autonomous pushes forbidden
+- ENFORCEMENT: local pre-push hook when installed (core.hooksPath = .githooks)
+- Historical violations: published main rewritten twice; one feature branch
+  force-pushed before PR #412
 
 ### Distribution infrastructure
 
@@ -387,12 +390,14 @@ Do not reopen UIA GetVisibleRanges research without new independent evidence.
 ## Git State
 
 ```
-latest merge: PR #420 (test: prove Quick/Deep model-switch cache isolation)
-HEAD:         2793b71
-Branches:     clean
-History:      rewritten twice (Co-authored-by removal). Current main is canonical.
-              No further rewrites.
-Pre-push:     rejects direct main push, rejects non-fast-forward push
+Content baseline:    2793b71 (PR #420)
+Handoff reconciled:  PR #422
+Branches:            clean
+History:             rewritten twice (Co-authored-by removal). Current main is
+                     canonical. No further rewrites.
+Local pre-push hook: rejects direct main push, rejects non-fast-forward push
+                     (active when core.hooksPath = .githooks)
+Server branch protection: OFF (no GitHub ruleset)
 always run `git log -1` at session start for actual HEAD.
 ```
 
