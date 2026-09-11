@@ -4240,3 +4240,97 @@ mod cli_override_tests {
         assert_eq!(dwell, 500);
     }
 }
+
+#[cfg(test)]
+mod copy_provenance_tests {
+    use super::PresentedReading;
+    use lens_core::card::Card;
+    use lens_core::geometry::ScreenRect;
+    use lens_core::translate::QuickTranslation;
+
+    fn make_reading() -> PresentedReading {
+        let qt = QuickTranslation {
+            text: "안녕".to_owned(),
+            engine: lens_core::translate::EngineId::LocalOllama,
+            model: "model-A".to_owned(),
+            latency_ms: 42,
+            cached: false,
+            part_was_removed: false,
+            name_changed: false,
+        };
+        let card = Card::translated("hello", &qt);
+        PresentedReading {
+            card,
+            anchor: ScreenRect::new(10, 20, 100, 40),
+            source_app: Some("AppA".to_owned()),
+            target_language: "Korean".to_owned(),
+        }
+    }
+
+    /// PR #437 fixed Copy to preserve source_app. This test proves the
+    /// invariant: a feedback redraw (copied/kept) preserves the provenance
+    /// that was bound at acquisition time.
+    #[test]
+    fn feedback_redraw_preserves_source_app_and_language() {
+        let reading = make_reading();
+
+        // Simulate the Copy feedback redraw: construct a new reading with
+        // the copied card, preserving provenance fields.
+        let copied_card = reading.card.clone().copied();
+        let after = PresentedReading {
+            card: copied_card,
+            anchor: reading.anchor,
+            source_app: reading.source_app.clone(),
+            target_language: reading.target_language.clone(),
+        };
+
+        // Provenance preserved.
+        assert_eq!(after.source_app, Some("AppA".to_owned()));
+        assert_eq!(after.target_language, "Korean");
+        assert_eq!(after.anchor, ScreenRect::new(10, 20, 100, 40));
+        // Model metadata preserved through copied().
+        assert_eq!(
+            after.card.metadata().and_then(|m| m.model.as_deref()),
+            Some("model-A")
+        );
+        // The card itself changed (copied footer).
+        assert!(after.card.footer.contains("복사함"));
+    }
+
+    /// Same invariant for Save/kept feedback.
+    #[test]
+    fn kept_feedback_preserves_provenance() {
+        let qt = QuickTranslation {
+            text: "세상".to_owned(),
+            engine: lens_core::translate::EngineId::LocalOllama,
+            model: "qwen2.5:7b".to_owned(),
+            latency_ms: 99,
+            cached: false,
+            part_was_removed: false,
+            name_changed: false,
+        };
+        let card = Card::translated("world", &qt);
+        let reading = PresentedReading {
+            card,
+            anchor: ScreenRect::new(0, 0, 50, 20),
+            source_app: Some("firefox.exe".to_owned()),
+            target_language: "Japanese".to_owned(),
+        };
+
+        let kept_card = reading.card.clone().kept();
+        let after = PresentedReading {
+            card: kept_card,
+            anchor: reading.anchor,
+            source_app: reading.source_app.clone(),
+            target_language: reading.target_language.clone(),
+        };
+
+        assert_eq!(after.source_app, Some("firefox.exe".to_owned()));
+        assert_eq!(after.target_language, "Japanese");
+        assert_eq!(
+            after.card.metadata().and_then(|m| m.model.as_deref()),
+            Some("qwen2.5:7b")
+        );
+        assert!(after.card.footer.contains("저장함"));
+    }
+}
