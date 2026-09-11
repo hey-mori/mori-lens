@@ -403,6 +403,7 @@ fn product_loop(
             focused_word: Option<String>,
             generation: u64,
             anchor: ScreenRect,
+            target_language: String,
         },
     }
     enum DeepJob {
@@ -427,6 +428,7 @@ fn product_loop(
             focused_word: Option<String>,
             generation: u64,
             anchor: ScreenRect,
+            target_language: String,
         },
         Deep {
             sentence: String,
@@ -435,6 +437,7 @@ fn product_loop(
             focused_word: Option<String>,
             generation: u64,
             anchor: ScreenRect,
+            target_language: String,
         },
     }
 
@@ -526,6 +529,7 @@ fn product_loop(
                     focused_word,
                     generation,
                     anchor,
+                    target_language,
                 } => {
                     // Cache key is computed here, where translator.model() is
                     // authoritative. The hover loop never builds cache keys;
@@ -544,6 +548,7 @@ fn product_loop(
                                     focused_word,
                                     generation,
                                     anchor,
+                                    target_language,
                                 });
                                 continue;
                             }
@@ -564,6 +569,7 @@ fn product_loop(
                         focused_word,
                         generation,
                         anchor,
+                        target_language,
                     });
                 }
             }
@@ -607,7 +613,7 @@ fn product_loop(
                     let deep_req = lens_core::analyse::DeepRequest {
                         sentence: sentence.clone(),
                         word: focused_word,
-                        target_language,
+                        target_language: target_language.clone(),
                         translation,
                         profile,
                     };
@@ -623,6 +629,7 @@ fn product_loop(
                             focused_word: deep_req.word,
                             generation,
                             anchor,
+                            target_language,
                         });
                         continue;
                     }
@@ -638,6 +645,7 @@ fn product_loop(
                         focused_word: deep_req.word,
                         generation,
                         anchor,
+                        target_language,
                     });
                 }
             }
@@ -685,6 +693,7 @@ fn product_loop(
                     focused_word,
                     generation,
                     anchor,
+                    target_language,
                 } => {
                     if generation != current_generation {
                         continue;
@@ -704,12 +713,12 @@ fn product_loop(
                                 &anchor,
                                 PresentationKind::Reading,
                                 app.as_deref(),
-                                &language,
+                                &target_language,
                                 &shared_recent,
                                 &shared_library,
                                 &shared_settings,
                             );
-                            current_card = Some((card, sentence, language.clone()));
+                            current_card = Some((card, sentence, target_language));
                             tally.card();
                         }
                         Err(msg) => {
@@ -725,12 +734,12 @@ fn product_loop(
                                 &anchor,
                                 PresentationKind::Feedback,
                                 None,
-                                &language,
+                                &target_language,
                                 &shared_recent,
                                 &shared_library,
                                 &shared_settings,
                             );
-                            current_card = Some((card, sentence, language.clone()));
+                            current_card = Some((card, sentence, target_language));
                             tally.card();
                         }
                     }
@@ -742,6 +751,7 @@ fn product_loop(
                     focused_word,
                     generation,
                     anchor,
+                    target_language,
                 } => {
                     if generation != current_generation {
                         continue;
@@ -758,12 +768,12 @@ fn product_loop(
                                 &anchor,
                                 PresentationKind::Reading,
                                 app.as_deref(),
-                                &language,
+                                &target_language,
                                 &shared_recent,
                                 &shared_library,
                                 &shared_settings,
                             );
-                            current_card = Some((card, sentence, language.clone()));
+                            current_card = Some((card, sentence, target_language));
                             tally.card();
                         }
                         Err(msg) => {
@@ -779,12 +789,12 @@ fn product_loop(
                                 &anchor,
                                 PresentationKind::Feedback,
                                 None,
-                                &language,
+                                &target_language,
                                 &shared_recent,
                                 &shared_library,
                                 &shared_settings,
                             );
-                            current_card = Some((card, sentence, language.clone()));
+                            current_card = Some((card, sentence, target_language));
                             tally.card();
                         }
                     }
@@ -1007,6 +1017,7 @@ fn product_loop(
                                             .map(str::to_owned),
                                         generation: current_generation,
                                         anchor: current_anchor,
+                                        target_language: language.clone(),
                                     });
                                     // Manual OCR: use the app from the OCR target itself,
                                     // not pending_app from a previous hover.
@@ -1337,6 +1348,7 @@ fn product_loop(
                             focused_word: current_focused_word.clone(),
                             generation: current_generation,
                             anchor: current_anchor,
+                            target_language: language.clone(),
                         });
                         // Store target for when result arrives.
                         current_app = pending_app.clone();
