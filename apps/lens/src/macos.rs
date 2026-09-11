@@ -19,6 +19,8 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::dispatch_carrier::{DeepJob, QuickJob, TransResult};
+
 use lens_core::acquire::{AcquireContext, AcquireError, AcquisitionSource, TextAcquirer};
 use lens_core::analyse::Analyser;
 use lens_core::cache::{AnalysisCache, CacheKey, TranslationCache};
@@ -392,55 +394,6 @@ fn product_loop(
     mut hover_scope: String,
     auto: bool,
 ) {
-    // Translation job types for async dispatch.
-    enum QuickJob {
-        Quick {
-            request: QuickRequest,
-            sentence: String,
-            display_text: String,
-            from_pixels: bool,
-            app: Option<String>,
-            focused_word: Option<String>,
-            generation: u64,
-            anchor: ScreenRect,
-            target_language: String,
-        },
-    }
-    enum DeepJob {
-        Deep {
-            sentence: String,
-            translation: Option<String>,
-            target_language: String,
-            profile: lens_core::analyse::Profile,
-            app: Option<String>,
-            focused_word: Option<String>,
-            generation: u64,
-            anchor: ScreenRect,
-        },
-    }
-    enum TransResult {
-        Quick {
-            sentence: String,
-            display_text: String,
-            result: Result<lens_core::translate::QuickTranslation, String>,
-            from_pixels: bool,
-            app: Option<String>,
-            focused_word: Option<String>,
-            generation: u64,
-            anchor: ScreenRect,
-            target_language: String,
-        },
-        Deep {
-            sentence: String,
-            result: Result<lens_core::analyse::DeepAnalysis, String>,
-            app: Option<String>,
-            focused_word: Option<String>,
-            generation: u64,
-            anchor: ScreenRect,
-            target_language: String,
-        },
-    }
-
     // Prune old history entries on startup, if history retention is configured.
     // Matches the Windows startup path (win.rs).
     {
