@@ -3,7 +3,7 @@
 Last updated: 2026-09-11
 
 Current canonical main:
-94b3012
+100d459
 
 This is the SHA at which handoff content was written.
 The docs PR merge commit will differ; that is natural.
@@ -36,6 +36,9 @@ Repository-local bounded diagnostics follow-up remains.
 - StructuredSave truth propagated to detail/hotkey callers (PR #429)
 - History entries persist target_language from settings (PR #430)
 - StructuredSave enum distinguishes Inserted/Duplicate/Failed (PR #426)
+- PresentedReading struct binds language/model at card creation (PR #432)
+- Duplicate id carried through StructuredSave and Detail frontend (PR #433)
+- Dual-store feedback reflects file and library truth (PR #434)
 - Code signing: NOT CONFIGURED (Store account or self-signed certificate needed)
 - Ollama + both models available locally (translategemma:latest, qwen2.5:7b)
 
@@ -165,12 +168,12 @@ scripts/check.sh --full:     PASS (2026-09-11, local Windows host)
   lens-core:                 493 passed
   lens-platform-windows:     40 passed, 54 ignored
   lens-settings:             23 passed
-  lens-storage:              71 passed
+  lens-storage:              72 passed
   lens-translate:            51 passed, 51 ignored
   lens-platform-macos:       0 tests (cfg macOS, not compiled on Windows)
-  apps/lens:                 148 passed
+  apps/lens:                 151 passed
   no_console_window:         1 passed
-Total:                       856 passed, 105 ignored
+Total:                       859 passed, 105 ignored
 ```
 
 ### Full-gate scope truth
@@ -392,8 +395,8 @@ Do not reopen UIA GetVisibleRanges research without new independent evidence.
 ## Git State
 
 ```
-Content baseline:    94b3012 (PR #430)
-Handoff reconciled:  PR #431
+Content baseline:    100d459 (PR #434)
+Handoff reconciled:  PR #435
 Branches:            clean
 History:             rewritten twice (Co-authored-by removal). Current main is
                      canonical. No further rewrites.
