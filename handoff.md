@@ -3,7 +3,7 @@
 Last updated: 2026-09-11
 
 Current canonical main:
-100d459
+664d7e5
 
 This is the SHA at which handoff content was written.
 The docs PR merge commit will differ; that is natural.
@@ -39,6 +39,8 @@ Repository-local bounded diagnostics follow-up remains.
 - PresentedReading struct binds language/model at card creation (PR #432)
 - Duplicate id carried through StructuredSave and Detail frontend (PR #433)
 - Dual-store feedback reflects file and library truth (PR #434)
+- Windows Copy preserves source_app through feedback card (PR #437)
+- Detail frontend surfaces StructuredSave::Failed with degraded status (PR #437)
 - Code signing: NOT CONFIGURED (Store account or self-signed certificate needed)
 - Ollama + both models available locally (translategemma:latest, qwen2.5:7b)
 
@@ -108,6 +110,7 @@ Real macOS product build/run verification: PENDING.
 - CLI missing-value validation (PR #388)
 - Selftest focused word privacy: length logged, not content (PR #389)
 - History metadata typed fields replace footer parsing (PR #397)
+- Async result target_language bound at dispatch time (PR #437)
 
 **macOS deferred:**
 - HoverSession/HoverWorker: DEFERRED (macOS uses inline acquisition, follows core contract)
@@ -173,7 +176,7 @@ scripts/check.sh --full:     PASS (2026-09-11, local Windows host)
   lens-platform-macos:       0 tests (cfg macOS, not compiled on Windows)
   apps/lens:                 151 passed
   no_console_window:         1 passed
-Total:                       859 passed, 105 ignored
+Total:                       860 passed, 105 ignored
 ```
 
 ### Full-gate scope truth
@@ -395,8 +398,8 @@ Do not reopen UIA GetVisibleRanges research without new independent evidence.
 ## Git State
 
 ```
-Content baseline:    100d459 (PR #434)
-Handoff reconciled:  PR #435
+Content baseline:    664d7e5 (PR #437)
+Handoff reconciled:  PR #438
 Branches:            clean
 History:             rewritten twice (Co-authored-by removal). Current main is
                      canonical. No further rewrites.
