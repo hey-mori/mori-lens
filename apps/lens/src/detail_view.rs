@@ -152,12 +152,13 @@ pub(crate) fn detail_copy(state: tauri::State<'_, SharedDetail>) -> bool {
 /// Calls [`keeping::append`] and stores the returned item id in the shared
 /// state so subsequent note saves and the open-in-library button can find
 /// the row. Returns a structured outcome that distinguishes a real insert
-/// from a duplicate or a failure.
+/// from a duplicate or a failure. On Duplicate, the existing row id is
+/// stored in the shared state so Note and Open-in-Library work.
 #[derive(Serialize)]
 #[serde(tag = "outcome")]
 pub(crate) enum DetailSaveOutcome {
     Inserted { id: i64 },
-    Duplicate,
+    Duplicate { id: i64 },
     Failed { reason: String },
 }
 
@@ -197,8 +198,23 @@ pub(crate) fn detail_save(
             }
             Ok(DetailSaveOutcome::Inserted { id })
         }
-        Ok(keeping::StructuredSave::Duplicate) => Ok(DetailSaveOutcome::Duplicate),
-        Ok(keeping::StructuredSave::Failed(reason)) => Ok(DetailSaveOutcome::Failed { reason }),
+        Ok(keeping::StructuredSave::Duplicate(id)) => {
+            // The row already exists. Set item_id so Note and Open-in-Library
+            // can find it, even though this save did not create a new row.
+            let mut guard = state.lock().unwrap();
+            if let Some(view) = guard.as_mut() {
+                view.item_id = Some(id);
+            }
+            Ok(DetailSaveOutcome::Duplicate { id })
+        }
+        Ok(keeping::StructuredSave::Failed(_detail)) => {
+            // Sanitize: do not leak raw database errors to the webview.
+            // The file write already succeeded; only the structured store
+            // failed. The user sees a stable Korean-friendly label.
+            Ok(DetailSaveOutcome::Failed {
+                reason: "library-db".to_owned(),
+            })
+        }
         Err(not_kept) => Err(not_kept.user_message().to_owned()),
     }
 }
