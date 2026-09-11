@@ -1453,7 +1453,7 @@ pub fn main() -> std::process::ExitCode {
                             std::time::SystemTime::now(),
                             lib_guard.library(),
                         ) {
-                            Ok(_item_id) => {
+                            Ok(_save) => {
                                 // Lengths and lines, never the text
                                 // (`docs/privacy-model.md` §3). The path is not
                                 // secret and is the useful half.
@@ -3231,7 +3231,7 @@ total {}ms from acquisition to card",
                             &selftest_lib,
                         )
                     }) {
-                    Ok(_item_id) => {
+                    Ok(_save) => {
                         let written = std::fs::read_to_string(&scratch).unwrap_or_default();
                         // Shape, not content: the file holds a sentence off
                         // this machine's screen (`docs/privacy-model.md` §3).

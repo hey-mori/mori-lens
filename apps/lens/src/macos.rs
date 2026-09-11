@@ -1382,8 +1382,15 @@ fn execute_save(
         model.clone(),
         library,
     ) {
-        Ok(Some(id)) => eprintln!("  save      saved as library item #{id}"),
-        Ok(None) => eprintln!("  save      nothing to keep (duplicate)"),
+        Ok(crate::keeping::StructuredSave::Inserted(id)) => {
+            eprintln!("  save      saved as library item #{id}")
+        }
+        Ok(crate::keeping::StructuredSave::Duplicate) => {
+            eprintln!("  save      nothing to keep (duplicate)")
+        }
+        Ok(crate::keeping::StructuredSave::Failed(_)) => {
+            eprintln!("  save      file saved, library database write failed")
+        }
         Err(crate::keeping::NotKept::NothingToKeep) => {
             eprintln!("  save      nothing to keep (waiting/problem card refused)")
         }
