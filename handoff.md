@@ -2,10 +2,11 @@
 
 Last updated: 2026-09-11
 
-Verified through: PR #439
+Repository HEAD:
+query at session start
 
-This handoff was reconciled with the state of main at PR #439 merge.
-For the actual HEAD SHA, run `git log -1` at session start.
+This document describes current implementation semantics;
+git history is the provenance of the document itself.
 
 ## Current Goal
 
@@ -399,15 +400,13 @@ Do not reopen UIA GetVisibleRanges research without new independent evidence.
 ## Git State
 
 ```
-Content baseline:    verified through PR #439
-Handoff reconciled:  PR #438, PR #439
+Content baseline:    query `git log -1` at session start
 Branches:            clean
 History:             rewritten twice (Co-authored-by removal). Current main is
                      canonical. No further rewrites.
 Local pre-push hook: rejects direct main push, rejects non-fast-forward push
                      (active when core.hooksPath = .githooks)
 Server branch protection: OFF (no GitHub ruleset)
-always run `git log -1` at session start for actual HEAD.
 ```
 
 ## Constraints
