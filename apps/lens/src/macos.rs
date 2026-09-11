@@ -1554,7 +1554,7 @@ fn record_presented_reading(
                     answer: answer_text,
                     kind: kind.to_owned(),
                     source_language: None,
-                    target_language: None,
+                    target_language: Some(current.language.clone()),
                     model,
                     app: stored_app,
                     provenance: provenance.to_owned(),
