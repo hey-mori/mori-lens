@@ -829,7 +829,7 @@ impl Card {
                 .filter(|name| !name.trim().is_empty()),
             source_language: None,
             target_language: None,
-            model: None,
+            model: self.metadata.as_ref().and_then(|m| m.model.clone()),
         })
     }
 
