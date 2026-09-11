@@ -122,18 +122,22 @@ Real macOS product build/run verification: PENDING.
 **macOS deferred:**
 - HoverSession/HoverWorker: DEFERRED (macOS uses inline acquisition, follows core contract)
 
-### Privacy hardening (PR #410, #414, #416, #418)
+### Privacy hardening (PR #410, #414, #416, #418, #446)
 
 - saved.md new files: created with 0600 from byte zero (OpenOptions + mode(0o600))
+- saved.md existing files: tightened to 0600 BEFORE opening for write; chmod failure returns NotKept::NotWritten
+- saved.md create_dir_all failure: propagates as NotKept::NotWritten
 - Mori temp payload: created with 0600 from byte zero
-- Library DB/WAL/SHM: permission tightening AFTER migrate completes
-- Existing files with group/other bits: tightening attempted on open
-
-IMPORTANT: current code uses `let _ = set_permissions(...)` for existing-file
-tightening. Permission failures are silently ignored.
+- Library DB/WAL/SHM: permission tightening AFTER migrate completes; chmod failure returns Error
+- Library hardening failure: Library::open returns error; library_service falls back to InMemoryFallback
+- Absent WAL/SHM: normal, skipped (not a failure)
+- Windows: inherits filesystem ACLs; no Unix-mode guarantee
 
 - PRIVATE MODE HARDENING: IMPLEMENTED
-- PERMISSION FAILURE HANDLING: NOT CLOSED (silent continuation)
+- PERMISSION FAILURE HANDLING: CLOSED (#446)
+  - Unix saved.md: owner-only hardening required before new reader-content append
+  - Unix SQLite persistent backing: permission-hardening failure rejects persistent backing, falls back to in-memory
+  - Windows: inherits filesystem ACL; no Unix-mode guarantee
 
 ### Mori integration (PR #380, #409, #416)
 
@@ -173,7 +177,7 @@ REAL Mori watcher end-to-end: not human/runtime verified
 ## Automated Evidence
 
 ```
-scripts/check.sh --full:     PASS (2026-09-11, local Windows host)
+scripts/check.sh --full:     PASS (2026-09-12, local Windows host)
   hover-probe:               29 passed
   lens-core:                 493 passed
   lens-platform-windows:     40 passed, 54 ignored
@@ -181,9 +185,9 @@ scripts/check.sh --full:     PASS (2026-09-11, local Windows host)
   lens-storage:              72 passed
   lens-translate:            51 passed, 51 ignored
   lens-platform-macos:       0 tests (cfg macOS, not compiled on Windows)
-  apps/lens:                 161 passed
+  apps/lens:                 162 passed
   no_console_window:         1 passed
-Total:                       870 passed, 105 ignored
+Total:                       871 passed, 105 ignored
 ```
 
 ### Full-gate scope truth
