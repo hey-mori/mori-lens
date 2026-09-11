@@ -1391,7 +1391,7 @@ fn execute_save(
         Ok(crate::keeping::StructuredSave::Inserted(id)) => {
             eprintln!("  save      saved as library item #{id}")
         }
-        Ok(crate::keeping::StructuredSave::Duplicate) => {
+        Ok(crate::keeping::StructuredSave::Duplicate(_existing_id)) => {
             eprintln!("  save      nothing to keep (duplicate)")
         }
         Ok(crate::keeping::StructuredSave::Failed(_)) => {
