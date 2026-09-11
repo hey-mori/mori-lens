@@ -2,11 +2,10 @@
 
 Last updated: 2026-09-11
 
-Current canonical main:
-664d7e5
+Verified through: PR #439
 
-This is the SHA at which handoff content was written.
-The docs PR merge commit will differ; that is natural.
+This handoff was reconciled with the state of main at PR #439 merge.
+For the actual HEAD SHA, run `git log -1` at session start.
 
 ## Current Goal
 
@@ -176,9 +175,9 @@ scripts/check.sh --full:     PASS (2026-09-11, local Windows host)
   lens-storage:              72 passed
   lens-translate:            51 passed, 51 ignored
   lens-platform-macos:       0 tests (cfg macOS, not compiled on Windows)
-  apps/lens:                 153 passed
+  apps/lens:                 157 passed
   no_console_window:         1 passed
-Total:                       862 passed, 105 ignored
+Total:                       866 passed, 105 ignored
 ```
 
 ### Full-gate scope truth
@@ -400,8 +399,8 @@ Do not reopen UIA GetVisibleRanges research without new independent evidence.
 ## Git State
 
 ```
-Content baseline:    664d7e5 (PR #437)
-Handoff reconciled:  PR #438
+Content baseline:    verified through PR #439
+Handoff reconciled:  PR #438, PR #439
 Branches:            clean
 History:             rewritten twice (Co-authored-by removal). Current main is
                      canonical. No further rewrites.

@@ -134,7 +134,10 @@
   const { listen } = window.__TAURI__.event;
   let currentNote = '';
   let noteDebounce = null;
+  // saveStatus is keyed to the reading's original text so warnings don't
+  // bleed across different pinned readings.
   let saveStatus = null;
+  let saveStatusIdentity = null;
 
   async function load() {
     try {
@@ -219,8 +222,9 @@
     content.innerHTML = html;
     currentNote = detail.note || '';
 
-    // Restore persisted save status (survives polling refresh).
-    if (saveStatus) {
+    // Restore persisted save status (survives polling refresh) only if
+    // it applies to the current reading.
+    if (saveStatus && saveStatusIdentity === detail.original) {
       const el = document.getElementById('save-status');
       if (el) {
         el.textContent = saveStatus.text;
@@ -261,10 +265,13 @@
       if (result && (result.outcome === 'Inserted' || result.outcome === 'Duplicate')) {
         // Clear any prior warning and re-render to show the note area.
         saveStatus = null;
+        saveStatusIdentity = null;
         await load();
       } else if (result && result.outcome === 'Failed') {
         console.error('save failed (library-db):', result.reason);
+        const detail = await invoke('detail_read');
         saveStatus = { kind: 'warn', text: '파일에 저장했지만 라이브러리 기록에 실패했습니다' };
+        saveStatusIdentity = detail ? detail.original : null;
         // Apply immediately without load() so the warning is visible now.
         const el = document.getElementById('save-status');
         if (el) {
