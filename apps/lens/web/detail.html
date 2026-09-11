@@ -139,6 +139,7 @@
   let saveStatus = null;
   let saveStatusRevision = null;
   let currentDetailRevision = null;
+  let saving = false;
 
   async function load() {
     try {
@@ -261,41 +262,39 @@
   }
 
   async function doSave() {
+    if (saving) return;
+    saving = true;
+    const btn = document.getElementById('save-btn');
+    if (btn) btn.disabled = true;
     try {
       const result = await invoke('detail_save');
-      // result is a tagged object: {outcome: "Inserted", id, revision} |
-      // {outcome: "Duplicate", id, revision} | {outcome: "Failed", reason, revision}
-      if (result && (result.outcome === 'Inserted' || result.outcome === 'Duplicate')) {
-        // Only clear status and reload if this response belongs to the
-        // currently rendered detail. A stale success for a previous detail
-        // must not clear the current detail's warning.
-        if (result.revision === currentDetailRevision) {
-          saveStatus = null;
-          saveStatusRevision = null;
-          await load();
-        } else {
-          // Record the status so it's available if the user navigates back
-          // to that detail, but do not touch the current DOM.
-          saveStatus = null;
-          saveStatusRevision = result.revision;
-        }
-      } else if (result && result.outcome === 'Failed') {
+      // Stale response policy: an async save response may mutate frontend
+      // state ONLY if its revision matches the currently rendered detail.
+      // Otherwise it is a no-op.
+      if (!result || result.revision !== currentDetailRevision) {
+        return;
+      }
+      if (result.outcome === 'Inserted' || result.outcome === 'Duplicate') {
+        saveStatus = null;
+        saveStatusRevision = null;
+        await load();
+      } else if (result.outcome === 'Failed') {
         console.error('save failed (library-db):', result.reason);
         saveStatus = { kind: 'warn', text: '파일에 저장했지만 라이브러리 기록에 실패했습니다' };
         saveStatusRevision = result.revision;
-        // Only mutate the current DOM if this response belongs to the
-        // currently rendered detail. Otherwise the warning is recorded
-        // and will appear if the user navigates back.
-        if (result.revision === currentDetailRevision) {
-          const el = document.getElementById('save-status');
-          if (el) {
-            el.textContent = saveStatus.text;
-            el.className = 'save-status show ' + saveStatus.kind;
-          }
+        const el = document.getElementById('save-status');
+        if (el) {
+          el.textContent = saveStatus.text;
+          el.className = 'save-status show ' + saveStatus.kind;
         }
+        // Restore button on failure so user can retry.
+        if (btn) btn.disabled = false;
       }
     } catch (e) {
       console.error('save failed:', e);
+      if (btn) btn.disabled = false;
+    } finally {
+      saving = false;
     }
   }
 
