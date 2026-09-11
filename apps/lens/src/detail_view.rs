@@ -182,7 +182,8 @@ pub(crate) fn detail_save(
         lib_guard.library(),
     );
     match result {
-        Ok(item_id) => {
+        Ok(save) => {
+            let item_id = save.item_id();
             // Store the item id so the note and open-in-library can find it.
             let mut guard = state.lock().unwrap();
             if let Some(view) = guard.as_mut() {
