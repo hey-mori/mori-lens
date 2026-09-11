@@ -1441,7 +1441,7 @@ pub fn main() -> std::process::ExitCode {
                             std::time::SystemTime::now(),
                             lib_guard.library(),
                         ) {
-                            Ok(_save) => {
+                            Ok(keeping::StructuredSave::Inserted(_id)) => {
                                 // Lengths and lines, never the text
                                 // (`docs/privacy-model.md` §3). The path is not
                                 // secret and is the useful half.
@@ -1456,6 +1456,46 @@ pub fn main() -> std::process::ExitCode {
                                         &overlay,
                                         &mut on_screen,
                                         card.kept(),
+                                        anchor,
+                                        PresentationKind::Feedback,
+                                        saved_app.as_deref(),
+                                        &shared_recent,
+                                        &loop_library,
+                                        &loop_settings,
+                                    );
+                                }
+                            }
+                            Ok(keeping::StructuredSave::Duplicate) => {
+                                println!(
+                                    "keep  {} + {} chars -> already in library",
+                                    entry.original.chars().count(),
+                                    entry.answer.chars().count(),
+                                );
+                                if let Some((_card, anchor, ref saved_app)) = on_screen.take() {
+                                    show_card(
+                                        &overlay,
+                                        &mut on_screen,
+                                        Card::not_readable("이미 저장함"),
+                                        anchor,
+                                        PresentationKind::Feedback,
+                                        saved_app.as_deref(),
+                                        &shared_recent,
+                                        &loop_library,
+                                        &loop_settings,
+                                    );
+                                }
+                            }
+                            Ok(keeping::StructuredSave::Failed(ref reason)) => {
+                                println!(
+                                    "keep  {} + {} chars -> file saved, library write failed: {reason}",
+                                    entry.original.chars().count(),
+                                    entry.answer.chars().count(),
+                                );
+                                if let Some((_card, anchor, ref saved_app)) = on_screen.take() {
+                                    show_card(
+                                        &overlay,
+                                        &mut on_screen,
+                                        Card::not_readable("저장 실패"),
                                         anchor,
                                         PresentationKind::Feedback,
                                         saved_app.as_deref(),

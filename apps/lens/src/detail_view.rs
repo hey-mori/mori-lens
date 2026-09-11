@@ -151,14 +151,22 @@ pub(crate) fn detail_copy(state: tauri::State<'_, SharedDetail>) -> bool {
 ///
 /// Calls [`keeping::append`] and stores the returned item id in the shared
 /// state so subsequent note saves and the open-in-library button can find
-/// the row. Returns the item id, or `None` when the database skipped it
-/// (duplicate or error).
+/// the row. Returns a structured outcome that distinguishes a real insert
+/// from a duplicate or a failure.
+#[derive(Serialize)]
+#[serde(tag = "outcome")]
+pub(crate) enum DetailSaveOutcome {
+    Inserted { id: i64 },
+    Duplicate,
+    Failed { reason: String },
+}
+
 #[tauri::command]
 pub(crate) fn detail_save(
     state: tauri::State<'_, SharedDetail>,
     save_path: tauri::State<'_, SharedSavePath>,
     library: tauri::State<'_, SharedLibrary>,
-) -> Result<Option<i64>, String> {
+) -> Result<DetailSaveOutcome, String> {
     let guard = state.lock().unwrap();
     let Some(view) = guard.as_ref() else {
         return Err("nothing to save".to_owned());
@@ -182,15 +190,15 @@ pub(crate) fn detail_save(
         lib_guard.library(),
     );
     match result {
-        Ok(save) => {
-            let item_id = save.item_id();
-            // Store the item id so the note and open-in-library can find it.
+        Ok(keeping::StructuredSave::Inserted(id)) => {
             let mut guard = state.lock().unwrap();
             if let Some(view) = guard.as_mut() {
-                view.item_id = item_id;
+                view.item_id = Some(id);
             }
-            Ok(item_id)
+            Ok(DetailSaveOutcome::Inserted { id })
         }
+        Ok(keeping::StructuredSave::Duplicate) => Ok(DetailSaveOutcome::Duplicate),
+        Ok(keeping::StructuredSave::Failed(reason)) => Ok(DetailSaveOutcome::Failed { reason }),
         Err(not_kept) => Err(not_kept.user_message().to_owned()),
     }
 }
