@@ -75,6 +75,7 @@ pub enum StructuredSave {
 
 impl StructuredSave {
     /// The inserted row id, if any.
+    #[allow(dead_code)]
     pub fn item_id(&self) -> Option<i64> {
         match self {
             Self::Inserted(id) => Some(*id),
