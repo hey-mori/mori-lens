@@ -34,13 +34,14 @@ Repository-local bounded diagnostics follow-up remains.
 - saved.md migration preserves repeated entries (PR #376)
 - Save provenance bound to acquisition-time app and model (PR #428)
 - StructuredSave truth propagated to detail/hotkey callers (PR #429)
-- History entries persist target_language from settings (PR #430)
+- History entries persist reading-bound target_language from dispatch time (PR #430, provenance binding corrected by #432/#437)
 - StructuredSave enum distinguishes Inserted/Duplicate/Failed (PR #426)
 - PresentedReading struct binds language/model at card creation (PR #432)
 - Duplicate id carried through StructuredSave and Detail frontend (PR #433)
 - Dual-store feedback reflects file and library truth (PR #434)
 - Windows Copy preserves source_app through feedback card (PR #437)
 - Detail frontend surfaces StructuredSave::Failed with degraded status (PR #437)
+- Detail degraded-save warning survives 2-second polling refresh (saveStatus variable persists across render())
 - Code signing: NOT CONFIGURED (Store account or self-signed certificate needed)
 - Ollama + both models available locally (translategemma:latest, qwen2.5:7b)
 
@@ -85,7 +86,8 @@ Real macOS product build/run verification: PENDING.
 - Startup history_prune: IMPLEMENTED
 - record_history errors: logged (PR #399)
 - Typed history metadata (PR #397): provenance, provider_scope, producer model,
-  source/target language, source app delivered as typed fields, not footer parsing
+  source/target language, source app delivered as typed fields, not footer parsing.
+  Note: source_language detection is not implemented; value remains None for all entries.
 
 **Native capture safety (PR #402, #403, #410, #414):**
 - Integer overflow protection: checked arithmetic for stride * height
@@ -174,9 +176,9 @@ scripts/check.sh --full:     PASS (2026-09-11, local Windows host)
   lens-storage:              72 passed
   lens-translate:            51 passed, 51 ignored
   lens-platform-macos:       0 tests (cfg macOS, not compiled on Windows)
-  apps/lens:                 151 passed
+  apps/lens:                 153 passed
   no_console_window:         1 passed
-Total:                       860 passed, 105 ignored
+Total:                       862 passed, 105 ignored
 ```
 
 ### Full-gate scope truth

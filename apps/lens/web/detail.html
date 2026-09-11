@@ -134,6 +134,7 @@
   const { listen } = window.__TAURI__.event;
   let currentNote = '';
   let noteDebounce = null;
+  let saveStatus = null;
 
   async function load() {
     try {
@@ -218,6 +219,15 @@
     content.innerHTML = html;
     currentNote = detail.note || '';
 
+    // Restore persisted save status (survives polling refresh).
+    if (saveStatus) {
+      const el = document.getElementById('save-status');
+      if (el) {
+        el.textContent = saveStatus.text;
+        el.className = 'save-status show ' + saveStatus.kind;
+      }
+    }
+
     // Wire up note textarea blur-save
     const textarea = document.getElementById('note-text');
     if (textarea && detail.item_id) {
@@ -249,14 +259,17 @@
       // result is a tagged object: {outcome: "Inserted", id} |
       // {outcome: "Duplicate", id} | {outcome: "Failed", reason}
       if (result && (result.outcome === 'Inserted' || result.outcome === 'Duplicate')) {
-        // Re-render to show the note area and disable the save button.
+        // Clear any prior warning and re-render to show the note area.
+        saveStatus = null;
         await load();
       } else if (result && result.outcome === 'Failed') {
         console.error('save failed (library-db):', result.reason);
+        saveStatus = { kind: 'warn', text: '파일에 저장했지만 라이브러리 기록에 실패했습니다' };
+        // Apply immediately without load() so the warning is visible now.
         const el = document.getElementById('save-status');
         if (el) {
-          el.textContent = '파일에 저장했지만 라이브러리 기록에 실패했습니다';
-          el.className = 'save-status show warn';
+          el.textContent = saveStatus.text;
+          el.className = 'save-status show ' + saveStatus.kind;
         }
       }
     } catch (e) {
