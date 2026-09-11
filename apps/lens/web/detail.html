@@ -138,6 +138,7 @@
   // bleed across different pinned readings.
   let saveStatus = null;
   let saveStatusRevision = null;
+  let currentDetailRevision = null;
 
   async function load() {
     try {
@@ -153,10 +154,12 @@
     const emptyMsg = document.getElementById('empty-msg');
 
     if (!detail) {
+      currentDetailRevision = null;
       emptyMsg.textContent = 'Nothing pinned yet.';
       emptyMsg.style.display = 'block';
       return;
     }
+    currentDetailRevision = detail.revision;
     emptyMsg.style.display = 'none';
 
     let html = '';
@@ -263,21 +266,32 @@
       // result is a tagged object: {outcome: "Inserted", id, revision} |
       // {outcome: "Duplicate", id, revision} | {outcome: "Failed", reason, revision}
       if (result && (result.outcome === 'Inserted' || result.outcome === 'Duplicate')) {
-        // Clear any prior warning and re-render to show the note area.
-        saveStatus = null;
-        saveStatusRevision = null;
-        await load();
+        // Only clear status and reload if this response belongs to the
+        // currently rendered detail. A stale success for a previous detail
+        // must not clear the current detail's warning.
+        if (result.revision === currentDetailRevision) {
+          saveStatus = null;
+          saveStatusRevision = null;
+          await load();
+        } else {
+          // Record the status so it's available if the user navigates back
+          // to that detail, but do not touch the current DOM.
+          saveStatus = null;
+          saveStatusRevision = result.revision;
+        }
       } else if (result && result.outcome === 'Failed') {
         console.error('save failed (library-db):', result.reason);
         saveStatus = { kind: 'warn', text: '파일에 저장했지만 라이브러리 기록에 실패했습니다' };
-        // Use revision from the result, not from a new detail_read call.
-        // This ensures the warning is keyed to the exact save attempt.
         saveStatusRevision = result.revision;
-        // Apply immediately without load() so the warning is visible now.
-        const el = document.getElementById('save-status');
-        if (el) {
-          el.textContent = saveStatus.text;
-          el.className = 'save-status show ' + saveStatus.kind;
+        // Only mutate the current DOM if this response belongs to the
+        // currently rendered detail. Otherwise the warning is recorded
+        // and will appear if the user navigates back.
+        if (result.revision === currentDetailRevision) {
+          const el = document.getElementById('save-status');
+          if (el) {
+            el.textContent = saveStatus.text;
+            el.className = 'save-status show ' + saveStatus.kind;
+          }
         }
       }
     } catch (e) {
