@@ -11,6 +11,7 @@
 // -- Platform-neutral shared modules --
 mod ai_runtime;
 mod detail_view;
+mod dispatch_carrier;
 mod keeping;
 mod library_service;
 mod mori_transfer;
