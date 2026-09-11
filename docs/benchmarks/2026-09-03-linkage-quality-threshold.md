@@ -149,9 +149,65 @@ When two verified links overlap in source or target range, the longer one is kep
 - **E03 malformed**: 5 runs 중 4 runs에서 malformed. 이 entry는 모델이 JSON schema를 따르지 못하는 경우.
 - **Mean 0.92 vs gate 1.5**: 모델 quality가 threshold에 미달. Resolver는 올바르게 동작하고 있으며, speculative link를 drop하는 것이 correctness invariant를 유지함.
 
-### 결론
+### 결론 (baseline)
 
 **IMPLEMENTATION: COMPLETE** (resolver, schema, renderer, dash patterns 모두 정상 동작)
 **QUALITY GATE: OPEN** (모델 quality가 threshold 미달)
 
 Threshold는 낮추지 않음. 모델 개선(qwen2.5:7b → 더 큰 모델, prompt 개선, 또는 fine-tuning)이 필요.
+
+## 5-run benchmark 결과 (2026-09-12, prompt 개선 후)
+
+**모델:** qwen2.5:7b (Ollama v0.30.7, 로컬)
+**Corpus:** 25 entries (A01~F03)
+**변경:** link prompt 개선 (Candidate A)
+- "substring" → "word or short phrase" (입자 granularity 명시)
+- "Copy character-for-character from the fenced text" (명시적 copy 지시)
+- "Never link the entire sentence" (whole-sentence link 금지)
+- "at most six words" (길이 제한)
+- "Give two to five links when you can" (복수 link 유도)
+
+### Per-run 결과
+
+| Run | Avg links/item | Coverage | Malformed |
+|-----|---------------|----------|-----------|
+| 1   | 1.76          | 96.0%    | 0         |
+| 2   | 1.64          | 92.0%    | 0         |
+| 3   | 1.88          | 95.8%    | 1 (E03)   |
+| 4   | 1.75          | 95.8%    | 1 (E03)   |
+| 5   | 1.83          | 91.7%    | 1 (E03)   |
+
+### Aggregate
+
+| Metric | Value | Gate | Status |
+|--------|-------|------|--------|
+| Mean avg links/item | 1.77 | >= 1.5 | **PASS** |
+| Runs >= 1.4 | 5/5 | >= 4/5 | **PASS** |
+| Median | 1.76 | - | - |
+| Min | 1.64 | - | - |
+| Max | 1.88 | - | - |
+| Malformed rate | 2.4% | < 10% | PASS |
+| Speculative to UI | 0 | = 0 | PASS |
+
+### Resolution categories (전체 5 runs 합계)
+
+| Category | Count |
+|----------|-------|
+| Raw proposed | 257 |
+| Unique match | 216 |
+| Context resolved | 0 |
+| Missing dropped | 40 |
+| Ambiguous dropped | 1 |
+| Overlap dropped | 0 |
+
+### 분석
+
+- **Whole-sentence links 소멸**: baseline에서는 A01, C02, C03, D05 등이 항상 전체 문장을 하나의 link로 반환._prompt 개선 후_ word-level 및 short-phrase link가 일관적으로 나옴.
+- **Coverage 75% → 94%**: F02, F03 등 항상 0 links를 받던 entry들도 link를 받기 시작.
+- **Mean 0.97 → 1.77**: +82% 개선. 모든 run이 1.4 이상.
+- **Context resolved = 0**: 여전히 context disambiguation은 작동하지 않음. 하지만 unique match가 충분히 많아서 gate 통과에 문제없음.
+- **Resolver 변경 없음**: correctness invariant 유지. Prompt만 변경.
+
+### 결론
+
+**QUALITY GATE: MET** (#148 CLOSED)
