@@ -1392,7 +1392,7 @@ fn execute_save(
             eprintln!("  save      saved as library item #{id}")
         }
         Ok(crate::keeping::StructuredSave::Duplicate(_existing_id)) => {
-            eprintln!("  save      nothing to keep (duplicate)")
+            eprintln!("  save      file saved, already in library (duplicate)")
         }
         Ok(crate::keeping::StructuredSave::Failed(_)) => {
             eprintln!("  save      file saved, library database write failed")
