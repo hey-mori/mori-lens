@@ -1516,7 +1516,7 @@ pub fn main() -> std::process::ExitCode {
                                     show_card(
                                         &overlay,
                                         &mut on_screen,
-                                        Card::not_readable("이미 저장함"),
+                                        Card::not_readable("파일에 저장함 · 라이브러리에 이미 있음"),
                                         anchor,
                                         PresentationKind::Feedback,
                                         reading.source_app.as_deref(),
@@ -1537,7 +1537,7 @@ pub fn main() -> std::process::ExitCode {
                                     show_card(
                                         &overlay,
                                         &mut on_screen,
-                                        Card::not_readable("저장 실패"),
+                                        Card::not_readable("파일에 저장함 · 라이브러리 기록 실패"),
                                         anchor,
                                         PresentationKind::Feedback,
                                         reading.source_app.as_deref(),
