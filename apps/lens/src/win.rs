@@ -127,6 +127,23 @@ struct Explain {
     language: String,
 }
 
+/// What the overlay is showing right now, carrying the provenance that was
+/// bound when the reading was produced.
+///
+/// Replaces the old `(Card, ScreenRect, Option<String>)` tuple. The target
+/// language here is the one the reading was made in, not whatever the
+/// settings happen to say when a later Save or Pin is pressed.
+struct PresentedReading {
+    card: Card,
+    anchor: ScreenRect,
+    /// The application the text came from, at acquisition time.
+    source_app: Option<String>,
+    /// The target language the reading was produced for, bound at dispatch
+    /// time. Save, Pin, and history all read from here rather than from the
+    /// live settings.
+    target_language: String,
+}
+
 /// What comes back, still carrying the generation it belongs to.
 struct Answer {
     generation: Generation,
@@ -137,6 +154,11 @@ struct Answer {
     /// The application the text came out of, for the console line. See
     /// [`Translate::app`].
     app: Option<String>,
+    /// The target language this answer was produced for, bound at dispatch
+    /// time from the settings that were active when the reading started.
+    /// Carried through to Save/Pin/History so a later settings change cannot
+    /// retroactively alter what language a reading was made in.
+    target_language: String,
 }
 
 /// The outstanding reading's context, held as a single atomic unit.
@@ -901,6 +923,7 @@ pub fn main() -> std::process::ExitCode {
                             anchor: job.anchor,
                             final_answer: true,
                             app: job.app.clone(),
+                            target_language: job.language.clone(),
                         });
                         continue;
                     }
@@ -928,6 +951,7 @@ pub fn main() -> std::process::ExitCode {
                             anchor: job.anchor,
                             final_answer: true,
                             app: job.app.clone(),
+                            target_language: job.language.clone(),
                         })
                         .is_err()
                     {
@@ -954,6 +978,7 @@ pub fn main() -> std::process::ExitCode {
                     anchor: job.anchor,
                     final_answer: false,
                     app: job.app.clone(),
+                    target_language: job.language.clone(),
                 });
             }
 
@@ -971,6 +996,7 @@ pub fn main() -> std::process::ExitCode {
                     anchor: job.anchor,
                     final_answer: true,
                     app: job.app.clone(),
+                    target_language: job.language.clone(),
                 });
                 continue;
             }
@@ -985,6 +1011,7 @@ pub fn main() -> std::process::ExitCode {
             // Cloned out before the move, so the job stays whole for the
             // finished answer below.
             let partial_app = job.app.clone();
+            let partial_language = job.language.clone();
             let mut on_partial = move |text: &str| {
                 let card = Card::partial(&original, text);
                 let _ = partial_tx.send(Answer {
@@ -993,6 +1020,7 @@ pub fn main() -> std::process::ExitCode {
                     anchor,
                     final_answer: false,
                     app: partial_app.clone(),
+                    target_language: partial_language.clone(),
                 });
             };
 
@@ -1020,6 +1048,7 @@ pub fn main() -> std::process::ExitCode {
                     anchor: job.anchor,
                     final_answer: true,
                     app: job.app.clone(),
+                    target_language: job.language.clone(),
                 })
                 .is_err()
             {
@@ -1208,7 +1237,7 @@ pub fn main() -> std::process::ExitCode {
     // on the clipboard and can put the same card back with a mark on it. Held
     // here rather than read out of the overlay, which owns a `Card` for
     // drawing and is not a place to look things up.
-    let mut on_screen: Option<(Card, ScreenRect, Option<String>)> = None;
+    let mut on_screen: Option<PresentedReading> = None;
     // **One at a time**, which ADR-0012 says and this enforces by holding one.
     // Opening a second closes the first, so the screen cannot fill with panels.
     let mut pinned: Option<lens_platform_windows::PanelWindow> = None;
@@ -1420,20 +1449,31 @@ pub fn main() -> std::process::ExitCode {
                 // allowed is that a person pressed a key looking at the card, so
                 // the rule is the same as the clipboard's: nothing here is
                 // reachable from a hover (`docs/privacy-model.md` §1).
-                // Use the acquisition-time app from on_screen, not the current
-                // pointer position. The reading was produced from a specific app;
-                // later pointer movement must not change the saved provenance.
-                match on_screen.as_ref().and_then(|(card, anchor, app)| {
-                    card.kept_as(app.as_deref()).map(|mut entry| {
-                        // The model name is already carried by the card's
-                        // metadata (set at construction time from the actual
-                        // translation result). The target language is the
-                        // reader's own, from settings.
-                        entry.target_language = Some(language.clone());
-                        (entry, *anchor, app.clone())
-                    })
+                // Use the acquisition-time app and target language from
+                // on_screen, not the current pointer position or settings.
+                // The reading was produced from a specific app in a specific
+                // language; later movement or settings changes must not
+                // change the saved provenance.
+                match on_screen.as_ref().and_then(|reading| {
+                    reading
+                        .card
+                        .kept_as(reading.source_app.as_deref())
+                        .map(|mut entry| {
+                            // The model name is already carried by the card's
+                            // metadata (set at construction time from the actual
+                            // translation result). The target language comes from
+                            // the reading that produced this card, not from the
+                            // current settings.
+                            entry.target_language = Some(reading.target_language.clone());
+                            (
+                                entry,
+                                reading.anchor,
+                                reading.source_app.clone(),
+                                reading.target_language.clone(),
+                            )
+                        })
                 }) {
-                    Some((entry, anchor, saved_app)) => {
+                    Some((entry, anchor, saved_app, saved_language)) => {
                         let lib_guard = loop_library.lock().unwrap();
                         match keeping::append(
                             &saved_to,
@@ -1451,14 +1491,15 @@ pub fn main() -> std::process::ExitCode {
                                     entry.answer.chars().count(),
                                     saved_to.display(),
                                 );
-                                if let Some((card, anchor, ref saved_app)) = on_screen.take() {
+                                if let Some(reading) = on_screen.take() {
                                     show_card(
                                         &overlay,
                                         &mut on_screen,
-                                        card.kept(),
+                                        reading.card.kept(),
                                         anchor,
                                         PresentationKind::Feedback,
-                                        saved_app.as_deref(),
+                                        reading.source_app.as_deref(),
+                                        &saved_language,
                                         &shared_recent,
                                         &loop_library,
                                         &loop_settings,
@@ -1471,14 +1512,15 @@ pub fn main() -> std::process::ExitCode {
                                     entry.original.chars().count(),
                                     entry.answer.chars().count(),
                                 );
-                                if let Some((_card, anchor, ref saved_app)) = on_screen.take() {
+                                if let Some(reading) = on_screen.take() {
                                     show_card(
                                         &overlay,
                                         &mut on_screen,
                                         Card::not_readable("이미 저장함"),
                                         anchor,
                                         PresentationKind::Feedback,
-                                        saved_app.as_deref(),
+                                        reading.source_app.as_deref(),
+                                        &saved_language,
                                         &shared_recent,
                                         &loop_library,
                                         &loop_settings,
@@ -1491,14 +1533,15 @@ pub fn main() -> std::process::ExitCode {
                                     entry.original.chars().count(),
                                     entry.answer.chars().count(),
                                 );
-                                if let Some((_card, anchor, ref saved_app)) = on_screen.take() {
+                                if let Some(reading) = on_screen.take() {
                                     show_card(
                                         &overlay,
                                         &mut on_screen,
                                         Card::not_readable("저장 실패"),
                                         anchor,
                                         PresentationKind::Feedback,
-                                        saved_app.as_deref(),
+                                        reading.source_app.as_deref(),
+                                        &saved_language,
                                         &shared_recent,
                                         &loop_library,
                                         &loop_settings,
@@ -1514,6 +1557,7 @@ pub fn main() -> std::process::ExitCode {
                                     anchor,
                                     PresentationKind::Feedback,
                                     saved_app.as_deref(),
+                                    &saved_language,
                                     &shared_recent,
                                     &loop_library,
                                     &loop_settings,
@@ -1531,6 +1575,7 @@ pub fn main() -> std::process::ExitCode {
                             ScreenRect::new(at.x, at.y, 1, 1),
                             PresentationKind::Feedback,
                             None,
+                            &language,
                             &shared_recent,
                             &loop_library,
                             &loop_settings,
@@ -1556,22 +1601,20 @@ pub fn main() -> std::process::ExitCode {
                 // a window.
                 match on_screen
                     .as_ref()
-                    .and_then(|(card, _, _)| detail_view::view_from_card(card))
+                    .and_then(|reading| detail_view::view_from_card(&reading.card))
                 {
                     Some(mut view) => {
-                        // Use the acquisition-time app from on_screen, not the
-                        // current pointer position. The reading was produced from
-                        // a specific app; later pointer movement must not change
-                        // the saved provenance.
-                        view.app = on_screen.as_ref().and_then(|(_, _, app)| app.clone());
-                        // Record which model and target language produced this
-                        // answer, so the detail save can store them. The model
-                        // comes from the card's metadata (set at construction
-                        // time from the actual translation result).
-                        view.target_language = Some(language.clone());
+                        // Use the acquisition-time app and target language from
+                        // on_screen, not the current pointer position or
+                        // settings. The reading was produced from a specific app
+                        // in a specific language; later movement or settings
+                        // changes must not change the saved provenance.
+                        view.app = on_screen.as_ref().and_then(|r| r.source_app.clone());
+                        view.target_language =
+                            on_screen.as_ref().map(|r| r.target_language.clone());
                         view.model = on_screen
                             .as_ref()
-                            .and_then(|(card, _, _)| card.metadata())
+                            .and_then(|r| r.card.metadata())
                             .and_then(|m| m.model.clone());
                         let explained = view.rows.iter().any(|(_, v)| !v.trim().is_empty());
                         *loop_detail.lock().unwrap() = Some(view);
@@ -1600,10 +1643,13 @@ pub fn main() -> std::process::ExitCode {
                 // Whatever is on the card, not whatever was last translated: a
                 // reader pressing this means the thing in front of them, which may
                 // be an explanation rather than a translation.
-                match on_screen.as_ref().and_then(|(card, anchor, _)| {
-                    card.for_the_clipboard().map(|text| (text, *anchor))
+                match on_screen.as_ref().and_then(|reading| {
+                    reading
+                        .card
+                        .for_the_clipboard()
+                        .map(|text| (text, reading.anchor, reading.target_language.clone()))
                 }) {
-                    Some((text, anchor)) => {
+                    Some((text, anchor, reading_language)) => {
                         // Length and lines, never the text (`docs/privacy-model.md`
                         // §3). This is the one place in the product that writes
                         // what was read anywhere at all, and it does it because
@@ -1614,14 +1660,15 @@ pub fn main() -> std::process::ExitCode {
                                 text.chars().count(),
                                 text.lines().count(),
                             );
-                            if let Some((card, anchor, _)) = on_screen.take() {
+                            if let Some(reading) = on_screen.take() {
                                 show_card(
                                     &overlay,
                                     &mut on_screen,
-                                    card.copied(),
+                                    reading.card.copied(),
                                     anchor,
                                     PresentationKind::Feedback,
                                     None,
+                                    &reading_language,
                                     &shared_recent,
                                     &loop_library,
                                     &loop_settings,
@@ -1640,6 +1687,7 @@ pub fn main() -> std::process::ExitCode {
                                 anchor,
                                 PresentationKind::Feedback,
                                 None,
+                                &reading_language,
                                 &shared_recent,
                                 &loop_library,
                                 &loop_settings,
@@ -1656,6 +1704,7 @@ pub fn main() -> std::process::ExitCode {
                             ScreenRect::new(at.x, at.y, 1, 1),
                             PresentationKind::Feedback,
                             None,
+                            &language,
                             &shared_recent,
                             &loop_library,
                             &loop_settings,
@@ -1685,6 +1734,7 @@ pub fn main() -> std::process::ExitCode {
                                     showing.anchor,
                                     PresentationKind::Feedback,
                                     showing.app.as_deref(),
+                                    &language,
                                     &shared_recent,
                                     &loop_library,
                                     &loop_settings,
@@ -1717,6 +1767,7 @@ pub fn main() -> std::process::ExitCode {
                             ScreenRect::new(at.x, at.y, 1, 1),
                             PresentationKind::Feedback,
                             None,
+                            &language,
                             &shared_recent,
                             &loop_library,
                             &loop_settings,
@@ -1849,6 +1900,7 @@ pub fn main() -> std::process::ExitCode {
                             ScreenRect::new(at.x, at.y, 1, 1),
                             PresentationKind::Feedback,
                             None,
+                            &language,
                             &shared_recent,
                             &loop_library,
                             &loop_settings,
@@ -1939,6 +1991,7 @@ pub fn main() -> std::process::ExitCode {
                                 reading.anchor,
                                 PresentationKind::Feedback,
                                 ocr_app.as_deref(),
+                                &language,
                                 &shared_recent,
                                 &loop_library,
                                 &loop_settings,
@@ -1983,6 +2036,7 @@ pub fn main() -> std::process::ExitCode {
                             ScreenRect::new(at.x, at.y, 1, 1),
                             PresentationKind::Feedback,
                             None,
+                            &language,
                             &shared_recent,
                             &loop_library,
                             &loop_settings,
@@ -2019,6 +2073,7 @@ pub fn main() -> std::process::ExitCode {
                     ScreenRect::new(at.x, at.y, 1, 1),
                     PresentationKind::Feedback,
                     None,
+                    &language,
                     &shared_recent,
                     &loop_library,
                     &loop_settings,
@@ -2083,6 +2138,7 @@ pub fn main() -> std::process::ExitCode {
                         anchor,
                         PresentationKind::Feedback,
                         process_name.as_deref(),
+                        &language,
                         &shared_recent,
                         &loop_library,
                         &loop_settings,
@@ -2202,6 +2258,7 @@ pub fn main() -> std::process::ExitCode {
                                     anchor,
                                     PresentationKind::Feedback,
                                     process_name.as_deref(),
+                                    &language,
                                     &shared_recent,
                                     &loop_library,
                                     &loop_settings,
@@ -2316,6 +2373,7 @@ pub fn main() -> std::process::ExitCode {
                                     anchor,
                                     PresentationKind::Feedback,
                                     process_name.as_deref(),
+                                    &language,
                                     &shared_recent,
                                     &loop_library,
                                     &loop_settings,
@@ -2346,6 +2404,7 @@ pub fn main() -> std::process::ExitCode {
                     anchor,
                     PresentationKind::Feedback,
                     pending.as_ref().and_then(|p| p.app.as_deref()),
+                    &language,
                     &shared_recent,
                     &loop_library,
                     &loop_settings,
@@ -2403,6 +2462,7 @@ pub fn main() -> std::process::ExitCode {
                         answer.anchor,
                         PresentationKind::Reading,
                         answer.app.as_deref(),
+                        &answer.target_language,
                         &shared_recent,
                         &loop_library,
                         &loop_settings,
@@ -2678,17 +2738,28 @@ enum PresentationKind {
 ///
 /// This function handles rendering only. Callers that want to record the
 /// reading to history should call `record_presented_reading()` separately.
+///
+/// `target_language` is the language the reading was produced for, bound at
+/// dispatch time. Feedback cards (which are not new readings) pass the
+/// current language as a placeholder; it is never read for persistence
+/// because feedback cards are not recorded to history.
 #[allow(clippy::too_many_arguments)]
 fn render_card(
     overlay: &Overlay,
-    on_screen: &mut Option<(Card, ScreenRect, Option<String>)>,
+    on_screen: &mut Option<PresentedReading>,
     card: Card,
     anchor: ScreenRect,
     app: Option<String>,
+    target_language: String,
 ) -> bool {
     let drawn = overlay.show(card.clone(), anchor);
     if drawn {
-        *on_screen = Some((card, anchor, app));
+        *on_screen = Some(PresentedReading {
+            card,
+            anchor,
+            source_app: app,
+            target_language,
+        });
     }
     drawn
 }
@@ -2697,10 +2768,16 @@ fn render_card(
 ///
 /// Called explicitly by callers when `PresentationKind::Reading`. Feedback
 /// cards (copy/save confirmations, error messages) should not call this.
+///
+/// `target_language` is the language the reading was produced for, bound at
+/// dispatch time. History records this rather than the current settings
+/// language, so a later settings change cannot retroactively relabel a
+/// reading that was already shown.
 #[allow(clippy::too_many_arguments)]
 fn record_presented_reading(
     card: &Card,
     source_app: Option<&str>,
+    target_language: &str,
     recent: &tauri_app::SharedRecent,
     library: &library_service::SharedLibrary,
     settings: &settings_service::SharedSettings,
@@ -2768,7 +2845,7 @@ fn record_presented_reading(
                     answer: answer_text,
                     kind: kind.to_owned(),
                     source_language: None,
-                    target_language: Some(current.language.clone()),
+                    target_language: Some(target_language.to_owned()),
                     model,
                     app: stored_app,
                     provenance: provenance.to_owned(),
@@ -2796,14 +2873,19 @@ fn record_presented_reading(
 /// remain attributed to A even if the pointer moved to App B before the
 /// result arrived. Callers pass `None` for feedback cards (copy confirmation,
 /// save confirmation, error messages) that are not new readings.
+///
+/// `target_language` is the language the reading was produced for. For
+/// `Reading` cards this is the dispatch-time language; for `Feedback` cards
+/// it is a placeholder that will not be persisted.
 #[allow(clippy::too_many_arguments)]
 fn show_card(
     overlay: &Overlay,
-    on_screen: &mut Option<(Card, ScreenRect, Option<String>)>,
+    on_screen: &mut Option<PresentedReading>,
     card: Card,
     anchor: ScreenRect,
     kind: PresentationKind,
     source_app: Option<&str>,
+    target_language: &str,
     recent: &tauri_app::SharedRecent,
     library: &library_service::SharedLibrary,
     settings: &settings_service::SharedSettings,
@@ -2814,11 +2896,19 @@ fn show_card(
         card.clone(),
         anchor,
         source_app.map(String::from),
+        target_language.to_owned(),
     );
     if drawn {
         match kind {
             PresentationKind::Reading => {
-                record_presented_reading(&card, source_app, recent, library, settings);
+                record_presented_reading(
+                    &card,
+                    source_app,
+                    target_language,
+                    recent,
+                    library,
+                    settings,
+                );
             }
             PresentationKind::Feedback => {
                 // Do not record feedback cards to history.
