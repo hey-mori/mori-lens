@@ -1516,7 +1516,9 @@ pub fn main() -> std::process::ExitCode {
                                     show_card(
                                         &overlay,
                                         &mut on_screen,
-                                        Card::not_readable("파일에 저장함 · 라이브러리에 이미 있음"),
+                                        Card::not_readable(
+                                            "파일에 저장함 · 라이브러리에 이미 있음",
+                                        ),
                                         anchor,
                                         PresentationKind::Feedback,
                                         reading.source_app.as_deref(),
