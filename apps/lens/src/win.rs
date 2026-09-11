@@ -144,6 +144,22 @@ struct PresentedReading {
     target_language: String,
 }
 
+impl PresentedReading {
+    /// Produce a new reading with a different card, preserving provenance.
+    ///
+    /// Used for Copy/Save feedback redraws: the card changes (e.g. `copied()`
+    /// or `kept()`), but the anchor, source app, and target language remain
+    /// bound to the original acquisition.
+    fn with_card(&self, card: Card) -> Self {
+        Self {
+            card,
+            anchor: self.anchor,
+            source_app: self.source_app.clone(),
+            target_language: self.target_language.clone(),
+        }
+    }
+}
+
 /// What comes back, still carrying the generation it belongs to.
 struct Answer {
     generation: Generation,
@@ -1492,14 +1508,17 @@ pub fn main() -> std::process::ExitCode {
                                     saved_to.display(),
                                 );
                                 if let Some(reading) = on_screen.take() {
+                                    // Use with_card to preserve provenance through feedback.
+                                    let kept = reading.card.clone().kept();
+                                    let feedback = reading.with_card(kept);
                                     show_card(
                                         &overlay,
                                         &mut on_screen,
-                                        reading.card.kept(),
-                                        anchor,
+                                        feedback.card,
+                                        feedback.anchor,
                                         PresentationKind::Feedback,
-                                        reading.source_app.as_deref(),
-                                        &saved_language,
+                                        feedback.source_app.as_deref(),
+                                        &feedback.target_language,
                                         &shared_recent,
                                         &loop_library,
                                         &loop_settings,
@@ -1663,14 +1682,17 @@ pub fn main() -> std::process::ExitCode {
                                 text.lines().count(),
                             );
                             if let Some(reading) = on_screen.take() {
+                                // Use with_card to preserve provenance through feedback.
+                                let copied = reading.card.clone().copied();
+                                let feedback = reading.with_card(copied);
                                 show_card(
                                     &overlay,
                                     &mut on_screen,
-                                    reading.card.copied(),
-                                    anchor,
+                                    feedback.card,
+                                    feedback.anchor,
                                     PresentationKind::Feedback,
-                                    reading.source_app.as_deref(),
-                                    &reading_language,
+                                    feedback.source_app.as_deref(),
+                                    &feedback.target_language,
                                     &shared_recent,
                                     &loop_library,
                                     &loop_settings,
@@ -4269,20 +4291,14 @@ mod copy_provenance_tests {
 
     /// PR #437 fixed Copy to preserve source_app. This test proves the
     /// invariant: a feedback redraw (copied/kept) preserves the provenance
-    /// that was bound at acquisition time.
+    /// that was bound at acquisition time. Uses the same `with_card` helper
+    /// that production Copy handler uses.
     #[test]
     fn feedback_redraw_preserves_source_app_and_language() {
         let reading = make_reading();
 
-        // Simulate the Copy feedback redraw: construct a new reading with
-        // the copied card, preserving provenance fields.
-        let copied_card = reading.card.clone().copied();
-        let after = PresentedReading {
-            card: copied_card,
-            anchor: reading.anchor,
-            source_app: reading.source_app.clone(),
-            target_language: reading.target_language.clone(),
-        };
+        // Use the production seam: with_card preserves provenance.
+        let after = reading.with_card(reading.card.clone().copied());
 
         // Provenance preserved.
         assert_eq!(after.source_app, Some("AppA".to_owned()));
@@ -4297,7 +4313,7 @@ mod copy_provenance_tests {
         assert!(after.card.footer.contains("복사함"));
     }
 
-    /// Same invariant for Save/kept feedback.
+    /// Same invariant for Save/kept feedback. Uses the same `with_card` helper.
     #[test]
     fn kept_feedback_preserves_provenance() {
         let qt = QuickTranslation {
@@ -4317,13 +4333,8 @@ mod copy_provenance_tests {
             target_language: "Japanese".to_owned(),
         };
 
-        let kept_card = reading.card.clone().kept();
-        let after = PresentedReading {
-            card: kept_card,
-            anchor: reading.anchor,
-            source_app: reading.source_app.clone(),
-            target_language: reading.target_language.clone(),
-        };
+        // Use the production seam: with_card preserves provenance.
+        let after = reading.with_card(reading.card.clone().kept());
 
         assert_eq!(after.source_app, Some("firefox.exe".to_owned()));
         assert_eq!(after.target_language, "Japanese");
