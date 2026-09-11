@@ -804,11 +804,6 @@ pub fn main() -> std::process::ExitCode {
     let (answers_tx, answers_rx) = mpsc::channel::<Answer>();
 
     let mut cache = TranslationCache::new(CACHE_ENTRIES);
-    // Captured before the worker takes the translator, so the keep and detail
-    // paths can record which model produced a saved entry.
-    // ADR-0005: Quick and Deep have separate models.
-    let quick_model_name = quick_translator.model().to_owned();
-    let deep_model_name = deep_translator.model().to_owned();
     let warm_translator = quick_translator.clone();
     // Kept for the exit path: the worker takes ownership of the translators.
     // ADR-0005: Both Quick and Deep must be released on shutdown.
@@ -1213,7 +1208,7 @@ pub fn main() -> std::process::ExitCode {
     // on the clipboard and can put the same card back with a mark on it. Held
     // here rather than read out of the overlay, which owns a `Card` for
     // drawing and is not a place to look things up.
-    let mut on_screen: Option<(Card, ScreenRect)> = None;
+    let mut on_screen: Option<(Card, ScreenRect, Option<String>)> = None;
     // **One at a time**, which ADR-0012 says and this enforces by holding one.
     // Opening a second closes the first, so the screen cannot fill with panels.
     let mut pinned: Option<lens_platform_windows::PanelWindow> = None;
@@ -1425,27 +1420,20 @@ pub fn main() -> std::process::ExitCode {
                 // allowed is that a person pressed a key looking at the card, so
                 // the rule is the same as the clipboard's: nothing here is
                 // reachable from a hover (`docs/privacy-model.md` §1).
-                let under = pointer::position().and_then(pointer::process_name_at);
-                match on_screen.as_ref().and_then(|(card, anchor)| {
-                    card.kept_as(under.as_deref()).map(|mut entry| {
-                        // Populate the metadata the library stores alongside
-                        // the entry. The model name comes from the path that
-                        // produced this card: Analysis is Deep, Translation
-                        // is Quick. The target language is the reader's own,
-                        // from settings.
+                // Use the acquisition-time app from on_screen, not the current
+                // pointer position. The reading was produced from a specific app;
+                // later pointer movement must not change the saved provenance.
+                match on_screen.as_ref().and_then(|(card, anchor, app)| {
+                    card.kept_as(app.as_deref()).map(|mut entry| {
+                        // The model name is already carried by the card's
+                        // metadata (set at construction time from the actual
+                        // translation result). The target language is the
+                        // reader's own, from settings.
                         entry.target_language = Some(language.clone());
-                        // Determine which model produced this card based on its body.
-                        // Analysis cards come from the Deep path, Translation cards
-                        // come from the Quick path.
-                        let model_name = match &card.body {
-                            lens_core::card::CardBody::Analysis { .. } => &deep_model_name,
-                            _ => &quick_model_name,
-                        };
-                        entry.model = Some(model_name.clone());
-                        (entry, *anchor)
+                        (entry, *anchor, app.clone())
                     })
                 }) {
-                    Some((entry, anchor)) => {
+                    Some((entry, anchor, saved_app)) => {
                         let lib_guard = loop_library.lock().unwrap();
                         match keeping::append(
                             &saved_to,
@@ -1463,14 +1451,14 @@ pub fn main() -> std::process::ExitCode {
                                     entry.answer.chars().count(),
                                     saved_to.display(),
                                 );
-                                if let Some((card, anchor)) = on_screen.take() {
+                                if let Some((card, anchor, ref saved_app)) = on_screen.take() {
                                     show_card(
                                         &overlay,
                                         &mut on_screen,
                                         card.kept(),
                                         anchor,
                                         PresentationKind::Feedback,
-                                        under.as_deref(),
+                                        saved_app.as_deref(),
                                         &shared_recent,
                                         &loop_library,
                                         &loop_settings,
@@ -1485,7 +1473,7 @@ pub fn main() -> std::process::ExitCode {
                                     Card::not_readable(refusal.user_message()),
                                     anchor,
                                     PresentationKind::Feedback,
-                                    under.as_deref(),
+                                    saved_app.as_deref(),
                                     &shared_recent,
                                     &loop_library,
                                     &loop_settings,
@@ -1502,7 +1490,7 @@ pub fn main() -> std::process::ExitCode {
                             Card::not_readable(keeping::NotKept::NothingToKeep.user_message()),
                             ScreenRect::new(at.x, at.y, 1, 1),
                             PresentationKind::Feedback,
-                            under.as_deref(),
+                            None,
                             &shared_recent,
                             &loop_library,
                             &loop_settings,
@@ -1528,23 +1516,23 @@ pub fn main() -> std::process::ExitCode {
                 // a window.
                 match on_screen
                     .as_ref()
-                    .and_then(|(card, _)| detail_view::view_from_card(card))
+                    .and_then(|(card, _, _)| detail_view::view_from_card(card))
                 {
                     Some(mut view) => {
-                        // Capture the application name from under the pointer,
-                        // so the detail save can store it in the library.
-                        view.app = pointer::position().and_then(pointer::process_name_at);
+                        // Use the acquisition-time app from on_screen, not the
+                        // current pointer position. The reading was produced from
+                        // a specific app; later pointer movement must not change
+                        // the saved provenance.
+                        view.app = on_screen.as_ref().and_then(|(_, _, app)| app.clone());
                         // Record which model and target language produced this
-                        // answer, so the detail save can store them.
+                        // answer, so the detail save can store them. The model
+                        // comes from the card's metadata (set at construction
+                        // time from the actual translation result).
                         view.target_language = Some(language.clone());
-                        // Determine which model produced this card based on its body.
-                        // Analysis cards come from the Deep path, Translation cards
-                        // come from the Quick path.
-                        let model_name = match &on_screen.as_ref().unwrap().0.body {
-                            lens_core::card::CardBody::Analysis { .. } => &deep_model_name,
-                            _ => &quick_model_name,
-                        };
-                        view.model = Some(model_name.clone());
+                        view.model = on_screen
+                            .as_ref()
+                            .and_then(|(card, _, _)| card.metadata())
+                            .and_then(|m| m.model.clone());
                         let explained = view.rows.iter().any(|(_, v)| !v.trim().is_empty());
                         *loop_detail.lock().unwrap() = Some(view);
                         loop_tauri.show_detail_window();
@@ -1572,10 +1560,9 @@ pub fn main() -> std::process::ExitCode {
                 // Whatever is on the card, not whatever was last translated: a
                 // reader pressing this means the thing in front of them, which may
                 // be an explanation rather than a translation.
-                match on_screen
-                    .as_ref()
-                    .and_then(|(card, anchor)| card.for_the_clipboard().map(|text| (text, *anchor)))
-                {
+                match on_screen.as_ref().and_then(|(card, anchor, _)| {
+                    card.for_the_clipboard().map(|text| (text, *anchor))
+                }) {
                     Some((text, anchor)) => {
                         // Length and lines, never the text (`docs/privacy-model.md`
                         // §3). This is the one place in the product that writes
@@ -1587,7 +1574,7 @@ pub fn main() -> std::process::ExitCode {
                                 text.chars().count(),
                                 text.lines().count(),
                             );
-                            if let Some((card, anchor)) = on_screen.take() {
+                            if let Some((card, anchor, _)) = on_screen.take() {
                                 show_card(
                                     &overlay,
                                     &mut on_screen,
@@ -2654,13 +2641,14 @@ enum PresentationKind {
 #[allow(clippy::too_many_arguments)]
 fn render_card(
     overlay: &Overlay,
-    on_screen: &mut Option<(Card, ScreenRect)>,
+    on_screen: &mut Option<(Card, ScreenRect, Option<String>)>,
     card: Card,
     anchor: ScreenRect,
+    app: Option<String>,
 ) -> bool {
     let drawn = overlay.show(card.clone(), anchor);
     if drawn {
-        *on_screen = Some((card, anchor));
+        *on_screen = Some((card, anchor, app));
     }
     drawn
 }
@@ -2771,7 +2759,7 @@ fn record_presented_reading(
 #[allow(clippy::too_many_arguments)]
 fn show_card(
     overlay: &Overlay,
-    on_screen: &mut Option<(Card, ScreenRect)>,
+    on_screen: &mut Option<(Card, ScreenRect, Option<String>)>,
     card: Card,
     anchor: ScreenRect,
     kind: PresentationKind,
@@ -2780,7 +2768,13 @@ fn show_card(
     library: &library_service::SharedLibrary,
     settings: &settings_service::SharedSettings,
 ) -> bool {
-    let drawn = render_card(overlay, on_screen, card.clone(), anchor);
+    let drawn = render_card(
+        overlay,
+        on_screen,
+        card.clone(),
+        anchor,
+        source_app.map(String::from),
+    );
     if drawn {
         match kind {
             PresentationKind::Reading => {

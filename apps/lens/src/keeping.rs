@@ -485,7 +485,11 @@ mod tests {
 
         // A duplicate returns Duplicate (file succeeds, database skips).
         let dup = append(&file, &an_entry("hello"), at, &lib).expect("kept");
-        assert_eq!(dup, StructuredSave::Duplicate, "duplicate returns Duplicate");
+        assert_eq!(
+            dup,
+            StructuredSave::Duplicate,
+            "duplicate returns Duplicate"
+        );
         let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
     }
 
@@ -518,7 +522,11 @@ mod tests {
         // Different models produce two rows even for the same original text.
         let db_path = file.parent().unwrap().join("library.db");
         let verify = Library::open(&db_path).unwrap();
-        assert_eq!(verify.count().unwrap(), 2, "different model is not duplicate");
+        assert_eq!(
+            verify.count().unwrap(),
+            2,
+            "different model is not duplicate"
+        );
         let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
     }
 
