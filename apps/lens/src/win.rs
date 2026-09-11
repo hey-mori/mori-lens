@@ -1506,7 +1506,7 @@ pub fn main() -> std::process::ExitCode {
                                     );
                                 }
                             }
-                            Ok(keeping::StructuredSave::Duplicate) => {
+                            Ok(keeping::StructuredSave::Duplicate(_existing_id)) => {
                                 println!(
                                     "keep  {} + {} chars -> already in library",
                                     entry.original.chars().count(),

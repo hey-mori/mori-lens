@@ -359,6 +359,29 @@ impl Library {
         Ok(exists)
     }
 
+    /// Find the id of an existing item with the same original text, kind,
+    /// model, and target language. Returns `Ok(None)` if no duplicate exists.
+    ///
+    /// Duplicate identity follows ADR-0013: `original + kind + model +
+    /// target_language`. When multiple rows match (should not happen but
+    /// the schema allows it), returns the newest (highest id).
+    pub fn find_duplicate_id(
+        &self,
+        original: &str,
+        kind: &str,
+        model: Option<&str>,
+        target_language: Option<&str>,
+    ) -> Result<Option<i64>, Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM library WHERE original = ?1 AND kind = ?2 AND model IS ?3 AND target_language IS ?4 ORDER BY id DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![original, kind, model, target_language])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(row.get(0)?)),
+            None => Ok(None),
+        }
+    }
+
     /// Delete one item.
     ///
     /// A plain DELETE removes the row; it is not forensic erasure. See
@@ -2324,6 +2347,43 @@ mod tests {
         assert!(!lib
             .has_duplicate(&item.original, "translation", None, Some("ja"))
             .unwrap());
+        cleanup(&path);
+    }
+
+    /// find_duplicate_id returns the existing row id for a duplicate,
+    /// and None when there is no match.
+    #[test]
+    fn find_duplicate_id_returns_existing_row_id() {
+        let path = temp_db("find-dup-id");
+        let lib = Library::open(&path).unwrap();
+
+        let item = a_translation();
+        let id = lib.insert(&item).unwrap();
+        assert!(id > 0, "inserted row must have a positive id");
+
+        // Same key: returns the existing id.
+        let found = lib
+            .find_duplicate_id(&item.original, "translation", None, Some("ko"))
+            .unwrap();
+        assert_eq!(found, Some(id), "duplicate must return the existing id");
+
+        // Different kind: no match.
+        let found = lib
+            .find_duplicate_id(&item.original, "analysis", None, Some("ko"))
+            .unwrap();
+        assert_eq!(found, None, "different kind is not a duplicate");
+
+        // Different model: no match (ADR-0013).
+        let found = lib
+            .find_duplicate_id(
+                &item.original,
+                "translation",
+                Some("qwen2.5:7b"),
+                Some("ko"),
+            )
+            .unwrap();
+        assert_eq!(found, None, "different model is not a duplicate");
+
         cleanup(&path);
     }
 

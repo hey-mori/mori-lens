@@ -236,8 +236,10 @@
 
   async function doSave() {
     try {
-      const itemId = await invoke('detail_save');
-      if (itemId) {
+      const result = await invoke('detail_save');
+      // result is a tagged object: {outcome: "Inserted", id} |
+      // {outcome: "Duplicate", id} | {outcome: "Failed", reason}
+      if (result && (result.outcome === 'Inserted' || result.outcome === 'Duplicate')) {
         // Re-render to show the note area and disable the save button.
         await load();
       }

@@ -66,20 +66,21 @@ pub enum StructuredSave {
     /// The item was inserted. Carries the new row id.
     Inserted(i64),
     /// The item is a duplicate (same original, kind, model, target_language
-    /// per ADR-0013). The database already has this item.
-    Duplicate,
+    /// per ADR-0013). The database already has this item. Carries the
+    /// existing row id so callers can attach notes or navigate to it.
+    Duplicate(i64),
     /// The structured store write failed. The markdown file already has
     /// the entry. Carries the error detail for diagnostics.
     Failed(String),
 }
 
 impl StructuredSave {
-    /// The inserted row id, if any.
+    /// The row id, whether newly inserted or an existing duplicate.
     #[allow(dead_code)]
     pub fn item_id(&self) -> Option<i64> {
         match self {
-            Self::Inserted(id) => Some(*id),
-            Self::Duplicate | Self::Failed(_) => None,
+            Self::Inserted(id) | Self::Duplicate(id) => Some(*id),
+            Self::Failed(_) => None,
         }
     }
 }
@@ -250,9 +251,10 @@ pub fn save_card(
 /// A duplicate (same original text, kind, model, and target language per
 /// ADR-0013) is silently skipped: the file still gets the entry because
 /// it is append-only, but the database does not store the same sentence
-/// twice with the same provenance.
+/// twice with the same provenance. The existing row id is returned so
+/// callers can attach notes or navigate to it.
 ///
-/// A `has_duplicate` query failure is reported as [`StructuredSave::Failed`]
+/// A `find_duplicate_id` query failure is reported as [`StructuredSave::Failed`]
 /// rather than silently treated as "not duplicate" — a SELECT error is not
 /// evidence that the item is new.
 fn write_to_library(lib: &Library, entry: &Entry, at: SystemTime) -> StructuredSave {
@@ -269,20 +271,21 @@ fn write_to_library(lib: &Library, entry: &Entry, at: SystemTime) -> StructuredS
     // Skip duplicates: a sentence kept twice with the same model and target
     // language produces one database row. ADR-0013 requires that a different
     // model or a different target language for the same sentence is a new row.
-    let duplicate_check = lib.has_duplicate(
+    // Use find_duplicate_id so we can return the existing row id to callers.
+    let duplicate_check = lib.find_duplicate_id(
         &entry.original,
         kind,
         entry.model.as_deref(),
         entry.target_language.as_deref(),
     );
     match duplicate_check {
-        Ok(true) => return StructuredSave::Duplicate,
+        Ok(Some(existing_id)) => return StructuredSave::Duplicate(existing_id),
         Err(e) => {
             // A SELECT failure is not evidence that the item is new. Return
             // Failed rather than proceeding to insert and creating a duplicate.
-            return StructuredSave::Failed(format!("has_duplicate: {e}"));
+            return StructuredSave::Failed(format!("find_duplicate_id: {e}"));
         }
-        Ok(false) => {}
+        Ok(None) => {}
     }
 
     let item = Item {
@@ -488,21 +491,21 @@ mod tests {
         let save = append(&file, &an_entry("hello"), at, &lib).expect("kept");
         assert!(matches!(save, StructuredSave::Inserted(id) if id > 0));
 
-        // A duplicate returns Duplicate (file succeeds, database skips).
+        // A duplicate returns Duplicate with the existing row id (file succeeds,
+        // database skips).
         let dup = append(&file, &an_entry("hello"), at, &lib).expect("kept");
-        assert_eq!(
-            dup,
-            StructuredSave::Duplicate,
-            "duplicate returns Duplicate"
+        assert!(
+            matches!(dup, StructuredSave::Duplicate(id) if id > 0),
+            "duplicate returns Duplicate with existing id"
         );
         let _ = std::fs::remove_dir_all(file.parent().expect("a folder"));
     }
 
-    /// StructuredSave::item_id() returns Some only for Inserted.
+    /// StructuredSave::item_id() returns Some for both Inserted and Duplicate.
     #[test]
     fn structured_save_item_id_variants() {
         assert_eq!(StructuredSave::Inserted(42).item_id(), Some(42));
-        assert_eq!(StructuredSave::Duplicate.item_id(), None);
+        assert_eq!(StructuredSave::Duplicate(7).item_id(), Some(7));
         assert_eq!(StructuredSave::Failed("err".into()).item_id(), None);
     }
 
