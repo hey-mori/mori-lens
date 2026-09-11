@@ -220,18 +220,22 @@ pub fn append(
 ///   `append()`, per ADR-0013/ADR-0015.
 ///
 /// Serialization is handled by `append()` itself — no separate lock needed here.
+///
+/// The model name comes from the card's metadata, which was set at card
+/// construction time from the actual translation result. Callers must not
+/// pass a model from current configuration: a settings change between the
+/// reading and the save would overwrite the provenance with a model that
+/// did not produce the answer.
 #[allow(dead_code)] // Used by macOS; Windows calls `append` directly.
 pub fn save_card(
     card: &Card,
     app: Option<&str>,
     save_path: &Path,
     target_language: Option<String>,
-    model: Option<String>,
     library: &Library,
 ) -> Result<StructuredSave, NotKept> {
     let mut entry = card.kept_as(app).ok_or(NotKept::NothingToKeep)?;
     entry.target_language = target_language;
-    entry.model = model;
 
     append(save_path, &entry, SystemTime::now(), library)
 }
@@ -646,14 +650,7 @@ mod tests {
         let lib = Library::open(Path::new(":memory:")).unwrap();
 
         let card = Card::waiting("번역 중");
-        let result = save_card(
-            &card,
-            None,
-            &file,
-            Some("ko".into()),
-            Some("model".into()),
-            &lib,
-        );
+        let result = save_card(&card, None, &file, Some("ko".into()), &lib);
         assert!(
             matches!(result, Err(NotKept::NothingToKeep)),
             "Waiting card must be refused"
@@ -673,14 +670,7 @@ mod tests {
         let lib = Library::open(&db_path).unwrap();
 
         let card = a_translation_card();
-        let result = save_card(
-            &card,
-            Some("TestApp"),
-            &file,
-            Some("ko".into()),
-            Some("qwen".into()),
-            &lib,
-        );
+        let result = save_card(&card, Some("TestApp"), &file, Some("ko".into()), &lib);
         assert!(result.is_ok(), "Translation card must be savable");
         assert!(file.exists(), "saved.md must exist after save");
 
@@ -689,7 +679,43 @@ mod tests {
         let item = verify.get(1).unwrap().unwrap();
         assert_eq!(item.original, "Hello world");
         assert_eq!(item.target_language.as_deref(), Some("ko"));
-        assert_eq!(item.model.as_deref(), Some("qwen"));
+        assert_eq!(item.model.as_deref(), Some("qwen2.5:7b"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// save_card stores the model from the card's metadata, not from any
+    /// external source. This is the deterministic proof that a settings
+    /// change between card creation and save cannot alter the provenance:
+    /// the model was baked into the card when the translation result
+    /// arrived, and save_card copies it from there.
+    #[test]
+    fn save_card_model_comes_from_card_metadata() {
+        let dir = std::env::temp_dir().join("mori-lens-save-model-metadata");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("saved.md");
+        let db_path = dir.join("library.db");
+        let lib = Library::open(&db_path).unwrap();
+
+        // The card carries "qwen2.5:7b" in its metadata from construction.
+        let card = a_translation_card();
+        assert_eq!(
+            card.metadata().and_then(|m| m.model.as_deref()),
+            Some("qwen2.5:7b"),
+            "test setup: card metadata must carry the model"
+        );
+
+        let result = save_card(&card, Some("TestApp"), &file, Some("ko".into()), &lib);
+        assert!(result.is_ok());
+
+        // The stored model matches the card metadata, not any caller value.
+        let verify = Library::open(&db_path).unwrap();
+        let item = verify.get(1).unwrap().unwrap();
+        assert_eq!(
+            item.model.as_deref(),
+            Some("qwen2.5:7b"),
+            "model must come from card metadata, not caller"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -721,7 +747,6 @@ mod tests {
                         Some("ConcurrentTest"),
                         &file,
                         Some("ko".into()),
-                        Some("model".into()),
                         &lib,
                     );
                 })
