@@ -1669,7 +1669,7 @@ pub fn main() -> std::process::ExitCode {
                                     reading.card.copied(),
                                     anchor,
                                     PresentationKind::Feedback,
-                                    None,
+                                    reading.source_app.as_deref(),
                                     &reading_language,
                                     &shared_recent,
                                     &loop_library,
