@@ -927,13 +927,21 @@ fn product_loop(
                 }
                 ProductCommand::Save => {
                     if let Some((ref card, ref _sentence)) = current_card {
+                        // Select the model that produced this card: Analysis
+                        // cards come from the Deep path, everything else from
+                        // the Quick path. Using the wrong model would record
+                        // incorrect provenance in the library.
+                        let model = match &card.body {
+                            lens_core::card::CardBody::Analysis { .. } => &ai_config.deep.model,
+                            _ => &ai_config.quick.model,
+                        };
                         let lib_guard = shared_library.lock().unwrap();
                         execute_save(
                             card,
                             current_app.as_deref(),
                             &shared_save_path,
                             &language,
-                            &ai_config.quick.model,
+                            model,
                             lib_guard.library(),
                         );
                     }
