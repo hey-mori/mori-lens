@@ -99,6 +99,14 @@
     transition: opacity 0.3s;
   }
   .note-saved.show { opacity: 1; }
+  .save-status {
+    font-size: 11px;
+    margin-top: 6px;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .save-status.show { opacity: 1; }
+  .save-status.warn { color: #b55; }
   .empty {
     color: #999;
     text-align: center;
@@ -196,6 +204,7 @@
     html += '<button class="btn" onclick="doExplain()">Explain Again</button>';
     html += '<button class="btn" onclick="doOpenLibrary()">Open in Library</button>';
     html += '</div>';
+    html += '<div class="save-status" id="save-status"></div>';
 
     // Note area (visible after save)
     const noteVisible = detail.item_id ? ' visible' : '';
@@ -242,6 +251,13 @@
       if (result && (result.outcome === 'Inserted' || result.outcome === 'Duplicate')) {
         // Re-render to show the note area and disable the save button.
         await load();
+      } else if (result && result.outcome === 'Failed') {
+        console.error('save failed (library-db):', result.reason);
+        const el = document.getElementById('save-status');
+        if (el) {
+          el.textContent = '파일에 저장했지만 라이브러리 기록에 실패했습니다';
+          el.className = 'save-status show warn';
+        }
       }
     } catch (e) {
       console.error('save failed:', e);
