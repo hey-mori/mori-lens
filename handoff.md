@@ -44,7 +44,7 @@ Repository-local bounded diagnostics follow-up remains.
 - Detail degraded-save warning survives 2-second polling refresh (saveStatus variable persists across render())
 - Detail save status DOM mutation guarded by currentDetailRevision: stale async
   responses for a previous detail never write to or clear the current detail's UI
-- First-run Control Center discovery: opens Status section automatically (PR #458)
+- First-run Control Center discovery: opens Status section automatically (PR #462)
 - Second-launch activation: existing instance's Control Center comes to foreground (PR #459)
 - Code signing: NOT CONFIGURED (Store account or self-signed certificate needed)
 - Ollama + both models available locally (translategemma:latest, qwen2.5:7b)
@@ -182,14 +182,14 @@ REAL Mori watcher end-to-end: not human/runtime verified
 scripts/check.sh --full:     PASS (2026-09-12, local Windows host)
   hover-probe:               29 passed
   lens-core:                 493 passed
-  lens-platform-windows:     45 passed, 54 ignored
+  lens-platform-windows:     46 passed, 54 ignored
   lens-settings:             23 passed
   lens-storage:              72 passed
   lens-translate:            51 passed, 51 ignored
   lens-platform-macos:       0 tests (cfg macOS, not compiled on Windows)
   apps/lens:                 167 passed
   no_console_window:         1 passed
-Total:                       881 passed, 105 ignored
+Total:                       882 passed, 105 ignored
 ```
 
 ### Full-gate scope truth
@@ -317,7 +317,8 @@ Windows NSIS release    SHIPPED         CLOSED     N/A       N/A       UNSIGNED
 Windows MSIX release    IMPLEMENTED     CLOSED     N/A       N/A       BLOCKED+
 macOS .app bundle       IMPLEMENTED     CLOSED     PENDING   N/A       UNSIGNED
 macOS notarization      BLOCKED%       N/A        N/A       N/A       BLOCKED%
-First-user onboarding   IMPLEMENTED     N/A        N/A       PENDING   N/A
+First-run discovery     IMPLEMENTED     CLOSED     N/A       PENDING   N/A
+First-user onboarding   NOT MEASURED    N/A        N/A       HUMAN     N/A
 Return/re-entry         IMPLEMENTED     CLOSED     N/A       PENDING   N/A
 
 * M5 explanation quality: linkage quality gate MET (mean 1.77, 5/5 runs >= 1.4)
@@ -414,7 +415,7 @@ RUNTIME STATUS:            history/library/autostart displayed in Status page
 AUTOSTART TOGGLE:          Windows only; macOS shows "지원 안 함" (unsupported)
 LIBRARY BACKING TRUTH:     uses LibraryBacking enum, not Library handle existence
 PLATFORM BOUNDARY:         autostart cfg-gated; platform-neutral tauri_app.rs clean
-FIRST-RUN DISCOVERY:       Control Center opens on first run (PR #458)
+FIRST-RUN DISCOVERY:       Control Center opens on first run (PR #462)
 SECOND-LAUNCH ACTIVATION:  existing instance's Control Center comes to foreground (PR #459)
 ```
 
