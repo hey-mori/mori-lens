@@ -1384,9 +1384,11 @@ pub fn main() -> std::process::ExitCode {
     std::thread::spawn(move || {
         let mut quitting = false;
         while !pointer::stopping() && !quitting {
+            let mut pause_changed = false;
             // Check for pause toggle requests from the Control Center.
             if loop_pause_request.swap(false, std::sync::atomic::Ordering::Relaxed) {
                 pause.toggle();
+                pause_changed = true;
             }
             // Check for quit requests from the Control Center.
             if loop_quit_request.swap(false, std::sync::atomic::Ordering::Relaxed) {
@@ -1394,7 +1396,6 @@ pub fn main() -> std::process::ExitCode {
                 break;
             }
 
-            let mut pause_changed = false;
             if let Some(tray) = &tray {
                 for event in tray.poll() {
                     match event {
@@ -1410,6 +1411,15 @@ pub fn main() -> std::process::ExitCode {
                                 pause.is_paused(),
                             );
                             loop_tauri.show_window();
+                        }
+                        TrayEvent::OpenLibrary => {
+                            loop_tauri.show_window_section("library");
+                        }
+                        TrayEvent::OpenHistory => {
+                            loop_tauri.show_window_section("history");
+                        }
+                        TrayEvent::OpenGeneral => {
+                            loop_tauri.show_window_section("general");
                         }
                         TrayEvent::TogglePause => {
                             pause.toggle();
@@ -1819,6 +1829,15 @@ pub fn main() -> std::process::ExitCode {
                         theme.body,
                     );
                 }
+                // Update diagnostics so the Control Center reflects the new state.
+                update_diagnostics(
+                    &loop_diagnostics,
+                    &configuration_facts(&options, &engine_line, &deep_engine_line),
+                    &tally,
+                    worker_ocr.as_str(),
+                    build_stamp(),
+                    pause.is_paused(),
+                );
             }
             // **Put `deny_self` back the moment the lesson is gone.**
             //

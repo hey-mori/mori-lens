@@ -116,6 +116,7 @@
     <!-- Library -->
     <div class="section" id="section-library">
       <h1>Library</h1>
+      <p style="color:#666;margin-bottom:12px">Items you explicitly saved.</p>
       <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
         <input type="text" id="lib-search" placeholder="Search saved items..." style="flex:1;max-width:400px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;background:white">
         <button class="btn" onclick="searchLibrary()" style="padding:6px 12px">Search</button>
@@ -176,13 +177,13 @@
     <!-- Recent -->
     <div class="section" id="section-recent">
       <h1>Recent</h1>
-      <p style="color:#888;font-size:12px;margin-bottom:16px">Cards shown during this session. Disappears when the app closes.</p>
+      <p style="color:#888;font-size:12px;margin-bottom:16px">Session only · cleared when Mori Lens quits.</p>
       <div id="recent-list"><p style="color:#888;font-size:13px">No recent cards.</p></div>
     </div>
     <!-- History -->
     <div class="section" id="section-history">
       <h1>History</h1>
-      <p style="color:#888;font-size:12px;margin-bottom:16px">Persistent record of all cards. Retained according to settings.</p>
+      <p id="history-description" style="color:#888;font-size:12px;margin-bottom:16px">Persistent record of cards when History is enabled. Turn it on in General settings.</p>
       <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
         <span id="history-count" style="color:#888;font-size:12px"></span>
         <button class="btn" onclick="pruneHistory()" style="padding:4px 12px;font-size:12px;margin-left:auto">Prune old entries</button>
@@ -369,18 +370,60 @@
 
   <script>
     const { invoke } = window.__TAURI__.core;
+    const { listen } = window.__TAURI__.event;
     let currentSettings = null;
     let appsDirty = false;
+    let statusRefreshInterval = null;
 
     // Tab navigation
-    document.querySelectorAll('.sidebar-item').forEach(item => {
-      item.addEventListener('click', () => {
-        document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
-        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+    function showSection(sectionName) {
+      document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
+      document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+      const item = document.querySelector(`.sidebar-item[data-section="${sectionName}"]`);
+      if (item) {
         item.classList.add('active');
-        document.getElementById('section-' + item.dataset.section).classList.add('active');
-      });
+        document.getElementById('section-' + sectionName).classList.add('active');
+        // Load data for the section when it becomes visible.
+        if (sectionName === 'status') loadStatus();
+        else if (sectionName === 'library') loadLibrary();
+        else if (sectionName === 'history') loadHistory();
+        else if (sectionName === 'general') loadSettings();
+        else if (sectionName === 'models') { loadSettings(); refreshModels(); }
+        else if (sectionName === 'apps') loadSettings();
+        else if (sectionName === 'about') loadAbout();
+      }
+    }
+
+    document.querySelectorAll('.sidebar-item').forEach(item => {
+      item.addEventListener('click', () => showSection(item.dataset.section));
     });
+
+    // Listen for section navigation events from the tray menu.
+    listen('navigate-section', (event) => {
+      showSection(event.payload);
+    });
+
+    // Live refresh for the Status page while it is visible.
+    function startStatusRefresh() {
+      if (statusRefreshInterval) return;
+      statusRefreshInterval = setInterval(() => {
+        const statusSection = document.getElementById('section-status');
+        if (statusSection && statusSection.classList.contains('active')) {
+          loadStatus();
+        }
+      }, 1000);
+    }
+
+    function stopStatusRefresh() {
+      if (statusRefreshInterval) {
+        clearInterval(statusRefreshInterval);
+        statusRefreshInterval = null;
+      }
+    }
+
+    // Start refresh when window gains focus, stop when it loses focus.
+    window.addEventListener('focus', startStatusRefresh);
+    window.addEventListener('blur', stopStatusRefresh);
 
     async function loadAll() {
       try {
@@ -392,7 +435,10 @@
 
     async function loadStatus() {
       try {
-        const diag = await invoke('get_diagnostics');
+        const [diag, runtime] = await Promise.all([
+          invoke('get_diagnostics'),
+          invoke('get_runtime_status'),
+        ]);
         const el = document.getElementById('status-content');
         // Always show runtime controls even before session data arrives.
         const paused = diag && diag.paused;
@@ -416,6 +462,14 @@
         html += '<button class="btn" onclick="quitApp()" style="padding:8px 20px;color:#c00;border-color:#c00">Mori Lens 종료</button>';
         html += '</div>';
         html += '</div>';
+        // Runtime configuration table.
+        if (runtime) {
+          html += '<h2>런타임</h2><table>';
+          html += '<tr><td>History</td><td>' + (runtime.history_enabled ? '사용 중 (' + runtime.history_days + '일)' : '사용 안 함') + '</td></tr>';
+          html += '<tr><td>Library</td><td>' + (runtime.library_persistent ? '저장됨' : '세션만') + '</td></tr>';
+          html += '<tr><td>Windows 시작</td><td>' + (runtime.autostart_enabled ? '사용' : '사용 안 함') + '</td></tr>';
+          html += '</table>';
+        }
         if (!diag || !diag.build) {
           html += '<p class="loading">세션 데이터가 아직 없습니다.</p>';
           el.innerHTML = html;
@@ -440,6 +494,8 @@
           }
           html += '</table>';
         }
+        // Close hint.
+        html += '<p style="font-size:11px;color:#999;margin-top:20px">이 창을 닫아도 Mori Lens는 시스템 트레이에서 계속 실행됩니다.</p>';
         el.innerHTML = html;
       } catch (e) {
         console.error('loadStatus failed:', e);
@@ -1170,6 +1226,23 @@
 
     async function loadHistory() {
       historyOffset = 0;
+      // Update the description based on whether history is enabled.
+      try {
+        const runtime = await invoke('get_runtime_status');
+        const descEl = document.getElementById('history-description');
+        if (descEl && runtime) {
+          if (runtime.history_enabled) {
+            const days = runtime.history_days === 0 ? 'forever' : runtime.history_days + '일';
+            descEl.textContent = 'Persistent History 사용 중 · 보관 기간: ' + days;
+            descEl.style.color = '#2e7d32';
+          } else {
+            descEl.textContent = 'Persistent History는 꺼져 있습니다. General 설정에서 켤 수 있습니다.';
+            descEl.style.color = '#888';
+          }
+        }
+      } catch (e) {
+        // Ignore; description stays at default.
+      }
       await fetchHistoryPage();
     }
 
