@@ -159,6 +159,18 @@ impl AppHandle {
         }
     }
 
+    /// Show the main window and navigate to a specific section.
+    ///
+    /// Emits a Tauri event that the web UI listens for to switch sections.
+    /// Section names: "status", "library", "history", "general", etc.
+    pub fn show_window_section(&self, section: &str) {
+        if let Some(window) = self.0.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.set_focus();
+            let _ = window.emit("navigate-section", section);
+        }
+    }
+
     /// Show the pinned detail window.
     #[allow(dead_code)]
     pub fn show_detail_window(&self) {
@@ -178,6 +190,34 @@ impl AppHandle {
 #[tauri::command]
 fn get_diagnostics(state: tauri::State<'_, SharedDiagnostics>) -> DiagnosticsSnapshot {
     state.lock().unwrap().clone()
+}
+
+/// Runtime status for the Control Center Status page.
+///
+/// Contains operational product truth that the Status page needs to display
+/// but that is not part of the diagnostic snapshot.
+#[derive(Clone, Debug, Serialize)]
+pub struct RuntimeStatus {
+    pub history_enabled: bool,
+    pub history_days: i64,
+    pub library_persistent: bool,
+    pub autostart_enabled: bool,
+}
+
+/// Tauri command: return current runtime status for the Control Center.
+#[tauri::command]
+fn get_runtime_status(
+    settings: tauri::State<'_, SharedSettings>,
+    library: tauri::State<'_, SharedLibrary>,
+) -> RuntimeStatus {
+    let settings_view = settings.lock().unwrap().view();
+    let lib_guard = library.lock().unwrap();
+    RuntimeStatus {
+        history_enabled: settings_view.history,
+        history_days: settings_view.history_days,
+        library_persistent: lib_guard.library().is_some(),
+        autostart_enabled: lens_platform_windows::autostart::is_enabled(),
+    }
 }
 
 /// Tauri command: request a pause/resume toggle.
@@ -692,6 +732,7 @@ pub fn build(
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_diagnostics,
+            get_runtime_status,
             request_pause_toggle,
             request_quit,
             get_settings,
