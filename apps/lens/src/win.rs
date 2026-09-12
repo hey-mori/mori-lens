@@ -2584,6 +2584,14 @@ pub fn main() -> std::process::ExitCode {
         loop_tauri.exit();
     }); // end of polling loop thread
 
+    // On first run, open the Control Center so the user discovers the
+    // management surface without needing to know about the tray icon.
+    // The welcome lesson (if shown) runs on its own thread and does not
+    // conflict with the Control Center window.
+    if options.source.first_run {
+        tauri_handle.show_window_section("status");
+    }
+
     // Run Tauri on the main thread. This blocks until the event loop exits,
     // which happens when the polling loop calls tauri.exit() above.
     tauri_app::run(tauri_app);
