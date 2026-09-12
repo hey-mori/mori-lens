@@ -599,6 +599,10 @@ pub fn main() -> std::process::ExitCode {
     // double-clicks it and sees nothing double-clicks it again.
     let Some(_only_instance) = lens_platform_windows::single::claim() else {
         eprintln!("Mori Lens is already running. Its icon is in the notification area.");
+        // Signal the existing instance to show its Control Center.
+        // Failure is acceptable: the existing instance will continue running
+        // even if we cannot bring its window forward.
+        let _ = lens_platform_windows::single::signal_activation();
         // On a card too, because a binary started from Explorer has nowhere to
         // print that and the reader just double-clicked something and is
         // watching the screen. Briefly: this process exists to say one thing.
@@ -610,6 +614,33 @@ pub fn main() -> std::process::ExitCode {
         }
         return std::process::ExitCode::SUCCESS;
     };
+
+    // Create the activation event so a second instance can ask us to show
+    // the Control Center. Failure is acceptable: the product still works,
+    // but second-launch re-entry will not activate the existing window.
+    let activation_event = lens_platform_windows::single::create_activation_event();
+    // The event-watcher thread owns the ActivationEvent (which holds the Win32
+    // HANDLE) and converts native activation signals into an AtomicBool request.
+    // The polling loop below reads the flag and performs the Tauri UI action.
+    let activation_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let loop_activation_flag = activation_flag.clone();
+
+    // Spawn a thread to check the activation event and set the flag.
+    // This thread runs alongside the polling loop and watches for signals
+    // from second instances.
+    if let Some(event) = activation_event {
+        let flag = activation_flag.clone();
+        std::thread::spawn(move || {
+            while !pointer::stopping() {
+                if lens_platform_windows::single::check_activation(&event) {
+                    flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                // Sleep briefly to avoid busy-waiting. The activation signal
+                // is not time-critical, so a short sleep is acceptable.
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        });
+    }
 
     // Before any coordinate is read. Without it every rectangle is silently
     // wrong above 100% scaling.
@@ -1377,6 +1408,15 @@ pub fn main() -> std::process::ExitCode {
         };
     println!("  tauri     running");
 
+    // On first run, show the Control Center so the user discovers the
+    // management surface without needing to know about the tray icon.
+    // Using show_window() rather than show_window_section() because the
+    // frontend navigate-section listener may not be attached yet, and
+    // Status is the default section anyway.
+    if options.source.first_run {
+        tauri_handle.show_window();
+    }
+
     // Pause has three entrances now: the hotkey, the tray icon, and the tray
     // menu. They set the same flag rather than each doing their own thing,
     // because a product where the icon and the hotkey disagree about whether it
@@ -1390,6 +1430,9 @@ pub fn main() -> std::process::ExitCode {
     let loop_library = shared_library.clone();
     let loop_detail = shared_detail.clone();
     let loop_explain_flag = explain_flag.clone();
+    // Move the activation flag into the polling loop so it can check for
+    // second-instance re-entry signals.
+    let loop_activation = loop_activation_flag;
     std::thread::spawn(move || {
         let mut quitting = false;
         while !pointer::stopping() && !quitting {
@@ -1402,6 +1445,11 @@ pub fn main() -> std::process::ExitCode {
             // Check for quit requests from the Control Center.
             if loop_quit_request.swap(false, std::sync::atomic::Ordering::Relaxed) {
                 break;
+            }
+            // Check for activation requests from a second instance.
+            // When signaled, show the Control Center to bring it forward.
+            if loop_activation.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                loop_tauri.show_window_section("status");
             }
 
             if let Some(tray) = &tray {
