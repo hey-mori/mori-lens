@@ -426,7 +426,7 @@ Korean labels. Library/History/Settings menu items open the corresponding sectio
 
 1. **Human Windows GUI product smoke** — Quick/Deep/Copy/Save lifecycle
 2. **macOS work when environment returns**
-3. **First-run discovery verification** — confirm Control Center opens on first run (PR #458, human verification pending)
+3. **First-run discovery verification** — confirm Control Center opens on first run (PR #462, human verification pending)
 
 Do not reopen UIA GetVisibleRanges research without new independent evidence.
 

@@ -1,10 +1,11 @@
 # Release checklist
 
 Mori Lens releases are versioned `vX.Y.Z` and tagged on `main`. The
-release workflow (`.github/workflows/release.yml`) builds the NSIS
-installer automatically when a tag is pushed. This document covers what
-the workflow does not: signing, publishing, and the decisions that go
-into a release.
+release workflow (`.github/workflows/release.yml`) builds all platform
+artifacts when a tag is pushed: the Windows NSIS installer, the Windows
+MSIX package (for Microsoft Store submission), and the macOS `.app`
+bundle. This document covers what the workflow does not: signing,
+publishing, and the decisions that go into a release.
 
 ## Before tagging
 
@@ -30,9 +31,12 @@ The tag triggers the release workflow. The workflow:
 - Verifies version consistency across all three files.
 - Runs `scripts/check.sh --full`.
 - Builds the NSIS installer with `cargo tauri build --bundles nsis`.
-- Generates `SHA256SUMS.txt` with the SHA-256 hash of the installer.
-- Creates a draft GitHub Release with the installer and hash manifest
-  attached. The release body marks the artifact as unsigned.
+- Builds the MSIX package with `scripts/package-msix.ps1` and verifies
+  it with `scripts/verify-msix.ps1`.
+- Builds the macOS `.app` bundle with `cargo tauri build --bundles app`.
+- Generates `SHA256SUMS.txt` for each artifact.
+- Creates a draft GitHub Release with all artifacts and hash manifests
+  attached. The release body marks the artifacts as unsigned.
 
 The release is created as a draft. Open it, read the auto-generated
 notes, and publish when satisfied.
@@ -86,16 +90,23 @@ the GitHub Releases page.
 
 ## What a release contains
 
-A Mori Lens release is a single NSIS installer that:
-- Installs per-user (no admin rights needed).
-- Places the binary in `%LOCALAPPDATA%\Programs\Mori Lens`.
-- Adds a Start Menu shortcut.
-- Registers in Settings > Apps for uninstall.
+A Mori Lens release contains three artifacts:
 
-The installer does not:
+- **Windows NSIS installer** (`.exe`): installs per-user with no admin
+  rights needed. Places the binary in
+  `%LOCALAPPDATA%\Programs\Mori Lens`, adds a Start Menu shortcut, and
+  registers in Settings > Apps for uninstall.
+- **Windows MSIX package** (`.msix`): structurally valid for Microsoft
+  Store submission. Publisher identity uses placeholder values that
+  must be replaced before Store submission.
+- **macOS `.app` bundle** (zipped): a signed-ready application bundle.
+  Gatekeeper blocks the unsigned bundle until the user right-clicks
+  and opens it, or verifies its SHA-256.
+
+None of the artifacts:
 - Start with Windows by default (a tray menu option).
 - Bundle a model (Ollama is a separate install).
-- Send telemetry or make network requests on its own.
+- Send telemetry or make network requests on their own.
 
 ## After publishing
 

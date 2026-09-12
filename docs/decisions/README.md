@@ -66,3 +66,6 @@ Each file is `ADR-NNNN-kebab-slug.md` and holds:
 | [ADR-0013](ADR-0013-the-local-library.md) | The local library is SQLite, and the file survives it | Accepted |
 | [ADR-0014](ADR-0014-three-tiers-of-history.md) | Three tiers of history, and only one is on | Accepted |
 | [ADR-0015](ADR-0015-the-library-schema.md) | The library schema, search, and migration | Accepted |
+| [ADR-0016](ADR-0016-no-account-in-v1.md) | No account in v1 | Accepted |
+| [ADR-0017](ADR-0017-signed-binary-distribution.md) | Signed binary distribution | Accepted |
+| [ADR-0018](ADR-0018-mori-process-boundary.md) | The Mori process boundary | Accepted |

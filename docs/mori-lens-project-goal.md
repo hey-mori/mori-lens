@@ -67,6 +67,7 @@ not written), **out of v1** (deliberately excluded).
 | Waiting state | **shipped** · the card says it heard you after 180ms instead of leaving the screen empty for the second a model takes, and never for a cached sentence |
 | Start with Windows | **shipped** · off unless turned on from the tray menu, per-user run key, no elevation. The tick means *this* binary starts with Windows: a run-key entry pointing at a copy that has been moved reads as off, and turning it on again records the new location |
 | Tray icon | **shipped** · shows whether Lens is listening, pauses on a click, quits from its menu, and survives Explorer restarting |
+| Control Center (main window) | **shipped** · a Tauri webview with Status, Library, History, and General sections, opened from the tray icon. First run opens it so the reader discovers the management surface without needing to know about the tray; a second launch brings the existing instance forward. The product works with it closed. lens-core is unchanged (ADR-0003 held, [ADR-0012](decisions/ADR-0012-three-product-surfaces.md)). Human verification of the first-run discovery is pending |
 | Translation cache | **shipped** · in memory, keyed on model and prompt version |
 | Hover probe, sweep mode | **shipped** · produced the 2026-08-04 measurements |
 | Per-application compatibility matrix | **shipped** · all 8 target applications, 2026-08-05 |
@@ -93,7 +94,7 @@ recorded in
 [`compatibility/windows-app-matrix.md`](compatibility/windows-app-matrix.md).
 That gate is [ADR-0008](decisions/ADR-0008-probe-before-product.md).
 
-Twenty-six capabilities have passed it. The rest have unit tests, which
+Twenty-seven capabilities have passed it. The rest have unit tests, which
 prove the logic and prove nothing about a desktop.
 
 What is still missing before this is something a person installs: **signed,

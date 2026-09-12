@@ -71,7 +71,6 @@ crates/lens-core/          no OS dependencies, no async runtime
   tally.rs                 session counts and what the numbers suggest
   diagnostics.rs           is this working for me, in a window rather than a console (#165)
   icon.rs                  the tray glyph, computed rather than shipped
-  analyse.rs               deep analysis: schema, parser, answerable filter
   contract_tests.rs        property-based tests for the acquisition contract
   stress_tests.rs          load and stress tests for concurrent acquisition
 
