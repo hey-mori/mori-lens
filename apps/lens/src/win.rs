@@ -669,7 +669,15 @@ pub fn main() -> std::process::ExitCode {
     // Built once and printed here, because the same facts go into the tray's
     // 상태 보기 window and a release binary has no console to read this in
     // (#165). Two copies would be two things to keep right.
-    let facts = configuration_facts(&options, &engine_line, &deep_engine_line);
+    let facts = configuration_facts(
+        &options.language,
+        options.dwell.as_millis(),
+        &options.policy,
+        &options.ai_config.quick.endpoint,
+        &options.ai_config.deep.endpoint,
+        &engine_line,
+        &deep_engine_line,
+    );
     for (label, value) in &facts {
         println!("  {label:<9} {value}");
     }
@@ -1404,7 +1412,15 @@ pub fn main() -> std::process::ExitCode {
                             // Updates diagnostics so the Status page shows current state.
                             update_diagnostics(
                                 &loop_diagnostics,
-                                &configuration_facts(&options, &engine_line, &deep_engine_line),
+                                &configuration_facts(
+                                    &language,
+                                    hover_config.dwell.as_millis(),
+                                    &policy,
+                                    &options.ai_config.quick.endpoint,
+                                    &options.ai_config.deep.endpoint,
+                                    &engine_line,
+                                    &deep_engine_line,
+                                ),
                                 &tally,
                                 worker_ocr.as_str(),
                                 build_stamp(),
@@ -1832,7 +1848,15 @@ pub fn main() -> std::process::ExitCode {
                 // Update diagnostics so the Control Center reflects the new state.
                 update_diagnostics(
                     &loop_diagnostics,
-                    &configuration_facts(&options, &engine_line, &deep_engine_line),
+                    &configuration_facts(
+                        &language,
+                        hover_config.dwell.as_millis(),
+                        &policy,
+                        &options.ai_config.quick.endpoint,
+                        &options.ai_config.deep.endpoint,
+                        &engine_line,
+                        &deep_engine_line,
+                    ),
                     &tally,
                     worker_ocr.as_str(),
                     build_stamp(),
@@ -1873,7 +1897,15 @@ pub fn main() -> std::process::ExitCode {
                 println!("settings  applied from window");
                 update_diagnostics(
                     &loop_diagnostics,
-                    &configuration_facts(&options, &engine_line, &deep_engine_line),
+                    &configuration_facts(
+                        &language,
+                        hover_config.dwell.as_millis(),
+                        &policy,
+                        &options.ai_config.quick.endpoint,
+                        &options.ai_config.deep.endpoint,
+                        &engine_line,
+                        &deep_engine_line,
+                    ),
                     &tally,
                     worker_ocr.as_str(),
                     build_stamp(),
@@ -1992,7 +2024,15 @@ pub fn main() -> std::process::ExitCode {
                 );
                 update_diagnostics(
                     &loop_diagnostics,
-                    &configuration_facts(&options, &engine_line, &deep_engine_line),
+                    &configuration_facts(
+                        &language,
+                        hover_config.dwell.as_millis(),
+                        &policy,
+                        &options.ai_config.quick.endpoint,
+                        &options.ai_config.deep.endpoint,
+                        &engine_line,
+                        &deep_engine_line,
+                    ),
                     &tally,
                     worker_ocr.as_str(),
                     build_stamp(),
@@ -3030,8 +3070,16 @@ fn log_card(card: &Card, app: Option<&str>) {
 /// Only the short key-and-value ones. The banner's longer lines explain a
 /// setting rather than state it, and a window that repeated them would be a
 /// manual rather than a diagnostic.
+///
+/// The function takes the ACTIVE runtime values for fields that can change
+/// without restart (language, dwell, policy), and the startup values for
+/// fields that require restart (engine lines, endpoints).
 fn configuration_facts(
-    options: &Options,
+    language: &str,
+    dwell_ms: u128,
+    policy: &AppPolicy,
+    quick_endpoint: &str,
+    deep_endpoint: &str,
     engine_line: &str,
     deep_engine_line: &str,
 ) -> Vec<(String, String)> {
@@ -3039,27 +3087,18 @@ fn configuration_facts(
         // First, because everything under it is a measurement of *this* build
         // and a reader pasting the lines has no other way to say which one.
         ("build".to_owned(), build_stamp().to_owned()),
-        ("target".to_owned(), options.language.clone()),
+        ("target".to_owned(), language.to_owned()),
         // ADR-0005: Quick and Deep have separate engines.
         (
             "quick".to_owned(),
-            format!(
-                "{} · {} · on this machine",
-                engine_line, options.ai_config.quick.endpoint
-            ),
+            format!("{} · {} · on this machine", engine_line, quick_endpoint),
         ),
         (
             "deep".to_owned(),
-            format!(
-                "{} · {} · on this machine",
-                deep_engine_line, options.ai_config.deep.endpoint
-            ),
+            format!("{} · {} · on this machine", deep_engine_line, deep_endpoint),
         ),
-        (
-            "dwell".to_owned(),
-            format!("{}ms", options.dwell.as_millis()),
-        ),
-        ("mode".to_owned(), options.policy.describe()),
+        ("dwell".to_owned(), format!("{dwell_ms}ms")),
+        ("mode".to_owned(), policy.describe()),
         // Not `ocr` and not `profile`. The banner has a longer line for each,
         // naming the key and the recognisers, and a second short one above it
         // said the same word twice. The window gets the mode from the argument
@@ -4377,5 +4416,113 @@ mod copy_provenance_tests {
             Some("qwen2.5:7b")
         );
         assert!(after.card.footer.contains("저장함"));
+    }
+}
+
+#[cfg(test)]
+mod configuration_facts_tests {
+    use super::configuration_facts;
+    use lens_core::policy::{AppPolicy, AppTier};
+
+    fn default_policy() -> AppPolicy {
+        let mut p = AppPolicy::new(AppTier::Modifier);
+        p.deny_self("lens");
+        p
+    }
+
+    fn find_fact<'a>(facts: &'a [(String, String)], key: &str) -> Option<&'a str> {
+        facts
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// Startup Korean, then reload changes language to Japanese.
+    /// The facts must reflect the ACTIVE runtime value, not the startup value.
+    #[test]
+    fn facts_reflect_active_language_after_reload() {
+        let policy = default_policy();
+
+        // Startup facts: Korean
+        let startup = configuration_facts(
+            "Korean",
+            320,
+            &policy,
+            "127.0.0.1:11434",
+            "127.0.0.1:11434",
+            "translategemma:latest",
+            "qwen2.5:7b",
+        );
+        assert_eq!(find_fact(&startup, "target"), Some("Korean"));
+
+        // After reload: Japanese
+        let after_reload = configuration_facts(
+            "Japanese",
+            320,
+            &policy,
+            "127.0.0.1:11434",
+            "127.0.0.1:11434",
+            "translategemma:latest",
+            "qwen2.5:7b",
+        );
+        assert_eq!(find_fact(&after_reload, "target"), Some("Japanese"));
+    }
+
+    /// Startup 320ms dwell, then reload changes to 500ms.
+    /// The facts must reflect the ACTIVE runtime value.
+    #[test]
+    fn facts_reflect_active_dwell_after_reload() {
+        let policy = default_policy();
+
+        // Startup facts: 320ms
+        let startup = configuration_facts(
+            "Korean",
+            320,
+            &policy,
+            "127.0.0.1:11434",
+            "127.0.0.1:11434",
+            "translategemma:latest",
+            "qwen2.5:7b",
+        );
+        assert_eq!(find_fact(&startup, "dwell"), Some("320ms"));
+
+        // After reload: 500ms
+        let after_reload = configuration_facts(
+            "Korean",
+            500,
+            &policy,
+            "127.0.0.1:11434",
+            "127.0.0.1:11434",
+            "translategemma:latest",
+            "qwen2.5:7b",
+        );
+        assert_eq!(find_fact(&after_reload, "dwell"), Some("500ms"));
+    }
+
+    /// Engine lines and endpoints are startup values (restart required).
+    /// They do not change with live settings reload.
+    #[test]
+    fn facts_engine_lines_are_startup_values() {
+        let policy = default_policy();
+
+        let facts = configuration_facts(
+            "Korean",
+            320,
+            &policy,
+            "127.0.0.1:11434",
+            "127.0.0.1:11435",
+            "translategemma:latest",
+            "qwen2.5:7b",
+        );
+
+        // Quick and Deep show the startup model/endpoint values
+        assert_eq!(
+            find_fact(&facts, "quick"),
+            Some("translategemma:latest · 127.0.0.1:11434 · on this machine")
+        );
+        assert_eq!(
+            find_fact(&facts, "deep"),
+            Some("qwen2.5:7b · 127.0.0.1:11435 · on this machine")
+        );
     }
 }
