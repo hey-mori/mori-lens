@@ -396,11 +396,29 @@ SAVE PRODUCER-MODEL:         NOT YET HUMAN-VERIFIED
 
 Unit test evidence does not substitute for GUI smoke evidence.
 
+## Control Center (ADR-0012)
+
+```
+CONTROL CENTER:            tray-accessible and runtime-synchronized (PR #451, #452)
+PAUSE:                     single runtime state across hotkey/tray/control center
+RECENT:                    session only
+HISTORY:                   opt-in persistent
+LIBRARY:                   explicit saved items
+CLOSE:                     hide (window X does not quit)
+QUIT:                      explicit exit via Control Center or tray menu
+TRAY ROUTING:              Status / Library / History / Settings (deep-linked)
+STATUS REFRESH:            1-second polling while Status page visible
+RUNTIME STATUS:            history/library/autostart displayed in Status page
+```
+
+Tray left-click opens Control Center. Right-click menu is product-oriented with
+Korean labels. Library/History/Settings menu items open the corresponding sections.
+
 ## Next Session — Start Here
 
 1. **Permission failure semantics** — decide hard-fail vs degraded vs diagnostic
-2. **Human Windows GUI product smoke** — Quick/Deep/Copy/Save lifecycle
-3. **Bugs discovered by that smoke** — fix via branch -> PR -> merge
+2. **#148 linkage quality** — deterministic resolution research
+3. **Human Windows GUI product smoke** — Quick/Deep/Copy/Save lifecycle
 4. **macOS work when environment returns**
 
 Do not reopen UIA GetVisibleRanges research without new independent evidence.
