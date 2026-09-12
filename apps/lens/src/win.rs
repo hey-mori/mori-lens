@@ -598,7 +598,7 @@ pub fn main() -> std::process::ExitCode {
     // Easy to do, because Lens opens no window on launch: somebody who
     // double-clicks it and sees nothing double-clicks it again.
     let Some(_only_instance) = lens_platform_windows::single::claim() else {
-        eprintln!("Mori Lens is already running. Its icon is the notification area.");
+        eprintln!("Mori Lens is already running. Its icon is in the notification area.");
         // Signal the existing instance to show its Control Center.
         // Failure is acceptable: the existing instance will continue running
         // even if we cannot bring its window forward.
@@ -619,8 +619,9 @@ pub fn main() -> std::process::ExitCode {
     // the Control Center. Failure is acceptable: the product still works,
     // but second-launch re-entry will not activate the existing window.
     let activation_event = lens_platform_windows::single::create_activation_event();
-    // Use an atomic flag to communicate activation from the event checker
-    // to the polling loop, since HANDLE is not Send.
+    // The event-watcher thread owns the ActivationEvent (which holds the Win32
+    // HANDLE) and converts native activation signals into an AtomicBool request.
+    // The polling loop below reads the flag and performs the Tauri UI action.
     let activation_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let loop_activation_flag = activation_flag.clone();
 
