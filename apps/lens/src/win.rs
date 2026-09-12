@@ -1377,6 +1377,15 @@ pub fn main() -> std::process::ExitCode {
         };
     println!("  tauri     running");
 
+    // On first run, show the Control Center so the user discovers the
+    // management surface without needing to know about the tray icon.
+    // Using show_window() rather than show_window_section() because the
+    // frontend navigate-section listener may not be attached yet, and
+    // Status is the default section anyway.
+    if options.source.first_run {
+        tauri_handle.show_window();
+    }
+
     // Pause has three entrances now: the hotkey, the tray icon, and the tray
     // menu. They set the same flag rather than each doing their own thing,
     // because a product where the icon and the hotkey disagree about whether it
