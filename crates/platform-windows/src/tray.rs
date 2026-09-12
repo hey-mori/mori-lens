@@ -76,13 +76,19 @@ const ICON_ID: u32 = 1;
 /// What the user asked for by clicking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayEvent {
-    /// Open the Mori Lens Control Center (main window).
+    /// Open the Mori Lens Control Center (main window) to the Status section.
     ///
     /// This is the primary discoverable path to the management UI. Left-click
     /// on the tray icon opens the window rather than silently toggling pause,
     /// because a click that changes listening state without visible feedback
     /// is surprising.
     OpenMain,
+    /// Open the Library section of the Control Center.
+    OpenLibrary,
+    /// Open the History section of the Control Center.
+    OpenHistory,
+    /// Open the General (settings) section of the Control Center.
+    OpenGeneral,
     /// Pause if listening, resume if paused. The same request the Ctrl+Alt+L
     /// hotkey makes, so both paths land in one place in the loop.
     TogglePause,
@@ -575,7 +581,9 @@ unsafe fn show_menu(window: HWND) -> Option<TrayEvent> {
         match chosen.0 as usize {
             ID_OPEN_MAIN => Some(TrayEvent::OpenMain),
             ID_TOGGLE => Some(TrayEvent::TogglePause),
-            ID_LIBRARY | ID_HISTORY | ID_SETTINGS => Some(TrayEvent::OpenMain),
+            ID_LIBRARY => Some(TrayEvent::OpenLibrary),
+            ID_HISTORY => Some(TrayEvent::OpenHistory),
+            ID_SETTINGS => Some(TrayEvent::OpenGeneral),
             ID_AUTOSTART => Some(TrayEvent::ToggleAutostart),
             ID_QUIT => Some(TrayEvent::Quit),
             _ => None,
