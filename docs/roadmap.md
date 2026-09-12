@@ -326,6 +326,36 @@ Standing, 2026-09-08:
 | Export round-trips | CLOSED: JSONL: `jsonl_round_trip_preserves_items_and_tags`, `jsonl_semantic_round_trip`, `jsonl_round_trip_preserves_review_state`. JSON: `json_export_semantic_round_trip` (all fields + tags + review_state). Markdown: `exporting_generates_saved_md_format` (export→parse; human-readable format, not machine re-import). |
 | Deletion is real | CLOSED: `single_delete_survives_reopen` proves delete(id)→drop→reopen→absent with surviving items and tags. `secure_wipe_survives_reopen` covers bulk. `library_delete_does_not_affect_history` confirms isolation. Archive is a review_state value, not a separate operation. |
 
+## Product Shell · Tauri Control Center
+
+A Tauri webview window implementing the surface [ADR-0012](decisions/ADR-0012-three-product-surfaces.md)
+decides: Status, Library, History, and General (settings) sections,
+opened from the tray icon. Tray left-click opens the Control Center;
+right-click routes to a specific section. The product works with the
+Control Center closed: the tray icon, the hover card, and the hotkeys
+are independent of it.
+
+**Gate** · the Control Center opens from the tray without stealing
+typing focus; it opens on the first run so the reader discovers the
+management surface without needing to know about the tray icon; a
+second launch brings the existing instance's Control Center to the
+foreground; the product works with the Control Center closed; and
+`lens-core` is unchanged by the addition.
+
+**IMPLEMENTATION: complete.** All code is merged and verified by
+automated tests. Human verification of first-run discovery and
+second-launch activation is tracked as validation debt.
+
+Standing, 2026-09-12:
+
+| Condition | State |
+|---|---|
+| Opens from tray without stealing focus | CLOSED: Tauri webview, tray left-click opens Status section. Automated by Tauri command tests |
+| Opens on first run | CLOSED: `first_run` detection in `win.rs` calls `show_window()`. PR #462 merged. **Human verification pending** |
+| Second launch brings window forward | CLOSED: named activation event in `single.rs`; event-watcher thread converts HANDLE signal to Tauri UI action; polling loop owns the action. PR #459 merged. Test isolation uses PID + monotonic counter |
+| Product works with it closed | CLOSED: hover card, tray, hotkeys, and acquisition are independent of the Control Center. Tauri is an optional surface over the same `HoverSession` |
+| lens-core unchanged | CLOSED: no platform-specific additions to core; ADR-0003 held |
+
 ## What no milestone here covers
 
 Every gate condition above is a measurement: an acquisition rate, a
