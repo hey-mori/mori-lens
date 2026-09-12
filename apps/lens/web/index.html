@@ -467,7 +467,16 @@
           html += '<h2>런타임</h2><table>';
           html += '<tr><td>History</td><td>' + (runtime.history_enabled ? '사용 중 (' + runtime.history_days + '일)' : '사용 안 함') + '</td></tr>';
           html += '<tr><td>Library</td><td>' + (runtime.library_persistent ? '저장됨' : '세션만') + '</td></tr>';
-          html += '<tr><td>Windows 시작</td><td>' + (runtime.autostart_enabled ? '사용' : '사용 안 함') + '</td></tr>';
+          var autostartLabel;
+          var autostartToggle = '';
+          if (runtime.autostart_enabled === null) {
+            autostartLabel = '지원 안 함';
+          } else {
+            autostartLabel = runtime.autostart_enabled ? '사용' : '사용 안 함';
+            var nextLabel = runtime.autostart_enabled ? '사용 안 함' : '사용';
+            autostartToggle = ' <button class="btn" onclick="toggleAutostart()" style="padding:2px 10px;font-size:0.85em">' + nextLabel + '로 전환</button>';
+          }
+          html += '<tr><td>Windows 시작</td><td>' + autostartLabel + autostartToggle + '</td></tr>';
           html += '</table>';
         }
         if (!diag || !diag.build) {
@@ -517,6 +526,17 @@
         await invoke('request_quit');
       } catch (e) {
         console.error('quitApp failed:', e);
+      }
+    }
+
+    async function toggleAutostart() {
+      try {
+        var runtime = await invoke('get_runtime_status');
+        if (runtime.autostart_enabled === null) return;
+        await invoke('set_autostart', { enabled: !runtime.autostart_enabled });
+        setTimeout(loadStatus, 200);
+      } catch (e) {
+        console.error('toggleAutostart failed:', e);
       }
     }
 

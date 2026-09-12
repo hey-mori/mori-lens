@@ -1352,20 +1352,21 @@ pub fn main() -> std::process::ExitCode {
         lens_core::recent::SessionRecent::new(),
     ));
 
-    let (tauri_handle, shared_diagnostics, pause_request, quit_request, tauri_app) = match tauri_app::build(
-        shared_settings.clone(),
-        shared_library.clone(),
-        shared_detail.clone(),
-        shared_recent.clone(),
-        explain_flag.clone(),
-        shared_save_path,
-    ) {
-        Ok(quad) => quad,
-        Err(error) => {
-            eprintln!("Tauri initialization failed: {error}");
-            return std::process::ExitCode::from(1);
-        }
-    };
+    let (tauri_handle, shared_diagnostics, pause_request, quit_request, tauri_app) =
+        match tauri_app::build(
+            shared_settings.clone(),
+            shared_library.clone(),
+            shared_detail.clone(),
+            shared_recent.clone(),
+            explain_flag.clone(),
+            shared_save_path,
+        ) {
+            Ok(quad) => quad,
+            Err(error) => {
+                eprintln!("Tauri initialization failed: {error}");
+                return std::process::ExitCode::from(1);
+            }
+        };
     println!("  tauri     running");
 
     // Pause has three entrances now: the hotkey, the tray icon, and the tray
@@ -1392,7 +1393,6 @@ pub fn main() -> std::process::ExitCode {
             }
             // Check for quit requests from the Control Center.
             if loop_quit_request.swap(false, std::sync::atomic::Ordering::Relaxed) {
-                quitting = true;
                 break;
             }
 
@@ -1871,6 +1871,14 @@ pub fn main() -> std::process::ExitCode {
                 policy = reloaded;
                 hover.reconfigure(hover_config, policy.clone());
                 println!("settings  applied from window");
+                update_diagnostics(
+                    &loop_diagnostics,
+                    &configuration_facts(&options, &engine_line, &deep_engine_line),
+                    &tally,
+                    worker_ocr.as_str(),
+                    build_stamp(),
+                    pause.is_paused(),
+                );
             }
 
             // Anything edited or switched since the last look. Once a second,
@@ -1981,6 +1989,14 @@ pub fn main() -> std::process::ExitCode {
                     language,
                     appearance.dark,
                     policy.describe(),
+                );
+                update_diagnostics(
+                    &loop_diagnostics,
+                    &configuration_facts(&options, &engine_line, &deep_engine_line),
+                    &tally,
+                    worker_ocr.as_str(),
+                    build_stamp(),
+                    pause.is_paused(),
                 );
             }
 
