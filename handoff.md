@@ -318,7 +318,7 @@ macOS notarization      BLOCKED%       N/A        N/A       N/A       BLOCKED%
 First-user onboarding   NOT TESTED      N/A        N/A       PENDING   N/A
 Return/re-entry         NOT TESTED      N/A        N/A       PENDING   N/A
 
-* M5 explanation quality: model-quality research, gate open
+* M5 explanation quality: linkage quality gate MET (mean 1.77, 5/5 runs >= 1.4)
 + Signing/publisher trust required; current-main CI execution blocked by billing
 % Apple Developer ID credentials required; CI blocked by billing
 ```
@@ -362,7 +362,6 @@ REMAINING OWNER DECISIONS:
 ## Open Issues
 
 ```
-#148  colour linkage quality gate     QUALITY GATE OPEN
 #140  first-user onboarding           HUMAN VALIDATION
 #34   KakaoTalk                       OPEN (GVR not directly measured)
 #14   VS Code                         OPEN (GVR fallback rejected on performance)
