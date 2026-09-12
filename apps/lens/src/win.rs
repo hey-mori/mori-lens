@@ -1352,7 +1352,7 @@ pub fn main() -> std::process::ExitCode {
         lens_core::recent::SessionRecent::new(),
     ));
 
-    let (tauri_handle, shared_diagnostics, tauri_app) = match tauri_app::build(
+    let (tauri_handle, shared_diagnostics, pause_request, quit_request, tauri_app) = match tauri_app::build(
         shared_settings.clone(),
         shared_library.clone(),
         shared_detail.clone(),
@@ -1360,7 +1360,7 @@ pub fn main() -> std::process::ExitCode {
         explain_flag.clone(),
         shared_save_path,
     ) {
-        Ok(triple) => triple,
+        Ok(quad) => quad,
         Err(error) => {
             eprintln!("Tauri initialization failed: {error}");
             return std::process::ExitCode::from(1);
@@ -1375,6 +1375,8 @@ pub fn main() -> std::process::ExitCode {
     // Clone the Tauri handle so the polling loop can tell Tauri to exit.
     let loop_tauri = tauri_handle.clone();
     let loop_diagnostics = shared_diagnostics.clone();
+    let loop_pause_request = pause_request.clone();
+    let loop_quit_request = quit_request.clone();
     let loop_settings = shared_settings.clone();
     let loop_library = shared_library.clone();
     let loop_detail = shared_detail.clone();
@@ -1382,10 +1384,33 @@ pub fn main() -> std::process::ExitCode {
     std::thread::spawn(move || {
         let mut quitting = false;
         while !pointer::stopping() && !quitting {
+            // Check for pause toggle requests from the Control Center.
+            if loop_pause_request.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                pause.toggle();
+            }
+            // Check for quit requests from the Control Center.
+            if loop_quit_request.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                quitting = true;
+                break;
+            }
+
             let mut pause_changed = false;
             if let Some(tray) = &tray {
                 for event in tray.poll() {
                     match event {
+                        TrayEvent::OpenMain => {
+                            // The primary discoverable path to the Control Center.
+                            // Updates diagnostics so the Status page shows current state.
+                            update_diagnostics(
+                                &loop_diagnostics,
+                                &configuration_facts(&options, &engine_line, &deep_engine_line),
+                                &tally,
+                                worker_ocr.as_str(),
+                                build_stamp(),
+                                pause.is_paused(),
+                            );
+                            loop_tauri.show_window();
+                        }
                         TrayEvent::TogglePause => {
                             pause.toggle();
                             pause_changed = true;
@@ -1395,34 +1420,6 @@ pub fn main() -> std::process::ExitCode {
                             // The path is in the banner, which a user who
                             // double-clicked the binary never saw.
                             open_in_editor(&options.source.path);
-                        }
-                        TrayEvent::ShowDiagnostics => {
-                            // The one surface that answers *is this working for
-                            // me*. A menu item rather than a sixth chord, per
-                            // ADR-0012, and read-only: #165's writing half is a
-                            // decision problem this does not touch.
-                            update_diagnostics(
-                                &loop_diagnostics,
-                                &configuration_facts(&options, &engine_line, &deep_engine_line),
-                                &tally,
-                                worker_ocr.as_str(),
-                                build_stamp(),
-                            );
-                            loop_tauri.show_window();
-                            drop(pinned.take());
-                            let panel = lens_core::diagnostics::diagnostics_panel(
-                                &configuration_facts(&options, &engine_line, &deep_engine_line),
-                                &tally,
-                                worker_ocr,
-                                build_stamp(),
-                            );
-                            pinned = lens_platform_windows::PanelWindow::open(panel, theme);
-                            println!(
-                                "status {} · {} cards of {} settled hovers",
-                                if pinned.is_some() { "shown" } else { "FAILED" },
-                                tally.cards(),
-                                tally.settled(),
-                            );
                         }
                         TrayEvent::ToggleAutostart => {
                             let now = if lens_platform_windows::autostart::is_enabled() {
@@ -2566,6 +2563,7 @@ fn update_diagnostics(
     tally: &lens_core::tally::Tally,
     ocr_mode: &str,
     build: &str,
+    paused: bool,
 ) {
     let mut snapshot = shared.lock().unwrap();
     snapshot.build = build.to_owned();
@@ -2578,6 +2576,7 @@ fn update_diagnostics(
         .map(|(reason, count)| (reason.to_owned(), count))
         .collect();
     snapshot.ocr_mode = ocr_mode.to_owned();
+    snapshot.paused = paused;
 }
 
 /// What the tray icon says when the pointer rests on it.
