@@ -62,11 +62,13 @@ const WM_TRAY_REFRESH: u32 = WM_APP + 0x21;
 
 /// Menu command ids. Arbitrary, but distinct from zero, which `TrackPopupMenu`
 /// returns to mean "dismissed without choosing".
-const ID_TOGGLE: usize = 1;
-const ID_QUIT: usize = 2;
-const ID_SETTINGS: usize = 3;
-const ID_AUTOSTART: usize = 4;
-const ID_DIAGNOSTICS: usize = 5;
+const ID_OPEN_MAIN: usize = 1;
+const ID_TOGGLE: usize = 2;
+const ID_LIBRARY: usize = 3;
+const ID_HISTORY: usize = 4;
+const ID_SETTINGS: usize = 5;
+const ID_AUTOSTART: usize = 6;
+const ID_QUIT: usize = 7;
 
 /// The icon's own id within this process. One icon, so one id.
 const ICON_ID: u32 = 1;
@@ -74,6 +76,13 @@ const ICON_ID: u32 = 1;
 /// What the user asked for by clicking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayEvent {
+    /// Open the Mori Lens Control Center (main window).
+    ///
+    /// This is the primary discoverable path to the management UI. Left-click
+    /// on the tray icon opens the window rather than silently toggling pause,
+    /// because a click that changes listening state without visible feedback
+    /// is surprising.
+    OpenMain,
     /// Pause if listening, resume if paused. The same request the Ctrl+Alt+L
     /// hotkey makes, so both paths land in one place in the loop.
     TogglePause,
@@ -87,14 +96,6 @@ pub enum TrayEvent {
     OpenSettings,
     /// Start with Windows, or stop doing so.
     ToggleAutostart,
-    /// Show what this session has done, and the settings behind it.
-    ///
-    /// **A menu item rather than a sixth chord.**
-    /// [ADR-0012](../../../docs/decisions/ADR-0012-three-product-surfaces.md)
-    /// says the chord list stops growing once there is somewhere else for a
-    /// control to live, and four capabilities are already chords only because
-    /// there was nowhere. This is the first one that is not.
-    ShowDiagnostics,
 }
 
 /// What the loop asks the tray to do.
@@ -489,9 +490,9 @@ unsafe fn clicked(window: HWND, lparam: LPARAM) -> Option<TrayEvent> {
     // The shell packs the mouse message into the low word.
     let mouse = (lparam.0 as u32) & 0xffff;
     match mouse {
-        // Left click is the fast path, because pause and resume is the only
-        // thing a user does often enough to deserve one.
-        WM_LBUTTONUP => Some(TrayEvent::TogglePause),
+        // Left click opens the Control Center. This is the primary discoverable
+        // path to the management UI, and must not silently change listening state.
+        WM_LBUTTONUP => Some(TrayEvent::OpenMain),
         WM_RBUTTONUP => {
             // SAFETY: menu creation and tracking on the owning thread; the
             // menu is destroyed on every path.
@@ -510,9 +511,11 @@ unsafe fn show_menu(window: HWND) -> Option<TrayEvent> {
         // Korean, because this is product UI rather than a repository
         // artifact (`docs/git-workflow.md` §7).
         //
-        // The first item says what clicking it will do, not what is currently
-        // true. A menu entry reading "일시정지" while already paused is the
-        // classic ambiguity, and it is the item users reach for most.
+        // Menu structure per issue #450: product-oriented, with Open Mori Lens
+        // as the primary action. Library/History/Settings all open the Control
+        // Center for now; deep-linking can be added later.
+        let _ = AppendMenuW(menu, MF_STRING, ID_OPEN_MAIN, w!("Mori Lens 열기"));
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
         let paused = PAUSED.load(std::sync::atomic::Ordering::Relaxed);
         let _ = AppendMenuW(
             menu,
@@ -525,8 +528,10 @@ unsafe fn show_menu(window: HWND) -> Option<TrayEvent> {
             },
         );
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-        let _ = AppendMenuW(menu, MF_STRING, ID_DIAGNOSTICS, w!("상태 보기"));
-        let _ = AppendMenuW(menu, MF_STRING, ID_SETTINGS, w!("설정 파일 열기"));
+        let _ = AppendMenuW(menu, MF_STRING, ID_LIBRARY, w!("라이브러리"));
+        let _ = AppendMenuW(menu, MF_STRING, ID_HISTORY, w!("히스토리"));
+        let _ = AppendMenuW(menu, MF_STRING, ID_SETTINGS, w!("설정"));
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
         // Checked, because this one *is* a state rather than an action, and
         // its state is read from the registry each time the menu opens rather
         // than remembered: something else may have changed it.
@@ -541,7 +546,7 @@ unsafe fn show_menu(window: HWND) -> Option<TrayEvent> {
             w!("Windows 시작 시 실행"),
         );
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-        let _ = AppendMenuW(menu, MF_STRING, ID_QUIT, w!("종료"));
+        let _ = AppendMenuW(menu, MF_STRING, ID_QUIT, w!("Mori Lens 종료"));
 
         let mut point = POINT::default();
         let _ = GetCursorPos(&mut point);
@@ -568,10 +573,10 @@ unsafe fn show_menu(window: HWND) -> Option<TrayEvent> {
         let _ = PostMessageW(Some(window), WM_NULL, WPARAM(0), LPARAM(0));
 
         match chosen.0 as usize {
+            ID_OPEN_MAIN => Some(TrayEvent::OpenMain),
             ID_TOGGLE => Some(TrayEvent::TogglePause),
-            ID_SETTINGS => Some(TrayEvent::OpenSettings),
+            ID_LIBRARY | ID_HISTORY | ID_SETTINGS => Some(TrayEvent::OpenMain),
             ID_AUTOSTART => Some(TrayEvent::ToggleAutostart),
-            ID_DIAGNOSTICS => Some(TrayEvent::ShowDiagnostics),
             ID_QUIT => Some(TrayEvent::Quit),
             _ => None,
         }

@@ -394,11 +394,34 @@
       try {
         const diag = await invoke('get_diagnostics');
         const el = document.getElementById('status-content');
+        // Always show runtime controls even before session data arrives.
+        const paused = diag && diag.paused;
+        const pauseLabel = paused ? '다시 시작' : '일시정지';
+        const pauseStyle = paused
+          ? 'background:#2e7d32;color:white;border-color:#2e7d32'
+          : 'background:#f57c00;color:white;border-color:#f57c00';
+        let html = '<div style="margin-bottom:20px">';
+        html += '<div style="font-size:12px;color:#888;margin-bottom:8px">상태</div>';
+        html += '<div style="display:flex;gap:8px;align-items:center">';
+        if (paused) {
+          html += '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f57c00"></span>';
+          html += '<span style="color:#f57c00;font-size:13px">일시정지됨</span>';
+        } else {
+          html += '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2e7d32"></span>';
+          html += '<span style="color:#2e7d32;font-size:13px">실행 중</span>';
+        }
+        html += '</div>';
+        html += '<div style="display:flex;gap:8px;margin-top:12px">';
+        html += '<button class="btn" onclick="togglePause()" id="pause-btn" style="padding:8px 20px;' + pauseStyle + '">' + pauseLabel + '</button>';
+        html += '<button class="btn" onclick="quitApp()" style="padding:8px 20px;color:#c00;border-color:#c00">Mori Lens 종료</button>';
+        html += '</div>';
+        html += '</div>';
         if (!diag || !diag.build) {
-          el.innerHTML = '<p class="loading">No session data yet.</p>';
+          html += '<p class="loading">세션 데이터가 아직 없습니다.</p>';
+          el.innerHTML = html;
           return;
         }
-        let html = '<div style="margin-bottom:16px">';
+        html += '<div style="margin-bottom:16px">';
         html += '<span class="stat"><span class="stat-value">' + diag.cards + '</span> <span class="stat-label">cards</span></span>';
         html += '<span class="stat"><span class="stat-value">' + diag.settled_hovers + '</span> <span class="stat-label">settled hovers</span></span>';
         html += '</div>';
@@ -420,6 +443,24 @@
         el.innerHTML = html;
       } catch (e) {
         console.error('loadStatus failed:', e);
+      }
+    }
+
+    async function togglePause() {
+      try {
+        await invoke('request_pause_toggle');
+        // Refresh status to update the paused indicator.
+        setTimeout(loadStatus, 200);
+      } catch (e) {
+        console.error('togglePause failed:', e);
+      }
+    }
+
+    async function quitApp() {
+      try {
+        await invoke('request_quit');
+      } catch (e) {
+        console.error('quitApp failed:', e);
       }
     }
 
