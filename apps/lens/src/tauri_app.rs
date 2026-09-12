@@ -6,10 +6,10 @@
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use crate::detail_view::{ExplainFlag, SharedDetail, SharedSavePath};
-use crate::library_service::SharedLibrary;
+use crate::library_service::{LibraryBacking, SharedLibrary};
 use crate::settings_service::{SettingsView, SharedSettings};
 
 /// Shared session-recent state, written by the polling loop and read by Tauri commands.
@@ -196,12 +196,26 @@ fn get_diagnostics(state: tauri::State<'_, SharedDiagnostics>) -> DiagnosticsSna
 ///
 /// Contains operational product truth that the Status page needs to display
 /// but that is not part of the diagnostic snapshot.
+///
+/// `autostart_enabled` is `Some(bool)` on platforms where Lens manages
+/// autostart (Windows), `None` where it does not (macOS). The UI must
+/// not show "disabled" when the platform simply does not support the
+/// feature.
 #[derive(Clone, Debug, Serialize)]
 pub struct RuntimeStatus {
     pub history_enabled: bool,
-    pub history_days: i64,
+    pub history_days: u32,
     pub library_persistent: bool,
-    pub autostart_enabled: bool,
+    pub autostart_enabled: Option<bool>,
+}
+
+/// Classify library backing as persistent or not.
+///
+/// Both persistent and in-memory fallback have a `Library` handle, so
+/// the existence of a handle does not prove persistence. Only the
+/// backing variant carries that truth.
+pub fn is_library_persistent(backing: &LibraryBacking) -> bool {
+    matches!(backing, LibraryBacking::Persistent(_))
 }
 
 /// Tauri command: return current runtime status for the Control Center.
@@ -215,9 +229,52 @@ fn get_runtime_status(
     RuntimeStatus {
         history_enabled: settings_view.history,
         history_days: settings_view.history_days,
-        library_persistent: lib_guard.library().is_some(),
-        autostart_enabled: lens_platform_windows::autostart::is_enabled(),
+        library_persistent: is_library_persistent(lib_guard.backing()),
+        autostart_enabled: autostart_state(),
     }
+}
+
+/// Autostart state for the platform-neutral runtime status.
+///
+/// Windows: Lens manages autostart via the registry, so the state is known.
+/// macOS: Lens does not currently manage autostart, so the state is `None`.
+/// The UI must distinguish "disabled" from "unsupported".
+#[cfg(windows)]
+fn autostart_state() -> Option<bool> {
+    Some(lens_platform_windows::autostart::is_enabled())
+}
+
+#[cfg(not(windows))]
+fn autostart_state() -> Option<bool> {
+    None
+}
+
+/// Tauri command: toggle autostart on or off.
+///
+/// Returns the new state on success, or an error string. On platforms
+/// where Lens does not manage autostart, returns an error.
+#[tauri::command]
+fn set_autostart(enabled: bool) -> Result<bool, String> {
+    set_autostart_platform(enabled)
+}
+
+#[cfg(windows)]
+fn set_autostart_platform(enabled: bool) -> Result<bool, String> {
+    let ok = if enabled {
+        lens_platform_windows::autostart::enable()
+    } else {
+        lens_platform_windows::autostart::disable()
+    };
+    if ok {
+        Ok(lens_platform_windows::autostart::is_enabled())
+    } else {
+        Err("autostart toggle failed".to_owned())
+    }
+}
+
+#[cfg(not(windows))]
+fn set_autostart_platform(_enabled: bool) -> Result<bool, String> {
+    Err("autostart is not supported on this platform".to_owned())
 }
 
 /// Tauri command: request a pause/resume toggle.
@@ -721,7 +778,16 @@ pub fn build(
     shared_recent: SharedRecent,
     explain_flag: ExplainFlag,
     save_path: SharedSavePath,
-) -> Result<(AppHandle, SharedDiagnostics, SharedPauseRequest, SharedQuitRequest, tauri::App), tauri::Error> {
+) -> Result<
+    (
+        AppHandle,
+        SharedDiagnostics,
+        SharedPauseRequest,
+        SharedQuitRequest,
+        tauri::App,
+    ),
+    tauri::Error,
+> {
     let diagnostics: SharedDiagnostics = Arc::new(Mutex::new(DiagnosticsSnapshot {
         version: env!("CARGO_PKG_VERSION").to_owned(),
         ..Default::default()
@@ -733,6 +799,7 @@ pub fn build(
         .invoke_handler(tauri::generate_handler![
             get_diagnostics,
             get_runtime_status,
+            set_autostart,
             request_pause_toggle,
             request_quit,
             get_settings,
@@ -824,4 +891,25 @@ pub fn run(app: tauri::App) {
             api.prevent_close();
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn persistent_backing_is_persistent() {
+        assert!(is_library_persistent(&LibraryBacking::Persistent(
+            PathBuf::from("/tmp/lib.db")
+        )));
+    }
+
+    #[test]
+    fn in_memory_fallback_is_not_persistent() {
+        assert!(!is_library_persistent(&LibraryBacking::InMemoryFallback {
+            intended_path: PathBuf::from("/tmp/lib.db"),
+            reason: "test".to_owned(),
+        }));
+    }
 }

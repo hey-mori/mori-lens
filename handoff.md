@@ -327,7 +327,6 @@ Return/re-entry         NOT TESTED      N/A        N/A       PENDING   N/A
 
 ```
 REMAINING REPOSITORY AUDIT:
-  Permission failure handling:      set_permissions errors silently ignored
   Capture late-callback lifetime:   code hardened, real macOS/TSan pending
 
 REMAINING WINDOWS WORK:
@@ -409,6 +408,9 @@ QUIT:                      explicit exit via Control Center or tray menu
 TRAY ROUTING:              Status / Library / History / Settings (deep-linked)
 STATUS REFRESH:            1-second polling while Status page visible
 RUNTIME STATUS:            history/library/autostart displayed in Status page
+AUTOSTART TOGGLE:          Windows only; macOS shows "지원 안 함" (unsupported)
+LIBRARY BACKING TRUTH:     uses LibraryBacking enum, not Library handle existence
+PLATFORM BOUNDARY:         autostart cfg-gated; platform-neutral tauri_app.rs clean
 ```
 
 Tray left-click opens Control Center. Right-click menu is product-oriented with
@@ -416,10 +418,9 @@ Korean labels. Library/History/Settings menu items open the corresponding sectio
 
 ## Next Session — Start Here
 
-1. **Permission failure semantics** — decide hard-fail vs degraded vs diagnostic
-2. **#148 linkage quality** — deterministic resolution research
-3. **Human Windows GUI product smoke** — Quick/Deep/Copy/Save lifecycle
-4. **macOS work when environment returns**
+1. **Human Windows GUI product smoke** — Quick/Deep/Copy/Save lifecycle
+2. **macOS work when environment returns**
+3. **Second launch re-entry** — activate existing Control Center (focused follow-up)
 
 Do not reopen UIA GetVisibleRanges research without new independent evidence.
 
