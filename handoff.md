@@ -185,9 +185,9 @@ scripts/check.sh --full:     PASS (2026-09-12, local Windows host)
   lens-storage:              72 passed
   lens-translate:            51 passed, 51 ignored
   lens-platform-macos:       0 tests (cfg macOS, not compiled on Windows)
-  apps/lens:                 162 passed
+  apps/lens:                 167 passed
   no_console_window:         1 passed
-Total:                       871 passed, 105 ignored
+Total:                       876 passed, 105 ignored
 ```
 
 ### Full-gate scope truth
@@ -407,6 +407,7 @@ CLOSE:                     hide (window X does not quit)
 QUIT:                      explicit exit via Control Center or tray menu
 TRAY ROUTING:              Status / Library / History / Settings (deep-linked)
 STATUS REFRESH:            1-second polling while Status page visible
+STATUS ACTIVE RUNTIME:     language/dwell/policy show active values, not startup
 RUNTIME STATUS:            history/library/autostart displayed in Status page
 AUTOSTART TOGGLE:          Windows only; macOS shows "지원 안 함" (unsupported)
 LIBRARY BACKING TRUTH:     uses LibraryBacking enum, not Library handle existence
