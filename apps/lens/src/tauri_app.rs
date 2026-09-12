@@ -34,10 +34,21 @@ pub struct DiagnosticsSnapshot {
     pub settled_hovers: u32,
     pub refusals: Vec<(String, u32)>,
     pub ocr_mode: String,
+    /// Whether reading is currently paused. Shared with the Control Center so
+    /// it can show the current state and provide a pause/resume toggle.
+    pub paused: bool,
 }
 
 /// Shared diagnostics state, updated by the polling loop and read by Tauri commands.
 pub type SharedDiagnostics = Arc<Mutex<DiagnosticsSnapshot>>;
+
+/// Shared pause toggle request.
+///
+/// The polling loop checks this on each iteration and applies any pending toggle.
+/// This allows the Control Center (via Tauri commands) to request a pause/resume
+/// without directly owning the pause state, which remains on the polling loop thread.
+pub type SharedPauseRequest = Arc<std::sync::atomic::AtomicBool>;
+pub type SharedQuitRequest = Arc<std::sync::atomic::AtomicBool>;
 
 /// Mori availability status for the webview.
 ///
@@ -167,6 +178,24 @@ impl AppHandle {
 #[tauri::command]
 fn get_diagnostics(state: tauri::State<'_, SharedDiagnostics>) -> DiagnosticsSnapshot {
     state.lock().unwrap().clone()
+}
+
+/// Tauri command: request a pause/resume toggle.
+///
+/// Sets a flag that the polling loop checks and applies. The actual pause state
+/// remains owned by the polling loop thread; this is just a request mechanism.
+#[tauri::command]
+fn request_pause_toggle(pause_request: tauri::State<'_, SharedPauseRequest>) {
+    pause_request.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Tauri command: request the application to quit.
+///
+/// Sets a flag that the polling loop checks. The loop will exit cleanly,
+/// which triggers the normal shutdown sequence.
+#[tauri::command]
+fn request_quit(quit_request: tauri::State<'_, SharedQuitRequest>) {
+    quit_request.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Tauri command: return the current settings view.
@@ -640,7 +669,7 @@ fn export_diagnostics(
     serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_owned())
 }
 
-/// Build the Tauri application and return its handle, shared diagnostics, and the `App` itself.
+/// Build the Tauri application and return its handle, shared diagnostics, pause request, quit request, and the `App` itself.
 ///
 /// The `App` must be kept alive and `.run()` must be called on it. Dropping
 /// it without running destroys the event loop; keeping only the `AppHandle`
@@ -652,15 +681,19 @@ pub fn build(
     shared_recent: SharedRecent,
     explain_flag: ExplainFlag,
     save_path: SharedSavePath,
-) -> Result<(AppHandle, SharedDiagnostics, tauri::App), tauri::Error> {
+) -> Result<(AppHandle, SharedDiagnostics, SharedPauseRequest, SharedQuitRequest, tauri::App), tauri::Error> {
     let diagnostics: SharedDiagnostics = Arc::new(Mutex::new(DiagnosticsSnapshot {
         version: env!("CARGO_PKG_VERSION").to_owned(),
         ..Default::default()
     }));
+    let pause_request: SharedPauseRequest = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let quit_request: SharedQuitRequest = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_diagnostics,
+            request_pause_toggle,
+            request_quit,
             get_settings,
             save_settings,
             list_models,
@@ -702,6 +735,8 @@ pub fn build(
             crate::detail_view::detail_open_in_library,
         ])
         .manage(diagnostics.clone())
+        .manage(pause_request.clone())
+        .manage(quit_request.clone())
         .manage(shared_settings)
         .manage(shared_library)
         .manage(shared_detail)
@@ -720,7 +755,7 @@ pub fn build(
         .build(tauri::generate_context!())?;
 
     let handle = AppHandle(app.handle().clone());
-    Ok((handle, diagnostics, app))
+    Ok((handle, diagnostics, pause_request, quit_request, app))
 }
 
 /// Run the Tauri event loop. Consumes the `App`.
