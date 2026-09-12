@@ -86,6 +86,18 @@ cargo test --workspace
 step "smoke asset verification"
 python3 "$(dirname "$0")/verify-smoke-assets.py"
 
+# Documentation integrity: ADR index completeness, relative link validity,
+# and duplicate index detection. Catches the class of drift where an ADR
+# file exists but is absent from the index, or a markdown link references
+# a file that no longer exists.
+step "documentation integrity"
+python3 "$(dirname "$0")/check_doc_integrity.py"
+
+# Run the doc integrity checker's own regression tests to prove the
+# checker itself is correct.
+step "documentation integrity tests"
+python3 "$(dirname "$0")/test_check_doc_integrity.py"
+
 # The workspace version is the single source of truth. `apps/lens` is excluded
 # from the workspace (Tauri dependency) and `apps/lens/tauri.conf.json` is not
 # Cargo at all, so both duplicate the version by necessity. If they disagree,
