@@ -32,7 +32,12 @@ The tag triggers the release workflow. The workflow:
 - Runs `scripts/check.sh --full`.
 - Builds the NSIS installer with `cargo tauri build --bundles nsis`.
 - Builds the MSIX package with `scripts/package-msix.ps1` and verifies
-  it with `scripts/verify-msix.ps1`.
+  it with `scripts/verify-msix.ps1`. The verifier checks: structural
+  validity (valid zip, manifest, lens.exe, assets), manifest version
+  matches Cargo.toml in 4-part form, SHA-256 matches the `.sha256`
+  sidecar, lens.exe PE machine type is AMD64 (0x8664), and classifies
+  the Authenticode signature as SIGNED VALID, UNSIGNED, INVALID, or
+  UNKNOWN. Regression tests live in `scripts/test_verify_msix.ps1`.
 - Builds the macOS `.app` bundle with `cargo tauri build --bundles app`.
 - Generates `SHA256SUMS.txt` for each artifact.
 - Creates a draft GitHub Release with all artifacts and hash manifests
