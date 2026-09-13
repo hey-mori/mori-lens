@@ -1032,4 +1032,106 @@ mod tests {
         assert!(json.contains("\"dwell\""));
         assert!(json.contains("\"mode\""));
     }
+
+    /// Schema allowlist test for diagnostics export.
+    ///
+    /// This is the primary privacy boundary. The diagnostics JSON must contain
+    /// EXACTLY the allowed top-level keys, no more. Adding a new field requires
+    /// an intentional test change, which forces a privacy review.
+    ///
+    /// Configuration labels are also bounded: only the six labels from
+    /// configuration_facts() are allowed.
+    #[test]
+    fn diagnostics_export_schema_is_bounded() {
+        use serde_json::Value;
+        use std::collections::HashSet;
+
+        let configuration = vec![
+            ("build".to_owned(), "2026-09-13-test".to_owned()),
+            ("target".to_owned(), "ko".to_owned()),
+            (
+                "quick".to_owned(),
+                "llama3.2 · 127.0.0.1:11434 · on this machine".to_owned(),
+            ),
+            (
+                "deep".to_owned(),
+                "llama3.2 · 127.0.0.1:11434 · on this machine".to_owned(),
+            ),
+            ("dwell".to_owned(), "500ms".to_owned()),
+            ("mode".to_owned(), "default".to_owned()),
+        ];
+
+        let refusals = vec![("no_text".to_owned(), 5)];
+
+        let json = serialize_diagnostics_report(
+            "0.1.0",
+            "2026-09-13-test",
+            "windows",
+            "x86_64",
+            1,
+            42,
+            100,
+            &configuration,
+            15,
+            120,
+            &refusals,
+            "windows-gdi",
+            "ko",
+        );
+
+        // Parse the JSON and assert the exact allowed top-level key set.
+        let value: Value = serde_json::from_str(&json).expect("valid JSON");
+        let obj = value.as_object().expect("top-level object");
+        let actual_keys: HashSet<&String> = obj.keys().collect();
+
+        let allowed_keys: HashSet<&str> = [
+            "version",
+            "build",
+            "os",
+            "arch",
+            "schema_version",
+            "library_count",
+            "history_count",
+            "configuration",
+            "cards",
+            "settled_hovers",
+            "refusals",
+            "ocr_mode",
+            "language",
+        ]
+        .iter()
+        .copied()
+        .collect();
+
+        let actual_key_strs: HashSet<&str> = actual_keys.iter().map(|s| s.as_str()).collect();
+
+        assert_eq!(
+            actual_key_strs, allowed_keys,
+            "diagnostics export schema mismatch: actual keys do not match allowed set"
+        );
+
+        // Assert configuration labels are bounded.
+        let config_array = obj
+            .get("configuration")
+            .and_then(|v| v.as_array())
+            .expect("configuration is an array");
+
+        let allowed_config_labels: HashSet<&str> =
+            ["build", "target", "quick", "deep", "dwell", "mode"]
+                .iter()
+                .copied()
+                .collect();
+
+        for item in config_array {
+            let label = item
+                .get(0)
+                .and_then(|v| v.as_str())
+                .expect("configuration item has label");
+            assert!(
+                allowed_config_labels.contains(label),
+                "configuration label not in allowed set: {}",
+                label
+            );
+        }
+    }
 }
