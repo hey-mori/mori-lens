@@ -715,25 +715,29 @@
       }
     }
 
+    function applySettingsToForm(settings) {
+      document.getElementById('f-language').value = settings.language;
+      document.getElementById('f-dwell').value = settings.dwell_ms;
+      document.getElementById('f-theme').value = settings.theme;
+      document.getElementById('f-text-size').value = settings.text_size;
+      document.getElementById('f-translucency').value = settings.translucency;
+      document.getElementById('f-ocr').value = settings.ocr;
+      document.getElementById('f-profile').value = settings.profile;
+      document.getElementById('f-hover-scope').value = settings.hover_scope;
+      document.getElementById('f-default-tier').value = settings.default_tier;
+      document.getElementById('f-history').checked = settings.history;
+      document.getElementById('f-history-days').value = settings.history_days;
+      document.getElementById('f-history-store-app').checked = settings.history_store_app;
+      document.getElementById('f-history-excluded').value = (settings.history_excluded || []).join(',');
+      document.getElementById('f-quick-endpoint').value = settings.quick_endpoint;
+      document.getElementById('f-deep-engine').value = settings.deep_engine;
+      document.getElementById('f-deep-model').value = settings.deep_model || '';
+      document.getElementById('f-deep-endpoint').value = settings.deep_endpoint;
+    }
+
     async function loadSettings() {
       currentSettings = await invoke('get_settings');
-      document.getElementById('f-language').value = currentSettings.language;
-      document.getElementById('f-dwell').value = currentSettings.dwell_ms;
-      document.getElementById('f-theme').value = currentSettings.theme;
-      document.getElementById('f-text-size').value = currentSettings.text_size;
-      document.getElementById('f-translucency').value = currentSettings.translucency;
-      document.getElementById('f-ocr').value = currentSettings.ocr;
-      document.getElementById('f-profile').value = currentSettings.profile;
-      document.getElementById('f-hover-scope').value = currentSettings.hover_scope;
-      document.getElementById('f-default-tier').value = currentSettings.default_tier;
-      document.getElementById('f-history').checked = currentSettings.history;
-      document.getElementById('f-history-days').value = currentSettings.history_days;
-      document.getElementById('f-history-store-app').checked = currentSettings.history_store_app;
-      document.getElementById('f-history-excluded').value = (currentSettings.history_excluded || []).join(',');
-      document.getElementById('f-quick-endpoint').value = currentSettings.quick_endpoint;
-      document.getElementById('f-deep-engine').value = currentSettings.deep_engine;
-      document.getElementById('f-deep-model').value = currentSettings.deep_model || '';
-      document.getElementById('f-deep-endpoint').value = currentSettings.deep_endpoint;
+      applySettingsToForm(currentSettings);
       renderApps();
       await refreshModels(currentSettings.quick_model);
     }
@@ -807,6 +811,8 @@
       try {
         const outcome = await invoke('save_settings', { settings: view });
         currentSettings = outcome.settings;
+        applySettingsToForm(outcome.settings);
+        renderApps();
         if (outcome.restart_required) {
           setStatus('저장됨 · 변경사항을 적용하려면 Mori Lens를 다시 시작하세요', true);
         } else {
