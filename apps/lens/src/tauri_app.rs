@@ -368,8 +368,6 @@ pub struct LocalAiStatusView {
 /// Model readiness classification for a single lane (Quick or Deep).
 #[derive(Debug, Clone, PartialEq)]
 enum ModelReadiness {
-    /// Ollama endpoint is unreachable.
-    Unreachable,
     /// Auto mode with no installed models.
     AutoNoModels,
     /// Auto mode with at least one installed model.
@@ -378,8 +376,6 @@ enum ModelReadiness {
     Ready(String),
     /// Explicit model is not installed.
     Missing(String),
-    /// Error listing models.
-    Error(String),
 }
 
 /// Classify model readiness given a configured model and installed models.
@@ -450,8 +446,10 @@ async fn get_local_ai_status(
         } else {
             None
         };
-        let quick_names = quick_models.map(|m| m.into_iter().map(|info| info.name).collect::<Vec<_>>());
-        let deep_names = deep_models.map(|m| m.into_iter().map(|info| info.name).collect::<Vec<_>>());
+        let quick_names =
+            quick_models.map(|m| m.into_iter().map(|info| info.name).collect::<Vec<_>>());
+        let deep_names =
+            deep_models.map(|m| m.into_iter().map(|info| info.name).collect::<Vec<_>>());
         (deep_reachable, quick_names, deep_names)
     };
 
@@ -459,7 +457,6 @@ async fn get_local_ai_status(
     let (quick_status, quick_model_name, quick_pull_cmd) = match quick_model_names {
         None => ("unreachable".to_string(), None, None),
         Some(models) => match classify_model_readiness(quick_model.as_deref(), &models) {
-            ModelReadiness::Unreachable => ("unreachable".to_string(), None, None),
             ModelReadiness::AutoNoModels => {
                 ("auto_no_models".to_string(), Some("Auto".to_string()), None)
             }
@@ -470,7 +467,6 @@ async fn get_local_ai_status(
                 Some(model.clone()),
                 Some(format!("ollama pull {}", model)),
             ),
-            ModelReadiness::Error(model) => ("error".to_string(), Some(model), None),
         },
     };
 
@@ -478,7 +474,6 @@ async fn get_local_ai_status(
     let (deep_status, deep_model_name, deep_pull_cmd) = match deep_model_names {
         None => ("unreachable".to_string(), None, None),
         Some(models) => match classify_model_readiness(deep_model.as_deref(), &models) {
-            ModelReadiness::Unreachable => ("unreachable".to_string(), None, None),
             ModelReadiness::AutoNoModels => {
                 ("auto_no_models".to_string(), Some("Auto".to_string()), None)
             }
@@ -489,7 +484,6 @@ async fn get_local_ai_status(
                 Some(model.clone()),
                 Some(format!("ollama pull {}", model)),
             ),
-            ModelReadiness::Error(model) => ("error".to_string(), Some(model), None),
         },
     };
 
