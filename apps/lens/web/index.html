@@ -435,9 +435,10 @@
 
     async function loadStatus() {
       try {
-        const [diag, runtime] = await Promise.all([
+        const [diag, runtime, localAi] = await Promise.all([
           invoke('get_diagnostics'),
           invoke('get_runtime_status'),
+          invoke('get_local_ai_status'),
         ]);
         const el = document.getElementById('status-content');
         // Always show runtime controls even before session data arrives.
@@ -462,6 +463,33 @@
         html += '<button class="btn" onclick="quitApp()" style="padding:8px 20px;color:#c00;border-color:#c00">Mori Lens 종료</button>';
         html += '</div>';
         html += '</div>';
+
+        // Local AI readiness section
+        html += '<h2>로컬 AI</h2>';
+        html += '<table>';
+        if (localAi) {
+          // Ollama status
+          const ollamaIcon = localAi.ollama_reachable
+            ? '<span style="color:#2e7d32">✓</span>'
+            : '<span style="color:#c00">✗</span>';
+          const ollamaText = localAi.ollama_reachable ? '연결됨' : '연결 안 됨';
+          html += '<tr><td>Ollama</td><td>' + ollamaIcon + ' ' + ollamaText + '</td></tr>';
+
+          // Quick model status
+          const quickStatus = formatAiStatus(localAi.quick_status, localAi.quick_model, localAi.quick_pull_command);
+          html += '<tr><td>Quick</td><td>' + quickStatus + '</td></tr>';
+
+          // Deep model status
+          const deepStatus = formatAiStatus(localAi.deep_status, localAi.deep_model, localAi.deep_pull_command);
+          html += '<tr><td>Deep</td><td>' + deepStatus + '</td></tr>';
+        } else {
+          html += '<tr><td>Ollama</td><td>확인 중...</td></tr>';
+          html += '<tr><td>Quick</td><td>확인 중...</td></tr>';
+          html += '<tr><td>Deep</td><td>확인 중...</td></tr>';
+        }
+        html += '</table>';
+        html += '<div style="margin-top:12px"><button class="btn" onclick="refreshLocalAi()" style="padding:6px 12px;font-size:12px">새로고침</button></div>';
+
         // Runtime configuration table.
         if (runtime) {
           html += '<h2>런타임</h2><table>';
@@ -517,6 +545,67 @@
         el.innerHTML = html;
       } catch (e) {
         console.error('loadStatus failed:', e);
+      }
+    }
+
+    function formatAiStatus(status, model, pullCommand) {
+      if (status === 'unreachable') {
+        return '<span style="color:#888">Ollama 연결 필요</span>';
+      } else if (status === 'ready') {
+        return '<span style="color:#2e7d32">✓</span> ' + escapeHtml(model || '');
+      } else if (status === 'missing') {
+        let result = '<span style="color:#c00">✗</span> ' + escapeHtml(model || '') + ' <span style="color:#c00">· 설치 안 됨</span>';
+        if (pullCommand) {
+          const safeCommand = escapeHtml(pullCommand);
+          result += '<div style="margin-top:4px;font-family:monospace;font-size:11px;background:#f5f5f5;padding:6px 8px;border-radius:3px;display:flex;justify-content:space-between;align-items:center">';
+          result += '<span>' + safeCommand + '</span>';
+          result += '<button class="btn" onclick="copyPullCommand(this, \'' + safeCommand + '\')" style="padding:2px 8px;font-size:10px;margin-left:8px">복사</button>';
+          result += '</div>';
+        }
+        return result;
+      } else if (status === 'auto_ready') {
+        return '<span style="color:#2e7d32">✓</span> Auto <span style="color:#888;font-size:11px">· 모델 사용 가능</span>';
+      } else if (status === 'auto_no_models') {
+        return '<span style="color:#f57c00">!</span> Auto <span style="color:#f57c00;font-size:11px">· 설치된 모델 없음</span>';
+      } else if (status === 'error') {
+        return '<span style="color:#c00">✗</span> ' + escapeHtml(model || '') + ' <span style="color:#c00">· 모델 목록 확인 불가</span>';
+      } else {
+        return '<span style="color:#888">알 수 없음</span>';
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    async function copyPullCommand(button, command) {
+      try {
+        await navigator.clipboard.writeText(command);
+        const originalText = button.textContent;
+        button.textContent = '복사됨';
+        button.style.background = '#2e7d32';
+        button.style.color = 'white';
+        setTimeout(() => {
+          button.textContent = originalText;
+          button.style.background = '';
+          button.style.color = '';
+        }, 1500);
+      } catch (e) {
+        console.error('Copy failed:', e);
+        button.textContent = '실패';
+        setTimeout(() => {
+          button.textContent = '복사';
+        }, 1500);
+      }
+    }
+
+    async function refreshLocalAi() {
+      try {
+        await loadStatus();
+      } catch (e) {
+        console.error('refreshLocalAi failed:', e);
       }
     }
 
