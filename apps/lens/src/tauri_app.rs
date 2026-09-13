@@ -345,6 +345,149 @@ async fn check_ollama(endpoint: String) -> bool {
     rx.recv().unwrap_or(false)
 }
 
+/// Local AI readiness status for the webview.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct LocalAiStatusView {
+    pub ollama_reachable: bool,
+    pub quick_status: String,
+    pub quick_model: Option<String>,
+    pub quick_pull_command: Option<String>,
+    pub deep_status: String,
+    pub deep_model: Option<String>,
+    pub deep_pull_command: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Tauri command: get Local AI readiness status.
+///
+/// Checks Ollama reachability and model availability for Quick and Deep engines.
+/// Returns structured status for frontend display without polling.
+#[tauri::command]
+async fn get_local_ai_status(
+    settings: tauri::State<'_, SharedSettings>,
+) -> Result<LocalAiStatusView, String> {
+    let (quick_endpoint, deep_endpoint, quick_model, deep_model) = {
+        let s = settings.lock().unwrap();
+        let view = s.view();
+        (
+            view.quick_endpoint.clone(),
+            view.deep_endpoint.clone(),
+            view.quick_model.clone(),
+            view.deep_model.clone(),
+        )
+    };
+
+    // Check Ollama reachability (reuse one call if endpoints are the same).
+    let quick_reachable = check_ollama(quick_endpoint.clone()).await;
+    let deep_reachable = if quick_endpoint == deep_endpoint {
+        quick_reachable
+    } else {
+        check_ollama(deep_endpoint.clone()).await
+    };
+
+    // If neither endpoint is reachable, return early.
+    if !quick_reachable && !deep_reachable {
+        return Ok(LocalAiStatusView {
+            ollama_reachable: false,
+            quick_status: "unreachable".to_string(),
+            quick_model: None,
+            quick_pull_command: None,
+            deep_status: "unreachable".to_string(),
+            deep_model: None,
+            deep_pull_command: None,
+            error: None,
+        });
+    }
+
+    // Check Quick model status.
+    let (quick_status, quick_model_name, quick_pull_cmd) = if !quick_reachable {
+        ("unreachable".to_string(), None, None)
+    } else if let Some(model) = quick_model {
+        if model.is_empty() {
+            // Auto mode.
+            match list_models(quick_endpoint.clone()).await {
+                Ok(models) => {
+                    if models.is_empty() {
+                        ("auto_no_models".to_string(), Some("Auto".to_string()), None)
+                    } else {
+                        ("auto_ready".to_string(), Some("Auto".to_string()), None)
+                    }
+                }
+                Err(e) => ("error".to_string(), Some("Auto".to_string()), None),
+            }
+        } else {
+            // Explicit model.
+            match list_models(quick_endpoint.clone()).await {
+                Ok(models) => {
+                    let found = models.iter().any(|m| m.name == model);
+                    if found {
+                        ("ready".to_string(), Some(model.clone()), None)
+                    } else {
+                        (
+                            "missing".to_string(),
+                            Some(model.clone()),
+                            Some(format!("ollama pull {}", model)),
+                        )
+                    }
+                }
+                Err(_) => ("error".to_string(), Some(model.clone()), None),
+            }
+        }
+    } else {
+        ("unknown".to_string(), None, None)
+    };
+
+    // Check Deep model status.
+    let (deep_status, deep_model_name, deep_pull_cmd) = if !deep_reachable {
+        ("unreachable".to_string(), None, None)
+    } else if let Some(model) = deep_model {
+        if model.is_empty() {
+            // Auto mode.
+            match list_models(deep_endpoint.clone()).await {
+                Ok(models) => {
+                    if models.is_empty() {
+                        ("auto_no_models".to_string(), Some("Auto".to_string()), None)
+                    } else {
+                        ("auto_ready".to_string(), Some("Auto".to_string()), None)
+                    }
+                }
+                Err(_) => ("error".to_string(), Some("Auto".to_string()), None),
+            }
+        } else {
+            // Explicit model.
+            match list_models(deep_endpoint.clone()).await {
+                Ok(models) => {
+                    let found = models.iter().any(|m| m.name == model);
+                    if found {
+                        ("ready".to_string(), Some(model.clone()), None)
+                    } else {
+                        (
+                            "missing".to_string(),
+                            Some(model.clone()),
+                            Some(format!("ollama pull {}", model)),
+                        )
+                    }
+                }
+                Err(_) => ("error".to_string(), Some(model.clone()), None),
+            }
+        }
+    } else {
+        ("unknown".to_string(), None, None)
+    };
+
+    Ok(LocalAiStatusView {
+        ollama_reachable: quick_reachable || deep_reachable,
+        quick_status,
+        quick_model: quick_model_name,
+        quick_pull_command: quick_pull_cmd,
+        deep_status,
+        deep_model: deep_model_name,
+        deep_pull_command: deep_pull_cmd,
+        error: None,
+    })
+}
+
 /// Tauri command: translate a fixed sentence to test a model.
 #[tauri::command]
 async fn test_model(endpoint: String, model: String) -> Result<TestResultView, String> {
@@ -847,6 +990,7 @@ pub fn build(
             save_settings,
             list_models,
             check_ollama,
+            get_local_ai_status,
             test_model,
             library_list,
             library_filter,
