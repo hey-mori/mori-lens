@@ -680,9 +680,13 @@
         applications: currentSettings.applications
       };
       try {
-        await invoke('save_settings', { settings: view });
+        const outcome = await invoke('save_settings', { settings: view });
         currentSettings = view;
-        setStatus('Saved');
+        if (outcome.restart_required) {
+          setStatus('저장됨 · 변경사항을 적용하려면 Mori Lens를 다시 시작하세요');
+        } else {
+          setStatus('저장됨 · 바로 적용되었습니다');
+        }
       } catch (e) {
         setStatus('Error: ' + e);
       }
