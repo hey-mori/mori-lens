@@ -503,6 +503,15 @@
           }
           html += '</table>';
         }
+        // Diagnostics export button for bug reports
+        html += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid #eee">';
+        html += '<button class="btn" onclick="exportDiagnostics()" style="padding:8px 16px;font-size:12px">진단 정보 복사</button>';
+        html += '<p style="font-size:11px;color:#888;margin-top:8px">버그 보고용 진단 정보를 클립보드에 복사합니다. 캡처된 텍스트는 포함되지 않습니다.</p>';
+        html += '<div id="diagnostics-result" style="margin-top:12px;display:none">';
+        html += '<textarea id="diagnostics-json" readonly style="width:100%;height:200px;font-family:monospace;font-size:11px;padding:8px;border:1px solid #ddd;border-radius:4px;resize:vertical"></textarea>';
+        html += '<button class="btn" onclick="copyDiagnostics()" style="margin-top:8px;padding:6px 12px;font-size:11px">클립보드에 복사</button>';
+        html += '</div>';
+        html += '</div>';
         // Close hint.
         html += '<p style="font-size:11px;color:#999;margin-top:20px">이 창을 닫아도 Mori Lens는 시스템 트레이에서 계속 실행됩니다.</p>';
         el.innerHTML = html;
@@ -537,6 +546,42 @@
         setTimeout(loadStatus, 200);
       } catch (e) {
         console.error('toggleAutostart failed:', e);
+      }
+    }
+
+    async function exportDiagnostics() {
+      try {
+        var json = await invoke('export_diagnostics');
+        var textarea = document.getElementById('diagnostics-json');
+        var resultDiv = document.getElementById('diagnostics-result');
+        textarea.value = json;
+        resultDiv.style.display = 'block';
+      } catch (e) {
+        console.error('exportDiagnostics failed:', e);
+        alert('진단 정보 내보내기 실패: ' + e);
+      }
+    }
+
+    async function copyDiagnostics() {
+      try {
+        var textarea = document.getElementById('diagnostics-json');
+        textarea.select();
+        textarea.setSelectionRange(0, 99999); // For mobile devices
+        document.execCommand('copy');
+        // Provide visual feedback
+        var btn = event.target;
+        var originalText = btn.textContent;
+        btn.textContent = '복사됨!';
+        btn.style.background = '#2e7d32';
+        btn.style.color = 'white';
+        setTimeout(function() {
+          btn.textContent = originalText;
+          btn.style.background = '';
+          btn.style.color = '';
+        }, 2000);
+      } catch (e) {
+        console.error('copyDiagnostics failed:', e);
+        alert('클립보드 복사 실패: ' + e);
       }
     }
 
