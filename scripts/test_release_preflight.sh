@@ -263,7 +263,21 @@ else
     echo "Test: Missing MSIX artifact fails (skipped: not Windows)"
 fi
 
-# ── Test 13: Script structure verification ───────────────────────────────────
+# ── Test 13: Provenance semantics are explicit ───────────────────────────────
+echo "Test: Provenance semantics are explicit"
+if grep -q "ARTIFACT STRUCTURE VALID, REVISION PROVENANCE UNPROVEN" "$PREFLIGHT"; then
+    pass "Verify-only unproven shows weaker status"
+else
+    fail "Verify-only unproven should show 'ARTIFACT STRUCTURE VALID, REVISION PROVENANCE UNPROVEN'"
+fi
+
+if grep -q "REVISION_PROVENANCE.*VERIFIED" "$PREFLIGHT" || grep -A 5 "VERIFY_ONLY.*true" "$PREFLIGHT" | grep -q "STRUCTURALLY READY"; then
+    pass "Verify-only verified shows STRUCTURALLY READY"
+else
+    fail "Verify-only verified should show STRUCTURALLY READY"
+fi
+
+# ── Test 14: Script structure verification ───────────────────────────────────
 echo "Test: Script structure verification"
 if grep -q "STRUCTURALLY READY" "$PREFLIGHT"; then
     pass "Uses STRUCTURALLY READY terminology"

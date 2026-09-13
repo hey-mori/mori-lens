@@ -489,13 +489,37 @@ if [[ $GATE_FAILURES -eq 0 ]]; then
         echo ""
         echo "Source gates passed. Package checks were skipped (--source-only)."
         echo "Run without --source-only on a supported platform to verify packages."
+        exit 0
+    fi
+
+    # Check revision provenance for verify-only mode
+    if [[ "$VERIFY_ONLY" == "true" ]]; then
+        if [[ "${SUMMARY[REVISION_PROVENANCE]}" == "UNPROVEN" ]]; then
+            echo "OVERALL:              ARTIFACT STRUCTURE VALID, REVISION PROVENANCE UNPROVEN"
+            echo ""
+            echo "Artifacts are structurally valid, but build provenance could not be verified."
+            echo "The artifacts may not be from this exact revision."
+            echo "For exact-revision readiness, rebuild from clean tree or use artifacts with verified provenance."
+            exit 0
+        elif [[ "${SUMMARY[REVISION_PROVENANCE]}" == "VERIFIED" ]]; then
+            echo "OVERALL:              STRUCTURALLY READY"
+            echo ""
+            echo "All gates passed. Packages are structurally valid and verified for this revision."
+            echo "Signing and distribution remain external blockers."
+            exit 0
+        else
+            # MISMATCH or other unexpected status should have already failed
+            echo "OVERALL:              FAILED (unexpected provenance status: ${SUMMARY[REVISION_PROVENANCE]})"
+            exit 1
+        fi
     else
+        # BUILD mode: we just built from this tree
         echo "OVERALL:              STRUCTURALLY READY"
         echo ""
         echo "All gates passed. Packages are structurally valid for this revision."
         echo "Signing and distribution remain external blockers."
+        exit 0
     fi
-    exit 0
 else
     echo "OVERALL:              FAILED ($GATE_FAILURES gate(s))"
     echo ""
