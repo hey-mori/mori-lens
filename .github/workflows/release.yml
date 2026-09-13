@@ -132,6 +132,10 @@ jobs:
           echo "Found: $APP_DIR"
           echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
 
+      - name: Verify .app structure
+        shell: bash
+        run: ./scripts/verify-app-bundle.sh "$APP_DIR"
+
       - name: Create zip artifact
         shell: bash
         run: |
