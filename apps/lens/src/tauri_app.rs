@@ -378,6 +378,17 @@ enum ModelReadiness {
     Missing(String),
 }
 
+/// Model list retrieval state, distinguishing endpoint reachability from list errors.
+#[derive(Debug, Clone)]
+enum ModelListState {
+    /// Endpoint is unreachable (network down, wrong URL, etc.).
+    Unreachable,
+    /// Endpoint reachable, but model list request failed.
+    Error(String),
+    /// Models successfully listed.
+    Models(Vec<String>),
+}
+
 /// Classify model readiness given a configured model and installed models.
 fn classify_model_readiness(
     configured_model: Option<&str>,
@@ -422,69 +433,92 @@ async fn get_local_ai_status(
         )
     };
 
-    // Check Ollama reachability (deduplicate if endpoints are the same).
+    // Check Ollama reachability and model list (deduplicate if endpoints are the same).
     let quick_reachable = check_ollama(quick_endpoint.clone()).await;
-    let (deep_reachable, quick_model_names, deep_model_names) = if quick_endpoint == deep_endpoint {
+    let (deep_reachable, quick_model_state, deep_model_state) = if quick_endpoint == deep_endpoint {
         // Same endpoint: fetch model list once.
-        let models = if quick_reachable {
-            list_models(quick_endpoint.clone()).await.ok()
+        let state = if quick_reachable {
+            match list_models(quick_endpoint.clone()).await {
+                Ok(models) => {
+                    let names = models.into_iter().map(|info| info.name).collect::<Vec<_>>();
+                    ModelListState::Models(names)
+                }
+                Err(e) => ModelListState::Error(e),
+            }
         } else {
-            None
+            ModelListState::Unreachable
         };
-        let names = models.map(|m| m.into_iter().map(|info| info.name).collect::<Vec<_>>());
-        (quick_reachable, names.clone(), names)
+        (quick_reachable, state.clone(), state)
     } else {
         // Different endpoints: fetch separately.
         let deep_reachable = check_ollama(deep_endpoint.clone()).await;
-        let quick_models = if quick_reachable {
-            list_models(quick_endpoint.clone()).await.ok()
+        let quick_state = if quick_reachable {
+            match list_models(quick_endpoint.clone()).await {
+                Ok(models) => {
+                    let names = models.into_iter().map(|info| info.name).collect::<Vec<_>>();
+                    ModelListState::Models(names)
+                }
+                Err(e) => ModelListState::Error(e),
+            }
         } else {
-            None
+            ModelListState::Unreachable
         };
-        let deep_models = if deep_reachable {
-            list_models(deep_endpoint.clone()).await.ok()
+        let deep_state = if deep_reachable {
+            match list_models(deep_endpoint.clone()).await {
+                Ok(models) => {
+                    let names = models.into_iter().map(|info| info.name).collect::<Vec<_>>();
+                    ModelListState::Models(names)
+                }
+                Err(e) => ModelListState::Error(e),
+            }
         } else {
-            None
+            ModelListState::Unreachable
         };
-        let quick_names =
-            quick_models.map(|m| m.into_iter().map(|info| info.name).collect::<Vec<_>>());
-        let deep_names =
-            deep_models.map(|m| m.into_iter().map(|info| info.name).collect::<Vec<_>>());
-        (deep_reachable, quick_names, deep_names)
+        (deep_reachable, quick_state, deep_state)
     };
 
     // Classify Quick model.
-    let (quick_status, quick_model_name, quick_pull_cmd) = match quick_model_names {
-        None => ("unreachable".to_string(), None, None),
-        Some(models) => match classify_model_readiness(quick_model.as_deref(), &models) {
-            ModelReadiness::AutoNoModels => {
-                ("auto_no_models".to_string(), Some("Auto".to_string()), None)
+    let (quick_status, quick_model_name, quick_pull_cmd) = match quick_model_state {
+        ModelListState::Unreachable => ("unreachable".to_string(), None, None),
+        ModelListState::Error(e) => ("error".to_string(), Some(e), None),
+        ModelListState::Models(models) => {
+            match classify_model_readiness(quick_model.as_deref(), &models) {
+                ModelReadiness::AutoNoModels => {
+                    ("auto_no_models".to_string(), Some("Auto".to_string()), None)
+                }
+                ModelReadiness::AutoReady => {
+                    ("auto_ready".to_string(), Some("Auto".to_string()), None)
+                }
+                ModelReadiness::Ready(model) => ("ready".to_string(), Some(model), None),
+                ModelReadiness::Missing(model) => (
+                    "missing".to_string(),
+                    Some(model.clone()),
+                    Some(format!("ollama pull {}", model)),
+                ),
             }
-            ModelReadiness::AutoReady => ("auto_ready".to_string(), Some("Auto".to_string()), None),
-            ModelReadiness::Ready(model) => ("ready".to_string(), Some(model), None),
-            ModelReadiness::Missing(model) => (
-                "missing".to_string(),
-                Some(model.clone()),
-                Some(format!("ollama pull {}", model)),
-            ),
-        },
+        }
     };
 
     // Classify Deep model.
-    let (deep_status, deep_model_name, deep_pull_cmd) = match deep_model_names {
-        None => ("unreachable".to_string(), None, None),
-        Some(models) => match classify_model_readiness(deep_model.as_deref(), &models) {
-            ModelReadiness::AutoNoModels => {
-                ("auto_no_models".to_string(), Some("Auto".to_string()), None)
+    let (deep_status, deep_model_name, deep_pull_cmd) = match deep_model_state {
+        ModelListState::Unreachable => ("unreachable".to_string(), None, None),
+        ModelListState::Error(e) => ("error".to_string(), Some(e), None),
+        ModelListState::Models(models) => {
+            match classify_model_readiness(deep_model.as_deref(), &models) {
+                ModelReadiness::AutoNoModels => {
+                    ("auto_no_models".to_string(), Some("Auto".to_string()), None)
+                }
+                ModelReadiness::AutoReady => {
+                    ("auto_ready".to_string(), Some("Auto".to_string()), None)
+                }
+                ModelReadiness::Ready(model) => ("ready".to_string(), Some(model), None),
+                ModelReadiness::Missing(model) => (
+                    "missing".to_string(),
+                    Some(model.clone()),
+                    Some(format!("ollama pull {}", model)),
+                ),
             }
-            ModelReadiness::AutoReady => ("auto_ready".to_string(), Some("Auto".to_string()), None),
-            ModelReadiness::Ready(model) => ("ready".to_string(), Some(model), None),
-            ModelReadiness::Missing(model) => (
-                "missing".to_string(),
-                Some(model.clone()),
-                Some(format!("ollama pull {}", model)),
-            ),
-        },
+        }
     };
 
     Ok(LocalAiStatusView {
@@ -1319,5 +1353,21 @@ mod tests {
     fn classify_model_readiness_explicit_model_missing() {
         let result = classify_model_readiness(Some("llama3"), &["mistral".to_string()]);
         assert_eq!(result, ModelReadiness::Missing("llama3".to_string()));
+    }
+
+    #[test]
+    fn model_list_state_variants_are_distinct() {
+        // Verify the three semantic states exist and are distinguishable.
+        let unreachable = ModelListState::Unreachable;
+        let error = ModelListState::Error("network timeout".to_string());
+        let models = ModelListState::Models(vec!["llama3".to_string()]);
+
+        // Ensure they are distinct variants.
+        assert!(!matches!(unreachable, ModelListState::Error(_)));
+        assert!(!matches!(unreachable, ModelListState::Models(_)));
+        assert!(!matches!(error, ModelListState::Unreachable));
+        assert!(!matches!(error, ModelListState::Models(_)));
+        assert!(!matches!(models, ModelListState::Unreachable));
+        assert!(!matches!(models, ModelListState::Error(_)));
     }
 }
