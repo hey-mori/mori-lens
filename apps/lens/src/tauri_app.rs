@@ -349,14 +349,56 @@ async fn check_ollama(endpoint: String) -> bool {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct LocalAiStatusView {
-    pub ollama_reachable: bool,
+    pub quick_reachable: bool,
+    pub deep_reachable: bool,
     pub quick_status: String,
     pub quick_model: Option<String>,
     pub quick_pull_command: Option<String>,
     pub deep_status: String,
     pub deep_model: Option<String>,
     pub deep_pull_command: Option<String>,
-    pub error: Option<String>,
+}
+
+/// Model readiness classification for a single lane (Quick or Deep).
+#[derive(Debug, Clone, PartialEq)]
+enum ModelReadiness {
+    /// Ollama endpoint is unreachable.
+    Unreachable,
+    /// Auto mode with no installed models.
+    AutoNoModels,
+    /// Auto mode with at least one installed model.
+    AutoReady,
+    /// Explicit model is installed.
+    Ready(String),
+    /// Explicit model is not installed.
+    Missing(String),
+    /// Error listing models.
+    Error(String),
+}
+
+/// Classify model readiness given a configured model and installed models.
+fn classify_model_readiness(
+    configured_model: Option<&str>,
+    installed_models: &[String],
+) -> ModelReadiness {
+    match configured_model {
+        None | Some("") => {
+            // Auto mode: canonical is None, but accept Some("") for compatibility.
+            if installed_models.is_empty() {
+                ModelReadiness::AutoNoModels
+            } else {
+                ModelReadiness::AutoReady
+            }
+        }
+        Some(model) => {
+            // Explicit model.
+            if installed_models.iter().any(|m| m == model) {
+                ModelReadiness::Ready(model.to_string())
+            } else {
+                ModelReadiness::Missing(model.to_string())
+            }
+        }
+    }
 }
 
 /// Tauri command: get Local AI readiness status.
@@ -378,113 +420,90 @@ async fn get_local_ai_status(
         )
     };
 
-    // Check Ollama reachability (reuse one call if endpoints are the same).
+    // Check Ollama reachability (deduplicate if endpoints are the same).
     let quick_reachable = check_ollama(quick_endpoint.clone()).await;
-    let deep_reachable = if quick_endpoint == deep_endpoint {
-        quick_reachable
+    let (deep_reachable, quick_model_names, deep_model_names) = if quick_endpoint == deep_endpoint {
+        // Same endpoint: fetch model list once.
+        let models = if quick_reachable {
+            list_models(quick_endpoint.clone()).await.ok()
+        } else {
+            None
+        };
+        let names = models.map(|m| m.into_iter().map(|info| info.name).collect::<Vec<_>>());
+        (quick_reachable, names.clone(), names)
     } else {
-        check_ollama(deep_endpoint.clone()).await
+        // Different endpoints: fetch separately.
+        let deep_reachable = check_ollama(deep_endpoint.clone()).await;
+        let quick_models = if quick_reachable {
+            list_models(quick_endpoint.clone()).await.ok()
+        } else {
+            None
+        };
+        let deep_models = if deep_reachable {
+            list_models(deep_endpoint.clone()).await.ok()
+        } else {
+            None
+        };
+        let quick_names = quick_models.map(|m| m.into_iter().map(|info| info.name).collect::<Vec<_>>());
+        let deep_names = deep_models.map(|m| m.into_iter().map(|info| info.name).collect::<Vec<_>>());
+        (deep_reachable, quick_names, deep_names)
     };
 
-    // If neither endpoint is reachable, return early.
-    if !quick_reachable && !deep_reachable {
-        return Ok(LocalAiStatusView {
-            ollama_reachable: false,
-            quick_status: "unreachable".to_string(),
-            quick_model: None,
-            quick_pull_command: None,
-            deep_status: "unreachable".to_string(),
-            deep_model: None,
-            deep_pull_command: None,
-            error: None,
-        });
-    }
-
-    // Check Quick model status.
-    let (quick_status, quick_model_name, quick_pull_cmd) = if !quick_reachable {
-        ("unreachable".to_string(), None, None)
-    } else if let Some(model) = quick_model {
-        if model.is_empty() {
-            // Auto mode.
-            match list_models(quick_endpoint.clone()).await {
-                Ok(models) => {
-                    if models.is_empty() {
-                        ("auto_no_models".to_string(), Some("Auto".to_string()), None)
-                    } else {
-                        ("auto_ready".to_string(), Some("Auto".to_string()), None)
-                    }
+    // Classify Quick model.
+    let (quick_status, quick_model_name, quick_pull_cmd) = match quick_model_names {
+        None => ("unreachable".to_string(), None, None),
+        Some(models) => {
+            match classify_model_readiness(quick_model.as_deref(), &models) {
+                ModelReadiness::Unreachable => ("unreachable".to_string(), None, None),
+                ModelReadiness::AutoNoModels => {
+                    ("auto_no_models".to_string(), Some("Auto".to_string()), None)
                 }
-                Err(_) => ("error".to_string(), Some("Auto".to_string()), None),
-            }
-        } else {
-            // Explicit model.
-            match list_models(quick_endpoint.clone()).await {
-                Ok(models) => {
-                    let found = models.iter().any(|m| m.name == model);
-                    if found {
-                        ("ready".to_string(), Some(model.clone()), None)
-                    } else {
-                        (
-                            "missing".to_string(),
-                            Some(model.clone()),
-                            Some(format!("ollama pull {}", model)),
-                        )
-                    }
+                ModelReadiness::AutoReady => {
+                    ("auto_ready".to_string(), Some("Auto".to_string()), None)
                 }
-                Err(_) => ("error".to_string(), Some(model.clone()), None),
+                ModelReadiness::Ready(model) => ("ready".to_string(), Some(model), None),
+                ModelReadiness::Missing(model) => (
+                    "missing".to_string(),
+                    Some(model.clone()),
+                    Some(format!("ollama pull {}", model)),
+                ),
+                ModelReadiness::Error(model) => ("error".to_string(), Some(model), None),
             }
         }
-    } else {
-        ("unknown".to_string(), None, None)
     };
 
-    // Check Deep model status.
-    let (deep_status, deep_model_name, deep_pull_cmd) = if !deep_reachable {
-        ("unreachable".to_string(), None, None)
-    } else if let Some(model) = deep_model {
-        if model.is_empty() {
-            // Auto mode.
-            match list_models(deep_endpoint.clone()).await {
-                Ok(models) => {
-                    if models.is_empty() {
-                        ("auto_no_models".to_string(), Some("Auto".to_string()), None)
-                    } else {
-                        ("auto_ready".to_string(), Some("Auto".to_string()), None)
-                    }
+    // Classify Deep model.
+    let (deep_status, deep_model_name, deep_pull_cmd) = match deep_model_names {
+        None => ("unreachable".to_string(), None, None),
+        Some(models) => {
+            match classify_model_readiness(deep_model.as_deref(), &models) {
+                ModelReadiness::Unreachable => ("unreachable".to_string(), None, None),
+                ModelReadiness::AutoNoModels => {
+                    ("auto_no_models".to_string(), Some("Auto".to_string()), None)
                 }
-                Err(_) => ("error".to_string(), Some("Auto".to_string()), None),
-            }
-        } else {
-            // Explicit model.
-            match list_models(deep_endpoint.clone()).await {
-                Ok(models) => {
-                    let found = models.iter().any(|m| m.name == model);
-                    if found {
-                        ("ready".to_string(), Some(model.clone()), None)
-                    } else {
-                        (
-                            "missing".to_string(),
-                            Some(model.clone()),
-                            Some(format!("ollama pull {}", model)),
-                        )
-                    }
+                ModelReadiness::AutoReady => {
+                    ("auto_ready".to_string(), Some("Auto".to_string()), None)
                 }
-                Err(_) => ("error".to_string(), Some(model.clone()), None),
+                ModelReadiness::Ready(model) => ("ready".to_string(), Some(model), None),
+                ModelReadiness::Missing(model) => (
+                    "missing".to_string(),
+                    Some(model.clone()),
+                    Some(format!("ollama pull {}", model)),
+                ),
+                ModelReadiness::Error(model) => ("error".to_string(), Some(model), None),
             }
         }
-    } else {
-        ("unknown".to_string(), None, None)
     };
 
     Ok(LocalAiStatusView {
-        ollama_reachable: quick_reachable || deep_reachable,
+        quick_reachable,
+        deep_reachable,
         quick_status,
         quick_model: quick_model_name,
         quick_pull_command: quick_pull_cmd,
         deep_status,
         deep_model: deep_model_name,
         deep_pull_command: deep_pull_cmd,
-        error: None,
     })
 }
 
@@ -1277,5 +1296,36 @@ mod tests {
                 label
             );
         }
+    }
+
+    #[test]
+    fn classify_model_readiness_none_with_no_models() {
+        let result = classify_model_readiness(None, &[]);
+        assert_eq!(result, ModelReadiness::AutoNoModels);
+    }
+
+    #[test]
+    fn classify_model_readiness_none_with_models() {
+        let result = classify_model_readiness(None, &["llama3".to_string()]);
+        assert_eq!(result, ModelReadiness::AutoReady);
+    }
+
+    #[test]
+    fn classify_model_readiness_empty_string_with_models() {
+        // Some("") is accepted as Auto for backward compatibility.
+        let result = classify_model_readiness(Some(""), &["llama3".to_string()]);
+        assert_eq!(result, ModelReadiness::AutoReady);
+    }
+
+    #[test]
+    fn classify_model_readiness_explicit_model_present() {
+        let result = classify_model_readiness(Some("llama3"), &["llama3".to_string()]);
+        assert_eq!(result, ModelReadiness::Ready("llama3".to_string()));
+    }
+
+    #[test]
+    fn classify_model_readiness_explicit_model_missing() {
+        let result = classify_model_readiness(Some("llama3"), &["mistral".to_string()]);
+        assert_eq!(result, ModelReadiness::Missing("llama3".to_string()));
     }
 }
