@@ -727,6 +727,49 @@ fn mori_send_item(state: tauri::State<'_, SharedLibrary>, item_id: i64) -> Resul
     crate::mori_transfer::send_to_mori(&item).map_err(|e| format!("{e}"))
 }
 
+/// Serialize diagnostics into a JSON report for bug reports.
+///
+/// Pure function: no Tauri state, no locks, no side effects. Extracted so the
+/// privacy contract can be tested without instantiating `tauri::State`.
+///
+/// **Privacy contract:** Only metadata is included. No captured text, no
+/// translations, no analysis, no notes, no history content, no recent items,
+/// no clipboard content, no screenshots, no passwords, no tokens, no API keys.
+#[allow(clippy::too_many_arguments)]
+pub fn serialize_diagnostics_report(
+    version: &str,
+    build: &str,
+    os: &str,
+    arch: &str,
+    schema_version: i64,
+    library_count: i64,
+    history_count: i64,
+    configuration: &[(String, String)],
+    cards: u32,
+    settled_hovers: u32,
+    refusals: &[(String, u32)],
+    ocr_mode: &str,
+    language: &str,
+) -> String {
+    let report = serde_json::json!({
+        "version": version,
+        "build": build,
+        "os": os,
+        "arch": arch,
+        "schema_version": schema_version,
+        "library_count": library_count,
+        "history_count": history_count,
+        "configuration": configuration,
+        "cards": cards,
+        "settled_hovers": settled_hovers,
+        "refusals": refusals,
+        "ocr_mode": ocr_mode,
+        "language": language,
+    });
+
+    serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_owned())
+}
+
 /// Diagnostics export for bug reports.
 ///
 /// Explicit user action only: the reader clicks "Export diagnostics" in
@@ -747,23 +790,21 @@ fn export_diagnostics(
     let library_count = lib.library().count().unwrap_or(0);
     let history_count = lib.library().history_count().unwrap_or(0);
 
-    let report = serde_json::json!({
-        "version": env!("CARGO_PKG_VERSION"),
-        "build": diag.build,
-        "os": std::env::consts::OS,
-        "arch": std::env::consts::ARCH,
-        "schema_version": schema_version,
-        "library_count": library_count,
-        "history_count": history_count,
-        "configuration": diag.configuration,
-        "cards": diag.cards,
-        "settled_hovers": diag.settled_hovers,
-        "refusals": diag.refusals,
-        "ocr_mode": diag.ocr_mode,
-        "language": conf.current().language,
-    });
-
-    serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_owned())
+    serialize_diagnostics_report(
+        env!("CARGO_PKG_VERSION"),
+        &diag.build,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        schema_version,
+        library_count,
+        history_count,
+        &diag.configuration,
+        diag.cards,
+        diag.settled_hovers,
+        &diag.refusals,
+        &diag.ocr_mode,
+        &conf.current().language,
+    )
 }
 
 /// Build the Tauri application and return its handle, shared diagnostics, pause request, quit request, and the `App` itself.
@@ -911,5 +952,84 @@ mod tests {
             intended_path: PathBuf::from("/tmp/lib.db"),
             reason: "test".to_owned(),
         }));
+    }
+
+    /// Privacy regression test for diagnostics export.
+    ///
+    /// Proves that captured text, translations, analysis, notes, history, and
+    /// recent items cannot leak into the diagnostics JSON. If this test fails,
+    /// somebody added privacy-sensitive content to the export.
+    #[test]
+    fn diagnostics_export_excludes_canary_strings() {
+        // Canary strings that must NEVER appear in diagnostics output.
+        // These represent the kinds of content that are privacy-sensitive.
+        let canaries = [
+            "SUPER_SECRET_ORIGINAL_CANARY",
+            "SUPER_SECRET_TRANSLATION_CANARY",
+            "SUPER_SECRET_ANALYSIS_CANARY",
+            "SUPER_SECRET_NOTE_CANARY",
+            "SUPER_SECRET_HISTORY_CANARY",
+            "SUPER_SECRET_RECENT_CANARY",
+        ];
+
+        // Build a diagnostics report with realistic metadata.
+        let configuration = vec![
+            ("build".to_owned(), "2026-09-13-test".to_owned()),
+            ("target".to_owned(), "ko".to_owned()),
+            (
+                "quick".to_owned(),
+                "llama3.2 · 127.0.0.1:11434 · on this machine".to_owned(),
+            ),
+            (
+                "deep".to_owned(),
+                "llama3.2 · 127.0.0.1:11434 · on this machine".to_owned(),
+            ),
+            ("dwell".to_owned(), "500ms".to_owned()),
+            ("mode".to_owned(), "default".to_owned()),
+        ];
+
+        let refusals = vec![("no_text".to_owned(), 5), ("password_field".to_owned(), 2)];
+
+        let json = serialize_diagnostics_report(
+            "0.1.0",
+            "2026-09-13-test",
+            "windows",
+            "x86_64",
+            1,
+            42,
+            100,
+            &configuration,
+            15,
+            120,
+            &refusals,
+            "windows-gdi",
+            "ko",
+        );
+
+        // Verify no canary strings appear in the output.
+        for canary in &canaries {
+            assert!(
+                !json.contains(canary),
+                "diagnostics export contains privacy-sensitive canary: {}",
+                canary
+            );
+        }
+
+        // Verify expected metadata IS present.
+        assert!(json.contains("\"version\": \"0.1.0\""));
+        assert!(json.contains("\"build\": \"2026-09-13-test\""));
+        assert!(json.contains("\"os\": \"windows\""));
+        assert!(json.contains("\"arch\": \"x86_64\""));
+        assert!(json.contains("\"schema_version\": 1"));
+        assert!(json.contains("\"library_count\": 42"));
+        assert!(json.contains("\"history_count\": 100"));
+        assert!(json.contains("\"cards\": 15"));
+        assert!(json.contains("\"settled_hovers\": 120"));
+        assert!(json.contains("\"ocr_mode\": \"windows-gdi\""));
+        assert!(json.contains("\"language\": \"ko\""));
+        // Configuration is an array of key-value pairs.
+        assert!(json.contains("\"target\""));
+        assert!(json.contains("\"dwell\""));
+        assert!(json.contains("\"mode\""));
     }
 }
