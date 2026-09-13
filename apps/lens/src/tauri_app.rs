@@ -306,7 +306,7 @@ fn get_settings(state: tauri::State<'_, SharedSettings>) -> SettingsView {
 fn save_settings(
     state: tauri::State<'_, SharedSettings>,
     settings: SettingsView,
-) -> Result<(), String> {
+) -> Result<crate::settings_service::SettingsSaveOutcome, String> {
     state.lock().unwrap().apply(settings)
 }
 

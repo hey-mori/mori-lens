@@ -177,8 +177,48 @@ pub fn main() -> std::process::ExitCode {
     let _ = std::fs::create_dir_all(&data_dir);
 
     // Shared settings (via settings_service — same as Windows).
+    // First, load without a baseline to get the initial settings.
+    // Then construct the baseline from those settings (including CLI overrides).
+    // The baseline is used to detect restart-required changes when settings are saved.
+    let initial_settings = settings_service::load_or_migrate(
+        &settings_path,
+        settings_service::ActiveEngineSettings {
+            quick_model: None,
+            quick_endpoint: String::new(),
+            deep_model: None,
+            deep_endpoint: String::new(),
+            ocr_mode: String::new(),
+        },
+    );
+    // Construct the active baseline from the loaded settings and CLI flags.
+    let active_baseline = {
+        let guard = initial_settings.schema();
+        let quick_model = guard.quick.model.clone();
+        let quick_endpoint = guard.quick.endpoint.clone();
+        let deep_model = guard.deep.model.clone();
+        let deep_endpoint = guard.deep.endpoint.clone();
+        let ocr_mode = guard.general.ocr.clone();
+        // CLI flags can override these; apply them to the baseline.
+        let quick_endpoint = flags.endpoint.clone().unwrap_or(quick_endpoint);
+        let deep_endpoint = flags.endpoint.clone().unwrap_or(deep_endpoint);
+        let quick_model = flags.model.clone().or(quick_model);
+        let ocr_mode = flags
+            .ocr
+            .as_deref()
+            .map(String::from)
+            .unwrap_or(ocr_mode);
+        settings_service::ActiveEngineSettings {
+            quick_model,
+            quick_endpoint,
+            deep_model,
+            deep_endpoint,
+            ocr_mode,
+        }
+    };
+    // Reload with the proper baseline.
     let shared_settings: SharedSettings = Arc::new(Mutex::new(settings_service::load_or_migrate(
         &settings_path,
+        active_baseline,
     )));
 
     // Shared library (via library_service — same as Windows).
