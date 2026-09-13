@@ -746,15 +746,14 @@ impl Library {
                 continue;
             }
 
-            let item: Item = serde_json::from_str(trimmed)
-                .map_err(|e| {
-                    let ctx = if imported > 0 {
-                        format!("line {} (after {} imported): {e}", i + 1, imported)
-                    } else {
-                        format!("line {}: {e}", i + 1)
-                    };
-                    Error::Io(std::io::Error::other(ctx))
-                })?;
+            let item: Item = serde_json::from_str(trimmed).map_err(|e| {
+                let ctx = if imported > 0 {
+                    format!("line {} (after {} imported): {e}", i + 1, imported)
+                } else {
+                    format!("line {}: {e}", i + 1)
+                };
+                Error::Io(std::io::Error::other(ctx))
+            })?;
 
             // Skip duplicates.
             if self
