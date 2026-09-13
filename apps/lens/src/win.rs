@@ -1339,8 +1339,17 @@ pub fn main() -> std::process::ExitCode {
                 .unwrap_or_else(|_| std::path::PathBuf::from("."));
             base.join("Mori Lens")
         });
+    // Construct the active engine settings baseline from the initial configuration.
+    // This is used to detect restart-required changes when settings are saved.
+    let active_baseline = settings_service::ActiveEngineSettings {
+        quick_model: options.ai_config.quick.model.clone(),
+        quick_endpoint: options.ai_config.quick.endpoint.clone(),
+        deep_model: options.ai_config.deep.model.clone(),
+        deep_endpoint: options.ai_config.deep.endpoint.clone(),
+        ocr_mode: options.ocr_mode.as_str().to_owned(),
+    };
     let shared_settings = std::sync::Arc::new(std::sync::Mutex::new(
-        settings_service::load_or_migrate(&options.source.path),
+        settings_service::load_or_migrate(&options.source.path, active_baseline),
     ));
     println!(
         "  settings  {:?}",
