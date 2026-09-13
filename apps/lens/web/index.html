@@ -523,7 +523,17 @@
           html += '<tr><td>Windows 시작</td><td>' + autostartLabel + autostartToggle + '</td></tr>';
           // Restart status
           if (runtime.restart_required) {
-            var reasonText = runtime.restart_reasons.length > 0 ? ' (' + runtime.restart_reasons.join(', ') + ')' : '';
+            var reasonLabels = {
+              'quick_model': 'Quick 모델',
+              'quick_endpoint': 'Quick 엔드포인트',
+              'deep_model': 'Deep 모델',
+              'deep_endpoint': 'Deep 엔드포인트',
+              'ocr_mode': 'OCR 모드'
+            };
+            var mappedReasons = runtime.restart_reasons.map(function(key) {
+              return reasonLabels[key] || key;
+            });
+            var reasonText = mappedReasons.length > 0 ? ' (' + mappedReasons.join(', ') + ')' : '';
             html += '<tr><td style="color:#f57c00;font-weight:500">재시작 필요' + reasonText + '</td><td style="color:#f57c00">변경사항을 적용하려면 Mori Lens를 다시 시작하세요</td></tr>';
           } else {
             html += '<tr><td>재시작 상태</td><td style="color:#2e7d32">필요 없음</td></tr>';
@@ -736,6 +746,7 @@
       document.getElementById('f-history-store-app').checked = settings.history_store_app;
       document.getElementById('f-history-excluded').value = (settings.history_excluded || []).join(',');
       document.getElementById('f-quick-endpoint').value = settings.quick_endpoint;
+      document.getElementById('f-quick-model-select').value = settings.quick_model || '';
       document.getElementById('f-deep-engine').value = settings.deep_engine;
       document.getElementById('f-deep-model').value = settings.deep_model || '';
       document.getElementById('f-deep-endpoint').value = settings.deep_endpoint;
