@@ -104,6 +104,12 @@ python3 "$(dirname "$0")/test_check_doc_integrity.py"
 step "macOS app verifier portable regression"
 bash "$(dirname "$0")/test_verify_app_bundle.sh"
 
+# Check Tauri command registration vs frontend invocation.
+# Detects dead commands (registered but never invoked) and broken wiring
+# (frontend invoke with no registered handler).
+step "command/frontend wiring integrity"
+python3 "$(dirname "$0")/check_command_wiring.py"
+
 # The workspace version is the single source of truth. `apps/lens` is excluded
 # from the workspace (Tauri dependency) and `apps/lens/tauri.conf.json` is not
 # Cargo at all, so both duplicate the version by necessity. If they disagree,
