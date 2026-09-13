@@ -1,6 +1,6 @@
 # Mori Lens — Session Handoff
 
-Last updated: 2026-09-12
+Last updated: 2026-09-13
 
 Repository HEAD:
 query at session start
@@ -172,9 +172,31 @@ REAL Mori watcher end-to-end: not human/runtime verified
 - Windows: NSIS (via cargo tauri build) + MSIX (via scripts/package-msix.ps1)
 - macOS: .app bundle (via cargo tauri build)
 - Smoke asset generation (scripts/generate-smoke-assets.py): PNG, ICO, ICNS
+- NSIS verification (scripts/verify-nsis.ps1)
 - MSIX verification (scripts/verify-msix.ps1)
+- macOS .app bundle verification (scripts/verify-app-bundle.sh)
+- Portable macOS verifier regression test (scripts/test_verify_app_bundle.sh)
 - MSIX manifest: runFullTrust only (no unnecessary broadFileSystemAccess)
 - Release workflow (.github/workflows/release.yml): aligned with package-smoke
+- Command/frontend wiring three-set checker (scripts/check_command_wiring.py)
+- Command wiring regression tests (scripts/test_check_command_wiring.py)
+- Diagnostics export: privacy-safe metadata-only (PR #475, #478)
+- Diagnostics privacy regression test: canary strings (PR #478)
+- Diagnostics UX: button label matches action, copy success verified (PR #480)
+
+## Additional Gate Checks
+
+```
+scripts/check.sh --full also runs:
+  smoke asset verification:        PASS
+  documentation integrity:         PASS (scripts/check_doc_integrity.py)
+  doc integrity regression tests:  PASS (scripts/test_check_doc_integrity.py)
+  macOS app verifier portable test: PASS (scripts/test_verify_app_bundle.sh)
+  command/frontend wiring:         PASS (scripts/check_command_wiring.py)
+  command wiring regression tests: PASS (scripts/test_check_command_wiring.py)
+  version consistency:             PASS
+  commit message policy:           PASS
+```
 
 ## Automated Evidence
 
@@ -288,7 +310,12 @@ Future research candidate: Windows 11 dev-only unsigned package path.
 
 ```
 NSIS INFRASTRUCTURE:         IMPLEMENTED (cargo tauri build --bundles nsis)
-LOCAL EXECUTION:             NOT EXECUTED
+NSIS VERIFIER:               IMPLEMENTED (scripts/verify-nsis.ps1)
+LOCAL BUILD ATTEMPTED:       2026-09-13 (build completed, artifact path not confirmed)
+LOCAL VERIFIER EXECUTION:    PENDING (requires confirmed artifact path)
+CI WIRED:                    YES (package-smoke workflow)
+CI EXECUTED:                 NOT EXECUTED (billing blocker)
+SIGNATURE:                   UNSIGNED (external blocker)
 ```
 
 ## Package CI
@@ -358,7 +385,6 @@ REMAINING HUMAN PRODUCT GATES:
 REMAINING OWNER DECISIONS:
   Legal publishing identity
   OV certificate vendor
-  Return/re-entry UX approach
 ```
 
 ## Open Issues
