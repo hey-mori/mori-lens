@@ -36,6 +36,7 @@ pub struct ActiveEngineSettings {
 pub struct SettingsSaveOutcome {
     pub restart_required: bool,
     pub reasons: Vec<String>,
+    pub settings: SettingsView,
 }
 
 /// Shared settings state, accessed by Tauri commands and the polling loop.
@@ -290,9 +291,12 @@ impl SettingsState {
             reasons.push("ocr_mode".to_owned());
         }
 
+        let canonical_settings = self.view();
+
         Ok(SettingsSaveOutcome {
             restart_required,
             reasons,
+            settings: canonical_settings,
         })
     }
 
