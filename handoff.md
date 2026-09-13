@@ -201,17 +201,17 @@ scripts/check.sh --full also runs:
 ## Automated Evidence
 
 ```
-scripts/check.sh --full:     PASS (2026-09-12, local Windows host)
+scripts/check.sh --full:     PASS (2026-09-14, local Windows host)
   hover-probe:               29 passed
   lens-core:                 493 passed
   lens-platform-windows:     46 passed, 54 ignored
   lens-settings:             23 passed
-  lens-storage:              72 passed
+  lens-storage:              75 passed
   lens-translate:            51 passed, 51 ignored
   lens-platform-macos:       0 tests (cfg macOS, not compiled on Windows)
-  apps/lens:                 167 passed
+  apps/lens:                 185 passed
   no_console_window:         1 passed
-Total:                       882 passed, 105 ignored
+Total:                       902 passed (717 workspace + 185 product), 105 ignored
 ```
 
 ### Full-gate scope truth
@@ -311,8 +311,8 @@ Future research candidate: Windows 11 dev-only unsigned package path.
 ```
 NSIS INFRASTRUCTURE:         IMPLEMENTED (cargo tauri build --bundles nsis)
 NSIS VERIFIER:               IMPLEMENTED (scripts/verify-nsis.ps1)
-LOCAL BUILD ATTEMPTED:       2026-09-13 (build completed, artifact path not confirmed)
-LOCAL VERIFIER EXECUTION:    PENDING (requires confirmed artifact path)
+LOCAL BUILD:                 PASS (2026-09-14, artifact confirmed)
+LOCAL VERIFIER EXECUTION:    PASS (15/15 checks, 1 expected unsigned warning)
 CI WIRED:                    YES (package-smoke workflow)
 CI EXECUTED:                 NOT EXECUTED (billing blocker)
 SIGNATURE:                   UNSIGNED (external blocker)
@@ -447,6 +447,28 @@ SECOND-LAUNCH ACTIVATION:  existing instance's Control Center comes to foregroun
 
 Tray left-click opens Control Center. Right-click menu is product-oriented with
 Korean labels. Library/History/Settings menu items open the corresponding sections.
+
+## Local AI Readiness (PR #510, #518)
+
+```
+INITIAL LOAD:              loadAll() triggers refreshLocalAiStatus() after initial render
+1-SECOND POLLING:          loadStatus() uses cached value, no get_local_ai_status invocation
+ENDPOINT VS MODEL-LIST:    ModelListState enum distinguishes Unreachable/Error/Models
+AUTO MODEL:                None is canonical Auto, Some("") accepted for compatibility
+FRONTEND STATES:           NOT_LOADED / LOADED / ERROR with distinct rendering
+ERROR DISPLAY:             "상태 확인 실패" on error, not indefinite "확인 중..."
+REGRESSION TESTS:          scripts/check.sh verifies initial load and no-polling invariants
+TAURI COMMANDS:            39 total (get_local_ai_status, list_models, etc.)
+```
+
+## Restart Status (PR #511, #520)
+
+```
+BACKEND-DERIVED:           SettingsService.restart_status() compares saved vs active baseline
+REASON LABELS:             raw keys mapped to Korean labels (Quick 모델, Quick 엔드포인트, etc.)
+CANONICAL FORM:            applySettingsToForm() synchronizes all fields after save
+QUICK MODEL:               f-quick-model-select updated in applySettingsToForm()
+```
 
 ## Next Session — Start Here
 

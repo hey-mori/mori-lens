@@ -16,12 +16,24 @@ publishing, and the decisions that go into a release.
 2. Ensure the tree is clean (`git status --short` shows nothing).
 3. Run `scripts/release-preflight.sh` on the supported release platform (Windows
    for NSIS/MSIX, macOS for .app bundle). This builds the actual release artifacts
-   and verifies their structural validity. The preflight script supports:
+   and verifies their structural validity. The preflight script reports two provenance
+   dimensions:
+
+   **BUILD_PROVENANCE** (how the artifact was built):
+   - `BUILT_FROM_CURRENT_CLEAN_HEAD` - default mode + clean tree
+   - `DIRTY_WORKTREE` - `--allow-dirty` + dirty tree
+   - `VERIFY_ONLY` - `--verify-only` mode
+
+   **EMBEDDED_BUILD_STAMP** (what the embedded SHA says):
+   - `VERIFIED` - embedded SHA matches current HEAD
+   - `UNPROVEN` - no embedded SHA or cannot extract
+   - `MISMATCH` - embedded SHA doesn't match
+
+   The preflight script supports:
    - Default mode: builds artifacts and verifies them
    - `--verify-only`: verifies existing artifacts without rebuilding
    - `--source-only`: verifies source-only gates (no artifact build)
-   - `--allow-dirty`: allows dirty tree but marks provenance as DIRTY_WORKTREE
-     (weaker than VERIFIED)
+   - `--allow-dirty`: allows dirty tree but marks BUILD_PROVENANCE as DIRTY_WORKTREE
 4. Verify the version in three places matches:
    - `Cargo.toml` (workspace version)
    - `apps/lens/Cargo.toml`
@@ -49,13 +61,13 @@ The tag triggers the release workflow. The workflow:
 - Verifies version consistency across all three files.
 - Runs `scripts/check.sh --full`.
 - Builds the NSIS installer with `cargo tauri build --bundles nsis`.
-- Verifies the NSIS installer with `scripts/verify-nsis.sh`. The verifier checks:
+- Verifies the NSIS installer with `scripts/verify-nsis.ps1`. The verifier checks:
   installer exists and is non-empty, PE header (MZ magic), ProductName and
   FileDescription in version info, ProductVersion and FileVersion match Cargo.toml,
-  bootstrap architecture is x64, payload lens.exe exists and is x64, filename
-  contains version. The verifier classifies the Authenticode signature as SIGNED
-  VALID, UNSIGNED, INVALID, or UNKNOWN. Regression tests live in
-  `scripts/test_verify_app_bundle.sh`.
+  bootstrap architecture is x86 OR x64 (NSIS commonly uses x86 bootstrap for compatibility),
+  payload lens.exe exists and is x64 / AMD64, filename contains version. The verifier
+  classifies the Authenticode signature as SIGNED VALID, UNSIGNED, INVALID, or UNKNOWN.
+  Regression tests live in `scripts/test_verify_nsis.ps1`.
 - Builds the MSIX package with `scripts/package-msix.ps1` and verifies
   it with `scripts/verify-msix.ps1`. The verifier checks: structural
   validity (valid zip, manifest, lens.exe, assets), manifest version
