@@ -375,7 +375,7 @@
     let appsDirty = false;
     let statusRefreshInterval = null;
     let cachedLocalAiStatus = null;
-    let localAiLoaded = false;
+    let localAiLoadState = 'NOT_LOADED'; // NOT_LOADED | LOADED | ERROR
 
     // Tab navigation
     function showSection(sectionName) {
@@ -433,6 +433,8 @@
     async function loadAll() {
       try {
         await Promise.all([loadStatus(), loadSettings(), loadAbout()]);
+        // Asynchronously refresh Local AI after initial load to avoid blocking Control Center display
+        refreshLocalAiStatus().then(() => loadStatus());
       } catch (e) {
         console.error('loadAll failed:', e);
       }
@@ -494,6 +496,9 @@
           // Deep model status
           const deepModelStatus = formatAiStatus(localAi.deep_status, localAi.deep_model, localAi.deep_pull_command, 'deep');
           html += '<tr><td></td><td>' + deepModelStatus + '</td></tr>';
+        } else if (localAiLoadState === 'ERROR') {
+          html += '<tr><td>Quick</td><td><span style="color:#c00">상태 확인 실패</span></td></tr>';
+          html += '<tr><td>Deep</td><td><span style="color:#c00">상태 확인 실패</span></td></tr>';
         } else {
           html += '<tr><td>Quick</td><td>확인 중...</td></tr>';
           html += '<tr><td>Deep</td><td>확인 중...</td></tr>';
@@ -633,10 +638,11 @@
     async function refreshLocalAiStatus() {
       try {
         cachedLocalAiStatus = await invoke('get_local_ai_status');
-        localAiLoaded = true;
+        localAiLoadState = 'LOADED';
       } catch (e) {
         console.error('refreshLocalAiStatus failed:', e);
         cachedLocalAiStatus = null;
+        localAiLoadState = 'ERROR';
       }
     }
 

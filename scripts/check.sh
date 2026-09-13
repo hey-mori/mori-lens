@@ -124,6 +124,15 @@ if grep -A 10 "async function loadStatus()" apps/lens/web/index.html | grep -q "
 fi
 echo "Local AI polling regression check passed"
 
+# Verify initial startup triggers one Local AI refresh.
+# loadAll() must call refreshLocalAiStatus to avoid indefinite "확인 중..." on first open.
+step "local-ai initial load regression"
+if ! grep -A 10 "async function loadAll()" apps/lens/web/index.html | grep -q "refreshLocalAiStatus"; then
+  echo "ERROR: loadAll() does not call refreshLocalAiStatus, initial Status will show '확인 중...' indefinitely"
+  exit 1
+fi
+echo "Local AI initial load regression check passed"
+
 # The workspace version is the single source of truth. `apps/lens` is excluded
 # from the workspace (Tauri dependency) and `apps/lens/tauri.conf.json` is not
 # Cargo at all, so both duplicate the version by necessity. If they disagree,
