@@ -3,14 +3,24 @@
 # Validates an NSIS installer for structural correctness.
 # This is NOT an installation test — it verifies the artifact shape.
 #
-# Usage:
-#   .\scripts\verify-nsis.ps1 <path-to-exe> [-ExpectedVersion <version>]
+# NSIS installers have a two-layer architecture:
+#   1. INSTALLER BOOTSTRAP: x86 PE for maximum Windows compatibility
+#   2. APPLICATION PAYLOAD: the actual lens.exe (must be x64)
 #
+# This verifier checks BOTH layers independently.
+#
+# Usage:
+#   .\scripts\verify-nsis.ps1 <path-to-exe> [-PayloadExePath <path>] [-ExpectedVersion <version>]
+#
+# If -PayloadExePath is provided, the application payload architecture is verified.
 # If -ExpectedVersion is not provided, reads from apps/lens/Cargo.toml.
 
 param(
     [Parameter(Mandatory=$true)]
     [string]$ExePath,
+
+    [Parameter(Mandatory=$false)]
+    [string]$PayloadExePath,
 
     [Parameter(Mandatory=$false)]
     [string]$ExpectedVersion
@@ -34,6 +44,9 @@ if (-not $ExpectedVersion) {
 
 Write-Host "Mori Lens NSIS Installer Verification"
 Write-Host "  Installer: $ExePath"
+if ($PayloadExePath) {
+    Write-Host "  Payload: $PayloadExePath"
+}
 if ($ExpectedVersion) {
     Write-Host "  Expected version: $ExpectedVersion"
 }
@@ -58,21 +71,25 @@ function Warn($Name, $Message) {
     $script:Warnings++
 }
 
+# ============================================================================
+# INSTALLER BOOTSTRAP CHECKS
+# ============================================================================
+
 # 1. File exists and is non-empty
 $FileInfo = Get-Item $ExePath
-Check "File exists" ($FileInfo.Length -gt 0) "Empty file"
+Check "Installer exists" ($FileInfo.Length -gt 0) "Empty file"
 
 # 2. File extension is .exe
-Check "File extension" ($ExePath -match '\.exe$') "Expected .exe extension"
+Check "Installer extension" ($ExePath -match '\.exe$') "Expected .exe extension"
 
 # 3. Nontrivial size (>1MB)
 $MinSize = 1MB
-Check "Minimum size" ($FileInfo.Length -gt $MinSize) "Installer too small ($($FileInfo.Length) bytes < $MinSize)"
+Check "Installer minimum size" ($FileInfo.Length -gt $MinSize) "Installer too small ($($FileInfo.Length) bytes < $MinSize)"
 
 # 4. PE header readable (check MZ magic bytes)
 $Bytes = [System.IO.File]::ReadAllBytes($ExePath)
 $HasMZ = ($Bytes.Length -ge 2 -and $Bytes[0] -eq 0x4D -and $Bytes[1] -eq 0x5A)
-Check "PE header (MZ magic)" $HasMZ "Not a valid PE file"
+Check "Installer PE header (MZ magic)" $HasMZ "Not a valid PE file"
 
 # 5. Version info via FileVersionInfo
 $VersionInfo = $null
@@ -85,46 +102,48 @@ try {
 if ($VersionInfo) {
     # Product name
     if ($VersionInfo.ProductName) {
-        Check "ProductName" ($VersionInfo.ProductName -match 'Mori|Lens') "Unexpected: $($VersionInfo.ProductName)"
+        Check "Installer ProductName" ($VersionInfo.ProductName -match 'Mori|Lens') "Unexpected: $($VersionInfo.ProductName)"
     } else {
-        Warn "ProductName" "Not set in version info"
+        Warn "Installer ProductName" "Not set in version info"
     }
 
     # File description
     if ($VersionInfo.FileDescription) {
-        Check "FileDescription present" $true ""
+        Check "Installer FileDescription present" $true ""
     } else {
-        Warn "FileDescription" "Not set in version info"
+        Warn "Installer FileDescription" "Not set in version info"
     }
 
     # Product version
     if ($VersionInfo.ProductVersion) {
         if ($ExpectedVersion) {
             $VersionMatch = $VersionInfo.ProductVersion -match [regex]::Escape($ExpectedVersion)
-            Check "ProductVersion matches" $VersionMatch "Got $($VersionInfo.ProductVersion), expected $ExpectedVersion"
+            Check "Installer ProductVersion matches" $VersionMatch "Got $($VersionInfo.ProductVersion), expected $ExpectedVersion"
         } else {
-            Check "ProductVersion present" $true ""
+            Check "Installer ProductVersion present" $true ""
         }
     } else {
-        Warn "ProductVersion" "Not set in version info"
+        Warn "Installer ProductVersion" "Not set in version info"
     }
 
     # File version
     if ($VersionInfo.FileVersion) {
         if ($ExpectedVersion) {
             $FileVerMatch = $VersionInfo.FileVersion -match [regex]::Escape($ExpectedVersion)
-            Check "FileVersion matches" $FileVerMatch "Got $($VersionInfo.FileVersion), expected $ExpectedVersion"
+            Check "Installer FileVersion matches" $FileVerMatch "Got $($VersionInfo.FileVersion), expected $ExpectedVersion"
         } else {
-            Check "FileVersion present" $true ""
+            Check "Installer FileVersion present" $true ""
         }
     } else {
-        Warn "FileVersion" "Not set in version info"
+        Warn "Installer FileVersion" "Not set in version info"
     }
 } else {
-    Warn "VersionInfo" "Could not read version information"
+    Warn "Installer VersionInfo" "Could not read version information"
 }
 
-# 6. Architecture detection (PE machine type)
+# 6. Installer bootstrap architecture (PE machine type)
+# NSIS installers legitimately use x86 bootstrap for Windows compatibility.
+# This is NOT the application architecture — that's checked separately.
 if ($HasMZ -and $Bytes.Length -ge 64) {
     # PE header offset is at 0x3C
     $PeOffset = [BitConverter]::ToInt32($Bytes, 0x3C)
@@ -132,19 +151,20 @@ if ($HasMZ -and $Bytes.Length -ge 64) {
         # PE signature should be "PE\0\0"
         $PeSig = [System.Text.Encoding]::ASCII.GetString($Bytes, $PeOffset, 4)
         if ($PeSig -eq "PE`0`0") {
-            $Machine = [BitConverter]::ToUInt16($Bytes, $PeOffset + 4)
-            $MachineName = switch ($Machine) {
+            $BootstrapMachine = [BitConverter]::ToUInt16($Bytes, $PeOffset + 4)
+            $BootstrapMachineName = switch ($BootstrapMachine) {
                 0x8664 { "x64 (AMD64)" }
                 0x014c { "x86 (i386)" }
                 0xAA64 { "ARM64" }
-                default { "Unknown (0x$($Machine.ToString('X4')))" }
+                default { "Unknown (0x$($BootstrapMachine.ToString('X4')))" }
             }
-            Check "Architecture" ($Machine -eq 0x8664) "Expected x64, got $MachineName"
+            # NSIS bootstrap may be x86 or x64 — both are valid
+            Check "Installer bootstrap architecture" ($BootstrapMachine -eq 0x8664 -or $BootstrapMachine -eq 0x014c) "Unexpected bootstrap architecture: $BootstrapMachineName"
         } else {
-            Warn "PE signature" "Not found at expected offset"
+            Warn "Installer PE signature" "Not found at expected offset"
         }
     } else {
-        Warn "PE offset" "Invalid or out of range"
+        Warn "Installer PE offset" "Invalid or out of range"
     }
 }
 
@@ -152,10 +172,79 @@ if ($HasMZ -and $Bytes.Length -ge 64) {
 if ($ExpectedVersion) {
     $Filename = [System.IO.Path]::GetFileName($ExePath)
     $FilenameHasVersion = $Filename -match [regex]::Escape($ExpectedVersion)
-    Check "Filename contains version" $FilenameHasVersion "$Filename does not contain $ExpectedVersion"
+    Check "Installer filename contains version" $FilenameHasVersion "$Filename does not contain $ExpectedVersion"
 }
 
-# 8. Authenticode signature check
+# ============================================================================
+# APPLICATION PAYLOAD CHECKS
+# ============================================================================
+
+if ($PayloadExePath) {
+    Write-Host ""
+    Write-Host "Application Payload Verification:"
+    Write-Host ""
+
+    if (-not (Test-Path $PayloadExePath)) {
+        Check "Payload exists" $false "Payload not found: $PayloadExePath"
+    } else {
+        Check "Payload exists" $true ""
+
+        $PayloadInfo = Get-Item $PayloadExePath
+        Check "Payload non-empty" ($PayloadInfo.Length -gt 0) "Empty payload"
+
+        # Read payload PE header
+        $PayloadBytes = [System.IO.File]::ReadAllBytes($PayloadExePath)
+        $PayloadHasMZ = ($PayloadBytes.Length -ge 2 -and $PayloadBytes[0] -eq 0x4D -and $PayloadBytes[1] -eq 0x5A)
+        Check "Payload PE header (MZ magic)" $PayloadHasMZ "Not a valid PE file"
+
+        if ($PayloadHasMZ -and $PayloadBytes.Length -ge 64) {
+            $PayloadPeOffset = [BitConverter]::ToInt32($PayloadBytes, 0x3C)
+            if ($PayloadPeOffset -gt 0 -and ($PayloadPeOffset + 6) -lt $PayloadBytes.Length) {
+                $PayloadPeSig = [System.Text.Encoding]::ASCII.GetString($PayloadBytes, $PayloadPeOffset, 4)
+                if ($PayloadPeSig -eq "PE`0`0") {
+                    $PayloadMachine = [BitConverter]::ToUInt16($PayloadBytes, $PayloadPeOffset + 4)
+                    $PayloadMachineName = switch ($PayloadMachine) {
+                        0x8664 { "x64 (AMD64)" }
+                        0x014c { "x86 (i386)" }
+                        0xAA64 { "ARM64" }
+                        default { "Unknown (0x$($PayloadMachine.ToString('X4')))" }
+                    }
+                    # CRITICAL: Payload MUST be x64 for current Windows target
+                    Check "Payload architecture (x64 required)" ($PayloadMachine -eq 0x8664) "Expected x64, got $PayloadMachineName"
+                } else {
+                    Check "Payload PE signature" $false "Not found at expected offset"
+                }
+            } else {
+                Check "Payload PE offset" $false "Invalid or out of range"
+            }
+        }
+
+        # Payload version check
+        $PayloadVersionInfo = $null
+        try {
+            $PayloadVersionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($PayloadExePath)
+        } catch {
+            # Version info extraction failed
+        }
+
+        if ($PayloadVersionInfo -and $ExpectedVersion) {
+            if ($PayloadVersionInfo.ProductVersion) {
+                $PayloadVersionMatch = $PayloadVersionInfo.ProductVersion -match [regex]::Escape($ExpectedVersion)
+                Check "Payload ProductVersion matches" $PayloadVersionMatch "Got $($PayloadVersionInfo.ProductVersion), expected $ExpectedVersion"
+            } else {
+                Warn "Payload ProductVersion" "Not set in version info"
+            }
+        }
+    }
+} else {
+    # No payload path provided — warn that payload architecture is unverified
+    Warn "Payload architecture" "Not verified (use -PayloadExePath to verify the bundled lens.exe)"
+}
+
+# ============================================================================
+# SIGNATURE CHECK
+# ============================================================================
+
 $SigStatus = "UNKNOWN"
 try {
     $Sig = Get-AuthenticodeSignature -FilePath $ExePath -ErrorAction SilentlyContinue
@@ -179,7 +268,10 @@ if ($SigStatus -eq "SIGNED") {
     Warn "Authenticode signature" $SigStatus
 }
 
-# Summary
+# ============================================================================
+# SUMMARY
+# ============================================================================
+
 Write-Host ""
 Write-Host "Results: $Passed passed, $Failed failed, $Warnings warnings"
 Write-Host ""
