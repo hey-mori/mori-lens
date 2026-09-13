@@ -747,7 +747,14 @@ impl Library {
             }
 
             let item: Item = serde_json::from_str(trimmed)
-                .map_err(|e| Error::Io(std::io::Error::other(format!("line {}: {e}", i + 1))))?;
+                .map_err(|e| {
+                    let ctx = if imported > 0 {
+                        format!("line {} (after {} imported): {e}", i + 1, imported)
+                    } else {
+                        format!("line {}: {e}", i + 1)
+                    };
+                    Error::Io(std::io::Error::other(ctx))
+                })?;
 
             // Skip duplicates.
             if self
@@ -2718,6 +2725,67 @@ mod tests {
         let new_item = a_translation();
         lib.insert(&new_item).unwrap();
         assert_eq!(lib.count().unwrap(), 3);
+
+        cleanup(&path);
+    }
+
+    /// Error message truthfully reports how many items were imported before failure.
+    #[test]
+    fn jsonl_error_message_reports_partial_import_count() {
+        let path = temp_db("jsonl-partial-import-msg");
+        let lib = Library::open(&path).unwrap();
+
+        // Two valid items, then a malformed line, then another valid item.
+        let jsonl = r#"{"version":1}
+{"id":0,"original":"first","answer":"first","kind":"translation","created_at":1000}
+{"id":0,"original":"second","answer":"second","kind":"translation","created_at":2000}
+{malformed json}
+{"id":0,"original":"fourth","answer":"fourth","kind":"translation","created_at":3000}
+"#;
+
+        let result = lib.import_jsonl(jsonl);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+
+        // Error must mention the line number where the parse failed.
+        assert!(
+            err_msg.contains("line 4"),
+            "error should name the failing line, got: {err_msg}"
+        );
+        // Error must truthfully report how many items were already imported.
+        assert!(
+            err_msg.contains("after 2 imported"),
+            "error should report partial import count, got: {err_msg}"
+        );
+        // The two valid items before the malformed line are committed.
+        assert_eq!(lib.count().unwrap(), 2);
+
+        cleanup(&path);
+    }
+
+    /// Error message when no items were imported yet does not claim partial import.
+    #[test]
+    fn jsonl_error_message_no_partial_when_zero_imported() {
+        let path = temp_db("jsonl-error-zero-imported");
+        let lib = Library::open(&path).unwrap();
+
+        let jsonl = r#"{"version":1}
+{malformed json on first data line}
+"#;
+
+        let result = lib.import_jsonl(jsonl);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+
+        assert!(
+            err_msg.contains("line 2"),
+            "error should name the failing line, got: {err_msg}"
+        );
+        assert!(
+            !err_msg.contains("after"),
+            "error should not mention partial import when none imported, got: {err_msg}"
+        );
+        assert_eq!(lib.count().unwrap(), 0);
 
         cleanup(&path);
     }
