@@ -516,6 +516,13 @@
             autostartToggle = ' <button class="btn" onclick="toggleAutostart()" style="padding:2px 10px;font-size:0.85em">' + nextLabel + '로 전환</button>';
           }
           html += '<tr><td>Windows 시작</td><td>' + autostartLabel + autostartToggle + '</td></tr>';
+          // Restart status
+          if (runtime.restart_required) {
+            var reasonText = runtime.restart_reasons.length > 0 ? ' (' + runtime.restart_reasons.join(', ') + ')' : '';
+            html += '<tr><td style="color:#f57c00;font-weight:500">재시작 필요' + reasonText + '</td><td style="color:#f57c00">변경사항을 적용하려면 Mori Lens를 다시 시작하세요</td></tr>';
+          } else {
+            html += '<tr><td>재시작 상태</td><td style="color:#2e7d32">필요 없음</td></tr>';
+          }
           html += '</table>';
         }
         if (!diag || !diag.build) {
