@@ -374,6 +374,8 @@
     let currentSettings = null;
     let appsDirty = false;
     let statusRefreshInterval = null;
+    let cachedLocalAiStatus = null;
+    let localAiLoaded = false;
 
     // Tab navigation
     function showSection(sectionName) {
@@ -384,7 +386,10 @@
         item.classList.add('active');
         document.getElementById('section-' + sectionName).classList.add('active');
         // Load data for the section when it becomes visible.
-        if (sectionName === 'status') loadStatus();
+        if (sectionName === 'status') {
+          // Refresh Local AI on section activation, then load status.
+          refreshLocalAiStatus().then(() => loadStatus());
+        }
         else if (sectionName === 'library') loadLibrary();
         else if (sectionName === 'history') loadHistory();
         else if (sectionName === 'general') loadSettings();
@@ -435,11 +440,11 @@
 
     async function loadStatus() {
       try {
-        const [diag, runtime, localAi] = await Promise.all([
+        const [diag, runtime] = await Promise.all([
           invoke('get_diagnostics'),
           invoke('get_runtime_status'),
-          invoke('get_local_ai_status'),
         ]);
+        const localAi = cachedLocalAiStatus;
         const el = document.getElementById('status-content');
         // Always show runtime controls even before session data arrives.
         const paused = diag && diag.paused;
@@ -468,22 +473,28 @@
         html += '<h2>로컬 AI</h2>';
         html += '<table>';
         if (localAi) {
-          // Ollama status
-          const ollamaIcon = localAi.ollama_reachable
+          // Quick endpoint status
+          const quickIcon = localAi.quick_reachable
             ? '<span style="color:#2e7d32">✓</span>'
             : '<span style="color:#c00">✗</span>';
-          const ollamaText = localAi.ollama_reachable ? '연결됨' : '연결 안 됨';
-          html += '<tr><td>Ollama</td><td>' + ollamaIcon + ' ' + ollamaText + '</td></tr>';
+          const quickEndpointText = localAi.quick_reachable ? '연결됨' : '연결 안 됨';
+          html += '<tr><td>Quick</td><td>' + quickIcon + ' ' + quickEndpointText + '</td></tr>';
 
           // Quick model status
-          const quickStatus = formatAiStatus(localAi.quick_status, localAi.quick_model, localAi.quick_pull_command);
-          html += '<tr><td>Quick</td><td>' + quickStatus + '</td></tr>';
+          const quickModelStatus = formatAiStatus(localAi.quick_status, localAi.quick_model, localAi.quick_pull_command, 'quick');
+          html += '<tr><td></td><td>' + quickModelStatus + '</td></tr>';
+
+          // Deep endpoint status
+          const deepIcon = localAi.deep_reachable
+            ? '<span style="color:#2e7d32">✓</span>'
+            : '<span style="color:#c00">✗</span>';
+          const deepEndpointText = localAi.deep_reachable ? '연결됨' : '연결 안 됨';
+          html += '<tr><td>Deep</td><td>' + deepIcon + ' ' + deepEndpointText + '</td></tr>';
 
           // Deep model status
-          const deepStatus = formatAiStatus(localAi.deep_status, localAi.deep_model, localAi.deep_pull_command);
-          html += '<tr><td>Deep</td><td>' + deepStatus + '</td></tr>';
+          const deepModelStatus = formatAiStatus(localAi.deep_status, localAi.deep_model, localAi.deep_pull_command, 'deep');
+          html += '<tr><td></td><td>' + deepModelStatus + '</td></tr>';
         } else {
-          html += '<tr><td>Ollama</td><td>확인 중...</td></tr>';
           html += '<tr><td>Quick</td><td>확인 중...</td></tr>';
           html += '<tr><td>Deep</td><td>확인 중...</td></tr>';
         }
@@ -543,12 +554,14 @@
         // Close hint.
         html += '<p style="font-size:11px;color:#999;margin-top:20px">이 창을 닫아도 Mori Lens는 시스템 트레이에서 계속 실행됩니다.</p>';
         el.innerHTML = html;
+        // Attach event listeners to copy buttons after rendering.
+        attachPullCommandHandlers();
       } catch (e) {
         console.error('loadStatus failed:', e);
       }
     }
 
-    function formatAiStatus(status, model, pullCommand) {
+    function formatAiStatus(status, model, pullCommand, lane) {
       if (status === 'unreachable') {
         return '<span style="color:#888">Ollama 연결 필요</span>';
       } else if (status === 'ready') {
@@ -559,7 +572,7 @@
           const safeCommand = escapeHtml(pullCommand);
           result += '<div style="margin-top:4px;font-family:monospace;font-size:11px;background:#f5f5f5;padding:6px 8px;border-radius:3px;display:flex;justify-content:space-between;align-items:center">';
           result += '<span>' + safeCommand + '</span>';
-          result += '<button class="btn" onclick="copyPullCommand(this, \'' + safeCommand + '\')" style="padding:2px 8px;font-size:10px;margin-left:8px">복사</button>';
+          result += '<button class="btn copy-pull-btn" data-command="' + safeCommand + '" style="padding:2px 8px;font-size:10px;margin-left:8px">복사</button>';
           result += '</div>';
         }
         return result;
@@ -578,6 +591,15 @@
       const div = document.createElement('div');
       div.textContent = text;
       return div.innerHTML;
+    }
+
+    function attachPullCommandHandlers() {
+      document.querySelectorAll('.copy-pull-btn').forEach(button => {
+        button.addEventListener('click', function() {
+          const command = this.getAttribute('data-command');
+          copyPullCommand(this, command);
+        });
+      });
     }
 
     async function copyPullCommand(button, command) {
@@ -601,12 +623,19 @@
       }
     }
 
-    async function refreshLocalAi() {
+    async function refreshLocalAiStatus() {
       try {
-        await loadStatus();
+        cachedLocalAiStatus = await invoke('get_local_ai_status');
+        localAiLoaded = true;
       } catch (e) {
-        console.error('refreshLocalAi failed:', e);
+        console.error('refreshLocalAiStatus failed:', e);
+        cachedLocalAiStatus = null;
       }
+    }
+
+    async function refreshLocalAi() {
+      await refreshLocalAiStatus();
+      await loadStatus();
     }
 
     async function togglePause() {

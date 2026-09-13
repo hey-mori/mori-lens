@@ -115,6 +115,15 @@ bash "$(dirname "$0")/test_release_preflight.sh"
 step "command/frontend wiring integrity"
 python3 "$(dirname "$0")/check_command_wiring.py"
 
+# Verify Local AI status is not polled in the 1-second refresh loop.
+# loadStatus() must use cached value, not invoke get_local_ai_status directly.
+step "local-ai polling regression"
+if grep -A 10 "async function loadStatus()" apps/lens/web/index.html | grep -q "get_local_ai_status"; then
+  echo "ERROR: loadStatus() invokes get_local_ai_status, which would poll every 1 second"
+  exit 1
+fi
+echo "Local AI polling regression check passed"
+
 # The workspace version is the single source of truth. `apps/lens` is excluded
 # from the workspace (Tauri dependency) and `apps/lens/tauri.conf.json` is not
 # Cargo at all, so both duplicate the version by necessity. If they disagree,
