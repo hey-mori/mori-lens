@@ -132,6 +132,16 @@ jobs:
       - name: Build .app bundle
         run: cargo tauri build --bundles app
 
+      - name: Verify .app bundle
+        shell: bash
+        run: |
+          APP_DIR=$(find apps/lens/target/release/bundle/macos -maxdepth 1 -name "*.app" -type d | head -1)
+          if [ -z "$APP_DIR" ]; then
+            echo "ERROR: .app bundle not found"
+            exit 1
+          fi
+          ./scripts/verify-app-bundle.sh "$APP_DIR"
+
       - name: Inspect .app bundle
         shell: bash
         run: |
