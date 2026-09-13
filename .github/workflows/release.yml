@@ -74,6 +74,12 @@ jobs:
           fi
           echo "Found: $EXE"
 
+      - name: Verify installer (structural)
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem apps/lens/target/release/bundle/nsis/*.exe | Select-Object -First 1
+          & .\scripts\verify-nsis.ps1 $exe.FullName
+
       - name: Generate SHA-256 manifest
         shell: bash
         run: |
