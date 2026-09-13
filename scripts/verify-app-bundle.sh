@@ -10,7 +10,7 @@
 #   0 - All checks passed
 #   1 - One or more checks failed
 
-set -e
+set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
   echo "Usage: $0 <path-to-app-bundle>"
@@ -33,12 +33,12 @@ FAIL_COUNT=0
 
 pass() {
   echo "✓ $1"
-  ((PASS_COUNT++))
+  PASS_COUNT=$((PASS_COUNT + 1))
 }
 
 fail() {
   echo "✗ $1"
-  ((FAIL_COUNT++))
+  FAIL_COUNT=$((FAIL_COUNT + 1))
 }
 
 # Check 1: Contents/MacOS directory exists
@@ -67,7 +67,7 @@ fi
 if [[ -f "$BINARY_PATH" ]]; then
   # Mach-O magic numbers: 0xfeedface (32-bit) or 0xfeedfacf (64-bit)
   MAGIC=$(xxd -l 4 -p "$BINARY_PATH" 2>/dev/null || echo "")
-  if [[ "$MAGIC" == "feedface" ]] || [[ "$MAGIC" == "feedfacf" ]] || [[ "$MAGIC" == "cafefedf" ]] || [[ "$MAGIC" == "cffaedfe" ]]; then
+  if [[ "$MAGIC" == "feedface" ]] || [[ "$MAGIC" == "feedfacf" ]] || [[ "$MAGIC" == "cefaedfe" ]] || [[ "$MAGIC" == "cffaedfe" ]]; then
     pass "Binary is Mach-O format"
   else
     fail "Binary is not Mach-O format (magic: $MAGIC)"
@@ -127,6 +127,17 @@ if [[ -f "$PLIST_PATH" ]]; then
   SHORT_VERSION=$(plutil -extract CFBundleShortVersionString raw "$PLIST_PATH" 2>/dev/null || echo "")
   if [[ -n "$SHORT_VERSION" ]]; then
     pass "CFBundleShortVersionString is set ($SHORT_VERSION)"
+
+    # Verify version matches Cargo.toml
+    CARGO_TOML="$(dirname "$0")/../apps/lens/Cargo.toml"
+    if [[ -f "$CARGO_TOML" ]]; then
+      CARGO_VERSION=$(grep -m1 '^version' "$CARGO_TOML" | cut -d'"' -f2)
+      if [[ "$SHORT_VERSION" == "$CARGO_VERSION" ]]; then
+        pass "CFBundleShortVersionString matches Cargo.toml ($CARGO_VERSION)"
+      else
+        fail "CFBundleShortVersionString mismatch: bundle=$SHORT_VERSION cargo=$CARGO_VERSION"
+      fi
+    fi
   else
     fail "CFBundleShortVersionString not found in Info.plist"
   fi
