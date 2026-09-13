@@ -16,3 +16,8 @@ dist/
 apps/lens/target/
 apps/lens/gen/
 apps/lens/Cargo.lock
+
+# Ephemeral tool artifacts
+.git-rewrite/
+__pycache__/
+*.pyc
