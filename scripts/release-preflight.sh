@@ -354,8 +354,14 @@ elif [[ "$IS_WINDOWS" == "true" ]]; then
         if [[ -n "$BUILD_SHA_FROM_BINARY" ]]; then
             CLEAN_SHA="${BUILD_SHA_FROM_BINARY%-dirty}"
             if [[ "$CLEAN_SHA" == "$REVISION_SHORT" ]]; then
-                PROVENANCE_STATUS="VERIFIED"
-                echo "PASS: Artifact build SHA matches this revision ($REVISION_SHORT)"
+                # Check if tree is dirty - if so, mark as DIRTY_WORKTREE instead of VERIFIED
+                if [[ "$ALLOW_DIRTY" == "true" && -n "$TREE_STATUS" ]]; then
+                    PROVENANCE_STATUS="DIRTY_WORKTREE"
+                    echo "PASS: Artifact build SHA matches this revision ($REVISION_SHORT), but tree is dirty"
+                else
+                    PROVENANCE_STATUS="VERIFIED"
+                    echo "PASS: Artifact build SHA matches this revision ($REVISION_SHORT)"
+                fi
             else
                 PROVENANCE_STATUS="MISMATCH"
                 echo "FAIL: Artifact build SHA ($BUILD_SHA_FROM_BINARY) does not match this revision ($REVISION_SHORT)"
@@ -416,8 +422,14 @@ elif [[ "$IS_MACOS" == "true" ]]; then
         if [[ -n "$BUILD_SHA_FROM_BINARY" ]]; then
             CLEAN_SHA="${BUILD_SHA_FROM_BINARY%-dirty}"
             if [[ "$CLEAN_SHA" == "$REVISION_SHORT" ]]; then
-                PROVENANCE_STATUS="VERIFIED"
-                echo "PASS: Artifact build SHA matches this revision ($REVISION_SHORT)"
+                # Check if tree is dirty - if so, mark as DIRTY_WORKTREE instead of VERIFIED
+                if [[ "$ALLOW_DIRTY" == "true" && -n "$TREE_STATUS" ]]; then
+                    PROVENANCE_STATUS="DIRTY_WORKTREE"
+                    echo "PASS: Artifact build SHA matches this revision ($REVISION_SHORT), but tree is dirty"
+                else
+                    PROVENANCE_STATUS="VERIFIED"
+                    echo "PASS: Artifact build SHA matches this revision ($REVISION_SHORT)"
+                fi
             else
                 PROVENANCE_STATUS="MISMATCH"
                 echo "FAIL: Artifact build SHA ($BUILD_SHA_FROM_BINARY) does not match this revision ($REVISION_SHORT)"
@@ -501,6 +513,13 @@ if [[ $GATE_FAILURES -eq 0 ]]; then
             echo "The artifacts may not be from this exact revision."
             echo "For exact-revision readiness, rebuild from clean tree or use artifacts with verified provenance."
             exit 0
+        elif [[ "${SUMMARY[REVISION_PROVENANCE]}" == "DIRTY_WORKTREE" ]]; then
+            echo "OVERALL:              STRUCTURE VALID, DIRTY-WORKTREE PROVENANCE"
+            echo ""
+            echo "Artifacts are structurally valid and match this revision, but were built from a dirty working tree."
+            echo "The artifacts include uncommitted changes and cannot be associated cleanly with the reported Git revision."
+            echo "For exact-revision readiness, rebuild from clean tree."
+            exit 0
         elif [[ "${SUMMARY[REVISION_PROVENANCE]}" == "VERIFIED" ]]; then
             echo "OVERALL:              STRUCTURALLY READY"
             echo ""
@@ -514,11 +533,21 @@ if [[ $GATE_FAILURES -eq 0 ]]; then
         fi
     else
         # BUILD mode: we just built from this tree
-        echo "OVERALL:              STRUCTURALLY READY"
-        echo ""
-        echo "All gates passed. Packages are structurally valid for this revision."
-        echo "Signing and distribution remain external blockers."
-        exit 0
+        if [[ "${SUMMARY[REVISION_PROVENANCE]}" == "DIRTY_WORKTREE" ]]; then
+            echo "OVERALL:              STRUCTURE VALID, DIRTY-WORKTREE PROVENANCE"
+            echo ""
+            echo "All gates passed. Packages are structurally valid but were built from a dirty working tree."
+            echo "The artifacts include uncommitted changes and cannot be associated cleanly with the reported Git revision."
+            echo "For exact-revision readiness, rebuild from clean tree."
+            echo "Signing and distribution remain external blockers."
+            exit 0
+        else
+            echo "OVERALL:              STRUCTURALLY READY"
+            echo ""
+            echo "All gates passed. Packages are structurally valid for this revision."
+            echo "Signing and distribution remain external blockers."
+            exit 0
+        fi
     fi
 else
     echo "OVERALL:              FAILED ($GATE_FAILURES gate(s))"
