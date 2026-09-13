@@ -207,6 +207,8 @@ pub struct RuntimeStatus {
     pub history_days: u32,
     pub library_persistent: bool,
     pub autostart_enabled: Option<bool>,
+    pub restart_required: bool,
+    pub restart_reasons: Vec<String>,
 }
 
 /// Classify library backing as persistent or not.
@@ -224,13 +226,17 @@ fn get_runtime_status(
     settings: tauri::State<'_, SharedSettings>,
     library: tauri::State<'_, SharedLibrary>,
 ) -> RuntimeStatus {
-    let settings_view = settings.lock().unwrap().view();
+    let settings_guard = settings.lock().unwrap();
+    let settings_view = settings_guard.view();
+    let (restart_required, restart_reasons) = settings_guard.restart_status();
     let lib_guard = library.lock().unwrap();
     RuntimeStatus {
         history_enabled: settings_view.history,
         history_days: settings_view.history_days,
         library_persistent: is_library_persistent(lib_guard.backing()),
         autostart_enabled: autostart_state(),
+        restart_required,
+        restart_reasons,
     }
 }
 
