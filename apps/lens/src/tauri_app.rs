@@ -458,47 +458,39 @@ async fn get_local_ai_status(
     // Classify Quick model.
     let (quick_status, quick_model_name, quick_pull_cmd) = match quick_model_names {
         None => ("unreachable".to_string(), None, None),
-        Some(models) => {
-            match classify_model_readiness(quick_model.as_deref(), &models) {
-                ModelReadiness::Unreachable => ("unreachable".to_string(), None, None),
-                ModelReadiness::AutoNoModels => {
-                    ("auto_no_models".to_string(), Some("Auto".to_string()), None)
-                }
-                ModelReadiness::AutoReady => {
-                    ("auto_ready".to_string(), Some("Auto".to_string()), None)
-                }
-                ModelReadiness::Ready(model) => ("ready".to_string(), Some(model), None),
-                ModelReadiness::Missing(model) => (
-                    "missing".to_string(),
-                    Some(model.clone()),
-                    Some(format!("ollama pull {}", model)),
-                ),
-                ModelReadiness::Error(model) => ("error".to_string(), Some(model), None),
+        Some(models) => match classify_model_readiness(quick_model.as_deref(), &models) {
+            ModelReadiness::Unreachable => ("unreachable".to_string(), None, None),
+            ModelReadiness::AutoNoModels => {
+                ("auto_no_models".to_string(), Some("Auto".to_string()), None)
             }
-        }
+            ModelReadiness::AutoReady => ("auto_ready".to_string(), Some("Auto".to_string()), None),
+            ModelReadiness::Ready(model) => ("ready".to_string(), Some(model), None),
+            ModelReadiness::Missing(model) => (
+                "missing".to_string(),
+                Some(model.clone()),
+                Some(format!("ollama pull {}", model)),
+            ),
+            ModelReadiness::Error(model) => ("error".to_string(), Some(model), None),
+        },
     };
 
     // Classify Deep model.
     let (deep_status, deep_model_name, deep_pull_cmd) = match deep_model_names {
         None => ("unreachable".to_string(), None, None),
-        Some(models) => {
-            match classify_model_readiness(deep_model.as_deref(), &models) {
-                ModelReadiness::Unreachable => ("unreachable".to_string(), None, None),
-                ModelReadiness::AutoNoModels => {
-                    ("auto_no_models".to_string(), Some("Auto".to_string()), None)
-                }
-                ModelReadiness::AutoReady => {
-                    ("auto_ready".to_string(), Some("Auto".to_string()), None)
-                }
-                ModelReadiness::Ready(model) => ("ready".to_string(), Some(model), None),
-                ModelReadiness::Missing(model) => (
-                    "missing".to_string(),
-                    Some(model.clone()),
-                    Some(format!("ollama pull {}", model)),
-                ),
-                ModelReadiness::Error(model) => ("error".to_string(), Some(model), None),
+        Some(models) => match classify_model_readiness(deep_model.as_deref(), &models) {
+            ModelReadiness::Unreachable => ("unreachable".to_string(), None, None),
+            ModelReadiness::AutoNoModels => {
+                ("auto_no_models".to_string(), Some("Auto".to_string()), None)
             }
-        }
+            ModelReadiness::AutoReady => ("auto_ready".to_string(), Some("Auto".to_string()), None),
+            ModelReadiness::Ready(model) => ("ready".to_string(), Some(model), None),
+            ModelReadiness::Missing(model) => (
+                "missing".to_string(),
+                Some(model.clone()),
+                Some(format!("ollama pull {}", model)),
+            ),
+            ModelReadiness::Error(model) => ("error".to_string(), Some(model), None),
+        },
     };
 
     Ok(LocalAiStatusView {
