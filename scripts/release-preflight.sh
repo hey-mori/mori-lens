@@ -193,6 +193,7 @@ NSIS_DIR="apps/lens/target/release/bundle/nsis"
 MSIX_DIR="target/msix"
 NSIS_ARTIFACT=""
 MSIX_ARTIFACT=""
+PAYLOAD_PATH=""
 
 # ── Platform package gates ───────────────────────────────────────────────────
 if [[ "$SOURCE_ONLY" == "true" ]]; then
