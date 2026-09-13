@@ -98,6 +98,12 @@ python3 "$(dirname "$0")/check_doc_integrity.py"
 step "documentation integrity tests"
 python3 "$(dirname "$0")/test_check_doc_integrity.py"
 
+# Verify the macOS app bundle verifier's control flow and counter semantics.
+# This is a portable test that doesn't require macOS hardware - it uses stub
+# commands and fake bundles to prove the set -e counter mechanism works.
+step "macOS app verifier portable regression"
+bash "$(dirname "$0")/test_verify_app_bundle.sh"
+
 # The workspace version is the single source of truth. `apps/lens` is excluded
 # from the workspace (Tauri dependency) and `apps/lens/tauri.conf.json` is not
 # Cargo at all, so both duplicate the version by necessity. If they disagree,
