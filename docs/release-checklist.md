@@ -9,16 +9,34 @@ publishing, and the decisions that go into a release.
 
 ## Before tagging
 
-1. Run `scripts/check.sh` locally. The CI workflow also runs it, but a
-   failure on CI means a wasted runner minute and a delayed release.
-2. Verify the version in three places matches:
+1. Run `scripts/check.sh --full` locally. This runs the full product-quality gate:
+   workspace fmt/clippy/test, product binary fmt/clippy/check/test, clean native
+   rebuild of lens-platform-macos, release build of hover-probe, privacy static
+   gates, documentation integrity, command wiring integrity, and version consistency.
+2. Ensure the tree is clean (`git status --short` shows nothing).
+3. Run `scripts/release-preflight.sh` on the supported release platform (Windows
+   for NSIS/MSIX, macOS for .app bundle). This builds the actual release artifacts
+   and verifies their structural validity. The preflight script supports:
+   - Default mode: builds artifacts and verifies them
+   - `--verify-only`: verifies existing artifacts without rebuilding
+   - `--source-only`: verifies source-only gates (no artifact build)
+   - `--allow-dirty`: allows dirty tree but marks provenance as DIRTY_WORKTREE
+     (weaker than VERIFIED)
+4. Verify the version in three places matches:
    - `Cargo.toml` (workspace version)
    - `apps/lens/Cargo.toml`
    - `apps/lens/tauri.conf.json`
-3. Update `docs/compatibility/windows-app-matrix.md` if any application
+5. Update `docs/compatibility/windows-app-matrix.md` if any application
    support changed since the last release.
-4. Read `docs/mori-lens-project-goal.md` and confirm the release covers
+6. Read `docs/mori-lens-project-goal.md` and confirm the release covers
    what the current milestone promises.
+
+**Important**: `STRUCTURALLY READY` does not mean production ready. The preflight
+verifies structural validity of the packages. A release is not ready for distribution
+until:
+- Packages are code-signed (external blocker)
+- Human install smoke test passes on a clean machine
+- macOS runtime verification completes (currently PENDING)
 
 ## Tagging
 
@@ -31,13 +49,22 @@ The tag triggers the release workflow. The workflow:
 - Verifies version consistency across all three files.
 - Runs `scripts/check.sh --full`.
 - Builds the NSIS installer with `cargo tauri build --bundles nsis`.
+- Verifies the NSIS installer with `scripts/verify-nsis.sh`. The verifier checks:
+  installer exists and is non-empty, PE header (MZ magic), ProductName and
+  FileDescription in version info, ProductVersion and FileVersion match Cargo.toml,
+  bootstrap architecture is x64, payload lens.exe exists and is x64, filename
+  contains version. The verifier classifies the Authenticode signature as SIGNED
+  VALID, UNSIGNED, INVALID, or UNKNOWN. Regression tests live in
+  `scripts/test_verify_app_bundle.sh`.
 - Builds the MSIX package with `scripts/package-msix.ps1` and verifies
   it with `scripts/verify-msix.ps1`. The verifier checks: structural
   validity (valid zip, manifest, lens.exe, assets), manifest version
   matches Cargo.toml in 4-part form, SHA-256 matches the `.sha256`
   sidecar, lens.exe PE machine type is AMD64 (0x8664), and classifies
   the Authenticode signature as SIGNED VALID, UNSIGNED, INVALID, or
-  UNKNOWN. Regression tests live in `scripts/test_verify_msix.ps1`.
+  UNKNOWN. Publisher identity and PublisherDisplayName are checked for
+  placeholder values that must be replaced before Store submission.
+  Regression tests live in `scripts/test_verify_msix.ps1`.
 - Builds the macOS `.app` bundle with `cargo tauri build --bundles app`.
 - Generates `SHA256SUMS.txt` for each artifact.
 - Creates a draft GitHub Release with all artifacts and hash manifests
