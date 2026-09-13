@@ -414,7 +414,7 @@ async fn get_local_ai_status(
                         ("auto_ready".to_string(), Some("Auto".to_string()), None)
                     }
                 }
-                Err(e) => ("error".to_string(), Some("Auto".to_string()), None),
+                Err(_) => ("error".to_string(), Some("Auto".to_string()), None),
             }
         } else {
             // Explicit model.
