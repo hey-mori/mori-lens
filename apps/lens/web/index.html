@@ -770,9 +770,9 @@
       };
       try {
         const outcome = await invoke('save_settings', { settings: view });
-        currentSettings = view;
+        currentSettings = outcome.settings;
         if (outcome.restart_required) {
-          setStatus('저장됨 · 변경사항을 적용하려면 Mori Lens를 다시 시작하세요');
+          setStatus('저장됨 · 변경사항을 적용하려면 Mori Lens를 다시 시작하세요', true);
         } else {
           setStatus('저장됨 · 바로 적용되었습니다');
         }
@@ -781,12 +781,14 @@
       }
     }
 
-    function setStatus(msg) {
+    function setStatus(msg, persistent = false) {
       const active = document.querySelector('.section.active');
       const statusEl = active.querySelector('[id$="-status"]');
       if (statusEl) {
         statusEl.textContent = msg;
-        setTimeout(() => { statusEl.textContent = ''; }, 3000);
+        if (!persistent) {
+          setTimeout(() => { statusEl.textContent = ''; }, 3000);
+        }
       }
     }
 
