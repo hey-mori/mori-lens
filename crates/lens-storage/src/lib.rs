@@ -2801,6 +2801,77 @@ mod tests {
         cleanup(&path);
     }
 
+    /// JSONL round-trip preserves all fields (assertion matrix).
+    /// This test verifies the complete field contract per directive section 33.
+    #[test]
+    fn jsonl_round_trip_preserves_all_fields() {
+        let path_a = temp_db("jsonl-all-fields-export");
+        let lib_a = Library::open(&path_a).unwrap();
+
+        // Create item with all fields populated
+        let item = Item {
+            id: 0,
+            original: "测试文本".to_owned(),
+            answer: "Test text".to_owned(),
+            caveat: Some("Note: formal register".to_owned()),
+            app: Some("chrome.exe".to_owned()),
+            created_at: 1234567890,
+            kind: "translation".to_owned(),
+            source_language: Some("zh".to_owned()),
+            target_language: Some("en".to_owned()),
+            model: Some("qwen2.5:7b".to_owned()),
+            note: Some("User's personal note".to_owned()),
+            tags: None,
+            review_state: None,
+        };
+        let id = lib_a.insert(&item).unwrap();
+        // Set review_state and tags after insertion (insert() hardcodes review_state to "later")
+        lib_a.set_review_state(id, REVIEW_KNOWN).unwrap();
+        lib_a
+            .set_tags(id, &["work".to_owned(), "important".to_owned()])
+            .unwrap();
+
+        // Export
+        let jsonl = lib_a.export_jsonl().unwrap();
+        drop(lib_a);
+
+        // Import to fresh DB
+        let path_b = temp_db("jsonl-all-fields-import");
+        let lib_b = Library::open(&path_b).unwrap();
+        let imported = lib_b.import_jsonl(&jsonl).unwrap();
+        assert_eq!(imported, 1);
+
+        // Verify all fields preserved
+        let items = lib_b.list(0).unwrap().items;
+        assert_eq!(items.len(), 1);
+        let imported_item = &items[0];
+
+        assert_eq!(imported_item.original, "测试文本");
+        assert_eq!(imported_item.answer, "Test text");
+        assert_eq!(
+            imported_item.caveat.as_deref(),
+            Some("Note: formal register")
+        );
+        assert_eq!(imported_item.app.as_deref(), Some("chrome.exe"));
+        assert_eq!(imported_item.kind, "translation");
+        assert_eq!(imported_item.source_language.as_deref(), Some("zh"));
+        assert_eq!(imported_item.target_language.as_deref(), Some("en"));
+        assert_eq!(imported_item.model.as_deref(), Some("qwen2.5:7b"));
+        assert_eq!(imported_item.note.as_deref(), Some("User's personal note"));
+        assert_eq!(imported_item.review_state.as_deref(), Some("known"));
+
+        let tags = lib_b.get_tags(imported_item.id).unwrap();
+        assert_eq!(tags.len(), 2);
+        assert!(tags.contains(&"work".to_owned()));
+        assert!(tags.contains(&"important".to_owned()));
+
+        // Note: created_at is not preserved (items get new timestamp on import)
+        // This is intentional per ADR-0013: imported items are treated as new
+
+        cleanup(&path_a);
+        cleanup(&path_b);
+    }
+
     /// History → Library promotion creates independent item.
     #[test]
     fn history_promoted_to_library_is_independent() {
