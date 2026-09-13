@@ -505,11 +505,11 @@
         }
         // Diagnostics export button for bug reports
         html += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid #eee">';
-        html += '<button class="btn" onclick="exportDiagnostics()" style="padding:8px 16px;font-size:12px">진단 정보 복사</button>';
-        html += '<p style="font-size:11px;color:#888;margin-top:8px">버그 보고용 진단 정보를 클립보드에 복사합니다. 캡처된 텍스트는 포함되지 않습니다.</p>';
+        html += '<button class="btn" onclick="exportDiagnostics()" style="padding:8px 16px;font-size:12px">진단 정보 보기</button>';
+        html += '<p style="font-size:11px;color:#888;margin-top:8px">버그 보고용 진단 정보를 표시합니다. 캡처된 텍스트는 포함되지 않습니다.</p>';
         html += '<div id="diagnostics-result" style="margin-top:12px;display:none">';
         html += '<textarea id="diagnostics-json" readonly style="width:100%;height:200px;font-family:monospace;font-size:11px;padding:8px;border:1px solid #ddd;border-radius:4px;resize:vertical"></textarea>';
-        html += '<button class="btn" onclick="copyDiagnostics()" style="margin-top:8px;padding:6px 12px;font-size:11px">클립보드에 복사</button>';
+        html += '<button class="btn" onclick="copyDiagnostics(this)" style="margin-top:8px;padding:6px 12px;font-size:11px">클립보드에 복사</button>';
         html += '</div>';
         html += '</div>';
         // Close hint.
@@ -562,18 +562,23 @@
       }
     }
 
-    async function copyDiagnostics() {
+    async function copyDiagnostics(btn) {
       try {
         var textarea = document.getElementById('diagnostics-json');
         textarea.select();
         textarea.setSelectionRange(0, 99999); // For mobile devices
-        document.execCommand('copy');
-        // Provide visual feedback
-        var btn = event.target;
+        var copied = document.execCommand('copy');
+        // Provide visual feedback only if copy succeeded
         var originalText = btn.textContent;
-        btn.textContent = '복사됨!';
-        btn.style.background = '#2e7d32';
-        btn.style.color = 'white';
+        if (copied) {
+          btn.textContent = '복사됨!';
+          btn.style.background = '#2e7d32';
+          btn.style.color = 'white';
+        } else {
+          btn.textContent = '복사 실패';
+          btn.style.background = '#c62828';
+          btn.style.color = 'white';
+        }
         setTimeout(function() {
           btn.textContent = originalText;
           btn.style.background = '';

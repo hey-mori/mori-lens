@@ -4,6 +4,7 @@
 Detects:
 - Registered commands with no frontend caller (dead commands)
 - Frontend invokes with no registered handler (broken wiring)
+- Diagnostics UI correctness (copy action semantics)
 
 Allowlist: commands intentionally invoked outside main webviews.
 """
@@ -62,6 +63,59 @@ def find_frontend_invokes(root: Path) -> dict[str, str]:
     return invokes
 
 
+def check_diagnostics_ui(root: Path) -> list[str]:
+    """Check diagnostics UI correctness.
+
+    Verifies:
+    - export_diagnostics frontend invoke exists
+    - copyDiagnostics takes explicit button parameter
+    - execCommand return value is checked
+    - No clipboard-read API is introduced
+
+    Returns list of error messages (empty if all good).
+    """
+    errors = []
+    web_dir = root / "apps" / "lens" / "web"
+    if not web_dir.exists():
+        return errors
+
+    # Search all HTML files for the patterns
+    html_files = list(web_dir.glob("*.html"))
+    if not html_files:
+        return errors
+
+    # Combine all HTML content
+    all_content = ""
+    for html_file in html_files:
+        try:
+            all_content += html_file.read_text(encoding="utf-8")
+        except Exception:
+            continue
+
+    # Check 1: export_diagnostics invoke exists
+    if "invoke('export_diagnostics')" not in all_content and 'invoke("export_diagnostics")' not in all_content:
+        errors.append("export_diagnostics frontend invoke not found")
+
+    # Check 2: copyDiagnostics function takes explicit parameter
+    # Look for function definition with parameter
+    if not re.search(r"function\s+copyDiagnostics\s*\(\s*\w+\s*\)", all_content):
+        errors.append("copyDiagnostics must take explicit button parameter, not rely on implicit event")
+
+    # Check 3: execCommand return value is checked
+    # Look for pattern like: var copied = document.execCommand('copy') or if (document.execCommand...)
+    if "document.execCommand('copy')" in all_content or 'document.execCommand("copy")' in all_content:
+        # Check if return value is captured or tested
+        if not re.search(r"(var|let|const)\s+\w+\s*=\s*document\.execCommand\(['\"]copy['\"]\)", all_content):
+            if not re.search(r"if\s*\(\s*document\.execCommand\(['\"]copy['\"]\)", all_content):
+                errors.append("execCommand('copy') return value must be checked to avoid false success feedback")
+
+    # Check 4: No clipboard-read API
+    if "clipboard.read" in all_content or "navigator.clipboard.readText" in all_content:
+        errors.append("clipboard-read API detected; diagnostics copy must be write-only")
+
+    return errors
+
+
 def check_command_wiring(root: Path) -> list[str]:
     """Check command registration vs invocation.
 
@@ -95,6 +149,9 @@ def check_command_wiring(root: Path) -> list[str]:
                 f"  {cmd_name} (in {file_path})"
             )
 
+    # Check diagnostics UI correctness
+    errors.extend(check_diagnostics_ui(root))
+
     return errors
 
 
@@ -111,6 +168,7 @@ def main():
         print("Command wiring check passed.")
         print(f"  {len(find_tauri_commands(root))} registered commands")
         print(f"  {len(find_frontend_invokes(root))} frontend invokes")
+        print("  Diagnostics UI: OK")
         sys.exit(0)
 
 
