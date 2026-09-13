@@ -202,11 +202,7 @@ pub fn main() -> std::process::ExitCode {
         let quick_endpoint = flags.endpoint.clone().unwrap_or(quick_endpoint);
         let deep_endpoint = flags.endpoint.clone().unwrap_or(deep_endpoint);
         let quick_model = flags.model.clone().or(quick_model);
-        let ocr_mode = flags
-            .ocr
-            .as_deref()
-            .map(String::from)
-            .unwrap_or(ocr_mode);
+        let ocr_mode = flags.ocr.as_deref().map(String::from).unwrap_or(ocr_mode);
         settings_service::ActiveEngineSettings {
             quick_model,
             quick_endpoint,
