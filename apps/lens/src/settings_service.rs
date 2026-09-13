@@ -265,7 +265,24 @@ impl SettingsState {
         self.pending = Some(self.current.clone());
         self.generation += 1;
 
-        // Determine if restart is required by comparing against active baseline
+        // Determine if restart is required by comparing against active baseline.
+        let (restart_required, reasons) = self.restart_status();
+
+        let canonical_settings = self.view();
+
+        Ok(SettingsSaveOutcome {
+            restart_required,
+            reasons,
+            settings: canonical_settings,
+        })
+    }
+
+    /// Determine if a restart is required by comparing current settings against
+    /// the active baseline (process-start settings).
+    ///
+    /// Returns a tuple of (restart_required, reasons) where reasons lists the
+    /// specific settings that changed.
+    pub fn restart_status(&self) -> (bool, Vec<String>) {
         let saved_schema = self.file.schema();
         let mut restart_required = false;
         let mut reasons = Vec::new();
@@ -291,13 +308,7 @@ impl SettingsState {
             reasons.push("ocr_mode".to_owned());
         }
 
-        let canonical_settings = self.view();
-
-        Ok(SettingsSaveOutcome {
-            restart_required,
-            reasons,
-            settings: canonical_settings,
-        })
+        (restart_required, reasons)
     }
 
     /// Take any pending settings, clearing the slot.
@@ -748,6 +759,37 @@ mod tests {
         let outcome = state.apply(view).unwrap();
         assert!(outcome.restart_required);
         assert!(outcome.reasons.contains(&"ocr_mode".to_owned()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restart_status_returns_same_result_as_apply() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        view.quick_model = Some("llama2".into());
+        view.deep_endpoint = "127.0.0.1:11436".into();
+
+        // Apply the settings
+        let outcome = state.apply(view.clone()).unwrap();
+
+        // Query restart_status() and verify it matches
+        let (restart_required, reasons) = state.restart_status();
+        assert_eq!(restart_required, outcome.restart_required);
+        assert_eq!(reasons, outcome.reasons);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restart_status_no_restart_when_unchanged() {
+        let dir = temp_dir();
+        let state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+
+        let (restart_required, reasons) = state.restart_status();
+        assert!(!restart_required);
+        assert!(reasons.is_empty());
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 
