@@ -332,9 +332,24 @@ elif [[ "$IS_WINDOWS" == "true" ]]; then
     fi
     echo ""
 
-    # ── Step 4: Revision provenance ──────────────────────────────────────
-    echo "=== Step 4: Revision provenance ==="
-    PROVENANCE_STATUS="UNPROVEN"
+    # ── Step 4: Build provenance and embedded stamp ─────────────────────
+    echo "=== Step 4: Build provenance and embedded stamp ==="
+
+    # Determine BUILD_PROVENANCE based on build mode and tree state
+    if [[ "$VERIFY_ONLY" == "true" ]]; then
+        BUILD_PROVENANCE="VERIFY_ONLY"
+        echo "Build provenance: VERIFY_ONLY (--verify-only mode)"
+    elif [[ "$ALLOW_DIRTY" == "true" && -n "$TREE_STATUS" ]]; then
+        BUILD_PROVENANCE="DIRTY_WORKTREE"
+        echo "Build provenance: DIRTY_WORKTREE (--allow-dirty with dirty tree)"
+    else
+        BUILD_PROVENANCE="BUILT_FROM_CURRENT_CLEAN_HEAD"
+        echo "Build provenance: BUILT_FROM_CURRENT_CLEAN_HEAD (default mode, clean tree)"
+    fi
+    summary_set "BUILD_PROVENANCE" "$BUILD_PROVENANCE"
+
+    # Determine EMBEDDED_BUILD_STAMP from binary
+    EMBEDDED_STAMP="UNPROVEN"
     if [[ -f "$PAYLOAD_PATH" ]]; then
         # Extract LENS_BUILD_SHA from the PE binary using PowerShell.
         # The Rust env!() macro embeds the string as a literal in the binary.
@@ -354,28 +369,22 @@ elif [[ "$IS_WINDOWS" == "true" ]]; then
         if [[ -n "$BUILD_SHA_FROM_BINARY" ]]; then
             CLEAN_SHA="${BUILD_SHA_FROM_BINARY%-dirty}"
             if [[ "$CLEAN_SHA" == "$REVISION_SHORT" ]]; then
-                # Check if tree is dirty - if so, mark as DIRTY_WORKTREE instead of VERIFIED
-                if [[ "$ALLOW_DIRTY" == "true" && -n "$TREE_STATUS" ]]; then
-                    PROVENANCE_STATUS="DIRTY_WORKTREE"
-                    echo "PASS: Artifact build SHA matches this revision ($REVISION_SHORT), but tree is dirty"
-                else
-                    PROVENANCE_STATUS="VERIFIED"
-                    echo "PASS: Artifact build SHA matches this revision ($REVISION_SHORT)"
-                fi
+                EMBEDDED_STAMP="VERIFIED"
+                echo "Embedded build stamp: VERIFIED (matches $REVISION_SHORT)"
             else
-                PROVENANCE_STATUS="MISMATCH"
-                echo "FAIL: Artifact build SHA ($BUILD_SHA_FROM_BINARY) does not match this revision ($REVISION_SHORT)"
+                EMBEDDED_STAMP="MISMATCH"
+                echo "Embedded build stamp: MISMATCH (binary has $BUILD_SHA_FROM_BINARY, expected $REVISION_SHORT)"
                 gate_fail
             fi
         else
-            PROVENANCE_STATUS="UNPROVEN"
-            echo "INFO: Could not extract build SHA from binary. Revision provenance unproven."
+            EMBEDDED_STAMP="UNPROVEN"
+            echo "Embedded build stamp: UNPROVEN (could not extract from binary)"
         fi
     else
-        PROVENANCE_STATUS="UNPROVEN"
-        echo "INFO: No payload binary available. Revision provenance unproven."
+        EMBEDDED_STAMP="UNPROVEN"
+        echo "Embedded build stamp: UNPROVEN (no payload binary available)"
     fi
-    summary_set "REVISION_PROVENANCE" "$PROVENANCE_STATUS"
+    summary_set "EMBEDDED_BUILD_STAMP" "$EMBEDDED_STAMP"
     echo ""
 
 elif [[ "$IS_MACOS" == "true" ]]; then
@@ -413,35 +422,46 @@ elif [[ "$IS_MACOS" == "true" ]]; then
     fi
     echo ""
 
-    # ── Step 4: Revision provenance (macOS) ──────────────────────────────
-    echo "=== Step 4: Revision provenance ==="
+    # ── Step 4: Build provenance and embedded stamp (macOS) ─────────────
+    echo "=== Step 4: Build provenance and embedded stamp ==="
+
+    # Determine BUILD_PROVENANCE based on build mode and tree state
+    if [[ "$VERIFY_ONLY" == "true" ]]; then
+        BUILD_PROVENANCE="VERIFY_ONLY"
+        echo "Build provenance: VERIFY_ONLY (--verify-only mode)"
+    elif [[ "$ALLOW_DIRTY" == "true" && -n "$TREE_STATUS" ]]; then
+        BUILD_PROVENANCE="DIRTY_WORKTREE"
+        echo "Build provenance: DIRTY_WORKTREE (--allow-dirty with dirty tree)"
+    else
+        BUILD_PROVENANCE="BUILT_FROM_CURRENT_CLEAN_HEAD"
+        echo "Build provenance: BUILT_FROM_CURRENT_CLEAN_HEAD (default mode, clean tree)"
+    fi
+    summary_set "BUILD_PROVENANCE" "$BUILD_PROVENANCE"
+
+    # Determine EMBEDDED_BUILD_STAMP from binary
     MACOS_PAYLOAD="apps/lens/target/release/lens"
-    PROVENANCE_STATUS="UNPROVEN"
+    EMBEDDED_STAMP="UNPROVEN"
     if [[ -f "$MACOS_PAYLOAD" ]]; then
         BUILD_SHA_FROM_BINARY="$(strings "$MACOS_PAYLOAD" 2>/dev/null | grep -oE '[0-9a-f]{7,40}' | head -1 || true)"
         if [[ -n "$BUILD_SHA_FROM_BINARY" ]]; then
             CLEAN_SHA="${BUILD_SHA_FROM_BINARY%-dirty}"
             if [[ "$CLEAN_SHA" == "$REVISION_SHORT" ]]; then
-                # Check if tree is dirty - if so, mark as DIRTY_WORKTREE instead of VERIFIED
-                if [[ "$ALLOW_DIRTY" == "true" && -n "$TREE_STATUS" ]]; then
-                    PROVENANCE_STATUS="DIRTY_WORKTREE"
-                    echo "PASS: Artifact build SHA matches this revision ($REVISION_SHORT), but tree is dirty"
-                else
-                    PROVENANCE_STATUS="VERIFIED"
-                    echo "PASS: Artifact build SHA matches this revision ($REVISION_SHORT)"
-                fi
+                EMBEDDED_STAMP="VERIFIED"
+                echo "Embedded build stamp: VERIFIED (matches $REVISION_SHORT)"
             else
-                PROVENANCE_STATUS="MISMATCH"
-                echo "FAIL: Artifact build SHA ($BUILD_SHA_FROM_BINARY) does not match this revision ($REVISION_SHORT)"
+                EMBEDDED_STAMP="MISMATCH"
+                echo "Embedded build stamp: MISMATCH (binary has $BUILD_SHA_FROM_BINARY, expected $REVISION_SHORT)"
                 gate_fail
             fi
         else
-            echo "INFO: Could not extract build SHA from binary. Revision provenance unproven."
+            EMBEDDED_STAMP="UNPROVEN"
+            echo "Embedded build stamp: UNPROVEN (could not extract from binary)"
         fi
     else
-        echo "INFO: No payload binary available. Revision provenance unproven."
+        EMBEDDED_STAMP="UNPROVEN"
+        echo "Embedded build stamp: UNPROVEN (no payload binary available)"
     fi
-    summary_set "REVISION_PROVENANCE" "$PROVENANCE_STATUS"
+    summary_set "EMBEDDED_BUILD_STAMP" "$EMBEDDED_STAMP"
     echo ""
 
 else
@@ -488,7 +508,8 @@ elif [[ "$IS_MACOS" == "true" ]]; then
 fi
 
 echo ""
-echo "REVISION_PROVENANCE:  ${SUMMARY[REVISION_PROVENANCE]:-SKIP}"
+echo "BUILD_PROVENANCE:     ${SUMMARY[BUILD_PROVENANCE]:-SKIP}"
+echo "EMBEDDED_BUILD_STAMP: ${SUMMARY[EMBEDDED_BUILD_STAMP]:-SKIP}"
 echo ""
 echo "SIGNING:              BLOCKED / UNSIGNED"
 echo "STORE PUBLISHER:      PLACEHOLDER / CONFIGURED"
@@ -504,50 +525,44 @@ if [[ $GATE_FAILURES -eq 0 ]]; then
         exit 0
     fi
 
-    # Check revision provenance for verify-only mode
+    # Check build provenance and embedded stamp for final verdict
     if [[ "$VERIFY_ONLY" == "true" ]]; then
-        if [[ "${SUMMARY[REVISION_PROVENANCE]}" == "UNPROVEN" ]]; then
-            echo "OVERALL:              ARTIFACT STRUCTURE VALID, REVISION PROVENANCE UNPROVEN"
+        if [[ "${SUMMARY[EMBEDDED_BUILD_STAMP]}" == "UNPROVEN" ]]; then
+            echo "OVERALL:              ARTIFACT STRUCTURE VALID, EMBEDDED STAMP UNPROVEN"
             echo ""
-            echo "Artifacts are structurally valid, but build provenance could not be verified."
+            echo "Artifacts are structurally valid, but embedded build stamp could not be verified."
             echo "The artifacts may not be from this exact revision."
-            echo "For exact-revision readiness, rebuild from clean tree or use artifacts with verified provenance."
+            echo "For exact-revision readiness, rebuild from clean tree or use artifacts with verified stamp."
             exit 0
-        elif [[ "${SUMMARY[REVISION_PROVENANCE]}" == "DIRTY_WORKTREE" ]]; then
-            echo "OVERALL:              STRUCTURE VALID, DIRTY-WORKTREE PROVENANCE"
+        elif [[ "${SUMMARY[EMBEDDED_BUILD_STAMP]}" == "MISMATCH" ]]; then
+            echo "OVERALL:              FAILED (embedded stamp mismatch)"
             echo ""
-            echo "Artifacts are structurally valid and match this revision, but were built from a dirty working tree."
-            echo "The artifacts include uncommitted changes and cannot be associated cleanly with the reported Git revision."
-            echo "For exact-revision readiness, rebuild from clean tree."
-            exit 0
-        elif [[ "${SUMMARY[REVISION_PROVENANCE]}" == "VERIFIED" ]]; then
+            echo "Artifacts are structurally valid but the embedded build stamp does not match this revision."
+            exit 1
+        elif [[ "${SUMMARY[EMBEDDED_BUILD_STAMP]}" == "VERIFIED" ]]; then
             echo "OVERALL:              STRUCTURALLY READY"
             echo ""
             echo "All gates passed. Packages are structurally valid and verified for this revision."
             echo "Signing and distribution remain external blockers."
             exit 0
         else
-            # MISMATCH or other unexpected status should have already failed
-            echo "OVERALL:              FAILED (unexpected provenance status: ${SUMMARY[REVISION_PROVENANCE]})"
+            echo "OVERALL:              FAILED (unexpected embedded stamp: ${SUMMARY[EMBEDDED_BUILD_STAMP]})"
             exit 1
         fi
+    elif [[ "${SUMMARY[BUILD_PROVENANCE]}" == "DIRTY_WORKTREE" ]]; then
+        echo "OVERALL:              STRUCTURE VALID, DIRTY-WORKTREE PROVENANCE"
+        echo ""
+        echo "All gates passed. Packages are structurally valid but were built from a dirty working tree."
+        echo "The artifacts include uncommitted changes and cannot be associated cleanly with the reported Git revision."
+        echo "For exact-revision readiness, rebuild from clean tree."
+        echo "Signing and distribution remain external blockers."
+        exit 0
     else
-        # BUILD mode: we just built from this tree
-        if [[ "${SUMMARY[REVISION_PROVENANCE]}" == "DIRTY_WORKTREE" ]]; then
-            echo "OVERALL:              STRUCTURE VALID, DIRTY-WORKTREE PROVENANCE"
-            echo ""
-            echo "All gates passed. Packages are structurally valid but were built from a dirty working tree."
-            echo "The artifacts include uncommitted changes and cannot be associated cleanly with the reported Git revision."
-            echo "For exact-revision readiness, rebuild from clean tree."
-            echo "Signing and distribution remain external blockers."
-            exit 0
-        else
-            echo "OVERALL:              STRUCTURALLY READY"
-            echo ""
-            echo "All gates passed. Packages are structurally valid for this revision."
-            echo "Signing and distribution remain external blockers."
-            exit 0
-        fi
+        echo "OVERALL:              STRUCTURALLY READY"
+        echo ""
+        echo "All gates passed. Packages are structurally valid for this revision."
+        echo "Signing and distribution remain external blockers."
+        exit 0
     fi
 else
     echo "OVERALL:              FAILED ($GATE_FAILURES gate(s))"
