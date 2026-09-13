@@ -265,13 +265,13 @@ fi
 
 # ── Test 13: Provenance semantics are explicit ───────────────────────────────
 echo "Test: Provenance semantics are explicit"
-if grep -q "ARTIFACT STRUCTURE VALID, REVISION PROVENANCE UNPROVEN" "$PREFLIGHT"; then
+if grep -q "ARTIFACT STRUCTURE VALID, EMBEDDED STAMP UNPROVEN" "$PREFLIGHT"; then
     pass "Verify-only unproven shows weaker status"
 else
-    fail "Verify-only unproven should show 'ARTIFACT STRUCTURE VALID, REVISION PROVENANCE UNPROVEN'"
+    fail "Verify-only unproven should show 'ARTIFACT STRUCTURE VALID, EMBEDDED STAMP UNPROVEN'"
 fi
 
-if grep -q "REVISION_PROVENANCE.*VERIFIED" "$PREFLIGHT" || grep -A 5 "VERIFY_ONLY.*true" "$PREFLIGHT" | grep -q "STRUCTURALLY READY"; then
+if grep -q "EMBEDDED_BUILD_STAMP.*VERIFIED" "$PREFLIGHT" || grep -A 5 "VERIFY_ONLY.*true" "$PREFLIGHT" | grep -q "STRUCTURALLY READY"; then
     pass "Verify-only verified shows STRUCTURALLY READY"
 else
     fail "Verify-only verified should show STRUCTURALLY READY"
@@ -297,10 +297,16 @@ else
     fail "Should support --source-only flag"
 fi
 
-if grep -q "REVISION_PROVENANCE" "$PREFLIGHT"; then
-    pass "Summary includes REVISION_PROVENANCE"
+if grep -q "BUILD_PROVENANCE" "$PREFLIGHT"; then
+    pass "Summary includes BUILD_PROVENANCE"
 else
-    fail "Summary should include REVISION_PROVENANCE"
+    fail "Summary should include BUILD_PROVENANCE"
+fi
+
+if grep -q "EMBEDDED_BUILD_STAMP" "$PREFLIGHT"; then
+    pass "Summary includes EMBEDDED_BUILD_STAMP"
+else
+    fail "Summary should include EMBEDDED_BUILD_STAMP"
 fi
 
 # Check deterministic artifact naming (no find | head -1)
