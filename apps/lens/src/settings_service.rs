@@ -18,6 +18,26 @@ use lens_settings::schema::Schema;
 use lens_settings::SettingsFile;
 use serde::{Deserialize, Serialize};
 
+/// The active engine settings at startup, used to detect restart-required changes.
+///
+/// These fields are captured from the initial settings and compared against
+/// saved settings to determine if a restart is needed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ActiveEngineSettings {
+    pub quick_model: Option<String>,
+    pub quick_endpoint: String,
+    pub deep_model: Option<String>,
+    pub deep_endpoint: String,
+    pub ocr_mode: String,
+}
+
+/// The outcome of saving settings, indicating whether a restart is required.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SettingsSaveOutcome {
+    pub restart_required: bool,
+    pub reasons: Vec<String>,
+}
+
 /// Shared settings state, accessed by Tauri commands and the polling loop.
 pub type SharedSettings = Arc<Mutex<SettingsState>>;
 
@@ -37,6 +57,8 @@ pub struct SettingsState {
     /// Monotonically increasing counter. Incremented on every `apply`.
     /// The product loop checks this to avoid cloning Settings every tick.
     generation: u64,
+    /// The engine settings at startup, used to detect restart-required changes.
+    active_baseline: ActiveEngineSettings,
 }
 
 /// A serde-friendly view of the settings, for IPC with the webview.
@@ -78,7 +100,10 @@ pub struct SettingsView {
 ///
 /// A corrupt or future-version file is preserved without modification.
 /// The reader's own configuration is not lost.
-pub fn load_or_migrate(settings_path: &std::path::Path) -> SettingsState {
+pub fn load_or_migrate(
+    settings_path: &std::path::Path,
+    active_baseline: ActiveEngineSettings,
+) -> SettingsState {
     let toml_path = settings_path.to_path_buf();
 
     // Use canonical loader
@@ -110,6 +135,7 @@ pub fn load_or_migrate(settings_path: &std::path::Path) -> SettingsState {
                 current,
                 pending: None,
                 generation: 0,
+                active_baseline,
             }
         }
         Err(e) => {
@@ -122,6 +148,7 @@ pub fn load_or_migrate(settings_path: &std::path::Path) -> SettingsState {
                 current,
                 pending: None,
                 generation: 0,
+                active_baseline,
             }
         }
     }
@@ -164,7 +191,11 @@ impl SettingsState {
     /// String enum fields are validated before writing. An invalid value is
     /// replaced with the default and a warning is printed, because a setting
     /// the user cannot see being ignored is worse than one that is refused.
-    pub fn apply(&mut self, view: SettingsView) -> Result<(), String> {
+    ///
+    /// Returns a [`SettingsSaveOutcome`] indicating whether a restart is required.
+    /// A restart is required if any engine-related settings (model, endpoint, OCR mode)
+    /// differ from the active baseline captured at startup.
+    pub fn apply(&mut self, view: SettingsView) -> Result<SettingsSaveOutcome, String> {
         let schema = self.file.schema_mut();
         let defaults = lens_core::settings::Settings::default();
 
@@ -232,7 +263,37 @@ impl SettingsState {
         self.current = self.file.to_settings();
         self.pending = Some(self.current.clone());
         self.generation += 1;
-        Ok(())
+
+        // Determine if restart is required by comparing against active baseline
+        let saved_schema = self.file.schema();
+        let mut restart_required = false;
+        let mut reasons = Vec::new();
+
+        if saved_schema.quick.model != self.active_baseline.quick_model {
+            restart_required = true;
+            reasons.push("quick_model".to_owned());
+        }
+        if saved_schema.quick.endpoint != self.active_baseline.quick_endpoint {
+            restart_required = true;
+            reasons.push("quick_endpoint".to_owned());
+        }
+        if saved_schema.deep.model != self.active_baseline.deep_model {
+            restart_required = true;
+            reasons.push("deep_model".to_owned());
+        }
+        if saved_schema.deep.endpoint != self.active_baseline.deep_endpoint {
+            restart_required = true;
+            reasons.push("deep_endpoint".to_owned());
+        }
+        if saved_schema.general.ocr != self.active_baseline.ocr_mode {
+            restart_required = true;
+            reasons.push("ocr_mode".to_owned());
+        }
+
+        Ok(SettingsSaveOutcome {
+            restart_required,
+            reasons,
+        })
     }
 
     /// Take any pending settings, clearing the slot.
@@ -375,10 +436,20 @@ mod tests {
         }
     }
 
+    fn default_baseline() -> ActiveEngineSettings {
+        ActiveEngineSettings {
+            quick_model: None,
+            quick_endpoint: "127.0.0.1:11434".into(),
+            deep_model: None,
+            deep_endpoint: "127.0.0.1:11434".into(),
+            ocr_mode: "manual".into(),
+        }
+    }
+
     #[test]
     fn load_or_migrate_creates_defaults_when_no_file() {
         let dir = temp_dir();
-        let state = load_or_migrate(&dir.join("settings.toml"));
+        let state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
         assert!(state.pending.is_none());
         let view = state.view();
         assert_eq!(view.language, "Korean");
@@ -390,9 +461,9 @@ mod tests {
     fn load_or_migrate_loads_existing_file() {
         let dir = temp_dir();
         // Create defaults first.
-        let _ = load_or_migrate(&dir.join("settings.toml"));
+        let _ = load_or_migrate(&dir.join("settings.toml"), default_baseline());
         // Load again — should read the file.
-        let state = load_or_migrate(&dir.join("settings.toml"));
+        let state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
         assert_eq!(state.view().language, "Korean");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -400,7 +471,7 @@ mod tests {
     #[test]
     fn apply_sets_pending_and_persists() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir.join("settings.toml"));
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
         assert!(state.take_pending().is_none());
 
         let mut view = default_view();
@@ -420,7 +491,7 @@ mod tests {
         assert_eq!(state.current().language, "Japanese");
 
         // File persists: reload and check.
-        let reloaded = load_or_migrate(&dir.join("settings.toml"));
+        let reloaded = load_or_migrate(&dir.join("settings.toml"), default_baseline());
         assert_eq!(reloaded.current().language, "Japanese");
         assert_eq!(reloaded.current().dwell_ms, 500);
         let _ = std::fs::remove_dir_all(&dir);
@@ -429,7 +500,7 @@ mod tests {
     #[test]
     fn apply_clamps_dwell_ms() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir.join("settings.toml"));
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
         let mut view = default_view();
         view.dwell_ms = 10; // Below minimum (80).
         state.apply(view).unwrap();
@@ -445,7 +516,7 @@ mod tests {
     #[test]
     fn apply_invalid_tier_falls_back_to_default() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir.join("settings.toml"));
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
         let mut view = default_view();
         view.default_tier = "bogus".into();
         state.apply(view).unwrap();
@@ -460,7 +531,7 @@ mod tests {
     #[test]
     fn view_roundtrip_preserves_values() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir.join("settings.toml"));
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
         let mut view = default_view();
         view.language = "Spanish".into();
         view.hover_scope = "word".into();
@@ -484,7 +555,7 @@ mod tests {
     #[test]
     fn apply_invalid_theme_falls_back_to_default() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir.join("settings.toml"));
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
         let mut view = default_view();
         view.theme = "purple".into();
         state.apply(view).unwrap();
@@ -495,7 +566,7 @@ mod tests {
     #[test]
     fn apply_invalid_translucency_falls_back_to_default() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir.join("settings.toml"));
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
         let mut view = default_view();
         view.translucency = "invisible".into();
         state.apply(view).unwrap();
@@ -509,7 +580,7 @@ mod tests {
     #[test]
     fn apply_invalid_text_size_falls_back_to_default() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir.join("settings.toml"));
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
         let mut view = default_view();
         view.text_size = "huge".into();
         state.apply(view).unwrap();
@@ -520,7 +591,7 @@ mod tests {
     #[test]
     fn apply_invalid_ocr_falls_back_to_default() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir.join("settings.toml"));
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
         let mut view = default_view();
         view.ocr = "always".into();
         state.apply(view).unwrap();
@@ -531,7 +602,7 @@ mod tests {
     #[test]
     fn apply_invalid_hover_scope_falls_back_to_default() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir.join("settings.toml"));
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
         let mut view = default_view();
         view.hover_scope = "paragraph".into();
         state.apply(view).unwrap();
@@ -542,7 +613,7 @@ mod tests {
     #[test]
     fn apply_invalid_endpoint_falls_back_to_default() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir.join("settings.toml"));
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
         let mut view = default_view();
         view.quick_endpoint = "192.168.1.100:11434".into();
         state.apply(view).unwrap();
@@ -553,7 +624,7 @@ mod tests {
     #[test]
     fn apply_valid_enum_values_are_kept() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir.join("settings.toml"));
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
         let mut view = default_view();
         view.theme = "night-lake".into();
         view.translucency = "solid".into();
@@ -578,7 +649,7 @@ mod tests {
         let custom_path = dir.join("custom-profile.toml");
 
         // Load from custom path
-        let state = load_or_migrate(&custom_path);
+        let state = load_or_migrate(&custom_path, default_baseline());
         assert_eq!(state.view().language, "Korean");
 
         // Verify the file was created with the custom name, not "settings.toml"
@@ -595,9 +666,101 @@ mod tests {
         state.apply(view).unwrap();
 
         // Reload from the same custom path — should see the change
-        let reloaded = load_or_migrate(&custom_path);
+        let reloaded = load_or_migrate(&custom_path, default_baseline());
         assert_eq!(reloaded.view().language, "Japanese");
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_no_restart_required_when_engine_settings_unchanged() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        // Change only non-engine settings
+        view.language = "Japanese".into();
+        view.dwell_ms = 500;
+        view.theme = "night-lake".into();
+        let outcome = state.apply(view).unwrap();
+        assert!(!outcome.restart_required);
+        assert!(outcome.reasons.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_restart_required_when_quick_model_changed() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        view.quick_model = Some("llama2".into());
+        let outcome = state.apply(view).unwrap();
+        assert!(outcome.restart_required);
+        assert!(outcome.reasons.contains(&"quick_model".to_owned()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_restart_required_when_quick_endpoint_changed() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        view.quick_endpoint = "127.0.0.1:11435".into();
+        let outcome = state.apply(view).unwrap();
+        assert!(outcome.restart_required);
+        assert!(outcome.reasons.contains(&"quick_endpoint".to_owned()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_restart_required_when_deep_model_changed() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        view.deep_model = Some("codellama".into());
+        let outcome = state.apply(view).unwrap();
+        assert!(outcome.restart_required);
+        assert!(outcome.reasons.contains(&"deep_model".to_owned()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_restart_required_when_deep_endpoint_changed() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        view.deep_endpoint = "127.0.0.1:11436".into();
+        let outcome = state.apply(view).unwrap();
+        assert!(outcome.restart_required);
+        assert!(outcome.reasons.contains(&"deep_endpoint".to_owned()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_restart_required_when_ocr_mode_changed() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        view.ocr = "automatic".into();
+        let outcome = state.apply(view).unwrap();
+        assert!(outcome.restart_required);
+        assert!(outcome.reasons.contains(&"ocr_mode".to_owned()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_restart_required_multiple_reasons() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        view.quick_model = Some("llama2".into());
+        view.deep_endpoint = "127.0.0.1:11436".into();
+        view.ocr = "automatic".into();
+        let outcome = state.apply(view).unwrap();
+        assert!(outcome.restart_required);
+        assert_eq!(outcome.reasons.len(), 3);
+        assert!(outcome.reasons.contains(&"quick_model".to_owned()));
+        assert!(outcome.reasons.contains(&"deep_endpoint".to_owned()));
+        assert!(outcome.reasons.contains(&"ocr_mode".to_owned()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
