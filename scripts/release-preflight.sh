@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Mori Lens — Release preflight verification.
+# Mori Lens -- Release preflight verification.
 #
 # Determines whether THIS exact revision is structurally ready to hand
 # to signing/distribution. Default behavior builds fresh artifacts from
@@ -9,10 +9,11 @@
 #   ./scripts/release-preflight.sh [OPTIONS]
 #
 # Options:
-#   --version X.Y.Z   Override version (default: Cargo.toml version)
-#   --verify-only     Inspect already-built artifacts (do not build)
-#   --allow-dirty     Allow uncommitted changes in working tree
-#   --help            Show this help message
+#   --version X.Y.Z    Override version (default: Cargo.toml version)
+#   --verify-only      Inspect already-built artifacts (do not build)
+#   --allow-dirty      Allow uncommitted changes in working tree
+#   --source-only      Skip platform package checks, report source gates only
+#   --help             Show this help message
 #
 # Exit codes:
 #   0  Structurally ready (all gates passed)
@@ -25,20 +26,33 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+# Validate semver syntax: X.Y.Z where X, Y, Z are non-negative integers.
+validate_version_syntax() {
+    local ver="$1"
+    if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "ERROR: Version '$ver' is not valid semver (expected X.Y.Z, e.g. 0.1.0)" >&2
+        exit 2
+    fi
+}
+
 # ── CLI parsing ──────────────────────────────────────────────────────────────
 VERSION_OVERRIDE=""
 VERIFY_ONLY=false
 ALLOW_DIRTY=false
+SOURCE_ONLY=false
 
 usage() {
     cat <<'USAGE'
 Usage: ./scripts/release-preflight.sh [OPTIONS]
 
 Options:
-  --version X.Y.Z   Override version (default: Cargo.toml version)
-  --verify-only     Inspect already-built artifacts (do not build)
-  --allow-dirty     Allow uncommitted changes in working tree
-  --help            Show this help message
+  --version X.Y.Z    Override version (default: Cargo.toml version)
+  --verify-only      Inspect already-built artifacts (do not build)
+  --allow-dirty      Allow uncommitted changes in working tree
+  --source-only      Skip platform package checks, report source gates only
+  --help             Show this help message
 
 Exit codes:
   0  Structurally ready
@@ -54,6 +68,7 @@ while [[ $# -gt 0 ]]; do
                 echo "ERROR: --version requires an argument" >&2
                 exit 2
             fi
+            validate_version_syntax "$2"
             VERSION_OVERRIDE="$2"
             shift 2
             ;;
@@ -63,6 +78,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --allow-dirty)
             ALLOW_DIRTY=true
+            shift
+            ;;
+        --source-only)
+            SOURCE_ONLY=true
             shift
             ;;
         --help|-h)
@@ -79,6 +98,7 @@ done
 
 # ── Source identity ──────────────────────────────────────────────────────────
 REVISION="$(git rev-parse HEAD)"
+REVISION_SHORT="$(git rev-parse --short HEAD)"
 TREE_STATUS="$(git status --porcelain)"
 
 if [[ -n "$TREE_STATUS" && "$ALLOW_DIRTY" != "true" ]]; then
@@ -102,11 +122,12 @@ if [[ -n "$VERSION_OVERRIDE" ]]; then
     VERSION="$VERSION_OVERRIDE"
 else
     VERSION="$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')"
+    validate_version_syntax "$VERSION"
 fi
 
-echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║  Mori Lens Release Preflight                                ║"
-echo "╚══════════════════════════════════════════════════════════════╝"
+echo "================================================================"
+echo "  Mori Lens Release Preflight"
+echo "================================================================"
 echo ""
 echo "REVISION:  $REVISION"
 echo "VERSION:   $VERSION"
@@ -128,10 +149,10 @@ summary_set "TREE" "$TREE_STATE"
 echo "=== Step 1: Full validation ==="
 if bash scripts/check.sh --full 2>&1 | tail -20; then
     summary_set "FULL_GATE" "PASS"
-    echo "✓ Full validation passed"
+    echo "PASS: Full validation passed"
 else
     summary_set "FULL_GATE" "FAIL"
-    echo "✗ Full validation failed"
+    echo "FAIL: Full validation failed"
     gate_fail
 fi
 echo ""
@@ -143,19 +164,23 @@ LENS_VERSION="$(grep '^version' apps/lens/Cargo.toml | head -1 | sed 's/.*"\(.*\
 
 VERSION_CONSISTENT=true
 if [[ "$CARGO_VERSION" != "$VERSION" ]]; then
-    echo "✗ Cargo.toml version mismatch: expected $VERSION, got $CARGO_VERSION"
+    echo "FAIL: Cargo.toml version mismatch: expected $VERSION, got $CARGO_VERSION"
     VERSION_CONSISTENT=false
 fi
 if [[ "$LENS_VERSION" != "$VERSION" ]]; then
-    echo "✗ apps/lens/Cargo.toml version mismatch: expected $VERSION, got $LENS_VERSION"
+    echo "FAIL: apps/lens/Cargo.toml version mismatch: expected $VERSION, got $LENS_VERSION"
     VERSION_CONSISTENT=false
 fi
 if [[ "$VERSION_CONSISTENT" == "true" ]]; then
-    echo "✓ All Cargo.toml versions match: $VERSION"
+    echo "PASS: All Cargo.toml versions match: $VERSION"
+    summary_set "VERSION_CONSISTENCY" "PASS"
+else
+    summary_set "VERSION_CONSISTENCY" "FAIL"
+    gate_fail
 fi
 echo ""
 
-# ── Platform-specific paths ─────────────────────────────────────────────────
+# ── Platform detection ───────────────────────────────────────────────────────
 IS_WINDOWS=false
 IS_MACOS=false
 case "$(uname -s)" in
@@ -169,8 +194,14 @@ MSIX_DIR="target/msix"
 NSIS_ARTIFACT=""
 MSIX_ARTIFACT=""
 
-# ── Step 3: Build or locate artifacts ────────────────────────────────────────
-if [[ "$IS_WINDOWS" == "true" ]]; then
+# ── Platform package gates ───────────────────────────────────────────────────
+if [[ "$SOURCE_ONLY" == "true" ]]; then
+    echo "=== Step 3: Platform packages (--source-only) ==="
+    echo "  Source gates verified. Package readiness NOT verified."
+    echo "  Platform: $(uname -s) (skipped per --source-only)"
+    summary_set "PACKAGE_READINESS" "NOT VERIFIED"
+    echo ""
+elif [[ "$IS_WINDOWS" == "true" ]]; then
     echo "=== Step 3: Build and verify Windows packages ==="
 
     if [[ "$VERIFY_ONLY" == "true" ]]; then
@@ -178,36 +209,43 @@ if [[ "$IS_WINDOWS" == "true" ]]; then
     else
         echo "--- Building NSIS installer ---"
         if (cd apps/lens && cargo tauri build --bundles nsis 2>&1 | tail -10); then
-            echo "✓ NSIS build completed"
+            echo "PASS: NSIS build completed"
         else
-            echo "✗ NSIS build failed"
+            echo "FAIL: NSIS build failed"
             gate_fail
         fi
         echo ""
 
         echo "--- Building MSIX package ---"
         if powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-msix.ps1 2>&1 | tail -10; then
-            echo "✓ MSIX build completed"
+            echo "PASS: MSIX build completed"
         else
-            echo "✗ MSIX build failed"
+            echo "FAIL: MSIX build failed"
             gate_fail
         fi
         echo ""
     fi
 
-    # ── Locate NSIS artifact ─────────────────────────────────────────────
+    # ── Locate NSIS artifact (deterministic, version-exact) ──────────────
     echo "--- Locating NSIS artifact ---"
-    if [[ -d "$NSIS_DIR" ]]; then
-        NSIS_ARTIFACT="$(find "$NSIS_DIR" -maxdepth 1 -name "*.exe" -type f | head -1)"
-    fi
-    if [[ -z "$NSIS_ARTIFACT" ]]; then
-        echo "✗ NSIS installer not found in $NSIS_DIR"
-        echo "  Cannot pass preflight without NSIS artifact."
+    NSIS_EXPECTED="Mori Lens_${VERSION}_x64-setup.exe"
+    NSIS_EXACT_PATH="${NSIS_DIR}/${NSIS_EXPECTED}"
+    if [[ ! -d "$NSIS_DIR" ]]; then
+        echo "FAIL: NSIS directory does not exist: $NSIS_DIR"
+        summary_set "NSIS_BUILD" "MISSING"
+        summary_set "NSIS_ARTIFACT" "NONE"
+        summary_set "NSIS_VERIFY" "FAIL"
+        gate_fail
+    elif [[ ! -f "$NSIS_EXACT_PATH" ]]; then
+        echo "FAIL: Expected NSIS artifact not found: $NSIS_EXACT_PATH"
+        echo "  Looked for exactly: $NSIS_EXPECTED"
+        echo "  0 matches for current version $VERSION. Cannot pass preflight."
         summary_set "NSIS_BUILD" "MISSING"
         summary_set "NSIS_ARTIFACT" "NONE"
         summary_set "NSIS_VERIFY" "FAIL"
         gate_fail
     else
+        NSIS_ARTIFACT="$NSIS_EXACT_PATH"
         echo "Found: $NSIS_ARTIFACT"
         NSIS_FILENAME="$(basename "$NSIS_ARTIFACT")"
         summary_set "NSIS_ARTIFACT" "$NSIS_FILENAME"
@@ -231,34 +269,44 @@ if [[ "$IS_WINDOWS" == "true" ]]; then
             PS_ARGS+=("-PayloadExePath" "$PAYLOAD_PATH")
             echo "Payload: $PAYLOAD_PATH"
         else
-            echo "WARNING: Payload binary not found at $PAYLOAD_PATH"
-            echo "  Architecture check will be limited to bootstrap only."
+            echo "FAIL: Payload binary not found at expected location"
+            echo "  Cannot verify payload architecture without the binary."
+            echo "  The release preflight cannot pass without proving the payload."
+            summary_set "NSIS_PAYLOAD" "MISSING"
+            gate_fail
         fi
 
         if powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-nsis.ps1 "${PS_ARGS[@]}" 2>&1 | tail -30; then
             summary_set "NSIS_VERIFY" "PASS"
-            echo "✓ NSIS verification passed"
+            echo "PASS: NSIS verification passed"
         else
             summary_set "NSIS_VERIFY" "FAIL"
-            echo "✗ NSIS verification failed"
+            echo "FAIL: NSIS verification failed"
             gate_fail
         fi
     fi
     echo ""
 
-    # ── Locate MSIX artifact ─────────────────────────────────────────────
+    # ── Locate MSIX artifact (deterministic, version-exact) ──────────────
     echo "--- Locating MSIX artifact ---"
-    if [[ -d "$MSIX_DIR" ]]; then
-        MSIX_ARTIFACT="$(find "$MSIX_DIR" -maxdepth 1 -name "MoriLens_*.msix" -type f | head -1)"
-    fi
-    if [[ -z "$MSIX_ARTIFACT" ]]; then
-        echo "✗ MSIX package not found in $MSIX_DIR"
-        echo "  Cannot pass preflight without MSIX artifact."
+    MSIX_EXPECTED="MoriLens_${VERSION}.0_x64.msix"
+    MSIX_EXACT_PATH="${MSIX_DIR}/${MSIX_EXPECTED}"
+    if [[ ! -d "$MSIX_DIR" ]]; then
+        echo "FAIL: MSIX directory does not exist: $MSIX_DIR"
+        summary_set "MSIX_BUILD" "MISSING"
+        summary_set "MSIX_ARTIFACT" "NONE"
+        summary_set "MSIX_VERIFY" "FAIL"
+        gate_fail
+    elif [[ ! -f "$MSIX_EXACT_PATH" ]]; then
+        echo "FAIL: Expected MSIX artifact not found: $MSIX_EXACT_PATH"
+        echo "  Looked for exactly: $MSIX_EXPECTED"
+        echo "  0 matches for current version $VERSION. Cannot pass preflight."
         summary_set "MSIX_BUILD" "MISSING"
         summary_set "MSIX_ARTIFACT" "NONE"
         summary_set "MSIX_VERIFY" "FAIL"
         gate_fail
     else
+        MSIX_ARTIFACT="$MSIX_EXACT_PATH"
         echo "Found: $MSIX_ARTIFACT"
         MSIX_FILENAME="$(basename "$MSIX_ARTIFACT")"
         summary_set "MSIX_ARTIFACT" "$MSIX_FILENAME"
@@ -274,13 +322,53 @@ if [[ "$IS_WINDOWS" == "true" ]]; then
         if powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-msix.ps1 \
             -MsixPath "$MSIX_ARTIFACT" 2>&1 | tail -30; then
             summary_set "MSIX_VERIFY" "PASS"
-            echo "✓ MSIX verification passed"
+            echo "PASS: MSIX verification passed"
         else
             summary_set "MSIX_VERIFY" "FAIL"
-            echo "✗ MSIX verification failed"
+            echo "FAIL: MSIX verification failed"
             gate_fail
         fi
     fi
+    echo ""
+
+    # ── Step 4: Revision provenance ──────────────────────────────────────
+    echo "=== Step 4: Revision provenance ==="
+    PROVENANCE_STATUS="UNPROVEN"
+    if [[ -f "$PAYLOAD_PATH" ]]; then
+        # Extract LENS_BUILD_SHA from the PE binary using PowerShell.
+        # The Rust env!() macro embeds the string as a literal in the binary.
+        BUILD_SHA_FROM_BINARY="$(powershell -NoProfile -Command "
+            \$bytes = [System.IO.File]::ReadAllBytes('$REPO_ROOT/$PAYLOAD_PATH')
+            \$text = [System.Text.Encoding]::ASCII.GetString(\$bytes)
+            if (\$text -match 'LENS_BUILD_SHA=([0-9a-f]{7,40}(-dirty)?)') {
+                Write-Output \$Matches[1]
+            } else {
+                \$short = '$REVISION_SHORT'
+                if (\$text.Contains(\$short)) {
+                    Write-Output \$short
+                }
+            }
+        " 2>/dev/null || true)"
+
+        if [[ -n "$BUILD_SHA_FROM_BINARY" ]]; then
+            CLEAN_SHA="${BUILD_SHA_FROM_BINARY%-dirty}"
+            if [[ "$CLEAN_SHA" == "$REVISION_SHORT" ]]; then
+                PROVENANCE_STATUS="VERIFIED"
+                echo "PASS: Artifact build SHA matches this revision ($REVISION_SHORT)"
+            else
+                PROVENANCE_STATUS="MISMATCH"
+                echo "FAIL: Artifact build SHA ($BUILD_SHA_FROM_BINARY) does not match this revision ($REVISION_SHORT)"
+                gate_fail
+            fi
+        else
+            PROVENANCE_STATUS="UNPROVEN"
+            echo "INFO: Could not extract build SHA from binary. Revision provenance unproven."
+        fi
+    else
+        PROVENANCE_STATUS="UNPROVEN"
+        echo "INFO: No payload binary available. Revision provenance unproven."
+    fi
+    summary_set "REVISION_PROVENANCE" "$PROVENANCE_STATUS"
     echo ""
 
 elif [[ "$IS_MACOS" == "true" ]]; then
@@ -293,9 +381,9 @@ elif [[ "$IS_MACOS" == "true" ]]; then
     else
         echo "--- Building macOS app bundle ---"
         if (cd apps/lens && cargo tauri build --bundles app 2>&1 | tail -10); then
-            echo "✓ macOS build completed"
+            echo "PASS: macOS build completed"
         else
-            echo "✗ macOS build failed"
+            echo "FAIL: macOS build failed"
             gate_fail
         fi
         echo ""
@@ -305,41 +393,78 @@ elif [[ "$IS_MACOS" == "true" ]]; then
         echo "--- Verifying app bundle ---"
         if bash scripts/verify-app-bundle.sh "$APP_BUNDLE" "$VERSION" 2>&1 | tail -30; then
             summary_set "APP_BUNDLE_VERIFY" "PASS"
-            echo "✓ App bundle verification passed"
+            echo "PASS: App bundle verification passed"
         else
             summary_set "APP_BUNDLE_VERIFY" "FAIL"
-            echo "✗ App bundle verification failed"
+            echo "FAIL: App bundle verification failed"
             gate_fail
         fi
     else
-        echo "✗ App bundle not found at $APP_BUNDLE"
+        echo "FAIL: App bundle not found at $APP_BUNDLE"
         summary_set "APP_BUNDLE_VERIFY" "FAIL"
         gate_fail
     fi
     echo ""
+
+    # ── Step 4: Revision provenance (macOS) ──────────────────────────────
+    echo "=== Step 4: Revision provenance ==="
+    MACOS_PAYLOAD="apps/lens/target/release/lens"
+    PROVENANCE_STATUS="UNPROVEN"
+    if [[ -f "$MACOS_PAYLOAD" ]]; then
+        BUILD_SHA_FROM_BINARY="$(strings "$MACOS_PAYLOAD" 2>/dev/null | grep -oE '[0-9a-f]{7,40}' | head -1 || true)"
+        if [[ -n "$BUILD_SHA_FROM_BINARY" ]]; then
+            CLEAN_SHA="${BUILD_SHA_FROM_BINARY%-dirty}"
+            if [[ "$CLEAN_SHA" == "$REVISION_SHORT" ]]; then
+                PROVENANCE_STATUS="VERIFIED"
+                echo "PASS: Artifact build SHA matches this revision ($REVISION_SHORT)"
+            else
+                PROVENANCE_STATUS="MISMATCH"
+                echo "FAIL: Artifact build SHA ($BUILD_SHA_FROM_BINARY) does not match this revision ($REVISION_SHORT)"
+                gate_fail
+            fi
+        else
+            echo "INFO: Could not extract build SHA from binary. Revision provenance unproven."
+        fi
+    else
+        echo "INFO: No payload binary available. Revision provenance unproven."
+    fi
+    summary_set "REVISION_PROVENANCE" "$PROVENANCE_STATUS"
+    echo ""
+
 else
+    # Unsupported platform without --source-only: FAIL
     echo "=== Step 3: Platform packages ==="
-    echo "⚠ Unsupported platform for package verification: $(uname -s)"
-    echo "  Skipping platform-specific checks"
+    echo "FAIL: Unsupported platform for package verification: $(uname -s)" >&2
+    echo "  Package checks cannot run on this platform." >&2
+    echo "  Use --source-only to skip package checks and verify source gates only." >&2
+    echo ""
+    summary_set "PACKAGE_READINESS" "FAIL"
+    gate_fail
 fi
 
 # ── Final summary ────────────────────────────────────────────────────────────
-echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║  Release Preflight Summary                                  ║"
-echo "╚══════════════════════════════════════════════════════════════╝"
+echo "================================================================"
+echo "  Release Preflight Summary"
+echo "================================================================"
 echo ""
 echo "REVISION:             ${SUMMARY[REVISION]:-unknown}"
 echo "VERSION:              ${SUMMARY[VERSION]:-unknown}"
 echo "TREE:                 ${SUMMARY[TREE]:-unknown}"
 echo ""
 echo "FULL_GATE:            ${SUMMARY[FULL_GATE]:-SKIP}"
+echo "VERSION_CONSISTENCY:  ${SUMMARY[VERSION_CONSISTENCY]:-SKIP}"
 echo ""
 
-if [[ "$IS_WINDOWS" == "true" ]]; then
+if [[ "$SOURCE_ONLY" == "true" ]]; then
+    echo "PACKAGE_READINESS:    ${SUMMARY[PACKAGE_READINESS]:-NOT VERIFIED}"
+elif [[ "$IS_WINDOWS" == "true" ]]; then
     echo "NSIS_BUILD:           ${SUMMARY[NSIS_BUILD]:-SKIP}"
     echo "NSIS_ARTIFACT:        ${SUMMARY[NSIS_ARTIFACT]:-NONE}"
     echo "NSIS_SHA256:          ${SUMMARY[NSIS_SHA256]:-NONE}"
     echo "NSIS_VERIFY:          ${SUMMARY[NSIS_VERIFY]:-SKIP}"
+    if [[ -n "${SUMMARY[NSIS_PAYLOAD]:-}" ]]; then
+        echo "NSIS_PAYLOAD:         ${SUMMARY[NSIS_PAYLOAD]}"
+    fi
     echo ""
     echo "MSIX_BUILD:           ${SUMMARY[MSIX_BUILD]:-SKIP}"
     echo "MSIX_ARTIFACT:        ${SUMMARY[MSIX_ARTIFACT]:-NONE}"
@@ -350,16 +475,25 @@ elif [[ "$IS_MACOS" == "true" ]]; then
 fi
 
 echo ""
+echo "REVISION_PROVENANCE:  ${SUMMARY[REVISION_PROVENANCE]:-SKIP}"
+echo ""
 echo "SIGNING:              BLOCKED / UNSIGNED"
 echo "STORE PUBLISHER:      PLACEHOLDER / CONFIGURED"
 echo "HUMAN INSTALL SMOKE:  PENDING"
 echo ""
 
 if [[ $GATE_FAILURES -eq 0 ]]; then
-    echo "OVERALL:              STRUCTURALLY READY"
-    echo ""
-    echo "All gates passed. Packages are structurally valid for this revision."
-    echo "Signing and distribution remain external blockers."
+    if [[ "$SOURCE_ONLY" == "true" ]]; then
+        echo "OVERALL:              SOURCE GATES PASS, PACKAGE READINESS NOT VERIFIED"
+        echo ""
+        echo "Source gates passed. Package checks were skipped (--source-only)."
+        echo "Run without --source-only on a supported platform to verify packages."
+    else
+        echo "OVERALL:              STRUCTURALLY READY"
+        echo ""
+        echo "All gates passed. Packages are structurally valid for this revision."
+        echo "Signing and distribution remain external blockers."
+    fi
     exit 0
 else
     echo "OVERALL:              FAILED ($GATE_FAILURES gate(s))"

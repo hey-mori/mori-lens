@@ -104,6 +104,11 @@ python3 "$(dirname "$0")/test_check_doc_integrity.py"
 step "macOS app verifier portable regression"
 bash "$(dirname "$0")/test_verify_app_bundle.sh"
 
+# Release preflight regression tests. Uses isolated temp repos with stub
+# commands so tests are fast and deterministic regardless of host state.
+step "release preflight regression"
+bash "$(dirname "$0")/test_release_preflight.sh"
+
 # Check Tauri command registration vs frontend invocation.
 # Detects dead commands (registered but never invoked) and broken wiring
 # (frontend invoke with no registered handler).
