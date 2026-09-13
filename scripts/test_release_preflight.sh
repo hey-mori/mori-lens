@@ -217,7 +217,53 @@ else
 fi
 cleanup_test_repo "$REPO"
 
-# ── Test 11: Script structure verification ───────────────────────────────────
+# ── Test 11: Missing NSIS artifact fails (Windows only) ──────────────────────
+if [[ "$(uname -s)" == "Windows"* || "$(uname -s)" == "MINGW"* ]]; then
+    echo "Test: Missing NSIS artifact fails"
+    REPO="$(create_test_repo)"
+    # Create MSIX directory and artifact but no NSIS
+    mkdir -p "$REPO/target/msix"
+    touch "$REPO/target/msix/MoriLens_0.1.0.0_x64.msix"
+    run_preflight "$REPO" --allow-dirty --verify-only
+    if echo "$PREFLIGHT_OUTPUT" | grep -q "NSIS_BUILD.*MISSING\|NSIS_VERIFY.*FAIL"; then
+        pass "Missing NSIS artifact reports MISSING/FAIL"
+    else
+        fail "Missing NSIS should report MISSING or FAIL"
+    fi
+    if [[ $PREFLIGHT_EXIT -ne 0 ]]; then
+        pass "Missing NSIS exits non-zero"
+    else
+        fail "Missing NSIS should exit non-zero"
+    fi
+    cleanup_test_repo "$REPO"
+else
+    echo "Test: Missing NSIS artifact fails (skipped: not Windows)"
+fi
+
+# ── Test 12: Missing MSIX artifact fails (Windows only) ──────────────────────
+if [[ "$(uname -s)" == "Windows"* || "$(uname -s)" == "MINGW"* ]]; then
+    echo "Test: Missing MSIX artifact fails"
+    REPO="$(create_test_repo)"
+    # Create NSIS directory and artifact but no MSIX
+    mkdir -p "$REPO/target/nsis"
+    touch "$REPO/target/nsis/Mori Lens_0.1.0_x64-setup.exe"
+    run_preflight "$REPO" --allow-dirty --verify-only
+    if echo "$PREFLIGHT_OUTPUT" | grep -q "MSIX_BUILD.*MISSING\|MSIX_VERIFY.*FAIL"; then
+        pass "Missing MSIX artifact reports MISSING/FAIL"
+    else
+        fail "Missing MSIX should report MISSING or FAIL"
+    fi
+    if [[ $PREFLIGHT_EXIT -ne 0 ]]; then
+        pass "Missing MSIX exits non-zero"
+    else
+        fail "Missing MSIX should exit non-zero"
+    fi
+    cleanup_test_repo "$REPO"
+else
+    echo "Test: Missing MSIX artifact fails (skipped: not Windows)"
+fi
+
+# ── Test 13: Script structure verification ───────────────────────────────────
 echo "Test: Script structure verification"
 if grep -q "STRUCTURALLY READY" "$PREFLIGHT"; then
     pass "Uses STRUCTURALLY READY terminology"
