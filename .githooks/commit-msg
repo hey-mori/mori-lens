@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+#
+# Reject commit messages that violate docs/commit-format.md before the commit
+# object is created. This prevents AI agent harnesses from appending forbidden
+# attribution (Co-Authored-By, Generated with, etc.) to commit messages.
+#
+# Delegates to scripts/validate-commit-message.sh (single source of truth).
+#
+# See docs/commit-format.md for the full specification.
+set -euo pipefail
+
+msg_file="$1"
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+
+errors="$("$repo_root/scripts/validate-commit-message.sh" "$msg_file" 2>&1)" || true
+
+if [ -n "$errors" ]; then
+  echo ""
+  echo "========================================="
+  echo "commit-msg hook: REJECTED"
+  echo "========================================="
+  echo ""
+  echo "$errors"
+  echo "Commit message was:"
+  echo "---"
+  cat "$msg_file"
+  echo "---"
+  echo ""
+  echo "See docs/commit-format.md for the full specification."
+  echo ""
+  exit 1
+fi
+
+exit 0
