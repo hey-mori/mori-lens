@@ -4938,4 +4938,92 @@ mod tests {
         assert_eq!(mode & 0o077, 0, "fresh DB must have no group/other bits");
         cleanup(&path);
     }
+
+    // P10 benchmarks: measure performance at 100/1k/10k scale
+    fn populate_bench(lib: &Library, n: usize) {
+        lib.conn
+            .execute_batch("PRAGMA synchronous = OFF; PRAGMA journal_mode = MEMORY;")
+            .unwrap();
+        let tx = lib.conn.unchecked_transaction().unwrap();
+        let now = 1_700_000_000i64;
+        for i in 0..n {
+            let original = format!("original text {i}");
+            let answer = format!("answer text {i}");
+            tx.execute(
+                "INSERT INTO library (original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state) VALUES (?1, ?2, '', 'bench', ?3, 'card', 'en', 'ko', 'test', '', 'later')",
+                params![original, answer, now + i as i64],
+            )
+            .unwrap();
+        }
+        tx.commit().unwrap();
+        lib.conn
+            .execute_batch("PRAGMA synchronous = NORMAL; PRAGMA journal_mode = WAL;")
+            .unwrap();
+    }
+
+    #[test]
+    fn bench_100_items() {
+        let path = temp_db("bench-100");
+        let lib = Library::open(&path).unwrap();
+        populate_bench(&lib, 100);
+        let start = std::time::Instant::now();
+        let page = lib.list_filtered(&Filter::default(), 0).unwrap();
+        let list_ms = start.elapsed().as_micros();
+        let start = std::time::Instant::now();
+        let page2 = lib
+            .search_and_filter("text 50", &Filter::default(), 0)
+            .unwrap();
+        let search_ms = start.elapsed().as_micros();
+        println!(
+            "100 items: list={list_ms}µs search={search_ms}µs total={}",
+            page.total
+        );
+        assert!(page.total == 100);
+        assert!(page2.total >= 1);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn bench_1k_items() {
+        let path = temp_db("bench-1k");
+        let lib = Library::open(&path).unwrap();
+        populate_bench(&lib, 1_000);
+        let start = std::time::Instant::now();
+        let page = lib.list_filtered(&Filter::default(), 0).unwrap();
+        let list_ms = start.elapsed().as_micros();
+        let start = std::time::Instant::now();
+        let page2 = lib
+            .search_and_filter("text 500", &Filter::default(), 0)
+            .unwrap();
+        let search_ms = start.elapsed().as_micros();
+        println!(
+            "1k items: list={list_ms}µs search={search_ms}µs total={}",
+            page.total
+        );
+        assert!(page.total == 1_000);
+        assert!(page2.total >= 1);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn bench_10k_items() {
+        let path = temp_db("bench-10k");
+        let lib = Library::open(&path).unwrap();
+        populate_bench(&lib, 10_000);
+        let start = std::time::Instant::now();
+        let page = lib.list_filtered(&Filter::default(), 0).unwrap();
+        let list_ms = start.elapsed().as_micros();
+        let start = std::time::Instant::now();
+        let page2 = lib
+            .search_and_filter("text 5000", &Filter::default(), 0)
+            .unwrap();
+        let search_ms = start.elapsed().as_micros();
+        println!(
+            "10k items: list={list_ms}µs search={search_ms}µs total={}",
+            page.total
+        );
+        assert!(page.total == 10_000);
+        assert!(page2.total >= 1);
+        cleanup(&path);
+    }
 }
