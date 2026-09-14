@@ -136,14 +136,14 @@ current_branch="$(git rev-parse --abbrev-ref HEAD 2>&1)" || {
 if [[ "$current_branch" != "$head_ref" ]]; then
   printf 'SKIPPED (not on PR branch %s)\n' "$head_ref"
 else
-  # Check for unpushed commits
-  unpushed="$(git log --branches --not --remotes 2>&1)" || {
+  # Check for unpushed commits on current branch only
+  unpushed="$(git log @{u}..HEAD 2>&1)" || {
     printf 'FAILED (could not check push state)\n'
     exit 2
   }
 
   if [[ -n "$unpushed" ]]; then
-    printf 'FAILED (unpushed commits exist)\n'
+    printf 'FAILED (unpushed commits exist on current branch)\n'
     errors=$((errors + 1))
   else
     printf 'OK (all commits pushed)\n'
