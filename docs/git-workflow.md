@@ -128,6 +128,34 @@ Never force-push a branch that others, or another machine, may have
 pulled. Never rewrite `main`. The pre-push hook enforces both rules
 (§6).
 
+### Merge-readiness gate
+
+Before calling `gh pr merge`, run `scripts/check-pr-ready.sh <pr-number>`.
+This script validates:
+
+- PR exists and is open
+- Base branch is `main`
+- PR body attribution is clean (no forbidden AI markers)
+- PR title follows commit format (`type: summary`)
+- All commits have clean attribution
+- No unpushed commits on the branch
+- PR is mergeable (when queryable)
+
+The contract is:
+
+```bash
+scripts/check.sh --full
+scripts/check-pr-ready.sh <pr-number>
+gh pr merge <pr-number> --merge --delete-branch
+```
+
+This repository does not have CI running on every PR (GitHub Actions
+costs are metered), so the merge-readiness gate is a local check rather
+than a GitHub-side hard block. The script enforces what can be enforced
+without CI; what cannot be enforced (for example, a PR body edited after
+the script ran) is instead a convention upheld by the author.
+
+
 ## 5. Pull requests
 
 **The title is a commit subject**: `<type>: <lower-case imperative
