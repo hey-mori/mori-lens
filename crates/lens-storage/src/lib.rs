@@ -58,6 +58,8 @@ pub struct Page {
     pub items: Vec<Item>,
     /// Whether more items exist beyond this page.
     pub has_more: bool,
+    /// Total number of items matching the query/filter (for pagination UI).
+    pub total: i64,
 }
 
 /// One entry in the persistent history (ADR-0014 Tier 3).
@@ -295,7 +297,12 @@ impl Library {
         let has_more = items.len() as i64 > PAGE_SIZE;
         let mut items = items;
         items.truncate(PAGE_SIZE as usize);
-        Ok(Page { items, has_more })
+        let total = self.count()?;
+        Ok(Page {
+            items,
+            has_more,
+            total,
+        })
     }
 
     /// Get one item by id.
@@ -465,7 +472,16 @@ impl Library {
         let has_more = items.len() as i64 > PAGE_SIZE;
         let mut items = items;
         items.truncate(PAGE_SIZE as usize);
-        Ok(Page { items, has_more })
+        let total = self.conn.query_row(
+            "SELECT COUNT(*) FROM library WHERE original LIKE ?1 ESCAPE '\\' OR answer LIKE ?1 ESCAPE '\\'",
+            params![pattern],
+            |row| row.get(0),
+        )?;
+        Ok(Page {
+            items,
+            has_more,
+            total,
+        })
     }
 
     /// List items matching the given filter, newest first.
@@ -521,7 +537,18 @@ impl Library {
         let has_more = items.len() as i64 > PAGE_SIZE;
         let mut items = items;
         items.truncate(PAGE_SIZE as usize);
-        Ok(Page { items, has_more })
+        let count_sql = format!("SELECT COUNT(*) FROM library{where_clause}");
+        let mut count_stmt = self.conn.prepare(&count_sql)?;
+        let count_params: Vec<&dyn rusqlite::types::ToSql> = param_values
+            .iter()
+            .map(|p| p as &dyn rusqlite::types::ToSql)
+            .collect();
+        let total: i64 = count_stmt.query_row(count_params.as_slice(), |row| row.get(0))?;
+        Ok(Page {
+            items,
+            has_more,
+            total,
+        })
     }
 
     /// Total number of items in the library.
@@ -842,7 +869,12 @@ impl Library {
         let has_more = items.len() as i64 > PAGE_SIZE;
         let mut items = items;
         items.truncate(PAGE_SIZE as usize);
-        Ok(Page { items, has_more })
+        let total = self.count_later()?;
+        Ok(Page {
+            items,
+            has_more,
+            total,
+        })
     }
 
     /// Count items marked "later".
@@ -1757,6 +1789,159 @@ mod tests {
             .unwrap();
         let tags = lib.get_tags(id).unwrap();
         assert_eq!(tags, vec!["valid"]);
+
+        cleanup(&path);
+    }
+
+    // -- Page.total regression tests ----------------------------------------
+
+    #[test]
+    fn page_total_reflects_unfiltered_count() {
+        let path = temp_db("page-total-unfiltered");
+        let lib = Library::open(&path).unwrap();
+
+        lib.insert(&a_translation()).unwrap();
+        lib.insert(&an_analysis()).unwrap();
+        lib.insert(&a_translation()).unwrap();
+
+        let page = lib.list(0).unwrap();
+        assert_eq!(page.total, 3);
+        assert_eq!(page.items.len(), 3);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn page_total_reflects_search_result_count() {
+        let path = temp_db("page-total-search");
+        let lib = Library::open(&path).unwrap();
+
+        let mut item1 = a_translation();
+        item1.original = "hello world".to_owned();
+        lib.insert(&item1).unwrap();
+
+        let mut item2 = a_translation();
+        item2.original = "hello rust".to_owned();
+        lib.insert(&item2).unwrap();
+
+        let mut item3 = a_translation();
+        item3.original = "goodbye".to_owned();
+        lib.insert(&item3).unwrap();
+
+        let page = lib.search("hello", 0).unwrap();
+        assert_eq!(page.total, 2);
+        assert_eq!(page.items.len(), 2);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn page_total_reflects_filtered_count() {
+        let path = temp_db("page-total-filtered");
+        let lib = Library::open(&path).unwrap();
+
+        lib.insert(&a_translation()).unwrap();
+        lib.insert(&an_analysis()).unwrap();
+        lib.insert(&a_translation()).unwrap();
+
+        let filter = Filter {
+            kind: Some("translation".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.list_filtered(&filter, 0).unwrap();
+        assert_eq!(page.total, 2);
+        assert_eq!(page.items.len(), 2);
+
+        let filter = Filter {
+            kind: Some("analysis".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.list_filtered(&filter, 0).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items.len(), 1);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn page_total_with_combined_filters() {
+        let path = temp_db("page-total-combined");
+        let lib = Library::open(&path).unwrap();
+
+        let mut item1 = a_translation();
+        item1.app = Some("Chrome".to_owned());
+        lib.insert(&item1).unwrap();
+
+        let mut item2 = a_translation();
+        item2.app = Some("VSCode".to_owned());
+        lib.insert(&item2).unwrap();
+
+        let mut item3 = an_analysis();
+        item3.app = Some("Chrome".to_owned());
+        lib.insert(&item3).unwrap();
+
+        let filter = Filter {
+            kind: Some("translation".to_owned()),
+            app: Some("Chrome".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.list_filtered(&filter, 0).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].kind, "translation");
+        assert_eq!(page.items[0].app.as_deref(), Some("Chrome"));
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn page_total_with_pagination() {
+        let path = temp_db("page-total-pagination");
+        let lib = Library::open(&path).unwrap();
+
+        // Insert 125 items (more than 2 pages of PAGE_SIZE 50)
+        for i in 0..125 {
+            let mut item = a_translation();
+            item.original = format!("item {}", i);
+            lib.insert(&item).unwrap();
+        }
+
+        let page1 = lib.list(0).unwrap();
+        assert_eq!(page1.total, 125);
+        assert_eq!(page1.items.len(), 50);
+        assert!(page1.has_more);
+
+        let page2 = lib.list(50).unwrap();
+        assert_eq!(page2.total, 125);
+        assert_eq!(page2.items.len(), 50);
+        assert!(page2.has_more);
+
+        let page3 = lib.list(100).unwrap();
+        assert_eq!(page3.total, 125);
+        assert_eq!(page3.items.len(), 25);
+        assert!(!page3.has_more);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn page_total_zero_for_empty_results() {
+        let path = temp_db("page-total-zero");
+        let lib = Library::open(&path).unwrap();
+
+        lib.insert(&a_translation()).unwrap();
+
+        let page = lib.search("nonexistent", 0).unwrap();
+        assert_eq!(page.total, 0);
+        assert_eq!(page.items.len(), 0);
+
+        let filter = Filter {
+            kind: Some("nonexistent".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.list_filtered(&filter, 0).unwrap();
+        assert_eq!(page.total, 0);
+        assert_eq!(page.items.len(), 0);
 
         cleanup(&path);
     }
