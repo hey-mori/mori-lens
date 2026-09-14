@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-history-count"
+description = "Enables the history_count command without any pre-configured scope."
+commands.allow = ["history_count"]
+
+[[permission]]
+identifier = "deny-history-count"
+description = "Denies the history_count command without any pre-configured scope."
+commands.deny = ["history_count"]
