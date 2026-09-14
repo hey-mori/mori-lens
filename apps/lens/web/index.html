@@ -1,63 +1,58 @@
 <!doctype html>
-<html lang="ko">
 <meta charset="utf-8">
 <title>Mori Lens</title>
 <link rel="stylesheet" href="styles.css">
 <body>
-  <a href="#main-content" class="skip-link">Skip to main content</a>
-  <nav class="sidebar" aria-label="Main navigation">
-    <div role="tablist" aria-label="Sections">
-      <div class="sidebar-item active" role="tab" aria-selected="true" aria-controls="section-status" data-section="status" tabindex="0">Status</div>
-      <div class="sidebar-item" role="tab" aria-selected="false" aria-controls="section-library" data-section="library" tabindex="-1">Library</div>
-      <div class="sidebar-item" role="tab" aria-selected="false" aria-controls="section-review" data-section="review" tabindex="-1">Review</div>
-      <div class="sidebar-item" role="tab" aria-selected="false" aria-controls="section-recent" data-section="recent" tabindex="-1">Recent</div>
-      <div class="sidebar-item" role="tab" aria-selected="false" aria-controls="section-history" data-section="history" tabindex="-1">History</div>
-      <div class="sidebar-item" role="tab" aria-selected="false" aria-controls="section-general" data-section="general" tabindex="-1">General</div>
-      <div class="sidebar-item" role="tab" aria-selected="false" aria-controls="section-models" data-section="models" tabindex="-1">Models</div>
-      <div class="sidebar-item" role="tab" aria-selected="false" aria-controls="section-apps" data-section="apps" tabindex="-1">Apps</div>
-      <div class="sidebar-item" role="tab" aria-selected="false" aria-controls="section-about" data-section="about" tabindex="-1">About</div>
-    </div>
-  </nav>
-  <main class="content" id="main-content">
+  <div class="sidebar">
+    <div class="sidebar-item active" data-section="status">Status</div>
+    <div class="sidebar-item" data-section="library">Library</div>
+    <div class="sidebar-item" data-section="review">Review</div>
+    <div class="sidebar-item" data-section="recent">Recent</div>
+    <div class="sidebar-item" data-section="history">History</div>
+    <div class="sidebar-item" data-section="general">General</div>
+    <div class="sidebar-item" data-section="models">Models</div>
+    <div class="sidebar-item" data-section="apps">Apps</div>
+    <div class="sidebar-item" data-section="about">About</div>
+  </div>
+  <div class="content">
     <!-- Status -->
-    <div class="section active" id="section-status" role="tabpanel" aria-labelledby="heading-status">
-      <h1 id="heading-status">Status</h1>
-      <div id="status-content" aria-live="polite"><p class="loading">Loading...</p></div>
+    <div class="section active" id="section-status">
+      <h1>Status</h1>
+      <div id="status-content"><p class="loading">Loading...</p></div>
     </div>
     <!-- Library -->
-    <div class="section" id="section-library" role="tabpanel" aria-labelledby="heading-library">
-      <h1 id="heading-library">Library</h1>
+    <div class="section" id="section-library">
+      <h1>Library</h1>
       <p style="color:#666;margin-bottom:12px">Items you explicitly saved.</p>
       <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
-        <label for="lib-search" class="sr-only">Search</label>
         <input type="text" id="lib-search" placeholder="Search saved items..." style="flex:1;max-width:400px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;background:white">
         <button class="btn" id="lib-search-btn" style="padding:6px 12px">Search</button>
         <button class="btn" id="lib-export-md-btn" style="padding:6px 12px">Export MD</button>
         <button class="btn" id="lib-export-json-btn" style="padding:6px 12px">Export JSON</button>
         <button class="btn" id="lib-export-jsonl-btn" style="padding:6px 12px">Export JSONL</button>
         <button class="btn" id="lib-import-jsonl-btn" style="padding:6px 12px">Import JSONL</button>
-        <span id="lib-count" style="color:#888;font-size:12px;margin-left:auto" aria-live="polite"></span>
+        <span id="lib-count" style="color:#888;font-size:12px;margin-left:auto"></span>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
-        <label for="lib-filter-kind" style="font-size:12px;color:#666">Type:</label>
+        <label style="font-size:12px;color:#666">Type:</label>
         <select id="lib-filter-kind" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
           <option value="">All</option>
           <option value="translation">Translations</option>
           <option value="analysis">Analyses</option>
         </select>
-        <label for="lib-filter-app" style="font-size:12px;color:#666">App:</label>
+        <label style="font-size:12px;color:#666">App:</label>
         <select id="lib-filter-app" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
           <option value="">All</option>
         </select>
-        <label for="lib-filter-source" style="font-size:12px;color:#666">Source:</label>
+        <label style="font-size:12px;color:#666">Source:</label>
         <select id="lib-filter-source" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
           <option value="">All</option>
         </select>
-        <label for="lib-filter-target" style="font-size:12px;color:#666">Target:</label>
+        <label style="font-size:12px;color:#666">Target:</label>
         <select id="lib-filter-target" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
           <option value="">All</option>
         </select>
-        <label for="lib-filter-state" style="font-size:12px;color:#666">State:</label>
+        <label style="font-size:12px;color:#666">State:</label>
         <select id="lib-filter-state" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
           <option value="">All</option>
           <option value="later">Later</option>
@@ -66,15 +61,15 @@
         </select>
         <button class="btn" id="lib-clear-filters-btn" style="padding:4px 12px;font-size:12px">Clear filters</button>
       </div>
-      <div id="lib-list" aria-live="polite"><p class="loading">Loading...</p></div>
+      <div id="lib-list"><p class="loading">Loading...</p></div>
       <div id="lib-detail" style="display:none;margin-top:24px;padding:16px;background:rgba(0,0,0,0.02);border-radius:6px"></div>
     </div>
     <!-- Review -->
-    <div class="section" id="section-review" role="tabpanel" aria-labelledby="heading-review">
-      <h1 id="heading-review">Review</h1>
+    <div class="section" id="section-review">
+      <h1>Review</h1>
       <p style="color:#888;font-size:12px;margin-bottom:16px">Items marked for later review. Categorise each as Known or Archive.</p>
-      <div id="review-summary" style="margin-bottom:16px" aria-live="polite"></div>
-      <div id="review-list" aria-live="polite"><p class="loading">Loading...</p></div>
+      <div id="review-summary" style="margin-bottom:16px"></div>
+      <div id="review-list"><p class="loading">Loading...</p></div>
       <div id="review-card" style="display:none;margin-top:16px;padding:20px;background:rgba(0,0,0,0.02);border-radius:8px;max-width:500px">
         <div id="review-original" style="font-size:16px;margin-bottom:12px;line-height:1.5"></div>
         <div id="review-answer" style="color:#555;margin-bottom:16px;padding:12px;background:rgba(0,0,0,0.03);border-radius:4px;display:none"></div>
@@ -87,34 +82,34 @@
       </div>
     </div>
     <!-- Recent -->
-    <div class="section" id="section-recent" role="tabpanel" aria-labelledby="heading-recent">
-      <h1 id="heading-recent">Recent</h1>
+    <div class="section" id="section-recent">
+      <h1>Recent</h1>
       <p style="color:#888;font-size:12px;margin-bottom:16px">Session only · cleared when Mori Lens quits.</p>
       <div id="recent-list"><p style="color:#888;font-size:13px">No recent cards.</p></div>
     </div>
     <!-- History -->
-    <div class="section" id="section-history" role="tabpanel" aria-labelledby="heading-history">
-      <h1 id="heading-history">History</h1>
+    <div class="section" id="section-history">
+      <h1>History</h1>
       <p id="history-description" style="color:#888;font-size:12px;margin-bottom:16px">Persistent record of cards when History is enabled. Turn it on in General settings.</p>
       <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
         <span id="history-count" style="color:#888;font-size:12px"></span>
         <button class="btn" id="history-prune-btn" style="padding:4px 12px;font-size:12px;margin-left:auto">Prune old entries</button>
       </div>
-      <div id="history-list" aria-live="polite"><p class="loading">Loading...</p></div>
+      <div id="history-list"><p class="loading">Loading...</p></div>
     </div>
     <!-- General -->
-    <div class="section" id="section-general" role="tabpanel" aria-labelledby="heading-general">
-      <h1 id="heading-general">General</h1>
+    <div class="section" id="section-general">
+      <h1>General</h1>
       <div class="field">
-        <label for="f-language">Language</label>
+        <label>Language</label>
         <input type="text" id="f-language">
       </div>
       <div class="field">
-        <label for="f-dwell">Dwell (ms)</label>
+        <label>Dwell (ms)</label>
         <input type="number" id="f-dwell" min="80" max="3000">
       </div>
       <div class="field">
-        <label for="f-theme">Theme</label>
+        <label>Theme</label>
         <select id="f-theme">
           <option value="system">System</option>
           <option value="forest">Forest</option>
@@ -123,7 +118,7 @@
         </select>
       </div>
       <div class="field">
-        <label for="f-text-size">Text size</label>
+        <label>Text size</label>
         <select id="f-text-size">
           <option value="small">Small</option>
           <option value="normal">Normal</option>
@@ -132,7 +127,7 @@
         </select>
       </div>
       <div class="field">
-        <label for="f-translucency">Translucency</label>
+        <label>Translucency</label>
         <select id="f-translucency">
           <option value="clear">Clear</option>
           <option value="balanced">Balanced</option>
@@ -140,7 +135,7 @@
         </select>
       </div>
       <div class="field">
-        <label for="f-ocr">OCR mode</label>
+        <label>OCR mode</label>
         <select id="f-ocr">
           <option value="off">Off</option>
           <option value="manual">Manual (Ctrl+Alt+O)</option>
@@ -148,7 +143,7 @@
         </select>
       </div>
       <div class="field">
-        <label for="f-profile">Profile</label>
+        <label>Profile</label>
         <select id="f-profile">
           <option value="reader">Reader</option>
           <option value="developer">Developer</option>
@@ -156,7 +151,7 @@
         </select>
       </div>
       <div class="field">
-        <label for="f-hover-scope">Hover scope</label>
+        <label>Hover scope</label>
         <select id="f-hover-scope">
           <option value="sentence">Sentence</option>
           <option value="word">Word</option>
@@ -164,7 +159,7 @@
         <p class="hint">What the card answers about. Hold Ctrl to toggle.</p>
       </div>
       <div class="field">
-        <label for="f-default-tier">Default tier</label>
+        <label>Default tier</label>
         <select id="f-default-tier">
           <option value="allow">Allow</option>
           <option value="modifier">Modifier</option>
@@ -177,7 +172,7 @@
         <p class="hint">Stores all cards in a database. Disabled by default for privacy.</p>
       </div>
       <div class="field">
-        <label for="f-history-days">Retention period</label>
+        <label>Retention period</label>
         <select id="f-history-days">
           <option value="1">1 day</option>
           <option value="7">7 days</option>
@@ -191,7 +186,7 @@
         <p class="hint">Records which app the card came from. Disable for more privacy.</p>
       </div>
       <div class="field">
-        <label for="f-history-excluded">Excluded applications (comma-separated)</label>
+        <label>Excluded applications (comma-separated)</label>
         <input type="text" id="f-history-excluded" placeholder="e.g. keepass,password">
         <p class="hint">Cards from these apps are never recorded in history.</p>
       </div>
@@ -202,8 +197,8 @@
       <div id="general-status" class="status-line"></div>
     </div>
     <!-- Models -->
-    <div class="section" id="section-models" role="tabpanel" aria-labelledby="heading-models">
-      <h1 id="heading-models">Models</h1>
+    <div class="section" id="section-models">
+      <h1>Models</h1>
       <div id="ollama-status" style="margin-bottom:16px">
         <span id="ollama-dot" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#888;margin-right:8px"></span>
         <span id="ollama-label">Checking...</span>
@@ -216,26 +211,26 @@
       </div>
       <h2 style="margin-top:24px">Quick translation</h2>
       <div class="field">
-        <label for="f-quick-model-select">Model</label>
+        <label>Model</label>
         <select id="f-quick-model-select">
           <option value="">Auto (best available)</option>
         </select>
       </div>
       <div class="field">
-        <label for="f-quick-endpoint">Endpoint</label>
+        <label>Endpoint</label>
         <input type="text" id="f-quick-endpoint">
       </div>
       <h2>Deep analysis</h2>
       <div class="field">
-        <label for="f-deep-engine">Engine</label>
+        <label>Engine</label>
         <input type="text" id="f-deep-engine" readonly>
       </div>
       <div class="field">
-        <label for="f-deep-model">Model (empty = auto)</label>
+        <label>Model (empty = auto)</label>
         <input type="text" id="f-deep-model" placeholder="auto">
       </div>
       <div class="field">
-        <label for="f-deep-endpoint">Endpoint</label>
+        <label>Endpoint</label>
         <input type="text" id="f-deep-endpoint">
       </div>
       <div style="margin-top:16px;padding:12px;background:rgba(0,0,0,0.04);border-radius:6px;max-width:500px">
@@ -251,14 +246,12 @@
       <div id="models-status" class="status-line"></div>
     </div>
     <!-- Apps -->
-    <div class="section" id="section-apps" role="tabpanel" aria-labelledby="heading-apps">
-      <h1 id="heading-apps">Applications</h1>
+    <div class="section" id="section-apps">
+      <h1>Applications</h1>
       <p style="color:#666;margin-bottom:12px">Per-application rules override the default tier.</p>
-      <div id="apps-list" aria-live="polite"></div>
+      <div id="apps-list"></div>
       <div style="margin-top:12px">
-        <label for="new-app-name" class="sr-only">Process name</label>
         <input type="text" id="new-app-name" placeholder="Process name" style="width:150px;padding:4px 8px;border:1px solid #ccc;border-radius:4px">
-        <label for="new-app-tier" class="sr-only">Tier</label>
         <select id="new-app-tier" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px">
           <option value="allow">Allow</option>
           <option value="modifier">Modifier</option>
@@ -273,8 +266,8 @@
       <div id="apps-status" class="status-line"></div>
     </div>
     <!-- About -->
-    <div class="section" id="section-about" role="tabpanel" aria-labelledby="heading-about">
-      <h1 id="heading-about">About</h1>
+    <div class="section" id="section-about">
+      <h1>About</h1>
       <div id="about-content"><p class="loading">Loading...</p></div>
       <h2 style="margin-top:32px;color:#c00">Danger zone</h2>
       <p style="font-size:12px;color:#888;margin-bottom:12px">Permanently delete all library and history data. This runs a secure wipe (WAL checkpoint, secure_delete, DELETE, VACUUM). Library items and persistent history are removed. saved.md and exports you have made are not affected. This does not reach filesystem snapshots, drive controller remapped blocks, or backups.</p>

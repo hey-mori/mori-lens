@@ -1,5 +1,4 @@
 <!doctype html>
-<html lang="ko">
 <meta charset="utf-8">
 <title>Mori Lens · Detail</title>
 <style>
@@ -69,10 +68,6 @@
     font-size: 12px;
   }
   .btn:hover { background: #f5f5f5; }
-  .btn:focus {
-    outline: 2px solid #0066cc;
-    outline-offset: 2px;
-  }
   .btn:disabled { opacity: 0.5; cursor: default; }
   .btn-primary { background: #0066cc; color: white; border-color: #0066cc; }
   .btn-primary:hover { background: #0055aa; }
@@ -117,11 +112,6 @@
     text-align: center;
     padding: 40px 20px;
   }
-  h1 {
-    font-size: 16px;
-    margin-bottom: 16px;
-    color: #555;
-  }
   @media (prefers-color-scheme: dark) {
     body { background: #1a1a1a; color: #e0e0e0; }
     .label { color: #777; }
@@ -135,9 +125,9 @@
   }
 </style>
 <body>
-  <main id="content" aria-live="polite">
+  <div id="content">
     <div class="empty" id="empty-msg">Loading...</div>
-  </main>
+  </div>
 
   <script>
   const { invoke } = window.__TAURI__.core;
@@ -227,8 +217,8 @@
     // Note area (visible after save)
     const noteVisible = detail.item_id ? ' visible' : '';
     html += '<div class="note-area' + noteVisible + '" id="note-area">';
-    html += '<label for="note-text" class="label" style="margin-top:8px">Note</label>';
-    html += '<textarea id="note-text" placeholder="Your note..." aria-label="Note">'
+    html += '<div class="label" style="margin-top:8px">Note</div>';
+    html += '<textarea id="note-text" placeholder="Your note...">'
       + esc(detail.note || '') + '</textarea>';
     html += '<div class="note-saved" id="note-saved">Saved</div>';
     html += '</div>';
