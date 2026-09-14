@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-library-get-tags"
+description = "Enables the library_get_tags command without any pre-configured scope."
+commands.allow = ["library_get_tags"]
+
+[[permission]]
+identifier = "deny-library-get-tags"
+description = "Denies the library_get_tags command without any pre-configured scope."
+commands.deny = ["library_get_tags"]

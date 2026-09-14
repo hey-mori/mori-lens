@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-library-review-session"
+description = "Enables the library_review_session command without any pre-configured scope."
+commands.allow = ["library_review_session"]
+
+[[permission]]
+identifier = "deny-library-review-session"
+description = "Denies the library_review_session command without any pre-configured scope."
+commands.deny = ["library_review_session"]

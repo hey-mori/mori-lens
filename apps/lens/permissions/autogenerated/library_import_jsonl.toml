@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-library-import-jsonl"
+description = "Enables the library_import_jsonl command without any pre-configured scope."
+commands.allow = ["library_import_jsonl"]
+
+[[permission]]
+identifier = "deny-library-import-jsonl"
+description = "Denies the library_import_jsonl command without any pre-configured scope."
+commands.deny = ["library_import_jsonl"]
