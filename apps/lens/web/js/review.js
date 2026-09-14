@@ -1,6 +1,7 @@
 // Review page: review later items
 
 import { invoke } from './tauri.js';
+import { escapeHtml } from './ui.js';
 
 let reviewItems = [];
 let currentReviewIndex = 0;
@@ -24,7 +25,7 @@ export async function loadReview() {
     list.innerHTML = '';
     showReviewCard();
   } catch (e) {
-    list.innerHTML = `<p class="error">Failed to load review list: ${e}</p>`;
+    list.innerHTML = `<p class="error">Failed to load review list: ${escapeHtml(String(e))}</p>`;
   }
 }
 
