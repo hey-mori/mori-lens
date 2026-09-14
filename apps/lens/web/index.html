@@ -3,18 +3,19 @@
 <title>Mori Lens</title>
 <link rel="stylesheet" href="styles.css">
 <body>
-  <div class="sidebar">
-    <div class="sidebar-item active" data-section="status">Status</div>
-    <div class="sidebar-item" data-section="library">Library</div>
-    <div class="sidebar-item" data-section="review">Review</div>
-    <div class="sidebar-item" data-section="recent">Recent</div>
-    <div class="sidebar-item" data-section="history">History</div>
-    <div class="sidebar-item" data-section="general">General</div>
-    <div class="sidebar-item" data-section="models">Models</div>
-    <div class="sidebar-item" data-section="apps">Apps</div>
-    <div class="sidebar-item" data-section="about">About</div>
-  </div>
-  <div class="content">
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <nav class="sidebar" role="navigation" aria-label="Main navigation">
+    <div class="sidebar-item active" data-section="status" role="button" tabindex="0" aria-current="page">Status</div>
+    <div class="sidebar-item" data-section="library" role="button" tabindex="0">Library</div>
+    <div class="sidebar-item" data-section="review" role="button" tabindex="0">Review</div>
+    <div class="sidebar-item" data-section="recent" role="button" tabindex="0">Recent</div>
+    <div class="sidebar-item" data-section="history" role="button" tabindex="0">History</div>
+    <div class="sidebar-item" data-section="general" role="button" tabindex="0">General</div>
+    <div class="sidebar-item" data-section="models" role="button" tabindex="0">Models</div>
+    <div class="sidebar-item" data-section="apps" role="button" tabindex="0">Apps</div>
+    <div class="sidebar-item" data-section="about" role="button" tabindex="0">About</div>
+  </nav>
+  <main class="content" id="main-content" role="main">
     <!-- Status -->
     <div class="section active" id="section-status">
       <h1>Status</h1>
@@ -24,8 +25,8 @@
     <div class="section" id="section-library">
       <h1>Library</h1>
       <p style="color:#666;margin-bottom:12px">Items you explicitly saved.</p>
-      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
-        <input type="text" id="lib-search" placeholder="Search saved items..." style="flex:1;max-width:400px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;background:white">
+      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center" role="search" aria-label="Library search">
+        <input type="text" id="lib-search" placeholder="Search saved items..." aria-label="Search saved items" style="flex:1;max-width:400px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;background:white">
         <button class="btn" id="lib-search-btn" style="padding:6px 12px">Search</button>
         <button class="btn" id="lib-export-md-btn" style="padding:6px 12px">Export MD</button>
         <button class="btn" id="lib-export-json-btn" style="padding:6px 12px">Export JSON</button>
@@ -33,27 +34,27 @@
         <button class="btn" id="lib-import-jsonl-btn" style="padding:6px 12px">Import JSONL</button>
         <span id="lib-count" style="color:#888;font-size:12px;margin-left:auto"></span>
       </div>
-      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
-        <label style="font-size:12px;color:#666">Type:</label>
-        <select id="lib-filter-kind" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
+      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap" role="search" aria-label="Library filters">
+        <label for="lib-filter-kind" style="font-size:12px;color:#666">Type:</label>
+        <select id="lib-filter-kind" aria-label="Filter by type" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
           <option value="">All</option>
           <option value="translation">Translations</option>
           <option value="analysis">Analyses</option>
         </select>
-        <label style="font-size:12px;color:#666">App:</label>
-        <select id="lib-filter-app" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
+        <label for="lib-filter-app" style="font-size:12px;color:#666">App:</label>
+        <select id="lib-filter-app" aria-label="Filter by application" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
           <option value="">All</option>
         </select>
-        <label style="font-size:12px;color:#666">Source:</label>
-        <select id="lib-filter-source" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
+        <label for="lib-filter-source" style="font-size:12px;color:#666">Source:</label>
+        <select id="lib-filter-source" aria-label="Filter by source language" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
           <option value="">All</option>
         </select>
-        <label style="font-size:12px;color:#666">Target:</label>
-        <select id="lib-filter-target" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
+        <label for="lib-filter-target" style="font-size:12px;color:#666">Target:</label>
+        <select id="lib-filter-target" aria-label="Filter by target language" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
           <option value="">All</option>
         </select>
-        <label style="font-size:12px;color:#666">State:</label>
-        <select id="lib-filter-state" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
+        <label for="lib-filter-state" style="font-size:12px;color:#666">State:</label>
+        <select id="lib-filter-state" aria-label="Filter by review state" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
           <option value="">All</option>
           <option value="later">Later</option>
           <option value="known">Known</option>
