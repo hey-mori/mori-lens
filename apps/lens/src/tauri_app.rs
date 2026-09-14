@@ -554,25 +554,12 @@ async fn test_model(endpoint: String, model: String) -> Result<TestResultView, S
         .map_err(|e| format!("{e}"))
 }
 
-/// Tauri command: list library items, newest first.
+/// Tauri command: search and filter combined.
+/// Applies both text search (original/answer) and structured filters with AND semantics.
 #[tauri::command]
-fn library_list(
+fn library_query(
     state: tauri::State<'_, SharedLibrary>,
-    offset: i64,
-) -> Result<LibraryPageView, String> {
-    let lib = state.lock().unwrap();
-    let page = lib.library().list(offset).map_err(|e| format!("{e}"))?;
-    Ok(LibraryPageView {
-        items: page.items.iter().map(LibraryItemView::from).collect(),
-        has_more: page.has_more,
-        total: page.total,
-    })
-}
-
-/// Tauri command: list library items with filters.
-#[tauri::command]
-fn library_filter(
-    state: tauri::State<'_, SharedLibrary>,
+    query: String,
     kind: Option<String>,
     app: Option<String>,
     source_language: Option<String>,
@@ -591,26 +578,7 @@ fn library_filter(
     };
     let page = lib
         .library()
-        .list_filtered(&filter, offset)
-        .map_err(|e| format!("{e}"))?;
-    Ok(LibraryPageView {
-        items: page.items.iter().map(LibraryItemView::from).collect(),
-        has_more: page.has_more,
-        total: page.total,
-    })
-}
-
-/// Tauri command: search the library.
-#[tauri::command]
-fn library_search(
-    state: tauri::State<'_, SharedLibrary>,
-    query: String,
-    offset: i64,
-) -> Result<LibraryPageView, String> {
-    let lib = state.lock().unwrap();
-    let page = lib
-        .library()
-        .search(&query, offset)
+        .search_and_filter(&query, &filter, offset)
         .map_err(|e| format!("{e}"))?;
     Ok(LibraryPageView {
         items: page.items.iter().map(LibraryItemView::from).collect(),
@@ -1033,9 +1001,7 @@ pub fn build(
             check_ollama,
             get_local_ai_status,
             test_model,
-            library_list,
-            library_filter,
-            library_search,
+            library_query,
             library_get,
             library_delete,
             library_update_note,
