@@ -64,7 +64,7 @@ jobs:
         shell: pwsh
         run: |
           $version = (Select-String -Path "apps/lens/Cargo.toml" -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
-          $exe = "apps/lens/target/release/bundle/nsis/Mori Lens_$version_x64-setup.exe"
+          $exe = "apps/lens/target/release/bundle/nsis/Mori Lens_${version}_x64-setup.exe"
           $payload = "apps/lens/target/release/lens.exe"
           if (-not (Test-Path $exe)) { Write-Error "NSIS installer not found: $exe"; exit 1 }
           if (-not (Test-Path $payload)) { Write-Error "Payload not found: $payload"; exit 1 }

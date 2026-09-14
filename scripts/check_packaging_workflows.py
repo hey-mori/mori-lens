@@ -94,6 +94,15 @@ def check_workflow_contract(workflow_path: Path) -> list[str]:
                     f"artifact, not find | head -1 on *.exe"
                 )
 
+    # Check 6: PowerShell variable interpolation must use explicit delimiters
+    # Reject ambiguous $version_x64 (PowerShell parses as variable name)
+    # Accept ${version}_x64 (explicit delimiter)
+    if re.search(r'\$version_[a-zA-Z0-9_]+', content):
+        errors.append(
+            f"{workflow_path.name}: PowerShell variable interpolation must use explicit "
+            f"delimiters: ${{version}}_x64, not $version_x64"
+        )
+
     return errors
 
 
