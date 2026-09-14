@@ -1,0 +1,15 @@
+{
+  "identifier": "detail",
+  "description": "Capabilities for the detail/pinned explanation window",
+  "windows": ["detail"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "allow-detail-copy",
+    "allow-detail-open-in-library",
+    "allow-detail-read",
+    "allow-detail-request-explain",
+    "allow-detail-save",
+    "allow-detail-save-note"
+  ]
+}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-library-distinct-tags"
+description = "Enables the library_distinct_tags command without any pre-configured scope."
+commands.allow = ["library_distinct_tags"]
+
+[[permission]]
+identifier = "deny-library-distinct-tags"
+description = "Denies the library_distinct_tags command without any pre-configured scope."
+commands.deny = ["library_distinct_tags"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mori-status"
+description = "Enables the mori_status command without any pre-configured scope."
+commands.allow = ["mori_status"]
+
+[[permission]]
+identifier = "deny-mori-status"
+description = "Denies the mori_status command without any pre-configured scope."
+commands.deny = ["mori_status"]
