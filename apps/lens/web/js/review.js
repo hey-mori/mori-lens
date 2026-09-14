@@ -14,6 +14,8 @@ let sessionItems = [];
 let seenActions = new Map();
 let actionInFlight = false;
 let reviewedCount = 0;
+let sessionSize = 0;
+let historyStack = []; // for undo: [{id, action}]
 
 export async function loadReview() {
   const list = document.getElementById('review-list');
@@ -25,6 +27,8 @@ export async function loadReview() {
     seenActions = new Map();
     actionInFlight = false;
     reviewedCount = 0;
+    sessionSize = sessionItems.length;
+    historyStack = [];
 
     if (sessionItems.length === 0) {
       summary.innerHTML = '';
@@ -83,8 +87,9 @@ function showNextReviewCard() {
   document.getElementById('review-known-btn').style.display = 'none';
   document.getElementById('review-later-btn').style.display = 'none';
   document.getElementById('review-archive-btn').style.display = 'none';
+  document.getElementById('review-undo-btn').style.display = historyStack.length > 0 ? '' : 'none';
   setReviewButtonsEnabled(true);
-  list.innerHTML = `<p style="color:#888;font-size:12px">Reviewed ${escapeHtml(String(reviewedCount))} this round</p>`;
+  list.innerHTML = `<p style="color:#888;font-size:12px">Reviewed ${escapeHtml(String(reviewedCount))} of ${escapeHtml(String(sessionSize))} this round</p>`;
 }
 
 async function showSessionComplete() {
@@ -130,6 +135,7 @@ export async function setReviewState(newState) {
       await invoke('library_set_review_state', { id: item.id, state_: newState });
     }
     seenActions.set(item.id, newState);
+    historyStack.push({ id: item.id, action: newState });
     reviewedCount++;
     await updateSummaryFromDb();
     showNextReviewCard();
@@ -153,4 +159,71 @@ export function initReviewHandlers() {
 
   const archiveBtn = document.getElementById('review-archive-btn');
   if (archiveBtn) archiveBtn.addEventListener('click', () => setReviewState('archive'));
+
+  const undoBtn = document.getElementById('review-undo-btn');
+  if (undoBtn) undoBtn.addEventListener('click', undoLastAction);
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    const card = document.getElementById('review-card');
+    if (!card || card.style.display === 'none') return;
+
+    // Ignore if typing in input/textarea
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+    const showBtn = document.getElementById('review-show-btn');
+    const answerVisible = document.getElementById('review-answer').style.display === 'block';
+
+    if ((e.key === ' ' || e.key === 'Enter') && !answerVisible && showBtn.style.display !== 'none') {
+      e.preventDefault();
+      showReviewAnswer();
+    } else if (e.key === 'k' || e.key === 'K') {
+      if (answerVisible) {
+        e.preventDefault();
+        setReviewState('known');
+      }
+    } else if (e.key === 'l' || e.key === 'L') {
+      if (answerVisible) {
+        e.preventDefault();
+        setReviewState('later');
+      }
+    } else if (e.key === 'a' || e.key === 'A') {
+      if (answerVisible) {
+        e.preventDefault();
+        setReviewState('archive');
+      }
+    } else if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+      e.preventDefault();
+      undoLastAction();
+    }
+  });
+}
+
+export async function undoLastAction() {
+  if (actionInFlight || historyStack.length === 0) return;
+
+  const last = historyStack.pop();
+  if (!last) return;
+
+  actionInFlight = true;
+  setReviewButtonsEnabled(false);
+
+  try {
+    // Revert DB state if action was Known or Archive
+    if (last.action !== 'later') {
+      await invoke('library_set_review_state', { id: last.id, state_: 'later' });
+    }
+    // Remove from seen map so it shows again
+    seenActions.delete(last.id);
+    reviewedCount--;
+    await updateSummaryFromDb();
+    showNextReviewCard();
+  } catch (e) {
+    alert('Failed to undo: ' + e);
+    // Re-add to history on failure
+    historyStack.push(last);
+    setReviewButtonsEnabled(true);
+  } finally {
+    actionInFlight = false;
+  }
 }
