@@ -1,0 +1,34 @@
+// Navigation: section switching, sidebar events, tray navigation
+
+export function showSection(sectionName) {
+  document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  const item = document.querySelector(`.sidebar-item[data-section="${sectionName}"]`);
+  if (item) {
+    item.classList.add('active');
+    document.getElementById('section-' + sectionName).classList.add('active');
+    // Dynamically import section modules to load their data
+    if (sectionName === 'status') {
+      import('./models.js').then(m => m.refreshLocalAiStatus())
+        .then(() => import('./status.js').then(s => s.loadStatus()));
+    }
+    else if (sectionName === 'library') import('./library.js').then(m => m.loadLibrary());
+    else if (sectionName === 'review') import('./review.js').then(m => m.loadReview());
+    else if (sectionName === 'recent') import('./recent.js').then(m => m.loadRecent());
+    else if (sectionName === 'history') import('./history.js').then(m => m.loadHistory());
+    else if (sectionName === 'general') import('./settings.js').then(m => m.loadSettings());
+    else if (sectionName === 'models') {
+      import('./settings.js').then(m => m.loadSettings());
+      import('./models.js').then(m => m.refreshModels());
+    }
+    else if (sectionName === 'apps') import('./settings.js').then(m => m.loadSettings());
+    else if (sectionName === 'about') import('./diagnostics.js').then(m => m.loadAbout());
+  }
+}
+
+export function initNavigation() {
+  // Sidebar click handlers
+  document.querySelectorAll('.sidebar-item').forEach(item => {
+    item.addEventListener('click', () => showSection(item.dataset.section));
+  });
+}
