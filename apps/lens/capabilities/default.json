@@ -1,9 +1,0 @@
-{
-  "identifier": "default",
-  "description": "Default capabilities for the Mori Lens windows",
-  "windows": ["main", "detail"],
-  "permissions": [
-    "core:default",
-    "core:event:default"
-  ]
-}
