@@ -551,6 +551,104 @@ impl Library {
         })
     }
 
+    /// Search and filter combined. Applies both text search (original/answer)
+    /// and structured filters (kind, app, languages, review_state) with AND semantics.
+    ///
+    /// Returns items matching BOTH the search query AND all specified filters.
+    /// If query is empty, behaves like list_filtered. If filter is empty, behaves like search.
+    pub fn search_and_filter(
+        &self,
+        query: &str,
+        filter: &Filter,
+        offset: i64,
+    ) -> Result<Page, Error> {
+        let trimmed = query.trim();
+
+        // Build filter conditions first
+        let mut conditions = Vec::new();
+        let mut param_values: Vec<String> = Vec::new();
+
+        if let Some(ref kind) = filter.kind {
+            param_values.push(kind.clone());
+            conditions.push(format!("kind = ?{}", param_values.len()));
+        }
+        if let Some(ref app) = filter.app {
+            param_values.push(app.clone());
+            conditions.push(format!("app = ?{}", param_values.len()));
+        }
+        if let Some(ref src) = filter.source_language {
+            param_values.push(src.clone());
+            conditions.push(format!("source_language = ?{}", param_values.len()));
+        }
+        if let Some(ref tgt) = filter.target_language {
+            param_values.push(tgt.clone());
+            conditions.push(format!("target_language = ?{}", param_values.len()));
+        }
+        if let Some(ref rs) = filter.review_state {
+            param_values.push(rs.clone());
+            conditions.push(format!("review_state = ?{}", param_values.len()));
+        }
+
+        // Add search condition if query is non-empty
+        let has_search = !trimmed.is_empty();
+        if has_search {
+            let escaped = trimmed
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+            let pattern = format!("%{escaped}%");
+            param_values.push(pattern);
+            conditions.push(format!(
+                "(original LIKE ?{} ESCAPE '\\' OR answer LIKE ?{} ESCAPE '\\')",
+                param_values.len(),
+                param_values.len()
+            ));
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
+
+        let limit = PAGE_SIZE + 1;
+        let sql = format!(
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state FROM library{where_clause} ORDER BY created_at DESC, id DESC LIMIT ?{} OFFSET ?{}",
+            param_values.len() + 1,
+            param_values.len() + 2
+        );
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut params: Vec<&dyn rusqlite::types::ToSql> = param_values
+            .iter()
+            .map(|p| p as &dyn rusqlite::types::ToSql)
+            .collect();
+        params.push(&limit);
+        params.push(&offset);
+
+        let items: Vec<Item> = stmt
+            .query_map(params.as_slice(), row_to_item)?
+            .collect::<Result<_, _>>()?;
+        let has_more = items.len() as i64 > PAGE_SIZE;
+        let mut items = items;
+        items.truncate(PAGE_SIZE as usize);
+
+        // Count query uses the same WHERE clause for predicate consistency
+        let count_sql = format!("SELECT COUNT(*) FROM library{where_clause}");
+        let mut count_stmt = self.conn.prepare(&count_sql)?;
+        let count_params: Vec<&dyn rusqlite::types::ToSql> = param_values
+            .iter()
+            .map(|p| p as &dyn rusqlite::types::ToSql)
+            .collect();
+        let total: i64 = count_stmt.query_row(count_params.as_slice(), |row| row.get(0))?;
+
+        Ok(Page {
+            items,
+            has_more,
+            total,
+        })
+    }
+
     /// Total number of items in the library.
     pub fn count(&self) -> Result<i64, Error> {
         self.conn
@@ -2016,6 +2114,214 @@ mod tests {
             page.items.is_empty(),
             "underscore must not act as a wildcard"
         );
+
+        cleanup(&path);
+    }
+
+    // -- search + filter composition ----------------------------------------
+
+    #[test]
+    fn search_and_filter_combines_with_and_semantics() {
+        let path = temp_db("search-filter-composition");
+        let lib = Library::open(&path).unwrap();
+
+        let mut item1 = a_translation();
+        item1.original = "hello world".to_owned();
+        item1.app = Some("Chrome".to_owned());
+        lib.insert(&item1).unwrap();
+
+        let mut item2 = a_translation();
+        item2.original = "hello rust".to_owned();
+        item2.app = Some("VSCode".to_owned());
+        lib.insert(&item2).unwrap();
+
+        let mut item3 = an_analysis();
+        item3.original = "hello analysis".to_owned();
+        item3.app = Some("Chrome".to_owned());
+        lib.insert(&item3).unwrap();
+
+        let filter = Filter {
+            kind: Some("translation".to_owned()),
+            app: Some("Chrome".to_owned()),
+            ..Default::default()
+        };
+
+        // Query "hello" + filter (translation, Chrome) should match only item1
+        let page = lib.search_and_filter("hello", &filter, 0).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].original, "hello world");
+        assert_eq!(page.items[0].app.as_deref(), Some("Chrome"));
+        assert_eq!(page.items[0].kind, "translation");
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn search_and_filter_empty_query_acts_as_filter_only() {
+        let path = temp_db("search-filter-empty-query");
+        let lib = Library::open(&path).unwrap();
+
+        let mut item1 = a_translation();
+        item1.app = Some("Chrome".to_owned());
+        lib.insert(&item1).unwrap();
+
+        let mut item2 = a_translation();
+        item2.app = Some("VSCode".to_owned());
+        lib.insert(&item2).unwrap();
+
+        let filter = Filter {
+            app: Some("Chrome".to_owned()),
+            ..Default::default()
+        };
+
+        let page = lib.search_and_filter("", &filter, 0).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].app.as_deref(), Some("Chrome"));
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn search_and_filter_empty_filter_acts_as_search_only() {
+        let path = temp_db("search-filter-empty-filter");
+        let lib = Library::open(&path).unwrap();
+
+        let mut item1 = a_translation();
+        item1.original = "hello world".to_owned();
+        lib.insert(&item1).unwrap();
+
+        let mut item2 = a_translation();
+        item2.original = "goodbye".to_owned();
+        lib.insert(&item2).unwrap();
+
+        let filter = Filter::default();
+
+        let page = lib.search_and_filter("hello", &filter, 0).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].original, "hello world");
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn search_and_filter_with_multiple_filters() {
+        let path = temp_db("search-filter-multiple");
+        let lib = Library::open(&path).unwrap();
+
+        let mut item1 = a_translation();
+        item1.original = "hello".to_owned();
+        item1.app = Some("Chrome".to_owned());
+        item1.source_language = Some("en".to_owned());
+        item1.target_language = Some("ko".to_owned());
+        lib.insert(&item1).unwrap();
+
+        let mut item2 = a_translation();
+        item2.original = "hello".to_owned();
+        item2.app = Some("Chrome".to_owned());
+        item2.source_language = Some("en".to_owned());
+        item2.target_language = Some("ja".to_owned());
+        lib.insert(&item2).unwrap();
+
+        let filter = Filter {
+            app: Some("Chrome".to_owned()),
+            source_language: Some("en".to_owned()),
+            target_language: Some("ko".to_owned()),
+            ..Default::default()
+        };
+
+        let page = lib.search_and_filter("hello", &filter, 0).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].target_language.as_deref(), Some("ko"));
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn search_and_filter_no_results() {
+        let path = temp_db("search-filter-no-results");
+        let lib = Library::open(&path).unwrap();
+
+        let mut item = a_translation();
+        item.original = "hello".to_owned();
+        item.app = Some("Chrome".to_owned());
+        lib.insert(&item).unwrap();
+
+        let filter = Filter {
+            app: Some("VSCode".to_owned()),
+            ..Default::default()
+        };
+
+        let page = lib.search_and_filter("hello", &filter, 0).unwrap();
+        assert_eq!(page.total, 0);
+        assert_eq!(page.items.len(), 0);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn search_and_filter_escapes_like_wildcards() {
+        let path = temp_db("search-filter-like-escape");
+        let lib = Library::open(&path).unwrap();
+
+        let mut item1 = a_translation();
+        item1.original = "100% complete".to_owned();
+        item1.app = Some("Chrome".to_owned());
+        lib.insert(&item1).unwrap();
+
+        let mut item2 = a_translation();
+        item2.original = "100 things".to_owned();
+        item2.app = Some("Chrome".to_owned());
+        lib.insert(&item2).unwrap();
+
+        let filter = Filter {
+            app: Some("Chrome".to_owned()),
+            ..Default::default()
+        };
+
+        // Searching for "100%" should only match the literal "100%"
+        let page = lib.search_and_filter("100%", &filter, 0).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].original, "100% complete");
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn search_and_filter_pagination_consistent_total() {
+        let path = temp_db("search-filter-pagination");
+        let lib = Library::open(&path).unwrap();
+
+        // Insert 125 items with "hello" and Chrome
+        for i in 0..125 {
+            let mut item = a_translation();
+            item.original = format!("hello {}", i);
+            item.app = Some("Chrome".to_owned());
+            lib.insert(&item).unwrap();
+        }
+
+        let filter = Filter {
+            app: Some("Chrome".to_owned()),
+            ..Default::default()
+        };
+
+        let page1 = lib.search_and_filter("hello", &filter, 0).unwrap();
+        assert_eq!(page1.total, 125);
+        assert_eq!(page1.items.len(), 50);
+        assert!(page1.has_more);
+
+        let page2 = lib.search_and_filter("hello", &filter, 50).unwrap();
+        assert_eq!(page2.total, 125);
+        assert_eq!(page2.items.len(), 50);
+        assert!(page2.has_more);
+
+        let page3 = lib.search_and_filter("hello", &filter, 100).unwrap();
+        assert_eq!(page3.total, 125);
+        assert_eq!(page3.items.len(), 25);
+        assert!(!page3.has_more);
 
         cleanup(&path);
     }
