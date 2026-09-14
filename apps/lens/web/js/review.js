@@ -1,51 +1,107 @@
-// Review page: review later items
+// Review page: review later items.
+//
+// Session semantics:
+// - On entry, take a snapshot of all current later items.
+// - Each item is shown at most once per session.
+// - Known/Archive: remove from later set in DB.
+// - Keep Later: item stays in DB as later, but is not re-presented this session.
+// - Completion copy reflects actual DB truth (library_later_count), not in-memory state.
 
 import { invoke } from './tauri.js';
 import { escapeHtml } from './ui.js';
 
-let reviewItems = [];
-let currentReviewIndex = 0;
+let sessionItems = [];
+let seenActions = new Map();
+let actionInFlight = false;
+let reviewedCount = 0;
 
 export async function loadReview() {
   const list = document.getElementById('review-list');
   const summary = document.getElementById('review-summary');
+  const card = document.getElementById('review-card');
   try {
-    const count = await invoke('library_later_count');
-    summary.innerHTML = `<span style="font-size:24px;font-weight:600">${count}</span> <span style="color:#888;font-size:12px">items for later review</span>`;
+    const page = await invoke('library_review_session');
+    sessionItems = page.items;
+    seenActions = new Map();
+    actionInFlight = false;
+    reviewedCount = 0;
 
-    if (count === 0) {
+    if (sessionItems.length === 0) {
+      summary.innerHTML = '';
       list.innerHTML = '<p style="color:#888;padding:20px 0">No items for later review. Save items to see them here.</p>';
-      document.getElementById('review-card').style.display = 'none';
+      card.style.display = 'none';
       return;
     }
 
-    const page = await invoke('library_later_list', { offset: 0 });
-    reviewItems = page.items;
-    currentReviewIndex = 0;
+    await updateSummaryFromDb();
     list.innerHTML = '';
-    showReviewCard();
+    showNextReviewCard();
   } catch (e) {
     list.innerHTML = `<p class="error">Failed to load review list: ${escapeHtml(String(e))}</p>`;
   }
 }
 
-function showReviewCard() {
+async function updateSummaryFromDb() {
+  const count = await invoke('library_later_count');
+  const summary = document.getElementById('review-summary');
+  summary.innerHTML = `<span style="font-size:24px;font-weight:600">${escapeHtml(String(count))}</span> <span style="color:#888;font-size:12px">items for later review</span>`;
+}
+
+function findNextUnseenIndex() {
+  for (let i = 0; i < sessionItems.length; i++) {
+    if (!seenActions.has(sessionItems[i].id)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function showNextReviewCard() {
   const card = document.getElementById('review-card');
-  if (currentReviewIndex >= reviewItems.length) {
+  const list = document.getElementById('review-list');
+  const idx = findNextUnseenIndex();
+
+  if (idx === -1) {
     card.style.display = 'none';
-    document.getElementById('review-list').innerHTML = '<p style="color:#2e7d32;padding:20px 0">All done! No more items to review.</p>';
+    showSessionComplete();
     return;
   }
-  const item = reviewItems[currentReviewIndex];
+
+  const item = sessionItems[idx];
   card.style.display = 'block';
   document.getElementById('review-original').textContent = item.original;
+  const noteEl = document.getElementById('review-note');
+  if (item.note && item.note.trim()) {
+    noteEl.textContent = item.note;
+    noteEl.style.display = 'block';
+  } else {
+    noteEl.style.display = 'none';
+  }
   document.getElementById('review-answer').textContent = item.answer;
   document.getElementById('review-answer').style.display = 'none';
   document.getElementById('review-show-btn').style.display = '';
   document.getElementById('review-known-btn').style.display = 'none';
   document.getElementById('review-later-btn').style.display = 'none';
   document.getElementById('review-archive-btn').style.display = 'none';
-  document.getElementById('review-list').innerHTML = `<p style="color:#888;font-size:12px">Item ${escapeHtml(String(currentReviewIndex + 1))} of ${escapeHtml(String(reviewItems.length))}</p>`;
+  setReviewButtonsEnabled(true);
+  list.innerHTML = `<p style="color:#888;font-size:12px">Reviewed ${escapeHtml(String(reviewedCount))} this round</p>`;
+}
+
+async function showSessionComplete() {
+  const list = document.getElementById('review-list');
+  const count = await invoke('library_later_count');
+  if (count === 0) {
+    list.innerHTML = '<p style="color:#2e7d32;padding:20px 0">All reviewed. No items for later review.</p>';
+  } else {
+    list.innerHTML = `<p style="color:#2e7d32;padding:20px 0">Review round complete. ${escapeHtml(String(count))} items remain for later.</p>`;
+  }
+}
+
+function setReviewButtonsEnabled(enabled) {
+  document.getElementById('review-show-btn').disabled = !enabled;
+  document.getElementById('review-known-btn').disabled = !enabled;
+  document.getElementById('review-later-btn').disabled = !enabled;
+  document.getElementById('review-archive-btn').disabled = !enabled;
 }
 
 export function showReviewAnswer() {
@@ -57,15 +113,31 @@ export function showReviewAnswer() {
 }
 
 export async function setReviewState(newState) {
-  const item = reviewItems[currentReviewIndex];
+  if (actionInFlight) return;
+  actionInFlight = true;
+  setReviewButtonsEnabled(false);
+
+  const idx = findNextUnseenIndex();
+  if (idx === -1) {
+    actionInFlight = false;
+    setReviewButtonsEnabled(true);
+    return;
+  }
+
+  const item = sessionItems[idx];
   try {
-    await invoke('library_set_review_state', { id: item.id, state_: newState });
-    currentReviewIndex++;
-    showReviewCard();
-    const count = await invoke('library_later_count');
-    document.getElementById('review-summary').innerHTML = `<span style="font-size:24px;font-weight:600">${count}</span> <span style="color:#888;font-size:12px">items for later review</span>`;
+    if (newState !== 'later') {
+      await invoke('library_set_review_state', { id: item.id, state_: newState });
+    }
+    seenActions.set(item.id, newState);
+    reviewedCount++;
+    await updateSummaryFromDb();
+    showNextReviewCard();
   } catch (e) {
     alert('Failed to update review state: ' + e);
+    setReviewButtonsEnabled(true);
+  } finally {
+    actionInFlight = false;
   }
 }
 

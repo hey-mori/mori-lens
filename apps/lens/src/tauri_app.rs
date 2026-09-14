@@ -556,6 +556,7 @@ async fn test_model(endpoint: String, model: String) -> Result<TestResultView, S
 
 /// Tauri command: search and filter combined.
 /// Applies both text search (original/answer) and structured filters with AND semantics.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 fn library_query(
     state: tauri::State<'_, SharedLibrary>,
@@ -733,26 +734,31 @@ fn library_secure_wipe(state: tauri::State<'_, SharedLibrary>) -> Result<(), Str
 }
 
 #[tauri::command]
-fn library_later_list(
-    state: tauri::State<'_, SharedLibrary>,
-    offset: Option<i64>,
-) -> Result<LibraryPageView, String> {
-    let lib = state.lock().unwrap();
-    let page = lib
-        .library()
-        .list_later(offset.unwrap_or(0))
-        .map_err(|e| format!("{e}"))?;
-    Ok(LibraryPageView {
-        items: page.items.iter().map(LibraryItemView::from).collect(),
-        has_more: page.has_more,
-        total: page.total,
-    })
-}
-
-#[tauri::command]
 fn library_later_count(state: tauri::State<'_, SharedLibrary>) -> Result<i64, String> {
     let lib = state.lock().unwrap();
     lib.library().count_later().map_err(|e| format!("{e}"))
+}
+
+/// Return all later items for a review session snapshot.
+///
+/// The review session takes a snapshot of all later items at entry time.
+/// Each item is shown at most once per session. This avoids offset pagination
+/// on a mutating dataset (Known/Archive remove items, Keep Later retains them).
+#[tauri::command]
+fn library_review_session(
+    state: tauri::State<'_, SharedLibrary>,
+) -> Result<LibraryPageView, String> {
+    let lib = state.lock().unwrap();
+    let items = lib
+        .library()
+        .list_later_session()
+        .map_err(|e| format!("{e}"))?;
+    let total = items.len() as i64;
+    Ok(LibraryPageView {
+        items: items.iter().map(LibraryItemView::from).collect(),
+        has_more: false,
+        total,
+    })
 }
 
 #[tauri::command]
@@ -1016,8 +1022,8 @@ pub fn build(
             library_import_jsonl,
             library_secure_wipe,
             recent_list,
-            library_later_list,
             library_later_count,
+            library_review_session,
             library_set_review_state,
             history_list,
             history_count,

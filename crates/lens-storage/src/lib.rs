@@ -987,6 +987,22 @@ impl Library {
             .map_err(Error::Sqlite)
     }
 
+    /// Return ALL items marked "later", newest first, without pagination.
+    ///
+    /// Used by the review session to take a snapshot of the current later set
+    /// at session start. The session tracks which items have been seen and
+    /// advances through them without relying on offset pagination, which would
+    /// be incorrect on a mutating dataset.
+    pub fn list_later_session(&self) -> Result<Vec<Item>, Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state FROM library WHERE review_state = ?1 ORDER BY created_at DESC, id DESC",
+        )?;
+        let items: Vec<Item> = stmt
+            .query_map(params![REVIEW_LATER], row_to_item)?
+            .collect::<Result<_, _>>()?;
+        Ok(items)
+    }
+
     /// Securely wipe all data from the database.
     ///
     /// A plain SQLite `DELETE` frees pages but does not erase their content;
@@ -3736,6 +3752,242 @@ mod tests {
     }
 
     // -- History tests ------------------------------------------------------
+
+    // -- Review session regression tests ------------------------------------
+
+    #[test]
+    fn list_later_session_returns_all_items() {
+        let path = temp_db("review-session-all");
+        let lib = Library::open(&path).unwrap();
+
+        for i in 0..5 {
+            let mut item = a_translation();
+            item.original = format!("item {i}");
+            item.created_at = 1_786_075_140 + i;
+            lib.insert(&item).unwrap();
+        }
+
+        let session = lib.list_later_session().unwrap();
+        assert_eq!(
+            session.len(),
+            5,
+            "all 5 later items returned without pagination"
+        );
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn list_later_session_exceeds_page_size() {
+        let path = temp_db("review-session-page-size");
+        let lib = Library::open(&path).unwrap();
+
+        let total = PAGE_SIZE + 7;
+        for i in 0..total {
+            let mut item = a_translation();
+            item.original = format!("item {i}");
+            item.created_at = 1_786_075_140 + i;
+            lib.insert(&item).unwrap();
+        }
+
+        let session = lib.list_later_session().unwrap();
+        assert_eq!(
+            session.len(),
+            total as usize,
+            "session returns all items beyond PAGE_SIZE"
+        );
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn review_session_all_known_clears_later() {
+        let path = temp_db("review-session-all-known");
+        let lib = Library::open(&path).unwrap();
+
+        let mut ids = Vec::new();
+        for i in 0..3 {
+            let mut item = a_translation();
+            item.original = format!("item {i}");
+            item.created_at = 1_786_075_140 + i;
+            ids.push(lib.insert(&item).unwrap());
+        }
+
+        let session = lib.list_later_session().unwrap();
+        assert_eq!(session.len(), 3);
+
+        for id in &ids {
+            lib.set_review_state(*id, REVIEW_KNOWN).unwrap();
+        }
+
+        assert_eq!(lib.count_later().unwrap(), 0);
+        let session_after = lib.list_later_session().unwrap();
+        assert!(session_after.is_empty());
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn review_session_all_archive_clears_later() {
+        let path = temp_db("review-session-all-archive");
+        let lib = Library::open(&path).unwrap();
+
+        let mut ids = Vec::new();
+        for i in 0..3 {
+            let mut item = a_translation();
+            item.original = format!("item {i}");
+            item.created_at = 1_786_075_140 + i;
+            ids.push(lib.insert(&item).unwrap());
+        }
+
+        for id in &ids {
+            lib.set_review_state(*id, REVIEW_ARCHIVE).unwrap();
+        }
+
+        assert_eq!(lib.count_later().unwrap(), 0);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn review_session_keep_later_preserves_db_state() {
+        let path = temp_db("review-session-keep-later");
+        let lib = Library::open(&path).unwrap();
+
+        for i in 0..3 {
+            let mut item = a_translation();
+            item.original = format!("item {i}");
+            item.created_at = 1_786_075_140 + i;
+            lib.insert(&item).unwrap();
+        }
+
+        let session = lib.list_later_session().unwrap();
+        assert_eq!(session.len(), 3);
+
+        for item in &session {
+            let state = item.review_state.as_deref().unwrap();
+            assert_eq!(state, REVIEW_LATER, "items start as later");
+        }
+
+        assert_eq!(
+            lib.count_later().unwrap(),
+            3,
+            "count unchanged after reading session"
+        );
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn review_session_mixed_actions_exact_final_count() {
+        let path = temp_db("review-session-mixed");
+        let lib = Library::open(&path).unwrap();
+
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            let mut item = a_translation();
+            item.original = format!("item {i}");
+            item.created_at = 1_786_075_140 + i;
+            ids.push(lib.insert(&item).unwrap());
+        }
+
+        lib.set_review_state(ids[0], REVIEW_KNOWN).unwrap();
+        lib.set_review_state(ids[1], REVIEW_KNOWN).unwrap();
+        lib.set_review_state(ids[2], REVIEW_ARCHIVE).unwrap();
+
+        assert_eq!(
+            lib.count_later().unwrap(),
+            2,
+            "3 removed (2 known + 1 archive), 2 remain later"
+        );
+
+        let session = lib.list_later_session().unwrap();
+        assert_eq!(session.len(), 2);
+        let remaining_ids: Vec<i64> = session.iter().map(|i| i.id).collect();
+        assert!(remaining_ids.contains(&ids[3]));
+        assert!(remaining_ids.contains(&ids[4]));
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn review_session_empty_starting_state() {
+        let path = temp_db("review-session-empty");
+        let lib = Library::open(&path).unwrap();
+
+        let session = lib.list_later_session().unwrap();
+        assert!(session.is_empty());
+        assert_eq!(lib.count_later().unwrap(), 0);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn review_session_snapshot_consistent_during_mutation() {
+        let path = temp_db("review-session-snapshot");
+        let lib = Library::open(&path).unwrap();
+
+        for i in 0..10 {
+            let mut item = a_translation();
+            item.original = format!("item {i}");
+            item.created_at = 1_786_075_140 + i;
+            lib.insert(&item).unwrap();
+        }
+
+        let session = lib.list_later_session().unwrap();
+        assert_eq!(session.len(), 10);
+
+        let first_ids: Vec<i64> = session.iter().map(|i| i.id).collect();
+
+        for id in &first_ids[..5] {
+            lib.set_review_state(*id, REVIEW_KNOWN).unwrap();
+        }
+
+        assert_eq!(lib.count_later().unwrap(), 5);
+
+        let snapshot_ids: std::collections::HashSet<i64> = first_ids.into_iter().collect();
+        let db_remaining = lib.list_later_session().unwrap();
+        for item in &db_remaining {
+            assert!(
+                !snapshot_ids.contains(&item.id)
+                    || item.review_state.as_deref() == Some(REVIEW_LATER),
+                "session snapshot items that were mutated are no longer later"
+            );
+        }
+        assert_eq!(db_remaining.len(), 5);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn review_session_large_set_no_skipped_items() {
+        let path = temp_db("review-session-large");
+        let lib = Library::open(&path).unwrap();
+
+        let total = PAGE_SIZE * 2 + 13;
+        let mut ids = Vec::new();
+        for i in 0..total {
+            let mut item = a_translation();
+            item.original = format!("item {i}");
+            item.created_at = 1_786_075_140 + i;
+            ids.push(lib.insert(&item).unwrap());
+        }
+
+        let session = lib.list_later_session().unwrap();
+        assert_eq!(session.len(), total as usize, "all items returned");
+
+        let session_ids: std::collections::HashSet<i64> = session.iter().map(|i| i.id).collect();
+        for id in &ids {
+            assert!(session_ids.contains(id), "no item skipped in session");
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        for item in &session {
+            assert!(seen.insert(item.id), "no duplicate in session");
+        }
+
+        cleanup(&path);
+    }
 
     fn a_history_entry() -> HistoryEntry {
         HistoryEntry {
