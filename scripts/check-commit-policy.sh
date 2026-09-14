@@ -43,6 +43,11 @@ while IFS= read -r sha; do
   subject="$(echo "$msg" | head -1)"
   errors=""
 
+  # Skip standard git revert commits (fixed format, not user-controlled).
+  if echo "$subject" | grep -qE '^Revert "'; then
+    continue
+  fi
+
   # 1. Subject must start with a valid type prefix.
   if ! echo "$subject" | grep -qE "^(${valid_types}): .+"; then
     errors="${errors}  - subject must start with '<type>: ' where type is one of: ${valid_types}\n"
