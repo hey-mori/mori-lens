@@ -562,11 +562,10 @@ fn library_list(
 ) -> Result<LibraryPageView, String> {
     let lib = state.lock().unwrap();
     let page = lib.library().list(offset).map_err(|e| format!("{e}"))?;
-    let total = lib.library().count().unwrap_or(0);
     Ok(LibraryPageView {
         items: page.items.iter().map(LibraryItemView::from).collect(),
         has_more: page.has_more,
-        total,
+        total: page.total,
     })
 }
 
@@ -594,11 +593,10 @@ fn library_filter(
         .library()
         .list_filtered(&filter, offset)
         .map_err(|e| format!("{e}"))?;
-    let total = lib.library().count().unwrap_or(0);
     Ok(LibraryPageView {
         items: page.items.iter().map(LibraryItemView::from).collect(),
         has_more: page.has_more,
-        total,
+        total: page.total,
     })
 }
 
@@ -614,11 +612,10 @@ fn library_search(
         .library()
         .search(&query, offset)
         .map_err(|e| format!("{e}"))?;
-    let total = lib.library().count().unwrap_or(0);
     Ok(LibraryPageView {
         items: page.items.iter().map(LibraryItemView::from).collect(),
         has_more: page.has_more,
-        total,
+        total: page.total,
     })
 }
 
@@ -777,11 +774,10 @@ fn library_later_list(
         .library()
         .list_later(offset.unwrap_or(0))
         .map_err(|e| format!("{e}"))?;
-    let total = lib.library().count_later().unwrap_or(0);
     Ok(LibraryPageView {
         items: page.items.iter().map(LibraryItemView::from).collect(),
         has_more: page.has_more,
-        total,
+        total: page.total,
     })
 }
 
