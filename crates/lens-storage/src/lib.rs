@@ -464,7 +464,7 @@ impl Library {
         let pattern = format!("%{escaped}%");
         let limit = PAGE_SIZE + 1;
         let mut stmt = self.conn.prepare(
-            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state FROM library WHERE original LIKE ?1 ESCAPE '\\' OR answer LIKE ?1 ESCAPE '\\' ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3",
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state FROM library WHERE original LIKE ?1 ESCAPE '\\' OR answer LIKE ?1 ESCAPE '\\' OR note LIKE ?1 ESCAPE '\\' ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3",
         )?;
         let items: Vec<Item> = stmt
             .query_map(params![pattern, limit, offset], row_to_item)?
@@ -473,7 +473,7 @@ impl Library {
         let mut items = items;
         items.truncate(PAGE_SIZE as usize);
         let total = self.conn.query_row(
-            "SELECT COUNT(*) FROM library WHERE original LIKE ?1 ESCAPE '\\' OR answer LIKE ?1 ESCAPE '\\'",
+            "SELECT COUNT(*) FROM library WHERE original LIKE ?1 ESCAPE '\\' OR answer LIKE ?1 ESCAPE '\\' OR note LIKE ?1 ESCAPE '\\'",
             params![pattern],
             |row| row.get(0),
         )?;
@@ -599,7 +599,8 @@ impl Library {
             let pattern = format!("%{escaped}%");
             param_values.push(pattern);
             conditions.push(format!(
-                "(original LIKE ?{} ESCAPE '\\' OR answer LIKE ?{} ESCAPE '\\')",
+                "(original LIKE ?{} ESCAPE '\\' OR answer LIKE ?{} ESCAPE '\\' OR note LIKE ?{} ESCAPE '\\')",
+                param_values.len(),
                 param_values.len(),
                 param_values.len()
             ));
@@ -2114,6 +2115,59 @@ mod tests {
             page.items.is_empty(),
             "underscore must not act as a wildcard"
         );
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn search_finds_items_by_note_text() {
+        let path = temp_db("search-note");
+        let lib = Library::open(&path).unwrap();
+
+        let mut item1 = a_translation();
+        item1.note = Some("important grammar rule".to_owned());
+        lib.insert(&item1).unwrap();
+
+        let mut item2 = a_translation();
+        item2.original = "unrelated text".to_owned();
+        item2.note = None;
+        lib.insert(&item2).unwrap();
+
+        // Searching for "grammar" should find the item by note
+        let page = lib.search("grammar", 0).unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(
+            page.items[0].note.as_deref(),
+            Some("important grammar rule")
+        );
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn search_finds_items_across_original_answer_and_note() {
+        let path = temp_db("search-all-fields");
+        let lib = Library::open(&path).unwrap();
+
+        let mut item1 = a_translation();
+        item1.original = "hello world".to_owned();
+        lib.insert(&item1).unwrap();
+
+        let mut item2 = a_translation();
+        item2.answer = "hello answer".to_owned();
+        lib.insert(&item2).unwrap();
+
+        let mut item3 = a_translation();
+        item3.note = Some("hello note".to_owned());
+        lib.insert(&item3).unwrap();
+
+        let mut item4 = a_translation();
+        item4.original = "goodbye".to_owned();
+        lib.insert(&item4).unwrap();
+
+        // Searching for "hello" should find all three items
+        let page = lib.search("hello", 0).unwrap();
+        assert_eq!(page.items.len(), 3);
 
         cleanup(&path);
     }
