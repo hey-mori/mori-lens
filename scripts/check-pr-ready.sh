@@ -84,8 +84,7 @@ title="$(gh pr view "$pr" --json title --jq '.title' 2>&1)" || {
   exit 2
 }
 
-# Validate PR title using the same logic as commit subject validation
-# PR title is treated as a single-line commit subject (no body)
+# Validate PR title using production validator
 if printf '%s\n' "$title" | scripts/validate-commit-message.sh --stdin >/dev/null 2>&1; then
   printf 'OK (%s)\n' "$title"
 else
@@ -94,46 +93,43 @@ else
   errors=$((errors + 1))
 fi
 
-# 5. Commits attribution clean
-printf '5. Commit attribution: '
-# Get all commits in the PR with full message (subject + body)
-commit_data="$(gh pr view "$pr" --json commits --jq '.commits[] | "\(.messageHeadline)\n\(.messageBody)"' 2>&1)" || {
+# 5. All commits follow commit format
+printf '5. Commit format validation: '
+
+# Get commit OIDs from PR
+commit_oids="$(gh pr view "$pr" --json commits --jq '.commits[].oid' 2>&1)" || {
   printf 'FAILED (could not fetch commits)\n'
   exit 2
 }
 
 commit_errors=0
-current_commit=""
-while IFS= read -r line; do
-  if [[ -z "$current_commit" ]]; then
-    # First line is the subject
-    current_commit="$line"
-  else
-    # Accumulate body lines
-    current_commit="$current_commit\n$line"
-  fi
+commit_count=0
+while IFS= read -r oid; do
+  [[ -z "$oid" ]] && continue
+  commit_count=$((commit_count + 1))
 
-  # When we hit an empty line after body, or end of input, validate
-  if [[ -z "$line" ]] || [[ $(printf '%s' "$commit_data" | tail -1) == "$line" ]]; then
-    if [[ -n "$current_commit" ]]; then
-      # Validate full commit message using the production validator
-      if ! printf '%b\n' "$current_commit" | scripts/validate-commit-message.sh --stdin >/dev/null 2>&1; then
-        if [[ $commit_errors -eq 0 ]]; then
-          printf 'FAILED\n'
-        fi
-        # Extract first line for error reporting
-        subject="$(printf '%b' "$current_commit" | head -1)"
-        printf '  - commit failed validation: %s\n' "$subject"
-        commit_errors=$((commit_errors + 1))
-      fi
-      current_commit=""
+  # Fetch full commit message via GitHub API
+  full_message="$(gh api "repos/{owner}/{repo}/commits/$oid" --jq '.commit.message' 2>&1)" || {
+    printf 'FAILED (could not fetch commit %s)\n' "$oid"
+    exit 2
+  }
+
+  # Validate using production validator
+  if ! printf '%s\n' "$full_message" | scripts/validate-commit-message.sh --stdin >/dev/null 2>&1; then
+    if [[ $commit_errors -eq 0 ]]; then
+      printf 'FAILED\n'
     fi
+    # Show first line of commit message for identification
+    first_line="$(printf '%s\n' "$full_message" | head -n 1)"
+    printf '  - commit %s: %s\n' "${oid:0:7}" "$first_line"
+    commit_errors=$((commit_errors + 1))
   fi
-done <<< "$commit_data"
+done <<< "$commit_oids"
 
 if [[ $commit_errors -eq 0 ]]; then
-  printf 'OK (all commits clean)\n'
+  printf 'OK (%d commits validated)\n' "$commit_count"
 else
+  printf '  %d of %d commits failed validation\n' "$commit_errors" "$commit_count"
   errors=$((errors + 1))
 fi
 
