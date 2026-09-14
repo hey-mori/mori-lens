@@ -70,22 +70,16 @@ async function fetchLibraryPage() {
   const listEl = document.getElementById('lib-list');
   const countEl = document.getElementById('lib-count');
   try {
-    let page;
-    const hasFilters = libraryFilters.kind || libraryFilters.app || libraryFilters.source_language || libraryFilters.target_language || libraryFilters.review_state;
-    if (libraryQuery) {
-      page = await invoke('library_search', { query: libraryQuery, offset: libraryOffset });
-    } else if (hasFilters) {
-      page = await invoke('library_filter', {
-        kind: libraryFilters.kind,
-        app: libraryFilters.app,
-        source_language: libraryFilters.source_language,
-        target_language: libraryFilters.target_language,
-        review_state: libraryFilters.review_state,
-        offset: libraryOffset
-      });
-    } else {
-      page = await invoke('library_list', { offset: libraryOffset });
-    }
+    // Always use the canonical query command for consistent semantics
+    const page = await invoke('library_query', {
+      query: libraryQuery,
+      kind: libraryFilters.kind,
+      app: libraryFilters.app,
+      source_language: libraryFilters.source_language,
+      target_language: libraryFilters.target_language,
+      review_state: libraryFilters.review_state,
+      offset: libraryOffset
+    });
     countEl.textContent = page.total + ' item' + (page.total !== 1 ? 's' : '');
     if (page.items.length === 0) {
       listEl.innerHTML = '<p style="color:#888;font-size:13px">' +
