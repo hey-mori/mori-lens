@@ -1026,7 +1026,18 @@
       try {
         let page;
         const hasFilters = libraryFilters.kind || libraryFilters.app || libraryFilters.source_language || libraryFilters.target_language || libraryFilters.review_state;
-        if (libraryQuery) {
+        if (libraryQuery && hasFilters) {
+          // Combined search and filter
+          page = await invoke('library_search_filter', {
+            query: libraryQuery,
+            kind: libraryFilters.kind,
+            app: libraryFilters.app,
+            source_language: libraryFilters.source_language,
+            target_language: libraryFilters.target_language,
+            review_state: libraryFilters.review_state,
+            offset: libraryOffset
+          });
+        } else if (libraryQuery) {
           page = await invoke('library_search', { query: libraryQuery, offset: libraryOffset });
         } else if (hasFilters) {
           page = await invoke('library_filter', {

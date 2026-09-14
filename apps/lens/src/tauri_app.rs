@@ -622,6 +622,39 @@ fn library_search(
     })
 }
 
+/// Tauri command: search and filter combined.
+#[tauri::command]
+fn library_search_filter(
+    state: tauri::State<'_, SharedLibrary>,
+    query: String,
+    kind: Option<String>,
+    app: Option<String>,
+    source_language: Option<String>,
+    target_language: Option<String>,
+    review_state: Option<String>,
+    offset: i64,
+) -> Result<LibraryPageView, String> {
+    use lens_storage::Filter;
+    let lib = state.lock().unwrap();
+    let filter = Filter {
+        kind,
+        app,
+        source_language,
+        target_language,
+        review_state,
+    };
+    let page = lib
+        .library()
+        .search_and_filter(&query, &filter, offset)
+        .map_err(|e| format!("{e}"))?;
+    let total = lib.library().count().unwrap_or(0);
+    Ok(LibraryPageView {
+        items: page.items.iter().map(LibraryItemView::from).collect(),
+        has_more: page.has_more,
+        total,
+    })
+}
+
 /// Tauri command: get a single library item.
 #[tauri::command]
 fn library_get(
@@ -1040,6 +1073,7 @@ pub fn build(
             library_list,
             library_filter,
             library_search,
+            library_search_filter,
             library_get,
             library_delete,
             library_update_note,

@@ -524,6 +524,94 @@ impl Library {
         Ok(Page { items, has_more })
     }
 
+    /// Search and filter combined.
+    ///
+    /// Applies both text search (LIKE on original/answer) and structured filters
+    /// (kind, app, languages, review_state). Either or both can be empty.
+    pub fn search_and_filter(
+        &self,
+        query: &str,
+        filter: &Filter,
+        offset: i64,
+    ) -> Result<Page, Error> {
+        let trimmed = query.trim();
+        let has_query = !trimmed.is_empty();
+        let has_filter = filter.kind.is_some()
+            || filter.app.is_some()
+            || filter.source_language.is_some()
+            || filter.target_language.is_some()
+            || filter.review_state.is_some();
+
+        // If neither query nor filter, return unfiltered list
+        if !has_query && !has_filter {
+            return self.list(offset);
+        }
+
+        let mut conditions: Vec<String> = Vec::new();
+        let mut param_values: Vec<String> = Vec::new();
+
+        // Add text search condition
+        if has_query {
+            let escaped = trimmed
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+            conditions.push("(original LIKE ?1 ESCAPE '\\' OR answer LIKE ?1 ESCAPE '\\')".to_string());
+            param_values.push(format!("%{escaped}%"));
+        }
+
+        // Add filter conditions
+        if let Some(ref kind) = filter.kind {
+            param_values.push(kind.clone());
+            conditions.push(format!("kind = ?{}", param_values.len()));
+        }
+        if let Some(ref app) = filter.app {
+            param_values.push(app.clone());
+            conditions.push(format!("app = ?{}", param_values.len()));
+        }
+        if let Some(ref src) = filter.source_language {
+            param_values.push(src.clone());
+            conditions.push(format!("source_language = ?{}", param_values.len()));
+        }
+        if let Some(ref tgt) = filter.target_language {
+            param_values.push(tgt.clone());
+            conditions.push(format!("target_language = ?{}", param_values.len()));
+        }
+        if let Some(ref rs) = filter.review_state {
+            param_values.push(rs.clone());
+            conditions.push(format!("review_state = ?{}", param_values.len()));
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
+
+        let limit = PAGE_SIZE + 1;
+        let sql = format!(
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state FROM library{where_clause} ORDER BY created_at DESC, id DESC LIMIT ?{} OFFSET ?{}",
+            param_values.len() + 1,
+            param_values.len() + 2
+        );
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut params: Vec<&dyn rusqlite::types::ToSql> = param_values
+            .iter()
+            .map(|p| p as &dyn rusqlite::types::ToSql)
+            .collect();
+        params.push(&limit);
+        params.push(&offset);
+
+        let items: Vec<Item> = stmt
+            .query_map(params.as_slice(), row_to_item)?
+            .collect::<Result<_, _>>()?;
+        let has_more = items.len() as i64 > PAGE_SIZE;
+        let mut items = items;
+        items.truncate(PAGE_SIZE as usize);
+        Ok(Page { items, has_more })
+    }
+
     /// Total number of items in the library.
     pub fn count(&self) -> Result<i64, Error> {
         self.conn
