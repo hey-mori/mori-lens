@@ -458,7 +458,7 @@ AUTO MODEL:                None is canonical Auto, Some("") accepted for compati
 FRONTEND STATES:           NOT_LOADED / LOADED / ERROR with distinct rendering
 ERROR DISPLAY:             "상태 확인 실패" on error, not indefinite "확인 중..."
 REGRESSION TESTS:          scripts/check.sh verifies initial load and no-polling invariants
-TAURI COMMANDS:            39 total (get_local_ai_status, list_models, etc.)
+TAURI COMMANDS:            45 total (get_local_ai_status, list_models, detail_read, detail_copy, detail_save, detail_save_note, detail_request_explain, detail_open_in_library, etc.)
 ```
 
 ## Restart Status (PR #511, #520)
