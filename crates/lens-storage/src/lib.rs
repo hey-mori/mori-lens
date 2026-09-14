@@ -58,6 +58,9 @@ pub struct Page {
     pub items: Vec<Item>,
     /// Whether more items exist beyond this page.
     pub has_more: bool,
+    /// Total count of items matching the query/filter (for pagination display).
+    /// For unfiltered list, this equals the full library count.
+    pub total: i64,
 }
 
 /// One entry in the persistent history (ADR-0014 Tier 3).
@@ -295,7 +298,8 @@ impl Library {
         let has_more = items.len() as i64 > PAGE_SIZE;
         let mut items = items;
         items.truncate(PAGE_SIZE as usize);
-        Ok(Page { items, has_more })
+        let total = self.count()?;
+        Ok(Page { items, has_more, total })
     }
 
     /// Get one item by id.
@@ -465,7 +469,12 @@ impl Library {
         let has_more = items.len() as i64 > PAGE_SIZE;
         let mut items = items;
         items.truncate(PAGE_SIZE as usize);
-        Ok(Page { items, has_more })
+        let total: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM library WHERE original LIKE ?1 ESCAPE '\\' OR answer LIKE ?1 ESCAPE '\\'",
+            params![pattern],
+            |row| row.get(0),
+        )?;
+        Ok(Page { items, has_more, total })
     }
 
     /// List items matching the given filter, newest first.
@@ -521,7 +530,21 @@ impl Library {
         let has_more = items.len() as i64 > PAGE_SIZE;
         let mut items = items;
         items.truncate(PAGE_SIZE as usize);
-        Ok(Page { items, has_more })
+
+        // Count total matching items
+        let count_sql = format!("SELECT COUNT(*) FROM library{where_clause}");
+        let total: i64 = if param_values.is_empty() {
+            self.conn.query_row(&count_sql, [], |row| row.get(0))?
+        } else {
+            let mut count_stmt = self.conn.prepare(&count_sql)?;
+            let count_params: Vec<&dyn rusqlite::types::ToSql> = param_values
+                .iter()
+                .map(|p| p as &dyn rusqlite::types::ToSql)
+                .collect();
+            count_stmt.query_row(count_params.as_slice(), |row| row.get(0))?
+        };
+
+        Ok(Page { items, has_more, total })
     }
 
     /// Search and filter combined.
@@ -609,7 +632,21 @@ impl Library {
         let has_more = items.len() as i64 > PAGE_SIZE;
         let mut items = items;
         items.truncate(PAGE_SIZE as usize);
-        Ok(Page { items, has_more })
+
+        // Count total matching items for pagination display
+        let count_sql = format!("SELECT COUNT(*) FROM library{where_clause}");
+        let total: i64 = if param_values.is_empty() {
+            self.conn.query_row(&count_sql, [], |row| row.get(0))?
+        } else {
+            let mut count_stmt = self.conn.prepare(&count_sql)?;
+            let count_params: Vec<&dyn rusqlite::types::ToSql> = param_values
+                .iter()
+                .map(|p| p as &dyn rusqlite::types::ToSql)
+                .collect();
+            count_stmt.query_row(count_params.as_slice(), |row| row.get(0))?
+        };
+
+        Ok(Page { items, has_more, total })
     }
 
     /// Total number of items in the library.
@@ -930,7 +967,8 @@ impl Library {
         let has_more = items.len() as i64 > PAGE_SIZE;
         let mut items = items;
         items.truncate(PAGE_SIZE as usize);
-        Ok(Page { items, has_more })
+        let total = self.count_later()?;
+        Ok(Page { items, has_more, total })
     }
 
     /// Count items marked "later".
