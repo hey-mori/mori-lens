@@ -1,6 +1,12 @@
 // Navigation: section switching, sidebar events, tray navigation
 
-export function showSection(sectionName) {
+/**
+ * Show a section and optionally move focus.
+ * @param {string} sectionName - Section to show
+ * @param {Object} options - Focus behavior options
+ * @param {boolean} options.skipFocusMove - If true, don't move focus to heading (for keyboard nav)
+ */
+export function showSection(sectionName, options = {}) {
   const tabs = document.querySelectorAll('.sidebar-item[role="tab"]');
   const panels = document.querySelectorAll('.section[role="tabpanel"]');
 
@@ -20,10 +26,13 @@ export function showSection(sectionName) {
     panel.classList.add('active');
 
     // Move focus to the section heading for screen reader context
-    const heading = panel.querySelector('h1');
-    if (heading) {
-      heading.setAttribute('tabindex', '-1');
-      heading.focus({ preventScroll: true });
+    // Skip this during keyboard arrow navigation to keep focus in tablist
+    if (!options.skipFocusMove) {
+      const heading = panel.querySelector('h1');
+      if (heading) {
+        heading.setAttribute('tabindex', '-1');
+        heading.focus({ preventScroll: true });
+      }
     }
 
     // Dynamically import section modules to load their data
@@ -79,6 +88,6 @@ export function initNavigation() {
 
     e.preventDefault();
     tabs[newIndex].focus();
-    showSection(tabs[newIndex].dataset.section);
+    showSection(tabs[newIndex].dataset.section, { skipFocusMove: true });
   });
 }

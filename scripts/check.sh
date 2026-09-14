@@ -127,12 +127,15 @@ step "accessibility attributes"
 python3 "$(dirname "$0")/check_accessibility.py"
 
 # Verify keyboard navigation is present for tablist pattern.
-step "keyboard navigation regression"
+# NOTE: This is a structural check only (grep for key names). It does NOT verify
+# actual DOM behavior (focus management, event handling). Behavioral verification
+# requires running the app with keyboard/screen reader (HUMAN PENDING).
+step "keyboard navigation regression (structural only)"
 if ! grep -q "ArrowDown\|ArrowRight\|ArrowUp\|ArrowLeft\|Home\|End" apps/lens/web/js/navigation.js; then
   echo "ERROR: navigation.js missing keyboard handlers for tablist pattern"
   exit 1
 fi
-echo "Keyboard navigation regression check passed"
+echo "Keyboard navigation structural check passed (behavioral: HUMAN PENDING)"
 
 # Verify Local AI status is not polled in the 1-second refresh loop.
 # loadStatus() must use cached value, not invoke get_local_ai_status directly.

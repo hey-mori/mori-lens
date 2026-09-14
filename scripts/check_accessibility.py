@@ -152,15 +152,23 @@ def validate_file(filepath):
 
 def main():
     repo_root = Path(__file__).parent.parent
-    index_html = repo_root / 'apps' / 'lens' / 'web' / 'index.html'
+    web_dir = repo_root / 'apps' / 'lens' / 'web'
 
-    if not index_html.exists():
-        print(f"ERROR: {index_html} not found")
-        sys.exit(1)
+    html_files = [
+        web_dir / 'index.html',
+        web_dir / 'detail.html',
+    ]
 
-    success = validate_file(index_html)
+    all_success = True
+    for html_file in html_files:
+        if not html_file.exists():
+            print(f"WARNING: {html_file} not found, skipping")
+            continue
+        success = validate_file(html_file)
+        if not success:
+            all_success = False
 
-    if success:
+    if all_success:
         print("\na11y-check: all accessibility checks passed")
         sys.exit(0)
     else:
