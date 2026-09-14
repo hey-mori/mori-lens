@@ -438,7 +438,7 @@
               'ocr_mode': 'OCR 모드'
             };
             var mappedReasons = runtime.restart_reasons.map(function(key) {
-              return reasonLabels[key] || key;
+              return escapeHtml(reasonLabels[key] || key);
             });
             var reasonText = mappedReasons.length > 0 ? ' (' + mappedReasons.join(', ') + ')' : '';
             html += '<tr><td style="color:#f57c00;font-weight:500">재시작 필요' + reasonText + '</td><td style="color:#f57c00">변경사항을 적용하려면 Mori Lens를 다시 시작하세요</td></tr>';
@@ -460,14 +460,14 @@
           html += '<h2>Refusals</h2><table>';
           for (const [reason, count] of diag.refusals) {
             const pct = diag.settled_hovers > 0 ? Math.round(count / diag.settled_hovers * 100) : 0;
-            html += '<tr class="refusal-row"><td>' + reason + '</td><td>' + count + ' (' + pct + '%)</td></tr>';
+            html += '<tr class="refusal-row"><td>' + escapeHtml(reason) + '</td><td>' + count + ' (' + pct + '%)</td></tr>';
           }
           html += '</table>';
         }
         if (diag.configuration && diag.configuration.length > 0) {
           html += '<h2>Configuration</h2><table>';
           for (const [label, value] of diag.configuration) {
-            html += '<tr><td>' + label + '</td><td>' + value + '</td></tr>';
+            html += '<tr><td>' + escapeHtml(label) + '</td><td>' + escapeHtml(value) + '</td></tr>';
           }
           html += '</table>';
         }
@@ -812,7 +812,7 @@
         }
         selectEl.innerHTML = opts;
       } catch (e) {
-        listEl.innerHTML = '<p class="error">Error: ' + e + '</p>';
+        listEl.innerHTML = '<p class="error">Error: ' + escapeHtml(String(e)) + '</p>';
       }
     }
 
@@ -830,9 +830,9 @@
       resultEl.innerHTML = '';
       try {
         const result = await invoke('test_model', { endpoint, model });
-        resultEl.innerHTML = '<strong>' + result.model + '</strong> (' + result.latency_ms + 'ms)<br>' + result.translated;
+        resultEl.innerHTML = '<strong>' + escapeHtml(result.model) + '</strong> (' + result.latency_ms + 'ms)<br>' + escapeHtml(result.translated);
       } catch (e) {
-        resultEl.innerHTML = '<span class="error">Error: ' + e + '</span>';
+        resultEl.innerHTML = '<span class="error">Error: ' + escapeHtml(String(e)) + '</span>';
       }
       btn.disabled = false;
       btn.textContent = 'Test';
@@ -1069,7 +1069,7 @@
         }
         listEl.innerHTML = html;
       } catch (e) {
-        listEl.innerHTML = '<p class="error">Error: ' + e + '</p>';
+        listEl.innerHTML = '<p class="error">Error: ' + escapeHtml(String(e)) + '</p>';
       }
     }
 
@@ -1135,7 +1135,7 @@
           // Ignore availability check errors.
         }
       } catch (e) {
-        detailEl.innerHTML = '<p class="error">Error: ' + e + '</p>';
+        detailEl.innerHTML = '<p class="error">Error: ' + escapeHtml(String(e)) + '</p>';
         detailEl.style.display = 'block';
       }
     }
@@ -1253,7 +1253,7 @@
       const summary = document.getElementById('review-summary');
       try {
         const count = await window.__TAURI__.invoke('library_later_count');
-        summary.innerHTML = `<span style="font-size:24px;font-weight:600">${count}</span> <span style="color:#888;font-size:12px">items for later review</span>`;
+        summary.innerHTML = `<span style="font-size:24px;font-weight:600">${escapeHtml(String(count))}</span> <span style="color:#888;font-size:12px">items for later review</span>`;
 
         if (count === 0) {
           list.innerHTML = '<p style="color:#888;padding:20px 0">No items for later review. Save items to see them here.</p>';
@@ -1267,7 +1267,7 @@
         list.innerHTML = '';
         showReviewCard();
       } catch (e) {
-        list.innerHTML = `<p class="error">Failed to load review list: ${e}</p>`;
+        list.innerHTML = `<p class="error">Failed to load review list: ${escapeHtml(String(e))}</p>`;
       }
     }
 
@@ -1287,7 +1287,7 @@
       document.getElementById('review-known-btn').style.display = 'none';
       document.getElementById('review-later-btn').style.display = 'none';
       document.getElementById('review-archive-btn').style.display = 'none';
-      document.getElementById('review-list').innerHTML = `<p style="color:#888;font-size:12px">Item ${currentReviewIndex + 1} of ${reviewItems.length}</p>`;
+      document.getElementById('review-list').innerHTML = `<p style="color:#888;font-size:12px">Item ${escapeHtml(String(currentReviewIndex + 1))} of ${escapeHtml(String(reviewItems.length))}</p>`;
     }
 
     function showReviewAnswer() {
@@ -1306,7 +1306,7 @@
         showReviewCard();
         // Update the summary count.
         const count = await window.__TAURI__.invoke('library_later_count');
-        document.getElementById('review-summary').innerHTML = `<span style="font-size:24px;font-weight:600">${count}</span> <span style="color:#888;font-size:12px">items for later review</span>`;
+        document.getElementById('review-summary').innerHTML = `<span style="font-size:24px;font-weight:600">${escapeHtml(String(count))}</span> <span style="color:#888;font-size:12px">items for later review</span>`;
       } catch (e) {
         alert('Failed to update review state: ' + e);
       }
@@ -1342,7 +1342,7 @@
         html += '</table>';
         el.innerHTML = html;
       } catch (e) {
-        el.innerHTML = '<p class="error">Error: ' + e + '</p>';
+        el.innerHTML = '<p class="error">Error: ' + escapeHtml(String(e)) + '</p>';
       }
     }
 
@@ -1418,7 +1418,7 @@
         }
         listEl.innerHTML = html;
       } catch (e) {
-        listEl.innerHTML = '<p class="error">Error: ' + e + '</p>';
+        listEl.innerHTML = '<p class="error">Error: ' + escapeHtml(String(e)) + '</p>';
       }
     }
 
