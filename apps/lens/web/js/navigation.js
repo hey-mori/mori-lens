@@ -1,12 +1,31 @@
 // Navigation: section switching, sidebar events, tray navigation
 
 export function showSection(sectionName) {
-  document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
-  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  const tabs = document.querySelectorAll('.sidebar-item[role="tab"]');
+  const panels = document.querySelectorAll('.section[role="tabpanel"]');
+
+  tabs.forEach(i => {
+    i.classList.remove('active');
+    i.setAttribute('aria-selected', 'false');
+    i.setAttribute('tabindex', '-1');
+  });
+  panels.forEach(s => s.classList.remove('active'));
+
   const item = document.querySelector(`.sidebar-item[data-section="${sectionName}"]`);
   if (item) {
     item.classList.add('active');
-    document.getElementById('section-' + sectionName).classList.add('active');
+    item.setAttribute('aria-selected', 'true');
+    item.setAttribute('tabindex', '0');
+    const panel = document.getElementById('section-' + sectionName);
+    panel.classList.add('active');
+
+    // Move focus to the section heading for screen reader context
+    const heading = panel.querySelector('h1');
+    if (heading) {
+      heading.setAttribute('tabindex', '-1');
+      heading.focus({ preventScroll: true });
+    }
+
     // Dynamically import section modules to load their data
     if (sectionName === 'status') {
       import('./models.js').then(m => m.refreshLocalAiStatus())
@@ -27,8 +46,39 @@ export function showSection(sectionName) {
 }
 
 export function initNavigation() {
-  // Sidebar click handlers
-  document.querySelectorAll('.sidebar-item').forEach(item => {
+  const tabs = Array.from(document.querySelectorAll('.sidebar-item[role="tab"]'));
+
+  tabs.forEach(item => {
     item.addEventListener('click', () => showSection(item.dataset.section));
+  });
+
+  // Keyboard navigation: arrow keys, Home, End (WAI-ARIA tablist pattern)
+  document.querySelector('[role="tablist"]').addEventListener('keydown', (e) => {
+    const currentIndex = tabs.indexOf(document.activeElement);
+    if (currentIndex === -1) return;
+
+    let newIndex;
+    switch (e.key) {
+      case 'ArrowDown':
+      case 'ArrowRight':
+        newIndex = (currentIndex + 1) % tabs.length;
+        break;
+      case 'ArrowUp':
+      case 'ArrowLeft':
+        newIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+        break;
+      case 'Home':
+        newIndex = 0;
+        break;
+      case 'End':
+        newIndex = tabs.length - 1;
+        break;
+      default:
+        return;
+    }
+
+    e.preventDefault();
+    tabs[newIndex].focus();
+    showSection(tabs[newIndex].dataset.section);
   });
 }
