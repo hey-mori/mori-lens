@@ -95,10 +95,26 @@ function showNextReviewCard() {
 async function showSessionComplete() {
   const list = document.getElementById('review-list');
   const count = await invoke('library_later_count');
+  let message;
   if (count === 0) {
-    list.innerHTML = '<p style="color:#2e7d32;padding:20px 0">All reviewed. No items for later review.</p>';
+    message = '<p style="color:#2e7d32;padding:20px 0">All reviewed. No items for later review.</p>';
   } else {
-    list.innerHTML = `<p style="color:#2e7d32;padding:20px 0">Review round complete. ${escapeHtml(String(count))} items remain for later.</p>`;
+    message = `<p style="color:#2e7d32;padding:20px 0">Review round complete. ${escapeHtml(String(count))} items remain for later.</p>`;
+  }
+
+  // Show undo button if there's history
+  if (historyStack.length > 0) {
+    message += `<div style="padding:20px 0;text-align:center">
+      <button id="review-undo-btn-completion" class="btn" style="padding:8px 16px;background:#1976d2;color:white;border-color:#1976d2">Undo last action</button>
+    </div>`;
+  }
+
+  list.innerHTML = message;
+
+  // Attach undo button handler
+  const undoBtn = document.getElementById('review-undo-btn-completion');
+  if (undoBtn) {
+    undoBtn.addEventListener('click', undoLastAction);
   }
 }
 
@@ -165,11 +181,22 @@ export function initReviewHandlers() {
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
-    const card = document.getElementById('review-card');
-    if (!card || card.style.display === 'none') return;
-
     // Ignore if typing in input/textarea
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.target.isContentEditable) return;
+
+    const card = document.getElementById('review-card');
+    const cardVisible = card && card.style.display !== 'none';
+
+    // Ctrl+Z works regardless of card visibility
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+      e.preventDefault();
+      undoLastAction();
+      return;
+    }
+
+    // Other shortcuts only work when card is visible
+    if (!cardVisible) return;
 
     const showBtn = document.getElementById('review-show-btn');
     const answerVisible = document.getElementById('review-answer').style.display === 'block';
@@ -178,23 +205,20 @@ export function initReviewHandlers() {
       e.preventDefault();
       showReviewAnswer();
     } else if (e.key === 'k' || e.key === 'K') {
-      if (answerVisible) {
+      if (answerVisible && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
         setReviewState('known');
       }
     } else if (e.key === 'l' || e.key === 'L') {
-      if (answerVisible) {
+      if (answerVisible && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
         setReviewState('later');
       }
     } else if (e.key === 'a' || e.key === 'A') {
-      if (answerVisible) {
+      if (answerVisible && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
         setReviewState('archive');
       }
-    } else if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
-      e.preventDefault();
-      undoLastAction();
     }
   });
 }
