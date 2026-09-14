@@ -1,7 +1,7 @@
 # P10 Storage Benchmarks: Comprehensive Query Performance
 
 **Date:** 2026-09-15  
-**Commit:** (pending)  
+**Commit:** 9ed439d (feat: comprehensive P10 storage benchmarks across 9 query patterns)  
 **Purpose:** Measure storage query performance across all operation types at different scales to validate that FTS5 is not needed at current scale.
 
 ## Test Environment
