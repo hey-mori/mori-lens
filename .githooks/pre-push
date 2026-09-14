@@ -2,13 +2,15 @@
 #
 # Reject pushes that violate the workflow contract.
 #
-# Two rules:
+# Three rules:
 #   1. Direct pushes to refs/heads/main are forbidden.
 #      All changes to main go through pull requests.
 #   2. Non-fast-forward pushes to any branch are forbidden.
 #      An autonomous agent must never force-push a published branch.
+#   3. New commits in this push must pass commit-policy check.
+#      Only the commits being pushed now are checked, not historical ones.
 #
-# See docs/git-workflow.md §6.
+# See docs/git-workflow.md §6 and docs/commit-format.md.
 #
 # Install via: scripts/setup-git-hooks.sh
 set -euo pipefail
@@ -24,23 +26,99 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     exit 1
   fi
 
-  # Skip new branches (remote has no ref yet).
-  if [ "$remote_sha" = "$ZERO" ]; then
-    continue
-  fi
-
   # Skip branch deletions (local ref is zero).
   if [ "$local_sha" = "$ZERO" ]; then
     continue
   fi
 
-  # Rule 2: reject non-fast-forward pushes.
-  # A push is fast-forward when remote_sha is an ancestor of local_sha.
-  if ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
-    echo "ERROR: non-fast-forward push rejected for $remote_ref."
-    echo "Autonomous agents must never force-push a published branch."
-    echo "See docs/git-workflow.md §6."
-    exit 1
+  # Determine which commits to check.
+  if [ "$remote_sha" = "$ZERO" ]; then
+    # New branch: check all commits reachable from local_sha but not from main.
+    # Try origin/main first (real push scenario), then fall back to local main (tests).
+    base="$(git merge-base origin/main "$local_sha" 2>/dev/null || git merge-base main "$local_sha" 2>/dev/null || echo "")"
+    if [ -z "$base" ]; then
+      # No merge-base with main: check just this commit.
+      commits_to_check="$(git rev-list -n 1 "$local_sha")"
+    else
+      commits_to_check="$(git rev-list "${base}..${local_sha}")"
+    fi
+  else
+    # Existing branch: reject non-fast-forward (Rule 2).
+    if ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+      echo "ERROR: non-fast-forward push rejected for $remote_ref."
+      echo "Autonomous agents must never force-push a published branch."
+      echo "See docs/git-workflow.md §6."
+      exit 1
+    fi
+
+    # Check only the new commits being pushed (remote_sha..local_sha).
+    # This ensures old historical bad commits don't permanently block future pushes.
+    commits_to_check="$(git rev-list "${remote_sha}..${local_sha}")"
+  fi
+
+  # Rule 3: check commit-policy for new commits.
+  if [ -n "$commits_to_check" ]; then
+    # Run commit-policy check on the specific commits.
+    # We need to temporarily set HEAD to check specific commits.
+    failed=0
+    while IFS= read -r sha; do
+      msg="$(git log -1 --format='%B' "$sha")"
+      subject="$(echo "$msg" | head -1)"
+      errors=""
+
+      valid_types="feat|fix|perf|refactor|test|docs|chore"
+
+      # Check subject format.
+      if ! echo "$subject" | grep -qE "^(${valid_types}): .+"; then
+        errors="${errors}  - subject must start with '<type>: '\n"
+      fi
+      if [ "${#subject}" -gt 72 ]; then
+        errors="${errors}  - subject is ${#subject} chars (max 72)\n"
+      fi
+      if echo "$subject" | grep -q '\.$'; then
+        errors="${errors}  - subject must not end with a period\n"
+      fi
+
+      # Check forbidden attribution.
+      if echo "$msg" | grep -qi 'co-authored-by:'; then
+        errors="${errors}  - Co-Authored-By is forbidden\n"
+      fi
+      if echo "$msg" | grep -qiE 'generated (with|by)'; then
+        errors="${errors}  - 'Generated with/by' is forbidden\n"
+      fi
+      if echo "$msg" | grep -qiE 'ai[- ]assisted'; then
+        errors="${errors}  - 'AI-assisted' is forbidden\n"
+      fi
+      if echo "$msg" | grep -qiE '(claude|qwen|copilot|chatgpt|gemini) (code|sonnet|opus|haiku|ai|assistant)'; then
+        errors="${errors}  - AI product attribution is forbidden\n"
+      fi
+
+      # Check body is bullet-only.
+      body="$(echo "$msg" | tail -n +3)"
+      if [ -n "$body" ]; then
+        while IFS= read -r line; do
+          [ -z "$line" ] && continue
+          if ! echo "$line" | grep -q '^- '; then
+            errors="${errors}  - body line must start with '- ': $(echo "$line" | head -c 50)\n"
+            break
+          fi
+        done <<< "$body"
+      fi
+
+      if [ -n "$errors" ]; then
+        echo "ERROR: commit $(echo "$sha" | cut -c1-8) violates commit-policy:"
+        echo "$subject"
+        echo -e "$errors"
+        failed=1
+      fi
+    done <<< "$commits_to_check"
+
+    if [ "$failed" -eq 1 ]; then
+      echo ""
+      echo "Push rejected: new commits violate commit-policy."
+      echo "See docs/commit-format.md for the full specification."
+      exit 1
+    fi
   fi
 done
 

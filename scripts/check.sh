@@ -115,6 +115,12 @@ bash "$(dirname "$0")/test_release_preflight.sh"
 step "command/frontend wiring integrity"
 python3 "$(dirname "$0")/check_command_wiring.py"
 
+# DOM trust boundary: verify that untrusted data is escaped before insertion
+# into innerHTML. Prevents XSS vulnerabilities where user-controlled data
+# (error messages, model outputs, configuration values) flows into DOM sinks.
+step "DOM trust boundary"
+python3 "$(dirname "$0")/check_trust_boundary.py"
+
 # Verify Local AI status is not polled in the 1-second refresh loop.
 # loadStatus() must use cached value, not invoke get_local_ai_status directly.
 step "local-ai polling regression"
