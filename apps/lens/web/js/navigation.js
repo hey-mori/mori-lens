@@ -1,11 +1,15 @@
 // Navigation: section switching, sidebar events, tray navigation
 
 export function showSection(sectionName) {
-  document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
+  document.querySelectorAll('.sidebar-item').forEach(i => {
+    i.classList.remove('active');
+    i.removeAttribute('aria-current');
+  });
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   const item = document.querySelector(`.sidebar-item[data-section="${sectionName}"]`);
   if (item) {
     item.classList.add('active');
+    item.setAttribute('aria-current', 'page');
     document.getElementById('section-' + sectionName).classList.add('active');
     // Dynamically import section modules to load their data
     if (sectionName === 'status') {
@@ -27,8 +31,14 @@ export function showSection(sectionName) {
 }
 
 export function initNavigation() {
-  // Sidebar click handlers
+  // Sidebar click and keyboard handlers
   document.querySelectorAll('.sidebar-item').forEach(item => {
     item.addEventListener('click', () => showSection(item.dataset.section));
+    item.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        showSection(item.dataset.section);
+      }
+    });
   });
 }
