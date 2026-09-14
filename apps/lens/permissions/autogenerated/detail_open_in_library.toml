@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-detail-open-in-library"
+description = "Enables the detail_open_in_library command without any pre-configured scope."
+commands.allow = ["detail_open_in_library"]
+
+[[permission]]
+identifier = "deny-detail-open-in-library"
+description = "Denies the detail_open_in_library command without any pre-configured scope."
+commands.deny = ["detail_open_in_library"]

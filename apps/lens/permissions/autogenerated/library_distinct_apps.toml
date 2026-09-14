@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-library-distinct-apps"
+description = "Enables the library_distinct_apps command without any pre-configured scope."
+commands.allow = ["library_distinct_apps"]
+
+[[permission]]
+identifier = "deny-library-distinct-apps"
+description = "Denies the library_distinct_apps command without any pre-configured scope."
+commands.deny = ["library_distinct_apps"]
