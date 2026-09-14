@@ -62,14 +62,16 @@ jobs:
         run: bash scripts/check.sh --full
 
       - name: Build installer
+        working-directory: apps/lens
         run: cargo tauri build --bundles nsis
 
       - name: Verify installer exists
         shell: bash
         run: |
-          EXE=$(find apps/lens/target/release/bundle/nsis -maxdepth 1 -name "*.exe" -type f | head -1)
-          if [ -z "$EXE" ]; then
-            echo "ERROR: NSIS installer not found in apps/lens/target/release/bundle/nsis/"
+          VERSION="${GITHUB_REF_NAME#v}"
+          EXE="apps/lens/target/release/bundle/nsis/Mori Lens_${VERSION}_x64-setup.exe"
+          if [ ! -f "$EXE" ]; then
+            echo "ERROR: NSIS installer not found: $EXE"
             exit 1
           fi
           echo "Found: $EXE"
@@ -77,8 +79,12 @@ jobs:
       - name: Verify installer (structural)
         shell: pwsh
         run: |
-          $exe = Get-ChildItem apps/lens/target/release/bundle/nsis/*.exe | Select-Object -First 1
-          & .\scripts\verify-nsis.ps1 $exe.FullName
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $exe = "apps/lens/target/release/bundle/nsis/Mori Lens_$version_x64-setup.exe"
+          $payload = "apps/lens/target/release/lens.exe"
+          if (-not (Test-Path $exe)) { Write-Error "NSIS installer not found: $exe"; exit 1 }
+          if (-not (Test-Path $payload)) { Write-Error "Payload not found: $payload"; exit 1 }
+          & .\scripts\verify-nsis.ps1 -ExePath $exe -PayloadExePath $payload -ExpectedVersion $version
 
       - name: Generate SHA-256 manifest
         shell: bash
@@ -119,6 +125,7 @@ jobs:
         run: bash scripts/check.sh --full
 
       - name: Build .app bundle
+        working-directory: apps/lens
         run: cargo tauri build --bundles app
 
       - name: Verify .app exists
@@ -242,7 +249,7 @@ jobs:
             These builds are **not code-signed**.
             - **Windows (NSIS)**: SmartScreen will show a warning. Verify SHA-256 before running.
             - **Windows (MSIX)**: Structurally valid for Store submission. Publisher identity uses placeholder values.
-            - **macOS**: Gatekeeper will block the unsigned .app. Right-click → Open to bypass, or verify SHA-256.
+            - **macOS**: Gatekeeper will block the unsigned .app. Right-click → Open to bypass. SHA-256 verifies artifact integrity but does not satisfy Gatekeeper.
 
             Apple Developer ID signing and notarization require external credentials (not yet configured).
             Microsoft Store submission requires a Store developer account and publisher identity replacement.

@@ -46,14 +46,16 @@ jobs:
 
       # --- NSIS ---
       - name: Build NSIS installer
+        working-directory: apps/lens
         run: cargo tauri build --bundles nsis
 
       - name: Verify NSIS installer (structural)
         shell: bash
         run: |
-          EXE=$(find apps/lens/target/release/bundle/nsis -maxdepth 1 -name "*.exe" -type f | head -1)
-          if [ -z "$EXE" ]; then
-            echo "ERROR: NSIS installer not found"
+          VERSION=$(grep -m1 '^version' apps/lens/Cargo.toml | cut -d'"' -f2)
+          EXE="apps/lens/target/release/bundle/nsis/Mori Lens_${VERSION}_x64-setup.exe"
+          if [ ! -f "$EXE" ]; then
+            echo "ERROR: NSIS installer not found: $EXE"
             exit 1
           fi
           echo "Found: $EXE"
@@ -61,8 +63,12 @@ jobs:
       - name: Verify NSIS installer (detailed)
         shell: pwsh
         run: |
-          $exe = Get-ChildItem apps/lens/target/release/bundle/nsis/*.exe | Select-Object -First 1
-          & .\scripts\verify-nsis.ps1 $exe.FullName
+          $version = (Select-String -Path "apps/lens/Cargo.toml" -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
+          $exe = "apps/lens/target/release/bundle/nsis/Mori Lens_$version_x64-setup.exe"
+          $payload = "apps/lens/target/release/lens.exe"
+          if (-not (Test-Path $exe)) { Write-Error "NSIS installer not found: $exe"; exit 1 }
+          if (-not (Test-Path $payload)) { Write-Error "Payload not found: $payload"; exit 1 }
+          & .\scripts\verify-nsis.ps1 -ExePath $exe -PayloadExePath $payload -ExpectedVersion $version
 
       - name: Generate NSIS SHA-256
         shell: bash
@@ -130,6 +136,7 @@ jobs:
         run: python3 scripts/generate-smoke-assets.py
 
       - name: Build .app bundle
+        working-directory: apps/lens
         run: cargo tauri build --bundles app
 
       - name: Verify .app bundle
