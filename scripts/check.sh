@@ -120,6 +120,20 @@ python3 "$(dirname "$0")/check_command_wiring.py"
 step "frontend module graph integrity"
 python3 "$(dirname "$0")/check_module_graph.py"
 
+# Verify accessibility attributes: label[for] targets exist, no duplicate IDs,
+# aria-controls/labelledby point to existing elements, no positive tabindex,
+# WAI-ARIA tablist pattern validity.
+step "accessibility attributes"
+python3 "$(dirname "$0")/check_accessibility.py"
+
+# Verify keyboard navigation is present for tablist pattern.
+step "keyboard navigation regression"
+if ! grep -q "ArrowDown\|ArrowRight\|ArrowUp\|ArrowLeft\|Home\|End" apps/lens/web/js/navigation.js; then
+  echo "ERROR: navigation.js missing keyboard handlers for tablist pattern"
+  exit 1
+fi
+echo "Keyboard navigation regression check passed"
+
 # Verify Local AI status is not polled in the 1-second refresh loop.
 # loadStatus() must use cached value, not invoke get_local_ai_status directly.
 step "local-ai polling regression"
