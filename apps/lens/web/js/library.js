@@ -117,7 +117,7 @@ async function fetchLibraryPage() {
     // Attach handlers for library item rows and load more
     attachLibraryPageHandlers();
   } catch (e) {
-    listEl.innerHTML = '<p class="error">Error: ' + e + '</p>';
+    listEl.innerHTML = '<p class="error">Error: ' + escapeHtml(String(e)) + '</p>';
   }
 }
 
@@ -197,7 +197,7 @@ export async function showLibraryItem(id) {
       // Ignore availability check errors.
     }
   } catch (e) {
-    detailEl.innerHTML = '<p class="error">Error: ' + e + '</p>';
+    detailEl.innerHTML = '<p class="error">Error: ' + escapeHtml(String(e)) + '</p>';
     detailEl.style.display = 'block';
   }
 }

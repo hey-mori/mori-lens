@@ -54,7 +54,7 @@ export async function refreshModels(selectedModel) {
     }
     selectEl.innerHTML = opts;
   } catch (e) {
-    listEl.innerHTML = '<p class="error">Error: ' + e + '</p>';
+    listEl.innerHTML = '<p class="error">Error: ' + escapeHtml(String(e)) + '</p>';
   }
 }
 
@@ -72,9 +72,9 @@ export async function testModel() {
   resultEl.innerHTML = '';
   try {
     const result = await invoke('test_model', { endpoint, model });
-    resultEl.innerHTML = '<strong>' + result.model + '</strong> (' + result.latency_ms + 'ms)<br>' + result.translated;
+    resultEl.innerHTML = '<strong>' + escapeHtml(String(result.model)) + '</strong> (' + escapeHtml(String(result.latency_ms)) + 'ms)<br>' + escapeHtml(String(result.translated));
   } catch (e) {
-    resultEl.innerHTML = '<span class="error">Error: ' + e + '</span>';
+    resultEl.innerHTML = '<span class="error">Error: ' + escapeHtml(String(e)) + '</span>';
   }
   btn.disabled = false;
   btn.textContent = 'Test';
