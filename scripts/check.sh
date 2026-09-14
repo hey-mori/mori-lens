@@ -120,6 +120,19 @@ python3 "$(dirname "$0")/check_command_wiring.py"
 step "frontend module graph integrity"
 python3 "$(dirname "$0")/check_module_graph.py"
 
+# DOM trust boundary: scan JS modules for innerHTML/outerHTML sinks where
+# untrusted data may flow without escapeHtml() wrapping. Catches template
+# literal interpolation and string concatenation patterns. This is a first
+# line of defense; comprehensive XSS prevention also requires code review
+# and CSP headers.
+step "DOM trust boundary"
+python3 "$(dirname "$0")/check_trust_boundary.py"
+
+# DOM trust boundary checker's own regression tests. Verifies that the
+# pattern matching correctly identifies violations and accepts safe patterns.
+step "DOM trust boundary tests"
+python3 "$(dirname "$0")/test_check_trust_boundary.py"
+
 # Verify Local AI status is not polled in the 1-second refresh loop.
 # loadStatus() must use cached value, not invoke get_local_ai_status directly.
 step "local-ai polling regression"
