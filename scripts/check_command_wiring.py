@@ -114,9 +114,12 @@ def find_frontend_invokes(root: Path) -> dict[str, str]:
     if not web_dir.exists():
         return invokes
 
-    for html_file in web_dir.glob("*.html"):
+    # Check both HTML and JS files
+    files_to_check = list(web_dir.glob("*.html")) + list(web_dir.glob("js/*.js"))
+
+    for file_path in files_to_check:
         try:
-            content = html_file.read_text(encoding="utf-8")
+            content = file_path.read_text(encoding="utf-8")
         except Exception:
             continue
 
@@ -124,7 +127,7 @@ def find_frontend_invokes(root: Path) -> dict[str, str]:
         pattern = r"invoke\(['\"](\w+)['\"]"
         for match in re.finditer(pattern, content):
             cmd_name = match.group(1)
-            invokes[cmd_name] = str(html_file.relative_to(root))
+            invokes[cmd_name] = str(file_path.relative_to(root))
 
     return invokes
 
