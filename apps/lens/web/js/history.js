@@ -68,7 +68,7 @@ async function fetchHistoryPage() {
     listEl.innerHTML = html;
     attachHistoryHandlers();
   } catch (e) {
-    listEl.innerHTML = '<p class="error">Error: ' + e + '</p>';
+    listEl.innerHTML = '<p class="error">Error: ' + escapeHtml(String(e)) + '</p>';
   }
 }
 
