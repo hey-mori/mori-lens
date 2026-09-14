@@ -26,6 +26,6 @@ export async function loadRecent() {
     html += '</table>';
     el.innerHTML = html;
   } catch (e) {
-    el.innerHTML = '<p class="error">Error: ' + e + '</p>';
+    el.innerHTML = '<p class="error">Error: ' + escapeHtml(String(e)) + '</p>';
   }
 }
