@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mori-send-item"
+description = "Enables the mori_send_item command without any pre-configured scope."
+commands.allow = ["mori_send_item"]
+
+[[permission]]
+identifier = "deny-mori-send-item"
+description = "Denies the mori_send_item command without any pre-configured scope."
+commands.deny = ["mori_send_item"]
