@@ -5,13 +5,13 @@ import { escapeHtml, populateSelect } from './ui.js';
 
 let libraryOffset = 0;
 let libraryQuery = '';
-let libraryFilters = { kind: null, app: null, source_language: null, target_language: null, review_state: null };
+let libraryFilters = { kind: null, app: null, source_language: null, target_language: null, review_state: null, tag: null };
 let moriAvailable = null;
 
 export async function loadLibrary() {
   libraryOffset = 0;
   libraryQuery = '';
-  libraryFilters = { kind: null, app: null, source_language: null, target_language: null, review_state: null };
+  libraryFilters = { kind: null, app: null, source_language: null, target_language: null, review_state: null, tag: null };
   const searchInput = document.getElementById('lib-search');
   if (searchInput) searchInput.value = '';
   document.getElementById('lib-filter-kind').value = '';
@@ -19,19 +19,22 @@ export async function loadLibrary() {
   document.getElementById('lib-filter-source').value = '';
   document.getElementById('lib-filter-target').value = '';
   document.getElementById('lib-filter-state').value = '';
+  document.getElementById('lib-filter-tag').value = '';
   await Promise.all([loadFilterOptions(), fetchLibraryPage()]);
 }
 
 async function loadFilterOptions() {
   try {
-    const [apps, sources, targets] = await Promise.all([
+    const [apps, sources, targets, tags] = await Promise.all([
       invoke('library_distinct_apps'),
       invoke('library_distinct_source_languages'),
       invoke('library_distinct_target_languages'),
+      invoke('library_distinct_tags'),
     ]);
     populateSelect('lib-filter-app', apps);
     populateSelect('lib-filter-source', sources);
     populateSelect('lib-filter-target', targets);
+    populateSelect('lib-filter-tag', tags);
   } catch (e) {
     // Ignore; dropdowns stay at "All".
   }
@@ -50,18 +53,20 @@ export function applyFilters() {
   const source_language = document.getElementById('lib-filter-source').value || null;
   const target_language = document.getElementById('lib-filter-target').value || null;
   const review_state = document.getElementById('lib-filter-state').value || null;
-  libraryFilters = { kind, app, source_language, target_language, review_state };
+  const tag = document.getElementById('lib-filter-tag').value || null;
+  libraryFilters = { kind, app, source_language, target_language, review_state, tag };
   libraryOffset = 0;
   fetchLibraryPage();
 }
 
 export function clearFilters() {
-  libraryFilters = { kind: null, app: null, source_language: null, target_language: null, review_state: null };
+  libraryFilters = { kind: null, app: null, source_language: null, target_language: null, review_state: null, tag: null };
   document.getElementById('lib-filter-kind').value = '';
   document.getElementById('lib-filter-app').value = '';
   document.getElementById('lib-filter-source').value = '';
   document.getElementById('lib-filter-target').value = '';
   document.getElementById('lib-filter-state').value = '';
+  document.getElementById('lib-filter-tag').value = '';
   libraryOffset = 0;
   fetchLibraryPage();
 }
@@ -78,6 +83,7 @@ async function fetchLibraryPage() {
       source_language: libraryFilters.source_language,
       target_language: libraryFilters.target_language,
       review_state: libraryFilters.review_state,
+      tag: libraryFilters.tag,
       offset: libraryOffset
     });
     countEl.textContent = page.total + ' item' + (page.total !== 1 ? 's' : '');

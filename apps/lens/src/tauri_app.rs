@@ -566,6 +566,7 @@ fn library_query(
     source_language: Option<String>,
     target_language: Option<String>,
     review_state: Option<String>,
+    tag: Option<String>,
     offset: i64,
 ) -> Result<LibraryPageView, String> {
     use lens_storage::Filter;
@@ -576,6 +577,7 @@ fn library_query(
         source_language,
         target_language,
         review_state,
+        tag,
     };
     let page = lib
         .library()
@@ -669,6 +671,13 @@ fn library_distinct_target_languages(
     lib.library()
         .distinct_target_languages()
         .map_err(|e| format!("{e}"))
+}
+
+/// Tauri command: get distinct tag names actually used in the library.
+#[tauri::command]
+fn library_distinct_tags(state: tauri::State<'_, SharedLibrary>) -> Result<Vec<String>, String> {
+    let lib = state.lock().unwrap();
+    lib.library().distinct_tags().map_err(|e| format!("{e}"))
 }
 
 /// Tauri command: export the library as Markdown.
@@ -1016,6 +1025,7 @@ pub fn build(
             library_distinct_apps,
             library_distinct_source_languages,
             library_distinct_target_languages,
+            library_distinct_tags,
             library_export,
             library_export_json,
             library_export_jsonl,

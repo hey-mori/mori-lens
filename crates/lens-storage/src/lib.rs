@@ -134,6 +134,9 @@ pub struct Filter {
     pub target_language: Option<String>,
     /// Filter by review state: "known", "later", or "archive".
     pub review_state: Option<String>,
+    /// Filter by exact tag name (case-sensitive). Uses EXISTS subquery
+    /// against the normalized tags/library_tags tables.
+    pub tag: Option<String>,
 }
 
 /// A page size for listing and searching.
@@ -509,6 +512,16 @@ impl Library {
             param_values.push(rs.clone());
             conditions.push(format!("review_state = ?{}", param_values.len()));
         }
+        if let Some(ref tag) = filter.tag {
+            let trimmed = tag.trim();
+            if !trimmed.is_empty() {
+                param_values.push(trimmed.to_owned());
+                conditions.push(format!(
+                    "EXISTS (SELECT 1 FROM library_tags lt JOIN tags t ON lt.tag_id = t.id WHERE lt.library_id = library.id AND t.name = ?{})",
+                    param_values.len()
+                ));
+            }
+        }
 
         let where_clause = if conditions.is_empty() {
             String::new()
@@ -587,6 +600,16 @@ impl Library {
         if let Some(ref rs) = filter.review_state {
             param_values.push(rs.clone());
             conditions.push(format!("review_state = ?{}", param_values.len()));
+        }
+        if let Some(ref tag) = filter.tag {
+            let trimmed_tag = tag.trim();
+            if !trimmed_tag.is_empty() {
+                param_values.push(trimmed_tag.to_owned());
+                conditions.push(format!(
+                    "EXISTS (SELECT 1 FROM library_tags lt JOIN tags t ON lt.tag_id = t.id WHERE lt.library_id = library.id AND t.name = ?{})",
+                    param_values.len()
+                ));
+            }
         }
 
         // Add search condition if query is non-empty
@@ -688,6 +711,18 @@ impl Library {
             .query_map([], |row| row.get(0))?
             .collect::<Result<Vec<String>, _>>()?;
         Ok(langs)
+    }
+
+    /// Get distinct tag names that are actually used (attached to at least one
+    /// library item), sorted alphabetically.
+    pub fn distinct_tags(&self) -> Result<Vec<String>, Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT t.name FROM tags t INNER JOIN library_tags lt ON lt.tag_id = t.id ORDER BY t.name",
+        )?;
+        let tags = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(tags)
     }
 
     /// Whether the library has been used (any imports tracked).
@@ -3747,6 +3782,289 @@ mod tests {
         let page = lib.list_filtered(&filter, 0).unwrap();
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.items[0].id, id2);
+
+        cleanup(&path);
+    }
+
+    // -- Tag filter tests ---------------------------------------------------
+
+    #[test]
+    fn tag_filter_finds_tagged_items() {
+        let path = temp_db("tag-filter-basic");
+        let lib = Library::open(&path).unwrap();
+
+        let id1 = lib.insert(&a_translation()).unwrap();
+        lib.set_tags(id1, &["work".to_owned()]).unwrap();
+
+        let mut item2 = a_translation();
+        item2.original = "second".to_owned();
+        let id2 = lib.insert(&item2).unwrap();
+
+        let filter = Filter {
+            tag: Some("work".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.list_filtered(&filter, 0).unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].id, id1);
+
+        let _ = id2;
+        cleanup(&path);
+    }
+
+    #[test]
+    fn tag_filter_excludes_untagged_items() {
+        let path = temp_db("tag-filter-exclude");
+        let lib = Library::open(&path).unwrap();
+
+        let id1 = lib.insert(&a_translation()).unwrap();
+        lib.set_tags(id1, &["work".to_owned()]).unwrap();
+
+        let mut item2 = a_translation();
+        item2.original = "untagged".to_owned();
+        let _id2 = lib.insert(&item2).unwrap();
+
+        let filter = Filter {
+            tag: Some("work".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.list_filtered(&filter, 0).unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].id, id1);
+        assert_eq!(page.total, 1);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn tag_filter_finds_multiple_items_with_same_tag() {
+        let path = temp_db("tag-filter-multi");
+        let lib = Library::open(&path).unwrap();
+
+        let id1 = lib.insert(&a_translation()).unwrap();
+        lib.set_tags(id1, &["work".to_owned()]).unwrap();
+
+        let mut item2 = a_translation();
+        item2.original = "second work item".to_owned();
+        let id2 = lib.insert(&item2).unwrap();
+        lib.set_tags(id2, &["work".to_owned()]).unwrap();
+
+        let filter = Filter {
+            tag: Some("work".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.list_filtered(&filter, 0).unwrap();
+        assert_eq!(page.items.len(), 2);
+        assert_eq!(page.total, 2);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn tag_filter_supports_korean_tags() {
+        let path = temp_db("tag-filter-korean");
+        let lib = Library::open(&path).unwrap();
+
+        let id1 = lib.insert(&a_translation()).unwrap();
+        lib.set_tags(id1, &["작업".to_owned()]).unwrap();
+
+        let filter = Filter {
+            tag: Some("작업".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.list_filtered(&filter, 0).unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].id, id1);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn tag_filter_trims_whitespace() {
+        let path = temp_db("tag-filter-trim");
+        let lib = Library::open(&path).unwrap();
+
+        let id1 = lib.insert(&a_translation()).unwrap();
+        lib.set_tags(id1, &["work".to_owned()]).unwrap();
+
+        let filter = Filter {
+            tag: Some("  work  ".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.list_filtered(&filter, 0).unwrap();
+        assert_eq!(page.items.len(), 1);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn tag_filter_empty_is_no_restriction() {
+        let path = temp_db("tag-filter-empty");
+        let lib = Library::open(&path).unwrap();
+
+        let id1 = lib.insert(&a_translation()).unwrap();
+        lib.set_tags(id1, &["work".to_owned()]).unwrap();
+
+        let mut item2 = a_translation();
+        item2.original = "untagged".to_owned();
+        let _id2 = lib.insert(&item2).unwrap();
+
+        let filter = Filter {
+            tag: Some("".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.list_filtered(&filter, 0).unwrap();
+        assert_eq!(page.items.len(), 2, "empty tag filter returns all items");
+
+        let filter = Filter {
+            tag: Some("   ".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.list_filtered(&filter, 0).unwrap();
+        assert_eq!(
+            page.items.len(),
+            2,
+            "whitespace-only tag filter returns all items"
+        );
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn query_and_tag_filter_compose_with_and() {
+        let path = temp_db("tag-filter-query-composition");
+        let lib = Library::open(&path).unwrap();
+
+        let id1 = lib.insert(&a_translation()).unwrap();
+        lib.set_tags(id1, &["work".to_owned()]).unwrap();
+
+        let mut item2 = a_translation();
+        item2.original = "work related text".to_owned();
+        let _id2 = lib.insert(&item2).unwrap();
+
+        let mut item3 = a_translation();
+        item3.original = "work meeting notes".to_owned();
+        let id3 = lib.insert(&item3).unwrap();
+        lib.set_tags(id3, &["work".to_owned()]).unwrap();
+
+        let filter = Filter {
+            tag: Some("work".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.search_and_filter("work", &filter, 0).unwrap();
+        assert_eq!(
+            page.items.len(),
+            1,
+            "only item with both 'work' in text AND 'work' tag"
+        );
+        assert_eq!(page.items[0].id, id3);
+        assert_eq!(page.total, 1);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn tag_and_app_filter_compose() {
+        let path = temp_db("tag-filter-app-composition");
+        let lib = Library::open(&path).unwrap();
+
+        let id1 = lib.insert(&a_translation()).unwrap();
+        lib.set_tags(id1, &["work".to_owned()]).unwrap();
+
+        let mut item2 = a_translation();
+        item2.original = "second".to_owned();
+        item2.app = Some("Firefox".to_owned());
+        let id2 = lib.insert(&item2).unwrap();
+        lib.set_tags(id2, &["work".to_owned()]).unwrap();
+
+        let filter = Filter {
+            tag: Some("work".to_owned()),
+            app: Some("Firefox".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.list_filtered(&filter, 0).unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].id, id2);
+        assert_eq!(page.total, 1);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn tag_filter_page_total_consistent() {
+        let path = temp_db("tag-filter-total");
+        let lib = Library::open(&path).unwrap();
+
+        for i in 0..5 {
+            let mut item = a_translation();
+            item.original = format!("item {i}");
+            item.created_at = 1_786_075_140 + i;
+            let id = lib.insert(&item).unwrap();
+            if i < 3 {
+                lib.set_tags(id, &["important".to_owned()]).unwrap();
+            }
+        }
+
+        let filter = Filter {
+            tag: Some("important".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.list_filtered(&filter, 0).unwrap();
+        assert_eq!(page.items.len(), 3);
+        assert_eq!(page.total, 3, "total matches items count for tag filter");
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn distinct_tags_returns_only_used_tags() {
+        let path = temp_db("tag-distinct");
+        let lib = Library::open(&path).unwrap();
+
+        let id1 = lib.insert(&a_translation()).unwrap();
+        lib.set_tags(id1, &["work".to_owned(), "urgent".to_owned()])
+            .unwrap();
+
+        let mut item2 = a_translation();
+        item2.original = "second".to_owned();
+        let id2 = lib.insert(&item2).unwrap();
+        lib.set_tags(id2, &["personal".to_owned()]).unwrap();
+
+        let mut item3 = a_translation();
+        item3.original = "third".to_owned();
+        let _id3 = lib.insert(&item3).unwrap();
+
+        let tags = lib.distinct_tags().unwrap();
+        assert_eq!(tags.len(), 3);
+        assert!(tags.contains(&"work".to_owned()));
+        assert!(tags.contains(&"urgent".to_owned()));
+        assert!(tags.contains(&"personal".to_owned()));
+
+        let _ = id1;
+        let _ = id2;
+        cleanup(&path);
+    }
+
+    #[test]
+    fn tag_filter_no_duplicate_rows() {
+        let path = temp_db("tag-filter-no-dupes");
+        let lib = Library::open(&path).unwrap();
+
+        let id1 = lib.insert(&a_translation()).unwrap();
+        lib.set_tags(id1, &["work".to_owned(), "urgent".to_owned()])
+            .unwrap();
+
+        let filter = Filter {
+            tag: Some("work".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.list_filtered(&filter, 0).unwrap();
+        assert_eq!(
+            page.items.len(),
+            1,
+            "EXISTS subquery prevents duplicate rows"
+        );
+        assert_eq!(page.total, 1);
 
         cleanup(&path);
     }
