@@ -1,6 +1,7 @@
 // Review page: review later items
 
 import { invoke } from './tauri.js';
+import { escapeHtml } from './ui.js';
 
 let reviewItems = [];
 let currentReviewIndex = 0;
@@ -24,7 +25,7 @@ export async function loadReview() {
     list.innerHTML = '';
     showReviewCard();
   } catch (e) {
-    list.innerHTML = `<p class="error">Failed to load review list: ${e}</p>`;
+    list.innerHTML = `<p class="error">Failed to load review list: ${escapeHtml(String(e))}</p>`;
   }
 }
 
@@ -44,7 +45,7 @@ function showReviewCard() {
   document.getElementById('review-known-btn').style.display = 'none';
   document.getElementById('review-later-btn').style.display = 'none';
   document.getElementById('review-archive-btn').style.display = 'none';
-  document.getElementById('review-list').innerHTML = `<p style="color:#888;font-size:12px">Item ${currentReviewIndex + 1} of ${reviewItems.length}</p>`;
+  document.getElementById('review-list').innerHTML = `<p style="color:#888;font-size:12px">Item ${escapeHtml(String(currentReviewIndex + 1))} of ${escapeHtml(String(reviewItems.length))}</p>`;
 }
 
 export function showReviewAnswer() {
