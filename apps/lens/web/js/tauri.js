@@ -1,7 +1,13 @@
-// Tauri IPC wrapper
-// Provides access to Tauri core APIs
+// Tauri API wrapper
+// Provides invoke, listen, emit to all modules
 
-const { invoke } = window.__TAURI__.core;
-const { listen } = window.__TAURI__.event;
+const { invoke: _invoke } = window.__TAURI__.core;
+const { listen: _listen } = window.__TAURI__.event;
 
-export { invoke, listen };
+export function invoke(cmd, args) {
+  return _invoke(cmd, args);
+}
+
+export function listen(event, handler) {
+  return _listen(event, handler);
+}

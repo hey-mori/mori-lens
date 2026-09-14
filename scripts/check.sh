@@ -115,10 +115,15 @@ bash "$(dirname "$0")/test_release_preflight.sh"
 step "command/frontend wiring integrity"
 python3 "$(dirname "$0")/check_command_wiring.py"
 
+# Verify module graph reachability: no orphan JS files, no missing imports,
+# no import cycles.
+step "frontend module graph integrity"
+python3 "$(dirname "$0")/check_module_graph.py"
+
 # Verify Local AI status is not polled in the 1-second refresh loop.
 # loadStatus() must use cached value, not invoke get_local_ai_status directly.
 step "local-ai polling regression"
-if grep -A 10 "async function loadStatus()" apps/lens/web/index.html | grep -q "get_local_ai_status"; then
+if grep -A 10 "export async function loadStatus()" apps/lens/web/js/status.js | grep -q "get_local_ai_status"; then
   echo "ERROR: loadStatus() invokes get_local_ai_status, which would poll every 1 second"
   exit 1
 fi
@@ -127,7 +132,7 @@ echo "Local AI polling regression check passed"
 # Verify initial startup triggers one Local AI refresh.
 # loadAll() must call refreshLocalAiStatus to avoid indefinite "확인 중..." on first open.
 step "local-ai initial load regression"
-if ! grep -A 10 "async function loadAll()" apps/lens/web/index.html | grep -q "refreshLocalAiStatus"; then
+if ! grep -A 15 "async function loadAll()" apps/lens/web/js/app.js | grep -q "refreshLocalAiStatus"; then
   echo "ERROR: loadAll() does not call refreshLocalAiStatus, initial Status will show '확인 중...' indefinitely"
   exit 1
 fi
