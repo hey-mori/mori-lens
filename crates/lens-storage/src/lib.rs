@@ -3911,4 +3911,200 @@ mod tests {
         assert_eq!(mode & 0o077, 0, "fresh DB must have no group/other bits");
         cleanup(&path);
     }
+
+    // -- search_and_filter regression tests ---------------------------------
+
+    fn seed_library(lib: &Library) {
+        let items = vec![
+            Item {
+                id: 0,
+                original: "The pointer must rest.".to_owned(),
+                answer: "포인터가 멈춰야 합니다.".to_owned(),
+                caveat: None,
+                app: Some("Chrome".to_owned()),
+                created_at: 1_786_075_100,
+                kind: "translation".to_owned(),
+                source_language: Some("en".to_owned()),
+                target_language: Some("ko".to_owned()),
+                model: None,
+                note: None,
+                tags: None,
+                review_state: None,
+            },
+            Item {
+                id: 0,
+                original: "Error in the system.".to_owned(),
+                answer: "시스템 오류.".to_owned(),
+                caveat: None,
+                app: Some("Firefox".to_owned()),
+                created_at: 1_786_075_200,
+                kind: "translation".to_owned(),
+                source_language: Some("en".to_owned()),
+                target_language: Some("ko".to_owned()),
+                model: None,
+                note: None,
+                tags: None,
+                review_state: Some("later".to_owned()),
+            },
+            Item {
+                id: 0,
+                original: "分析テスト".to_owned(),
+                answer: "분석 결과".to_owned(),
+                caveat: None,
+                app: Some("Chrome".to_owned()),
+                created_at: 1_786_075_300,
+                kind: "analysis".to_owned(),
+                source_language: Some("ja".to_owned()),
+                target_language: Some("ko".to_owned()),
+                model: None,
+                note: None,
+                tags: None,
+                review_state: None,
+            },
+        ];
+        for item in items {
+            lib.insert(&item).unwrap();
+        }
+    }
+
+    #[test]
+    fn search_and_filter_query_only() {
+        let path = temp_db("saf-query");
+        let lib = Library::open(&path).unwrap();
+        seed_library(&lib);
+
+        let filter = Filter::default();
+        let page = lib.search_and_filter("pointer", &filter, 0).unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert!(page.items[0].original.contains("pointer"));
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn search_and_filter_filter_only() {
+        let path = temp_db("saf-filter");
+        let lib = Library::open(&path).unwrap();
+        seed_library(&lib);
+
+        let filter = Filter {
+            kind: Some("translation".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.search_and_filter("", &filter, 0).unwrap();
+        assert_eq!(page.items.len(), 2);
+        for item in &page.items {
+            assert_eq!(item.kind, "translation");
+        }
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn search_and_filter_combined() {
+        let path = temp_db("saf-combined");
+        let lib = Library::open(&path).unwrap();
+        seed_library(&lib);
+
+        let filter = Filter {
+            app: Some("Chrome".to_owned()),
+            ..Default::default()
+        };
+        // Search for "Error" but filter to Chrome only
+        let page = lib.search_and_filter("Error", &filter, 0).unwrap();
+        // "Error in the system" is Firefox, not Chrome, so 0 results
+        assert_eq!(page.items.len(), 0);
+
+        // Search for "rest" (in Chrome item) with Chrome filter
+        let page = lib.search_and_filter("rest", &filter, 0).unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].app.as_deref(), Some("Chrome"));
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn search_and_filter_empty_returns_all() {
+        let path = temp_db("saf-empty");
+        let lib = Library::open(&path).unwrap();
+        seed_library(&lib);
+
+        let filter = Filter::default();
+        let page = lib.search_and_filter("", &filter, 0).unwrap();
+        assert_eq!(page.items.len(), 3);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn search_and_filter_like_escape() {
+        let path = temp_db("saf-escape");
+        let lib = Library::open(&path).unwrap();
+
+        let item = Item {
+            id: 0,
+            original: "100% complete".to_owned(),
+            answer: "100% 완료".to_owned(),
+            caveat: None,
+            app: None,
+            created_at: 1_786_075_400,
+            kind: "translation".to_owned(),
+            source_language: Some("en".to_owned()),
+            target_language: Some("ko".to_owned()),
+            model: None,
+            note: None,
+            tags: None,
+            review_state: None,
+        };
+        lib.insert(&item).unwrap();
+
+        // Search for literal "%" - should escape and find it
+        let filter = Filter::default();
+        let page = lib.search_and_filter("100%", &filter, 0).unwrap();
+        assert_eq!(page.items.len(), 1);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn search_and_filter_pagination() {
+        let path = temp_db("saf-pagination");
+        let lib = Library::open(&path).unwrap();
+
+        // Insert 5 items
+        for i in 0..5 {
+            let item = Item {
+                id: 0,
+                original: format!("Item number {}", i),
+                answer: format!("답변 {}", i),
+                caveat: None,
+                app: None,
+                created_at: 1_786_075_500 + i,
+                kind: "translation".to_owned(),
+                source_language: Some("en".to_owned()),
+                target_language: Some("ko".to_owned()),
+                model: None,
+                note: None,
+                tags: None,
+                review_state: None,
+            };
+            lib.insert(&item).unwrap();
+        }
+
+        let filter = Filter::default();
+        // PAGE_SIZE is 50, so all 5 fit in first page
+        let page = lib.search_and_filter("", &filter, 0).unwrap();
+        assert_eq!(page.items.len(), 5);
+        assert!(!page.has_more);
+
+        // Filter to a specific kind to get fewer results
+        let filter = Filter {
+            kind: Some("analysis".to_owned()),
+            ..Default::default()
+        };
+        let page = lib.search_and_filter("", &filter, 0).unwrap();
+        assert_eq!(page.items.len(), 0);
+
+        cleanup(&path);
+    }
 }
