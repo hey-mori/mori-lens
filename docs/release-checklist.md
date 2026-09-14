@@ -145,7 +145,8 @@ A Mori Lens release contains three artifacts:
   must be replaced before Store submission.
 - **macOS `.app` bundle** (zipped): a signed-ready application bundle.
   Gatekeeper blocks the unsigned bundle until the user right-clicks
-  and opens it, or verifies its SHA-256.
+  and opens it. SHA-256 verifies artifact integrity but does not
+  satisfy Gatekeeper.
 
 None of the artifacts:
 - Start with Windows by default (a tray menu option).

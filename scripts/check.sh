@@ -158,6 +158,9 @@ if [[ -f apps/lens/tauri.conf.json ]]; then
   fi
 fi
 
+step "workflow contract"
+python3 scripts/check_packaging_workflows.py
+
 if [[ "$FULL" == "1" ]]; then
   step "cargo build --release -p hover-probe"
   cargo build --release -p hover-probe
