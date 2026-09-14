@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-library-export-json"
+description = "Enables the library_export_json command without any pre-configured scope."
+commands.allow = ["library_export_json"]
+
+[[permission]]
+identifier = "deny-library-export-json"
+description = "Denies the library_export_json command without any pre-configured scope."
+commands.deny = ["library_export_json"]

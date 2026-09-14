@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-request-pause-toggle"
+description = "Enables the request_pause_toggle command without any pre-configured scope."
+commands.allow = ["request_pause_toggle"]
+
+[[permission]]
+identifier = "deny-request-pause-toggle"
+description = "Denies the request_pause_toggle command without any pre-configured scope."
+commands.deny = ["request_pause_toggle"]
