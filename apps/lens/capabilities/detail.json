@@ -4,7 +4,6 @@
   "windows": ["detail"],
   "permissions": [
     "core:default",
-    "core:event:default",
     "allow-detail-copy",
     "allow-detail-open-in-library",
     "allow-detail-read",
