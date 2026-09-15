@@ -63,7 +63,7 @@ impl ProviderRuntime for OllamaRuntime {
         let models = self.list_models()?;
         let model_info = models
             .iter()
-            .find(|m| m.name == model)
+            .find(|m| m.id == model)
             .ok_or_else(|| TranslateError::ModelMissing(model.to_owned()))?;
 
         // Check if the model is currently loaded (via /api/ps)
@@ -75,8 +75,8 @@ impl ProviderRuntime for OllamaRuntime {
             })
         } else {
             Ok(ModelState::Available {
-                name: model_info.name.clone(),
-                size: model_info.size,
+                name: model_info.id.clone(),
+                size: model_info.size_bytes,
             })
         }
     }
@@ -165,10 +165,12 @@ mod tests {
         let models = runtime.list_models().unwrap();
 
         assert_eq!(models.len(), 2);
-        assert_eq!(models[0].name, "llama3.1:8b");
-        assert_eq!(models[0].size, 4700000000);
-        assert_eq!(models[1].name, "qwen2.5:7b");
-        assert_eq!(models[1].size, 4300000000);
+        assert_eq!(models[0].id, "llama3.1:8b");
+        assert_eq!(models[0].display_name, "llama3.1:8b");
+        assert_eq!(models[0].size_bytes, 4700000000);
+        assert_eq!(models[1].id, "qwen2.5:7b");
+        assert_eq!(models[1].display_name, "qwen2.5:7b");
+        assert_eq!(models[1].size_bytes, 4300000000);
     }
 
     #[test]
