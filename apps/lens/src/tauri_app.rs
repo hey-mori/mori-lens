@@ -87,8 +87,9 @@ impl From<crate::mori_transfer::MoriStatus> for MoriStatusView {
 /// A model entry for the webview.
 #[derive(Clone, Debug, Serialize)]
 pub struct ModelInfoView {
-    pub name: String,
-    pub size: u64,
+    pub id: String,
+    pub display_name: String,
+    pub size_bytes: u64,
 }
 
 /// The result of a test translation for the webview.
@@ -333,8 +334,9 @@ async fn list_models(endpoint: String) -> Result<Vec<ModelInfoView>, String> {
             models
                 .into_iter()
                 .map(|m| ModelInfoView {
-                    name: m.name,
-                    size: m.size,
+                    id: m.id,
+                    display_name: m.display_name,
+                    size_bytes: m.size_bytes,
                 })
                 .collect()
         })
@@ -440,7 +442,7 @@ async fn get_local_ai_status(
         let state = if quick_reachable {
             match list_models(quick_endpoint.clone()).await {
                 Ok(models) => {
-                    let names = models.into_iter().map(|info| info.name).collect::<Vec<_>>();
+                    let names = models.into_iter().map(|info| info.id).collect::<Vec<_>>();
                     ModelListState::Models(names)
                 }
                 Err(e) => ModelListState::Error(e),
@@ -455,7 +457,7 @@ async fn get_local_ai_status(
         let quick_state = if quick_reachable {
             match list_models(quick_endpoint.clone()).await {
                 Ok(models) => {
-                    let names = models.into_iter().map(|info| info.name).collect::<Vec<_>>();
+                    let names = models.into_iter().map(|info| info.id).collect::<Vec<_>>();
                     ModelListState::Models(names)
                 }
                 Err(e) => ModelListState::Error(e),
@@ -466,7 +468,7 @@ async fn get_local_ai_status(
         let deep_state = if deep_reachable {
             match list_models(deep_endpoint.clone()).await {
                 Ok(models) => {
-                    let names = models.into_iter().map(|info| info.name).collect::<Vec<_>>();
+                    let names = models.into_iter().map(|info| info.id).collect::<Vec<_>>();
                     ModelListState::Models(names)
                 }
                 Err(e) => ModelListState::Error(e),
