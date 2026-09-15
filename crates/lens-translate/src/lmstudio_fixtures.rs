@@ -1,111 +1,88 @@
 //! LM Studio API schema fixtures for contract tests.
 //!
-//! These fixtures represent the official LM Studio v1 API schema as documented
-//! at https://lmstudio.ai/docs/api/v1. They are used by contract tests to
-//! validate the LmStudioRuntime and LmStudioTranslator implementations.
+//! These fixtures represent the official LM Studio native v1 API schema as
+//! documented at https://lmstudio.ai/docs/api/v1.
+//!
+//! LM Studio has two API surfaces:
+//! - Native v1: `GET /api/v1/models` (management plane)
+//! - OpenAI-compatible: `POST /v1/chat/completions` (inference plane)
+//!
+//! The native v1 model schema uses:
+//! - `id`: Model identifier (e.g., "llama-3.1-8b")
+//! - `name`: Human-readable name (e.g., "LLaMA 3.1 8B")
+//! - `type`: Model type ("llm" or "embedding")
+//! - `size`: Model size in bytes
+//! - `loaded_instances`: Array of currently loaded instances (empty if not loaded)
 //!
 //! All tests using these fixtures are AUTOMATED CONTRACT PASS, not RUNTIME VERIFIED.
 
-/// LM Studio v1 model schema.
+/// A sample LM Studio native v1 models list response with mixed model types.
 ///
-/// The official schema uses:
-/// - `id`: Model identifier (e.g., "llama-3.1-8b")
-/// - `object`: Always "model"
-/// - `created`: Unix timestamp
-/// - `owned_by`: Organization or user (e.g., "lmstudio", "user")
-/// - `type`: Model type (e.g., "text", "embedding")
-/// - `publisher_info`: Publisher metadata
-/// - `model_format`: File format (e.g., "gguf")
-/// - `quantization`: Quantization level (e.g., "Q4_K_M")
-///
-/// Example from LM Studio v1 API:
-/// ```json
-/// {
-///   "id": "llama-3.1-8b",
-///   "object": "model",
-///   "created": 1725000000,
-///   "owned_by": "lmstudio",
-///   "type": "text",
-///   "publisher_info": {...},
-///   "model_format": "gguf",
-///   "quantization": "Q4_K_M"
-/// }
-/// ```
-/// A sample LM Studio v1 models list response with mixed model types.
+/// This is the response from `GET /api/v1/models`.
+/// Note: `loaded_instances` is empty for unloaded models.
 pub const LM_STUDIO_MODELS_RESPONSE: &str = r#"{
-  "object": "list",
   "data": [
     {
       "id": "llama-3.1-8b",
-      "object": "model",
-      "created": 1725000000,
-      "owned_by": "lmstudio",
-      "type": "text",
-      "publisher_name": "LM Studio",
-      "model_format": "gguf",
-      "quantization": "Q4_K_M"
+      "name": "LLaMA 3.1 8B",
+      "type": "llm",
+      "size": 4700000000,
+      "loaded_instances": []
     },
     {
       "id": "qwen2.5-7b",
-      "object": "model",
-      "created": 1725000001,
-      "owned_by": "user",
-      "type": "text",
-      "publisher_name": "User",
-      "model_format": "gguf",
-      "quantization": "Q4_K_M"
+      "name": "Qwen 2.5 7B",
+      "type": "llm",
+      "size": 4300000000,
+      "loaded_instances": [
+        {"context_window": 4096}
+      ]
     },
     {
       "id": "nomic-embed-text",
-      "object": "model",
-      "created": 1725000002,
-      "owned_by": "lmstudio",
+      "name": "Nomic Embed Text",
       "type": "embedding",
-      "publisher_name": "LM Studio",
-      "model_format": "gguf",
-      "quantization": "Q8_0"
+      "size": 278000000,
+      "loaded_instances": []
     }
   ]
 }"#;
 
-/// A sample LM Studio v1 models list response with only text models.
-pub const LM_STUDIO_TEXT_MODELS_ONLY: &str = r#"{
-  "object": "list",
+/// A sample LM Studio native v1 models list response with only LLM models.
+pub const LM_STUDIO_LLM_MODELS_ONLY: &str = r#"{
   "data": [
     {
       "id": "llama-3.1-8b",
-      "object": "model",
-      "created": 1725000000,
-      "owned_by": "lmstudio",
-      "type": "text"
+      "name": "LLaMA 3.1 8B",
+      "type": "llm",
+      "size": 4700000000,
+      "loaded_instances": []
     },
     {
       "id": "qwen2.5-7b",
-      "object": "model",
-      "created": 1725000001,
-      "owned_by": "user",
-      "type": "text"
+      "name": "Qwen 2.5 7B",
+      "type": "llm",
+      "size": 4300000000,
+      "loaded_instances": []
     }
   ]
 }"#;
 
-/// A sample LM Studio v1 models list response with only embedding models.
+/// A sample LM Studio native v1 models list response with only embedding models.
 pub const LM_STUDIO_EMBEDDING_MODELS_ONLY: &str = r#"{
-  "object": "list",
   "data": [
     {
       "id": "nomic-embed-text",
-      "object": "model",
-      "created": 1725000002,
-      "owned_by": "lmstudio",
-      "type": "embedding"
+      "name": "Nomic Embed Text",
+      "type": "embedding",
+      "size": 278000000,
+      "loaded_instances": []
     }
   ]
 }"#;
 
 /// An empty models list response.
 pub const LM_STUDIO_EMPTY_MODELS: &str = r#"{
-  "object": "list",
   "data": []
 }"#;
 
