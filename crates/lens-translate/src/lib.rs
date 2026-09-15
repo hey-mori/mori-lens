@@ -34,8 +34,14 @@ use lens_core::translate::{
 };
 
 pub mod analyse;
+#[cfg(test)]
+mod fake_server;
 mod http;
 mod json;
+#[cfg(test)]
+pub mod lmstudio_fixtures;
+pub mod lmstudio_runtime;
+pub mod lmstudio_translator;
 pub mod ollama_runtime;
 
 #[cfg(test)]

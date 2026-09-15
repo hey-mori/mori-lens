@@ -22,7 +22,16 @@ use lens_core::translate::TranslateError;
 const MAX_BODY: usize = 1 << 20;
 
 pub fn get(endpoint: &str, path: &str, timeout: Duration) -> Result<String, TranslateError> {
-    request(endpoint, "GET", path, None, timeout)
+    request(endpoint, "GET", path, None, timeout, None)
+}
+
+pub fn get_with_auth(
+    endpoint: &str,
+    path: &str,
+    timeout: Duration,
+    token: &str,
+) -> Result<String, TranslateError> {
+    request(endpoint, "GET", path, None, timeout, Some(token))
 }
 
 pub fn post(
@@ -31,7 +40,18 @@ pub fn post(
     body: &str,
     timeout: Duration,
 ) -> Result<String, TranslateError> {
-    request(endpoint, "POST", path, Some(body), timeout)
+    request(endpoint, "POST", path, Some(body), timeout, None)
+}
+
+#[allow(dead_code)] // Will be used in Phase 3 for authenticated LM Studio requests
+pub fn post_with_auth(
+    endpoint: &str,
+    path: &str,
+    body: &str,
+    timeout: Duration,
+    token: &str,
+) -> Result<String, TranslateError> {
+    request(endpoint, "POST", path, Some(body), timeout, Some(token))
 }
 
 fn request(
@@ -40,6 +60,7 @@ fn request(
     path: &str,
     body: Option<&str>,
     timeout: Duration,
+    auth_token: Option<&str>,
 ) -> Result<String, TranslateError> {
     let address = resolve_loopback(endpoint)?;
 
@@ -60,6 +81,9 @@ fn request(
     let mut head = format!(
         "{method} {path} HTTP/1.1\r\nHost: {endpoint}\r\nConnection: close\r\nAccept: application/json\r\n",
     );
+    if let Some(token) = auth_token {
+        head.push_str(&format!("Authorization: Bearer {}\r\n", token));
+    }
     if body.is_some() {
         head.push_str(&format!(
             "Content-Type: application/json\r\nContent-Length: {}\r\n",
