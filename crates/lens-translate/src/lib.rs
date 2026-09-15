@@ -62,7 +62,7 @@ pub use lens_core::translate::ModelInfo;
 /// the settings UI needs to list models on an arbitrary endpoint before any
 /// translator is built.
 pub fn list_models(endpoint: &str) -> Result<Vec<ModelInfo>, TranslateError> {
-    let body = http::get(endpoint, "/api/tags", Duration::from_secs(3))
+    let (_status, body) = http::get(endpoint, "/api/tags", Duration::from_secs(3))
         .map_err(|_| TranslateError::Unavailable)?;
     let names = json::string_values_of_key(&body, "name");
     let sizes = json::number_values_of_key(&body, "size");
@@ -211,7 +211,8 @@ impl OllamaTranslator {
     /// this question only needs asking after a long gap. It costs about 8ms,
     /// which is worth avoiding on a hover that does not need it.
     pub fn is_resident(&self) -> bool {
-        let Ok(body) = http::get(&self.endpoint, "/api/ps", Duration::from_secs(2)) else {
+        let Ok((_status, body)) = http::get(&self.endpoint, "/api/ps", Duration::from_secs(2))
+        else {
             // Unreachable is not the same as unloaded, and the caller's next
             // move on a false is to show a "loading" card. Saying yes here
             // means the ordinary failure path reports the real problem.
@@ -247,7 +248,7 @@ impl OllamaTranslator {
         let started = Instant::now();
         // A cold 9.6GB model can take 35 seconds, so this timeout is far longer
         // than a hover's. Nobody is waiting on it.
-        let response = http::post(
+        let (_status, response) = http::post(
             &self.endpoint,
             "/api/generate",
             &body,
@@ -569,7 +570,9 @@ impl OllamaTranslator {
     fn retry_once(&self, request: &QuickRequest) -> Result<QuickTranslation, TranslateError> {
         let (body, _) = self.body_with_budget(request, false, GENEROUS_BUDGET);
         let started = Instant::now();
-        let Ok(response) = http::post(&self.endpoint, "/api/generate", &body, self.timeout) else {
+        let Ok((_status, response)) =
+            http::post(&self.endpoint, "/api/generate", &body, self.timeout)
+        else {
             return Err(TranslateError::Malformed);
         };
         if let Some(error) = self.error_in(&response) {
@@ -651,7 +654,9 @@ impl OllamaTranslator {
                 request.target_language,
             ),
         );
-        let Ok(response) = http::post(&self.endpoint, "/api/generate", &body, self.timeout) else {
+        let Ok((_status, response)) =
+            http::post(&self.endpoint, "/api/generate", &body, self.timeout)
+        else {
             return Err(TranslateError::NotTranslated);
         };
         if let Some(error) = self.error_in(&response) {
@@ -711,7 +716,8 @@ impl OllamaTranslator {
     fn control_translation(&self, clause: &str, target_language: &str) -> Option<String> {
         let request = QuickRequest::new(clause, target_language);
         let (body, fence) = self.body_for(&request, false);
-        let response = http::post(&self.endpoint, "/api/generate", &body, self.timeout).ok()?;
+        let (_status, response) =
+            http::post(&self.endpoint, "/api/generate", &body, self.timeout).ok()?;
         if self.error_in(&response).is_some() {
             return None;
         }
@@ -755,7 +761,7 @@ impl Translator for OllamaTranslator {
 
         let (body, fence) = self.body_for(request, false);
         let started = Instant::now();
-        let response = http::post(&self.endpoint, "/api/generate", &body, self.timeout)?;
+        let (_status, response) = http::post(&self.endpoint, "/api/generate", &body, self.timeout)?;
         let latency_ms = started.elapsed().as_millis();
 
         if let Some(error) = self.error_in(&response) {

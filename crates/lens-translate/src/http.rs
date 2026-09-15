@@ -21,7 +21,7 @@ use lens_core::translate::TranslateError;
 /// an unbounded read from a misbehaving endpoint is a way to exhaust memory.
 const MAX_BODY: usize = 1 << 20;
 
-pub fn get(endpoint: &str, path: &str, timeout: Duration) -> Result<String, TranslateError> {
+pub fn get(endpoint: &str, path: &str, timeout: Duration) -> Result<(u16, String), TranslateError> {
     request(endpoint, "GET", path, None, timeout, None)
 }
 
@@ -30,7 +30,7 @@ pub fn get_with_auth(
     path: &str,
     timeout: Duration,
     token: &str,
-) -> Result<String, TranslateError> {
+) -> Result<(u16, String), TranslateError> {
     request(endpoint, "GET", path, None, timeout, Some(token))
 }
 
@@ -39,18 +39,18 @@ pub fn post(
     path: &str,
     body: &str,
     timeout: Duration,
-) -> Result<String, TranslateError> {
+) -> Result<(u16, String), TranslateError> {
     request(endpoint, "POST", path, Some(body), timeout, None)
 }
 
-#[allow(dead_code)] // Will be used in Phase 3 for authenticated LM Studio requests
+#[allow(dead_code)] // Used by LmStudioTranslator after auth correction
 pub fn post_with_auth(
     endpoint: &str,
     path: &str,
     body: &str,
     timeout: Duration,
     token: &str,
-) -> Result<String, TranslateError> {
+) -> Result<(u16, String), TranslateError> {
     request(endpoint, "POST", path, Some(body), timeout, Some(token))
 }
 
@@ -61,7 +61,7 @@ fn request(
     body: Option<&str>,
     timeout: Duration,
     auth_token: Option<&str>,
-) -> Result<String, TranslateError> {
+) -> Result<(u16, String), TranslateError> {
     let address = resolve_loopback(endpoint)?;
 
     let stream =
@@ -111,6 +111,13 @@ fn request(
         return Err(TranslateError::Unavailable);
     }
 
+    // Parse the status code from "HTTP/1.1 200 OK\r\n"
+    let status_code = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(0);
+
     let mut chunked = false;
     loop {
         let mut header = String::new();
@@ -130,7 +137,8 @@ fn request(
     }
 
     if chunked {
-        read_chunked(&mut reader)
+        let body = read_chunked(&mut reader)?;
+        Ok((status_code, body))
     } else {
         // `Connection: close` means the server ends the body by closing, so
         // reading to end is correct and Content-Length is not needed.
@@ -150,7 +158,7 @@ fn request(
         if body.len() > MAX_BODY {
             return Err(TranslateError::Malformed);
         }
-        Ok(String::from_utf8_lossy(&body).into_owned())
+        Ok((status_code, String::from_utf8_lossy(&body).into_owned()))
     }
 }
 
