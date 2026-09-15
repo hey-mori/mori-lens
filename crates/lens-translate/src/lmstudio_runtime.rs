@@ -268,13 +268,9 @@ fn find_matching_brace(s: &str, start: usize) -> Option<usize> {
 /// Extract a string field value from a JSON object string.
 fn extract_string_field(obj: &str, field: &str) -> Option<String> {
     let needle = format!("\"{}\"", field);
-    let Some(field_pos) = obj.find(&needle) else {
-        return None;
-    };
+    let field_pos = obj.find(&needle)?;
     let after_field = &obj[field_pos + needle.len()..];
-    let Some(colon) = after_field.find(':') else {
-        return None;
-    };
+    let colon = after_field.find(':')?;
     let after_colon = after_field[colon + 1..].trim_start();
     if !after_colon.starts_with('"') {
         return None;
@@ -303,13 +299,9 @@ fn extract_string_field(obj: &str, field: &str) -> Option<String> {
 /// Extract a number field value from a JSON object string.
 fn extract_number_field(obj: &str, field: &str) -> Option<u64> {
     let needle = format!("\"{}\"", field);
-    let Some(field_pos) = obj.find(&needle) else {
-        return None;
-    };
+    let field_pos = obj.find(&needle)?;
     let after_field = &obj[field_pos + needle.len()..];
-    let Some(colon) = after_field.find(':') else {
-        return None;
-    };
+    let colon = after_field.find(':')?;
     let after_colon = after_field[colon + 1..].trim_start();
     // Parse digits
     let num_str: String = after_colon
