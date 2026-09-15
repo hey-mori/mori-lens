@@ -1090,21 +1090,21 @@ fn compare_installed_models() {
         models.len(),
         models
             .iter()
-            .map(|m| m.name.as_str())
+            .map(|m| m.id.as_str())
             .collect::<Vec<_>>()
             .join(", ")
     );
     println!();
 
     for model_info in &models {
-        let Some(translator) = live_with_model(&model_info.name) else {
+        let Some(translator) = live_with_model(&model_info.id) else {
             continue;
         };
 
         println!(
             "=== {} ({}MB) ===",
-            model_info.name,
-            model_info.size / 1_000_000
+            model_info.display_name,
+            model_info.size_bytes / 1_000_000
         );
         println!();
 

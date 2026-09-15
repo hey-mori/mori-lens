@@ -930,10 +930,20 @@ pub enum ModelState {
 }
 
 /// Information about a model installed on a provider endpoint.
+///
+/// Carries three distinct concerns:
+/// - `id`: the canonical request identifier the provider uses in API calls
+/// - `display_name`: a human-readable label for UI presentation
+/// - `size_bytes`: the model size on disk
+///
+/// For Ollama, `id` and `display_name` are the same (the model name like
+/// "qwen2.5:3b"). For LM Studio, `id` is the `key` (like "llama-3.1-8b")
+/// and `display_name` is the human label (like "LLaMA 3.1 8B").
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelInfo {
-    pub name: String,
-    pub size: u64,
+    pub id: String,
+    pub display_name: String,
+    pub size_bytes: u64,
 }
 
 /// Provider management operations: discovery, readiness, and status.
