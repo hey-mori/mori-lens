@@ -159,3 +159,77 @@ pub const LM_STUDIO_MODEL_NOT_FOUND_RESPONSE: &str = r#"{
     "code": "model_not_found"
   }
 }"#;
+
+/// Two models with identical display names but different keys.
+///
+/// Regression fixture: identity resolution must use canonical key,
+/// not display_name. If display_name were used as identity, looking up
+/// either model by "My Model" would be ambiguous.
+pub const LM_STUDIO_AMBIGUOUS_DISPLAY_NAMES: &str = r#"{
+  "data": [
+    {
+      "key": "llama-3.1-8b",
+      "display_name": "My Model",
+      "type": "llm",
+      "size_bytes": 4700000000,
+      "loaded_instances": []
+    },
+    {
+      "key": "qwen2.5-7b",
+      "display_name": "My Model",
+      "type": "llm",
+      "size_bytes": 4300000000,
+      "loaded_instances": [
+        {"context_window": 4096}
+      ]
+    }
+  ]
+}"#;
+
+/// A model with no type field. Fail-closed: must be excluded.
+pub const LM_STUDIO_MISSING_TYPE: &str = r#"{
+  "data": [
+    {
+      "key": "mystery-model",
+      "display_name": "Mystery Model",
+      "size_bytes": 1000000000,
+      "loaded_instances": []
+    },
+    {
+      "key": "known-llm",
+      "display_name": "Known LLM",
+      "type": "llm",
+      "size_bytes": 2000000000,
+      "loaded_instances": []
+    }
+  ]
+}"#;
+
+/// A model with an unknown future type. Fail-closed: must be excluded.
+pub const LM_STUDIO_UNKNOWN_TYPE: &str = r#"{
+  "data": [
+    {
+      "key": "future-model",
+      "display_name": "Future Model",
+      "type": "multimodal",
+      "size_bytes": 8000000000,
+      "loaded_instances": []
+    },
+    {
+      "key": "known-llm",
+      "display_name": "Known LLM",
+      "type": "llm",
+      "size_bytes": 2000000000,
+      "loaded_instances": []
+    }
+  ]
+}"#;
+
+/// A 500 Internal Server Error response body.
+pub const LM_STUDIO_INTERNAL_ERROR: &str = r#"{
+  "error": {
+    "message": "Internal server error",
+    "type": "server_error",
+    "code": "internal_error"
+  }
+}"#;

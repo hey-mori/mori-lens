@@ -81,7 +81,16 @@ impl FakeResponse {
         }
     }
 
-    #[allow(dead_code)]
+    pub fn bad_request() -> Self {
+        Self {
+            status: 400,
+            status_text: "Bad Request".to_owned(),
+            headers: vec![],
+            body: String::new(),
+            expect: None,
+        }
+    }
+
     pub fn server_error() -> Self {
         Self {
             status: 500,

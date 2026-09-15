@@ -157,6 +157,12 @@ fn list_models_with_loaded(
         return Err(TranslateError::Unavailable);
     }
 
+    // Any non-2xx status is an error, not a successful empty list.
+    // This prevents 400, 404, 500, etc. from being treated as "no models".
+    if !(200..300).contains(&status) {
+        return Err(TranslateError::Unavailable);
+    }
+
     // Also check for authentication errors in the response body
     if let Some(error_type) = crate::json::string_value_of_key(&body, "type") {
         if error_type == "authentication_error" || error_type == "permission_error" {
@@ -166,54 +172,162 @@ fn list_models_with_loaded(
 
     // Parse the LM Studio native v1 models response
     // Schema: {"data": [{"key": "...", "display_name": "...", "type": "llm", "size_bytes": 123, "loaded_instances": [...]}]}
-    let model_keys = crate::json::string_values_of_key(&body, "key");
-    let model_display_names = crate::json::string_values_of_key(&body, "display_name");
-    let model_types = crate::json::string_values_of_key(&body, "type");
-    let model_sizes = crate::json::number_values_of_key(&body, "size_bytes");
-
-    // Check loaded state by looking for non-empty loaded_instances arrays
-    // "loaded_instances":[] means not loaded, "loaded_instances":[{...}] means loaded
-    let is_loaded = check_loaded_instances(&body);
-
-    // Filter to only llm models (exclude embedding models and unknown types).
-    // Fail closed: models with missing or unrecognized type are excluded.
-    let models: Vec<RawLmStudioModel> = model_keys
-        .into_iter()
-        .enumerate()
-        .filter(|(i, _)| model_types.get(*i).is_some_and(|t| t == "llm"))
-        .map(|(i, key)| RawLmStudioModel {
-            key,
-            display_name: model_display_names.get(i).cloned().unwrap_or_default(),
-            size_bytes: model_sizes.get(i).copied().unwrap_or(0),
-            is_loaded: is_loaded.get(i).copied().unwrap_or(false),
-        })
-        .collect();
+    //
+    // Parse per-object to avoid index misalignment when fields are missing.
+    // Flat extraction (string_values_of_key) would assign values by position
+    // across the entire response, which breaks when one model lacks a field.
+    let models = parse_model_objects(&body);
 
     Ok(models)
 }
 
-/// Check which models have non-empty loaded_instances arrays.
+/// Parse model objects from the native v1 response body.
 ///
-/// Returns a vector of booleans, one per model in the response.
-/// True means the model has at least one loaded instance.
-fn check_loaded_instances(body: &str) -> Vec<bool> {
-    let mut result = Vec::new();
-    let needle = "\"loaded_instances\"";
-    let mut from = 0usize;
+/// Each object in the "data" array is parsed individually so that missing
+/// fields in one model do not shift the indices of subsequent models.
+fn parse_model_objects(body: &str) -> Vec<RawLmStudioModel> {
+    let mut models = Vec::new();
 
-    while let Some(at) = body[from..].find(needle) {
-        let after_key = from + at + needle.len();
-        from = after_key;
-        let rest = &body[after_key..];
-        let Some(colon) = rest.find(':') else { break };
-        let after_colon = rest[colon + 1..].trim_start();
+    // Find the "data" array
+    let Some(data_start) = body.find("\"data\"") else {
+        return models;
+    };
+    let after_data_key = &body[data_start + 6..];
+    let Some(array_start) = after_data_key.find('[') else {
+        return models;
+    };
+    let array_content = &after_data_key[array_start + 1..];
 
-        // Check if it's an empty array [] or non-empty [{...}]
-        let is_loaded = !after_colon.starts_with("[]");
-        result.push(is_loaded);
+    // Iterate through objects in the array
+    let mut pos = 0usize;
+    while let Some(obj_start) = array_content[pos..].find('{') {
+        let obj_begin = pos + obj_start;
+        // Find the matching closing brace
+        let Some(obj_end) = find_matching_brace(array_content, obj_begin) else {
+            break;
+        };
+        let obj_str = &array_content[obj_begin..=obj_end];
+
+        // Extract fields from this single object
+        let key = extract_string_field(obj_str, "key").unwrap_or_default();
+        let display_name = extract_string_field(obj_str, "display_name").unwrap_or_default();
+        let model_type = extract_string_field(obj_str, "type");
+        let size_bytes = extract_number_field(obj_str, "size_bytes").unwrap_or(0);
+        let is_loaded = check_object_loaded(obj_str);
+
+        // Fail closed: only include models with explicit type == "llm"
+        if model_type.as_deref() == Some("llm") {
+            models.push(RawLmStudioModel {
+                key,
+                display_name,
+                size_bytes,
+                is_loaded,
+            });
+        }
+
+        pos = obj_end + 1;
     }
 
-    result
+    models
+}
+
+/// Find the matching closing brace for an opening brace at position `start`.
+fn find_matching_brace(s: &str, start: usize) -> Option<usize> {
+    let mut depth = 0;
+    let mut in_string = false;
+    let mut escape = false;
+
+    for (i, ch) in s[start..].char_indices() {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if ch == '\\' && in_string {
+            escape = true;
+            continue;
+        }
+        if ch == '"' {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
+        if ch == '{' {
+            depth += 1;
+        } else if ch == '}' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(start + i);
+            }
+        }
+    }
+    None
+}
+
+/// Extract a string field value from a JSON object string.
+fn extract_string_field(obj: &str, field: &str) -> Option<String> {
+    let needle = format!("\"{}\"", field);
+    let Some(field_pos) = obj.find(&needle) else {
+        return None;
+    };
+    let after_field = &obj[field_pos + needle.len()..];
+    let Some(colon) = after_field.find(':') else {
+        return None;
+    };
+    let after_colon = after_field[colon + 1..].trim_start();
+    if !after_colon.starts_with('"') {
+        return None;
+    }
+    // Find the closing quote (handling escapes)
+    let content = &after_colon[1..];
+    let mut end = 0;
+    let mut escape = false;
+    for (i, ch) in content.char_indices() {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if ch == '\\' {
+            escape = true;
+            continue;
+        }
+        if ch == '"' {
+            end = i;
+            break;
+        }
+    }
+    Some(content[..end].to_owned())
+}
+
+/// Extract a number field value from a JSON object string.
+fn extract_number_field(obj: &str, field: &str) -> Option<u64> {
+    let needle = format!("\"{}\"", field);
+    let Some(field_pos) = obj.find(&needle) else {
+        return None;
+    };
+    let after_field = &obj[field_pos + needle.len()..];
+    let Some(colon) = after_field.find(':') else {
+        return None;
+    };
+    let after_colon = after_field[colon + 1..].trim_start();
+    // Parse digits
+    let num_str: String = after_colon.chars().take_while(|c| c.is_ascii_digit()).collect();
+    num_str.parse().ok()
+}
+
+/// Check if a single model object has non-empty loaded_instances.
+fn check_object_loaded(obj: &str) -> bool {
+    let Some(pos) = obj.find("\"loaded_instances\"") else {
+        return false;
+    };
+    let after = &obj[pos + 18..];
+    let Some(colon) = after.find(':') else {
+        return false;
+    };
+    let after_colon = after[colon + 1..].trim_start();
+    // Non-empty if it starts with [{ rather than []
+    after_colon.starts_with("[{") || (after_colon.starts_with('[') && !after_colon.starts_with("[]"))
 }
 
 /// List models from LM Studio's /api/v1/models endpoint.
@@ -483,6 +597,112 @@ mod tests {
             .expect_header("Authorization", "Bearer forbidden-token")]);
 
         let runtime = LmStudioRuntime::with_token(server.address(), "forbidden-token");
+        assert_eq!(runtime.reachability(), Reachability::Unreachable);
+    }
+
+    // Regression: identity uses canonical key, not display_name.
+    // Two models share the display_name "My Model" but have different keys.
+    // model_state must resolve by key only.
+    #[test]
+    fn model_state_uses_canonical_key_not_display_name() {
+        // model_state calls list_models_with_loaded once per call.
+        // Provide enough responses for all three model_state calls below.
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_AMBIGUOUS_DISPLAY_NAMES)
+                .expect_get("/api/v1/models"),
+            FakeResponse::ok_json(LM_STUDIO_AMBIGUOUS_DISPLAY_NAMES)
+                .expect_get("/api/v1/models"),
+            FakeResponse::ok_json(LM_STUDIO_AMBIGUOUS_DISPLAY_NAMES)
+                .expect_get("/api/v1/models"),
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+
+        // Looking up by key works and is unambiguous
+        let state = runtime.model_state("llama-3.1-8b").unwrap();
+        assert!(matches!(state, ModelState::Available { ref name, .. } if name == "llama-3.1-8b"));
+
+        // Looking up by the other key also works
+        let state = runtime.model_state("qwen2.5-7b").unwrap();
+        assert!(matches!(state, ModelState::Loaded { ref name } if name == "qwen2.5-7b"));
+
+        // Looking up by display_name alone does NOT resolve (canonical ID only)
+        let result = runtime.model_state("My Model");
+        assert!(matches!(result, Err(TranslateError::ModelMissing(_))));
+    }
+
+    // Fail-closed: models with missing type field are excluded.
+    #[test]
+    fn list_models_excludes_models_with_missing_type() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(LM_STUDIO_MISSING_TYPE)
+            .expect_get("/api/v1/models")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let models = runtime.list_models().unwrap();
+
+        // Only the model with explicit type == "llm" is included
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "known-llm");
+    }
+
+    // Fail-closed: models with unknown type are excluded.
+    #[test]
+    fn list_models_excludes_models_with_unknown_type() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(LM_STUDIO_UNKNOWN_TYPE)
+            .expect_get("/api/v1/models")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let models = runtime.list_models().unwrap();
+
+        // Only the model with explicit type == "llm" is included
+        // The "multimodal" type is not recognized and must be excluded
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "known-llm");
+    }
+
+    // HTTP 500 must not become a successful empty list.
+    #[test]
+    fn list_models_returns_unavailable_on_500() {
+        let server = FakeServer::start(vec![FakeResponse::server_error()
+            .expect_get("/api/v1/models")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.list_models();
+
+        assert!(matches!(result, Err(TranslateError::Unavailable)));
+    }
+
+    // HTTP 400 must not become a successful empty list.
+    #[test]
+    fn list_models_returns_unavailable_on_400() {
+        let server = FakeServer::start(vec![FakeResponse::bad_request()
+            .expect_get("/api/v1/models")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.list_models();
+
+        assert!(matches!(result, Err(TranslateError::Unavailable)));
+    }
+
+    // HTTP 404 must not become a successful empty list.
+    #[test]
+    fn list_models_returns_unavailable_on_404() {
+        let server = FakeServer::start(vec![FakeResponse::not_found()
+            .expect_get("/api/v1/models")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.list_models();
+
+        assert!(matches!(result, Err(TranslateError::Unavailable)));
+    }
+
+    // Reachability: 500 must NOT become Reachable.
+    #[test]
+    fn reachability_returns_unreachable_on_500() {
+        let server = FakeServer::start(vec![FakeResponse::server_error()
+            .expect_get("/api/v1/models")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
         assert_eq!(runtime.reachability(), Reachability::Unreachable);
     }
 }
