@@ -90,64 +90,9 @@ fn is_model_loaded(endpoint: &str, model: &str) -> Result<bool, TranslateError> 
     let body = crate::http::get(endpoint, "/api/ps", std::time::Duration::from_secs(2))
         .map_err(|_| TranslateError::Unavailable)?;
 
-    // Check if the model name appears in the JSON response
-    // The response has a "models" array, and we look for the model name in it
-    Ok(body.contains(&format!("\"name\":\"{}\"", model)))
-}
-
-/// Prewarm a model by sending a tiny request with a keep-alive lease.
-///
-/// This is an Ollama-specific lifecycle operation. It sends a minimal generate
-/// request to force the model to load, with a lease that keeps it in memory
-/// for the specified duration.
-///
-/// **Not part of the ProviderRuntime trait** because lifecycle operations are
-/// provider-specific. LM Studio requires explicit load/unload with instance
-/// ownership tracking, which is a different shape.
-pub fn prewarm(endpoint: &str, model: &str) -> Result<std::time::Duration, TranslateError> {
-    // Build JSON manually to avoid pulling in serde_json
-    let request = format!(
-        r#"{{"model":"{}","prompt":"","stream":false,"keep_alive":"30m"}}"#,
-        model
-    );
-
-    let start = std::time::Instant::now();
-    crate::http::post(
-        endpoint,
-        "/api/generate",
-        &request,
-        std::time::Duration::from_secs(30),
-    )
-    .map_err(|_| TranslateError::Unavailable)?;
-    let elapsed = start.elapsed();
-
-    Ok(elapsed)
-}
-
-/// Release a model by sending a request with keep_alive=0.
-///
-/// This is an Ollama-specific lifecycle operation. It tells Ollama to unload
-/// the model immediately.
-///
-/// **Not part of the ProviderRuntime trait** because lifecycle operations are
-/// provider-specific, and this has no ownership tracking. In a multi-client
-/// scenario, another client may have loaded the model, and releasing it here
-/// would break their lease. This is an existing weakness in the Ollama adapter
-/// that is documented in the P4 spike.
-pub fn release(endpoint: &str, model: &str) {
-    // Build JSON manually to avoid pulling in serde_json
-    let request = format!(
-        r#"{{"model":"{}","prompt":"","stream":false,"keep_alive":0}}"#,
-        model
-    );
-
-    // Best-effort: if the release fails, the model will expire naturally
-    let _ = crate::http::post(
-        endpoint,
-        "/api/generate",
-        &request,
-        std::time::Duration::from_secs(2),
-    );
+    // Use canonical JSON parsing path (same as lib.rs)
+    let loaded_models = crate::json::string_values_of_key(&body, "name");
+    Ok(loaded_models.iter().any(|name| name == model))
 }
 
 #[cfg(test)]
