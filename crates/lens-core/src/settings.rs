@@ -318,7 +318,7 @@ impl Settings {
                 None => reject("reader, developer, or exam"),
             },
             "endpoint" => {
-                if crate::translate::engine_for(value) == crate::translate::EngineId::LocalOllama {
+                if crate::translate::engine_for(value) == crate::translate::EngineId::Local {
                     self.endpoint = value.to_owned();
                 } else {
                     reject("an address on this machine: 127.0.0.1, localhost or ::1, with a port");

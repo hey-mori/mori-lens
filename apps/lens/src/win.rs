@@ -513,7 +513,7 @@ fn parse() -> Result<Options, String> {
     if let Some(endpoint) = flags.endpoint {
         // Validate the endpoint is local before accepting it.
         if lens_core::translate::engine_for(&endpoint)
-            != lens_core::translate::EngineId::LocalOllama
+            != lens_core::translate::EngineId::Local
         {
             return Err(format!(
                 // One line, deliberately. A `\`-continuation inside this
@@ -4403,7 +4403,7 @@ mod copy_provenance_tests {
     fn make_reading() -> PresentedReading {
         let qt = QuickTranslation {
             text: "안녕".to_owned(),
-            engine: lens_core::translate::EngineId::LocalOllama,
+            engine: lens_core::translate::EngineId::Local,
             model: "model-A".to_owned(),
             latency_ms: 42,
             cached: false,
@@ -4448,7 +4448,7 @@ mod copy_provenance_tests {
     fn kept_feedback_preserves_provenance() {
         let qt = QuickTranslation {
             text: "세상".to_owned(),
-            engine: lens_core::translate::EngineId::LocalOllama,
+            engine: lens_core::translate::EngineId::Local,
             model: "qwen2.5:7b".to_owned(),
             latency_ms: 99,
             cached: false,
