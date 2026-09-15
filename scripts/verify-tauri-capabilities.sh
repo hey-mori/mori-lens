@@ -170,15 +170,44 @@ else
   errors=$((errors + 1))
 fi
 
-# 11. Validate capability schema via cargo check
-printf '11. Validating capability schema... '
-if cargo check --manifest-path apps/lens/Cargo.toml --quiet 2>&1 | grep -qi "error"; then
-  printf 'FAILED (cargo check failed)\n'
-  cargo check --manifest-path apps/lens/Cargo.toml 2>&1 | grep -A 5 "error" | head -10
-  errors=$((errors + 1))
+# 11. Check detail has no core permissions
+printf '11. Checking detail has no core permissions... '
+detail_core=$(grep -E '"core:' apps/lens/capabilities/detail.json || true)
+if [[ -z "$detail_core" ]]; then
+  printf 'OK (no core permissions)\n'
 else
-  printf 'OK (schema valid)\n'
+  printf 'FAILED (detail has core permissions)\n'
+  echo "$detail_core"
+  errors=$((errors + 1))
 fi
+
+# 12. Check main has minimal core permissions
+printf '12. Checking main has minimal core permissions... '
+main_core=$(grep -E '"core:' apps/lens/capabilities/main.json | sed 's/.*"\(core:[^"]*\)".*/\1/' | sort)
+expected_core="core:event:allow-listen
+core:event:allow-unlisten"
+if [[ "$main_core" == "$expected_core" ]]; then
+  printf 'OK (minimal event permissions)\n'
+else
+  printf 'FAILED (main has incorrect core permissions)\n'
+  echo "Expected:"
+  echo "$expected_core"
+  echo "Got:"
+  echo "$main_core"
+  errors=$((errors + 1))
+fi
+
+# 13. Validate capability schema via cargo check
+printf '13. Validating capability schema... '
+cargo_output=$(mktemp)
+if cargo check --manifest-path apps/lens/Cargo.toml --quiet >"$cargo_output" 2>&1; then
+  printf 'OK (schema valid)\n'
+else
+  printf 'FAILED (cargo check failed)\n'
+  cat "$cargo_output" | head -20
+  errors=$((errors + 1))
+fi
+rm -f "$cargo_output"
 
 # Summary
 printf '\n'
