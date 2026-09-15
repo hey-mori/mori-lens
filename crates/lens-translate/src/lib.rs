@@ -1074,11 +1074,15 @@ use ollama_runtime::OllamaRuntime;
 /// Returns a boxed [`Translator`] trait object. The concrete type depends on
 /// the provider: [`OllamaTranslator`] for [`Provider::Ollama`],
 /// [`LmStudioTranslator`] for [`Provider::LmStudio`].
+///
+/// When `model` is `None`, uses [`DEFAULT_MODEL`] as a fallback. Production
+/// code should resolve the model before calling this when possible.
 pub fn build_translator(
     provider: Provider,
     endpoint: &str,
-    model: &str,
+    model: Option<&str>,
 ) -> Box<dyn Translator> {
+    let model = model.unwrap_or(DEFAULT_MODEL);
     match provider {
         Provider::Ollama => Box::new(OllamaTranslator::new(endpoint, model)),
         Provider::LmStudio => {
@@ -1458,16 +1462,22 @@ mod lease_tests {
 
     #[test]
     fn factory_builds_ollama_translator() {
-        let _translator = build_translator(Provider::Ollama, "127.0.0.1:11434", "test-model");
+        let _translator = build_translator(Provider::Ollama, "127.0.0.1:11434", Some("test-model"));
         // Factory successfully creates a Translator for Ollama
         // Concrete type verification happens through integration with production code
     }
 
     #[test]
     fn factory_builds_lmstudio_translator() {
-        let _translator = build_translator(Provider::LmStudio, "127.0.0.1:1234", "test-model");
+        let _translator = build_translator(Provider::LmStudio, "127.0.0.1:1234", Some("test-model"));
         // Factory successfully creates a Translator for LM Studio
         // Concrete type verification happens through integration with production code
+    }
+
+    #[test]
+    fn factory_handles_none_model_with_default() {
+        let _translator = build_translator(Provider::Ollama, "127.0.0.1:11434", None);
+        // Factory uses DEFAULT_MODEL when model is None
     }
 
     #[test]
