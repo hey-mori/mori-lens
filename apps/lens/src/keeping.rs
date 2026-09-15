@@ -638,7 +638,7 @@ mod tests {
             "Hello world",
             &QuickTranslation {
                 text: "안녕 세계".to_owned(),
-                engine: EngineId::LocalOllama,
+                engine: EngineId::Local,
                 model: "qwen2.5:7b".to_owned(),
                 latency_ms: 42,
                 cached: false,

@@ -182,7 +182,7 @@ mod tests {
             "The provider returns one rectangle per rendered line.",
             &QuickTranslation {
                 text: "제공자는 각 렌더링된 줄당 하나의 직사각형을 반환합니다.".to_owned(),
-                engine: EngineId::LocalOllama,
+                engine: EngineId::Local,
                 model: "qwen2.5:7b".to_owned(),
                 latency_ms: 1500,
                 cached: false,

@@ -209,7 +209,7 @@ impl Card {
     /// A card for a finished translation.
     pub fn translated(original: impl Into<String>, translation: &QuickTranslation) -> Self {
         let provider_scope = match translation.engine {
-            crate::translate::EngineId::LocalOllama => Some(CardProviderScope::Local),
+            crate::translate::EngineId::Local => Some(CardProviderScope::Local),
             crate::translate::EngineId::External => Some(CardProviderScope::External),
         };
         let card = Self {
@@ -989,7 +989,7 @@ mod tests {
     fn translation(text: &str) -> QuickTranslation {
         QuickTranslation {
             text: text.to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 900,
             cached: false,
@@ -1244,7 +1244,7 @@ mod streaming_tests {
             "original",
             &QuickTranslation {
                 text: "나는 다른 파일에서 삽입 스크립트를".to_owned(),
-                engine: crate::translate::EngineId::LocalOllama,
+                engine: crate::translate::EngineId::Local,
                 model: "m".to_owned(),
                 latency_ms: 900,
                 cached: false,
@@ -1289,7 +1289,7 @@ mod footer_tests {
                 part_was_removed: false,
                 name_changed: false,
                 text: "번역".to_owned(),
-                engine: EngineId::LocalOllama,
+                engine: EngineId::Local,
                 model: "qwen2.5-coder:7b".to_owned(),
                 latency_ms,
                 cached,
@@ -1389,7 +1389,7 @@ mod footer_tests {
             "original",
             &QuickTranslation {
                 text: "번역".to_owned(),
-                engine: EngineId::LocalOllama,
+                engine: EngineId::Local,
                 model: "qwen2.5:7b".to_owned(),
                 latency_ms: 3900,
                 cached: false,
@@ -1421,7 +1421,7 @@ mod footer_tests {
             "original",
             &QuickTranslation {
                 text: "번역".to_owned(),
-                engine: EngineId::LocalOllama,
+                engine: EngineId::Local,
                 model: "qwen2.5:7b".to_owned(),
                 latency_ms: 3900,
                 cached: false,
@@ -1780,7 +1780,7 @@ mod cutting_tests {
             "The original, which stays whole because it is how a reader checks the answer.",
             &QuickTranslation {
                 text: text.to_owned(),
-                engine: EngineId::LocalOllama,
+                engine: EngineId::Local,
                 model: "fixture".to_owned(),
                 latency_ms: 900,
                 cached: false,
@@ -1846,7 +1846,7 @@ mod clipboard_tests {
     fn an_answer() -> QuickTranslation {
         QuickTranslation {
             text: "포인터가 멈춘 뒤에야 무엇이든 읽습니다.".to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "qwen2.5:7b".to_owned(),
             latency_ms: 2644,
             cached: false,
@@ -2065,7 +2065,7 @@ mod name_changed_tests {
             "The LedgerDataSheetService returns one row per sheet.",
             &QuickTranslation {
                 text: "레저데이터시트서비스는 한 장당 한 행씩 반환합니다.".to_owned(),
-                engine: EngineId::LocalOllama,
+                engine: EngineId::Local,
                 model: "qwen2.5:7b".to_owned(),
                 latency_ms: 1500,
                 cached: false,
@@ -2092,7 +2092,7 @@ mod name_changed_tests {
             "The LedgerDataSheetService returns one row per sheet.",
             &QuickTranslation {
                 text: "레저데이터시트서비스는 한 장당".to_owned(),
-                engine: EngineId::LocalOllama,
+                engine: EngineId::Local,
                 model: "qwen2.5:7b".to_owned(),
                 latency_ms: 1500,
                 cached: false,
