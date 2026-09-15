@@ -329,7 +329,7 @@ mod tests {
     fn quick_translation(text: &str) -> QuickTranslation {
         QuickTranslation {
             text: text.to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 1600,
             cached: false,

@@ -168,7 +168,7 @@ fn showing_a_card_does_not_move_the_foreground_window() {
             text:
                 "출력 파일이 비어 있었기 때문에 전체 테스트 스위트는 아무것도 생성하지 않았습니다."
                     .to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 1090,
             cached: false,
@@ -215,7 +215,7 @@ fn the_overlay_refuses_a_translation_with_no_original() {
         "",
         &QuickTranslation {
             text: "무엇인가".to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 10,
             cached: false,
@@ -258,7 +258,7 @@ fn a_shown_card_has_text_painted_on_it() {
         "The output files came back empty.",
         &QuickTranslation {
             text: "출력 파일이 비어 있었습니다.".to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 1090,
             cached: false,
@@ -681,7 +681,7 @@ fn a_card_anchored_on_a_second_monitor_stays_on_it() {
             "The output files came back empty.",
             &QuickTranslation {
                 text: "출력 파일이 비어 있었습니다.".to_owned(),
-                engine: EngineId::LocalOllama,
+                engine: EngineId::Local,
                 model: "qwen2.5:3b".to_owned(),
                 latency_ms: 900,
                 cached: false,
@@ -770,7 +770,7 @@ fn a_click_on_the_card_passes_through_to_what_is_underneath() {
         "The output files came back empty.",
         &QuickTranslation {
             text: "출력 파일이 비어 있었습니다.".to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 900,
             cached: false,
@@ -1306,7 +1306,7 @@ fn one_attempt_at_reading_through_a_card() -> Result<String, String> {
             ORIGINAL,
             &QuickTranslation {
                 text: TRANSLATED.to_owned(),
-                engine: EngineId::LocalOllama,
+                engine: EngineId::Local,
                 model: "qwen2.5:3b".to_owned(),
                 latency_ms: 900,
                 cached: false,
@@ -1641,7 +1641,7 @@ fn the_card_is_painted_with_per_pixel_alpha_and_not_a_flat_rectangle() {
         "The output files came back empty, so the suite produced nothing at all.",
         &QuickTranslation {
             text: "출력 파일이 비어 있어서 테스트 스위트는 아무것도 만들지 않았습니다.".to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 1090,
             cached: false,
@@ -1653,7 +1653,7 @@ fn the_card_is_painted_with_per_pixel_alpha_and_not_a_flat_rectangle() {
         "The output files came back empty, so the suite produced nothing at all.",
         &QuickTranslation {
             text: "출력 파일이 비어 있어서 테스트 스위트는 아무것도 만들지 않았습니다.".to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 1090,
             cached: false,
@@ -1789,7 +1789,7 @@ fn a_longer_card_is_taller_and_the_renderer_is_the_one_that_says_so() {
             "A sentence.",
             &QuickTranslation {
                 text: translation.to_owned(),
-                engine: EngineId::LocalOllama,
+                engine: EngineId::Local,
                 model: "qwen2.5:3b".to_owned(),
                 latency_ms: 900,
                 cached: false,
@@ -1890,7 +1890,7 @@ fn a_short_answer_gets_a_narrow_card_and_a_long_one_gets_a_wide_card() {
             original,
             &QuickTranslation {
                 text: translated.to_owned(),
-                engine: EngineId::LocalOllama,
+                engine: EngineId::Local,
                 model: "qwen2.5:3b".to_owned(),
                 latency_ms: 900,
                 cached: false,
@@ -1963,7 +1963,7 @@ fn the_same_card_is_the_same_physical_size_on_a_scaled_display() {
             text:
                 "출력 파일이 비어 있었기 때문에 전체 테스트 스위트는 아무것도 생성하지 않았습니다."
                     .to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 900,
             cached: false,
@@ -2131,7 +2131,7 @@ fn a_theme_set_at_runtime_changes_the_next_card() {
         "The output files came back empty, so the suite produced nothing at all.",
         &QuickTranslation {
             text: "출력 파일이 비어 있어서 테스트 스위트는 아무것도 만들지 않았습니다.".to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 900,
             cached: false,
@@ -2191,7 +2191,7 @@ fn measure_what_a_long_paragraph_does_to_the_card() {
         &QuickTranslation {
             text: "접근성 계층은 Mori Lens가 가장 먼저 시도하는 경로입니다. 픽셀에서 복원한 추측이 아니라 애플리케이션이 이미 그리고 있다고 알고 있는 문자를 돌려주기 때문이고, 그 차이가 OCR 대체 경로를 설계가 아니라 대체 경로로 만드는 이유입니다. 두 번째 문장은 둘러싸는 단위로의 확장이 멈출 곳을 갖도록 존재하고, 세 번째 문장은 문단이 어떤 카드보다도 길어지도록 존재합니다."
                 .to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "qwen2.5:3b".to_owned(),
             latency_ms: 900,
             cached: false,
@@ -2350,7 +2350,7 @@ fn measure_what_a_capture_sees_through_the_card() {
             "The output files came back empty.",
             &QuickTranslation {
                 text: KOREAN.to_owned(),
-                engine: EngineId::LocalOllama,
+                engine: EngineId::Local,
                 model: "qwen2.5:3b".to_owned(),
                 latency_ms: 900,
                 cached: false,
@@ -2429,7 +2429,7 @@ fn dump_the_frame_around_a_card() {
         "This reveals a genuine contradiction between the two documents.",
         &QuickTranslation {
             text: "이것은 두 문서 사이의 진짜 모순을 드러냅니다.".to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "qwen2.5-coder:7b".to_owned(),
             latency_ms: 3400,
             cached: false,
@@ -2496,7 +2496,7 @@ fn measure_how_much_of_the_page_a_card_covers() {
             original,
             &QuickTranslation {
                 text: translation.to_owned(),
-                engine: EngineId::LocalOllama,
+                engine: EngineId::Local,
                 model: "qwen2.5-coder:7b".to_owned(),
                 latency_ms: 1500,
                 cached: false,
@@ -2854,7 +2854,7 @@ fn measure_what_enlarging_a_capture_does_for_small_text() {
         known,
         &QuickTranslation {
             text: "테스트가 의미 없이 통과하는 것을 올바르게 거부한다".to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "fixture".to_owned(),
             latency_ms: 0,
             cached: false,
@@ -3008,7 +3008,7 @@ fn measure_how_much_contrast_the_recogniser_needs() {
         known,
         &QuickTranslation {
             text: "테스트가 의미 없이 통과하는 것을 올바르게 거부한다".to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "fixture".to_owned(),
             latency_ms: 0,
             cached: false,
@@ -3206,7 +3206,7 @@ fn cropping_before_enlarging_still_finds_the_word() {
         "The test correctly refuses to pass vacuously",
         &QuickTranslation {
             text: "테스트가 의미 없이 통과하는 것을 올바르게 거부한다".to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "fixture".to_owned(),
             latency_ms: 0,
             cached: false,
@@ -3386,7 +3386,7 @@ fn a_card_too_tall_for_the_screen_is_cut_rather_than_clipped() {
         "one more clause about the deploy and what it did to the accounts table ".repeat(12),
         &QuickTranslation {
             text: "배포와 그것이 계정 테이블에 한 일에 대한 절 하나 더 ".repeat(12),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "fixture".to_owned(),
             latency_ms: 900,
             cached: false,
@@ -4403,7 +4403,7 @@ fn a_card_draws_over_a_full_screen_window() {
             "The output files came back empty.",
             &QuickTranslation {
                 text: "출력 파일은 비어있었습니다.".to_owned(),
-                engine: EngineId::LocalOllama,
+                engine: EngineId::Local,
                 model: "qwen2.5:7b".to_owned(),
                 latency_ms: 1090,
                 cached: false,
@@ -4708,7 +4708,7 @@ fn the_pinned_detail_is_on_screen_with_text_on_it() {
             text:
                 "제공자는 각 렌더링된 줄당 하나의 직사각형을 반환하고, 취득자는 그것을 보관합니다."
                     .to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "qwen2.5:7b".to_owned(),
             latency_ms: 1500,
             cached: false,
@@ -4931,7 +4931,7 @@ fn measure_korean_text_recognition() {
             KOREAN_SENTENCE,
             &QuickTranslation {
                 text: "The output files came back empty, so the suite produced nothing.".to_owned(),
-                engine: EngineId::LocalOllama,
+                engine: EngineId::Local,
                 model: "fixture".to_owned(),
                 latency_ms: 0,
                 cached: false,
@@ -5049,7 +5049,7 @@ fn measure_scanned_pdf_quality_recognition() {
             },
             &QuickTranslation {
                 text: "번역".to_owned(),
-                engine: EngineId::LocalOllama,
+                engine: EngineId::Local,
                 model: "fixture".to_owned(),
                 latency_ms: 0,
                 cached: false,
@@ -5169,7 +5169,7 @@ fn ocr_would_read_the_cards_own_text_if_the_hide_guard_failed() {
         ORIGINAL,
         &QuickTranslation {
             text: TRANSLATION.to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "fixture".to_owned(),
             latency_ms: 0,
             cached: false,
@@ -5368,7 +5368,7 @@ fn ocr_accuracy_corpus() {
             entry.original,
             &QuickTranslation {
                 text: entry.translation.to_owned(),
-                engine: EngineId::LocalOllama,
+                engine: EngineId::Local,
                 model: "fixture".to_owned(),
                 latency_ms: 0,
                 cached: false,
@@ -5438,7 +5438,7 @@ fn ocr_accuracy_corpus() {
         "Zarvex qulmite brandophane the seventh",
         &QuickTranslation {
             text: "자르벡스 퀄마이트 브랜도페인 일곱 번째".to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "fixture".to_owned(),
             latency_ms: 0,
             cached: false,

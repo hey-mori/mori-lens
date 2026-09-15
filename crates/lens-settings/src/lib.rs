@@ -586,17 +586,16 @@ fn extract_engine(doc: &toml_edit::DocumentMut, section: &str) -> schema::Engine
     // Reject non-loopback endpoints at parse time using the canonical
     // locality classifier. The HTTP client also validates at request time
     // (defense in depth), but early rejection prevents silent misconfiguration.
-    let endpoint = if lens_core::translate::engine_for(&endpoint)
-        == lens_core::translate::EngineId::LocalOllama
-    {
-        endpoint
-    } else {
-        eprintln!(
-            "settings: rejecting non-loopback endpoint {:?}, using default",
+    let endpoint =
+        if lens_core::translate::engine_for(&endpoint) == lens_core::translate::EngineId::Local {
             endpoint
-        );
-        defaults.endpoint.clone()
-    };
+        } else {
+            eprintln!(
+                "settings: rejecting non-loopback endpoint {:?}, using default",
+                endpoint
+            );
+            defaults.endpoint.clone()
+        };
 
     schema::EngineConfig {
         engine: get_str("engine").unwrap_or_else(|| "ollama".to_owned()),

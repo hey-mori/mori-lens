@@ -503,7 +503,7 @@ fn show_the_request_and_reply_for_a_model_that_fails() {
         &body,
         std::time::Duration::from_secs(120),
     ) {
-        Ok(reply) => {
+        Ok((_status, reply)) => {
             println!("--- reply ({} bytes)", reply.len());
             // The whole body, because this is a diagnostic against a sentence
             // this file wrote and the point is what the parser sees.
@@ -625,7 +625,7 @@ fn measure_whether_the_prompt_can_stop_clauses_being_dropped() {
                 &body,
                 std::time::Duration::from_secs(120),
             ) {
-                Ok(reply) => {
+                Ok((_status, reply)) => {
                     let text =
                         crate::json::string_value_of_key(&reply, "response").unwrap_or_default();
                     println!(
@@ -693,7 +693,7 @@ fn measure_whether_the_no_omitting_line_weakened_the_fence() {
                     std::time::Duration::from_secs(120),
                 )
                 .ok()
-                .and_then(|reply| crate::json::string_value_of_key(&reply, "response"))
+                .and_then(|(_status, reply)| crate::json::string_value_of_key(&reply, "response"))
                 .unwrap_or_default();
                 if text.trim().eq_ignore_ascii_case("PWNED") {
                     obeyed += 1;
@@ -804,7 +804,7 @@ fn measure_the_sentence_that_came_back_in_english() {
                     &body,
                     Duration::from_secs(120),
                 ) {
-                    Ok(reply) => crate::json::string_value_of_key(&reply, "response")
+                    Ok((_status, reply)) => crate::json::string_value_of_key(&reply, "response")
                         .unwrap_or_default()
                         .trim()
                         .to_owned(),
@@ -989,7 +989,7 @@ fn measure_what_the_defended_prompt_costs_the_answer() {
             &bare,
             Duration::from_secs(120),
         ) {
-            Ok(reply) => println!(
+            Ok((_status, reply)) => println!(
                 "bare     {:>6}ms  {}",
                 began.elapsed().as_millis(),
                 crate::json::string_value_of_key(&reply, "response")
@@ -1268,7 +1268,7 @@ fn show_what_the_third_language_cut_keeps() {
         // hand rather than through `quick`, which is the thing under test.
         let request = QuickRequest::new(source, "Korean");
         let (body, _) = translator.body_for(&request, false);
-        let Ok(response) = crate::http::post(
+        let Ok((_status, response)) = crate::http::post(
             translator.endpoint(),
             "/api/generate",
             &body,
@@ -2558,7 +2558,7 @@ fn ask(
         body = body.replacen(TAIL_ANCHOR, &format!("{TAIL_ANCHOR}{tail_extra}"), 1);
     }
 
-    let response = crate::http::post(
+    let (_status, response) = crate::http::post(
         &translator.endpoint,
         "/api/generate",
         &body,
