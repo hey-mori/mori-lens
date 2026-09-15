@@ -682,10 +682,9 @@ pub enum EngineId {
     /// grant.
     ///
     /// **TODO(P5):** This name leaks Ollama assumptions. The actual semantics
-    /// is "local loopback provider" which includes LM Studio at 127.0.0.1:1234.
-    /// Before P5 LM Studio integration, rename to `Local` or similar
-    /// provider-neutral name. Check for persisted/API compatibility first.
-    LocalOllama,
+    /// Local loopback provider: Ollama, LM Studio, or any engine at 127.0.0.0/8,
+    /// localhost, or ::1. Text sent here never leaves the machine.
+    Local,
     /// Anything reached over the network. Requires an explicit per-provider
     /// grant, and the card says so.
     External,
@@ -723,7 +722,7 @@ pub fn engine_for(endpoint: &str) -> EngineId {
             .split_once('.')
             .is_some_and(|(first, _)| first == "127" && host.split('.').count() == 4);
     if loopback {
-        EngineId::LocalOllama
+        EngineId::Local
     } else {
         EngineId::External
     }
@@ -732,7 +731,7 @@ pub fn engine_for(endpoint: &str) -> EngineId {
 impl EngineId {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::LocalOllama => "local",
+            Self::Local => "local",
             Self::External => "external",
         }
     }
@@ -801,7 +800,7 @@ impl TranslateError {
     /// messages based on EngineId).
     pub fn user_message(&self) -> String {
         match self {
-            Self::Unavailable => "Ollama에 연결할 수 없습니다".to_owned(),
+            Self::Unavailable => "로컬 번역 엔진에 연결할 수 없습니다".to_owned(),
             Self::ModelMissing(model) => format!("모델 {model}이(가) 설치되어 있지 않습니다"),
             Self::Timeout => "번역이 시간 안에 끝나지 않았습니다".to_owned(),
             Self::Malformed => "번역 결과를 이해할 수 없습니다".to_owned(),
@@ -820,21 +819,20 @@ impl TranslateError {
     /// [`Self::user_message`] says what went wrong. That is enough for a
     /// reader who already has the product working and hit a hiccup, and it is
     /// a dead end for the person this matters most to: someone who installed
-    /// Lens, has no Ollama, hovers over a sentence, and is told that Ollama
-    /// cannot be reached. They now know a name they have never heard and no
-    /// next step.
+    /// Lens, has no local engine, hovers over a sentence, and is told that the
+    /// translation engine cannot be reached. They now know no next step.
     ///
     /// `None` for the two states that are not the user's problem to fix. A
     /// cancelled hover with advice attached would be noise on a card that
     /// should barely register.
     pub fn remedy(&self) -> Option<String> {
         match self {
-            Self::Unavailable => {
-                Some("ollama.com 에서 Ollama를 설치한 뒤 실행해 주세요".to_owned())
+            Self::Unavailable => Some("번역 엔진을 설치하고 실행해 주세요".to_owned()),
+            // Provider-neutral: the specific command depends on which engine
+            // is configured. Phase 3 will make this provider-aware.
+            Self::ModelMissing(_model) => {
+                Some("번역 엔진에서 모델을 설치한 뒤 다시 시도해 주세요".to_owned())
             }
-            // Names the command, because the alternative is a user searching
-            // for how to install a model they did not choose.
-            Self::ModelMissing(model) => Some(format!("터미널에서 ollama pull {model}")),
             Self::Timeout => Some("더 작은 모델을 쓰거나 잠시 후 다시 시도해 주세요".to_owned()),
             Self::Malformed => Some("다른 모델로 바꿔 보세요".to_owned()),
             // The same advice, and it is the right advice: this failure is a
@@ -1016,7 +1014,7 @@ mod tests {
 
     #[test]
     fn a_local_engine_does_not_send_text_off_the_machine() {
-        assert!(!EngineId::LocalOllama.leaves_the_machine());
+        assert!(!EngineId::Local.leaves_the_machine());
         assert!(EngineId::External.leaves_the_machine());
     }
 
@@ -1026,16 +1024,16 @@ mod tests {
     fn the_failures_a_new_user_meets_say_what_to_do_about_them() {
         let unreachable = TranslateError::Unavailable.remedy().expect("a remedy");
         assert!(
-            unreachable.contains("ollama.com"),
-            "a user told only that Ollama is unreachable has nowhere to go: {unreachable}",
+            unreachable.contains("번역 엔진"),
+            "a user told the engine is unreachable needs a provider-neutral next step: {unreachable}",
         );
 
         let missing = TranslateError::ModelMissing("qwen2.5:3b".to_owned())
             .remedy()
             .expect("a remedy");
         assert!(
-            missing.contains("ollama pull qwen2.5:3b"),
-            "the remedy must be the command, not a description of it: {missing}",
+            missing.contains("모델"),
+            "the remedy must tell the user to install the model: {missing}",
         );
     }
 
@@ -1353,7 +1351,7 @@ mod endpoint_tests {
         ] {
             assert_eq!(
                 engine_for(endpoint),
-                EngineId::LocalOllama,
+                EngineId::Local,
                 "{endpoint} is on this machine",
             );
         }
@@ -2051,17 +2049,17 @@ mod fence_tests {
     #[test]
     fn engine_for_classifies_loopback_addresses_as_local() {
         // Standard loopback forms
-        assert_eq!(engine_for("127.0.0.1"), EngineId::LocalOllama);
-        assert_eq!(engine_for("127.0.0.1:11434"), EngineId::LocalOllama);
-        assert_eq!(engine_for("localhost"), EngineId::LocalOllama);
-        assert_eq!(engine_for("localhost:11434"), EngineId::LocalOllama);
-        assert_eq!(engine_for("::1"), EngineId::LocalOllama);
-        assert_eq!(engine_for("[::1]:11434"), EngineId::LocalOllama);
+        assert_eq!(engine_for("127.0.0.1"), EngineId::Local);
+        assert_eq!(engine_for("127.0.0.1:11434"), EngineId::Local);
+        assert_eq!(engine_for("localhost"), EngineId::Local);
+        assert_eq!(engine_for("localhost:11434"), EngineId::Local);
+        assert_eq!(engine_for("::1"), EngineId::Local);
+        assert_eq!(engine_for("[::1]:11434"), EngineId::Local);
 
         // Any 127.x.x.x is loopback per RFC 1122
-        assert_eq!(engine_for("127.0.0.999"), EngineId::LocalOllama);
-        assert_eq!(engine_for("127.255.255.255"), EngineId::LocalOllama);
-        assert_eq!(engine_for("127.1.2.3:8080"), EngineId::LocalOllama);
+        assert_eq!(engine_for("127.0.0.999"), EngineId::Local);
+        assert_eq!(engine_for("127.255.255.255"), EngineId::Local);
+        assert_eq!(engine_for("127.1.2.3:8080"), EngineId::Local);
     }
 
     /// Adversarial cases: strings that contain "localhost" or "127" but are
@@ -2128,7 +2126,7 @@ mod fence_tests {
 
         // Whitespace
         assert_eq!(engine_for("   "), EngineId::External);
-        assert_eq!(engine_for("  127.0.0.1  "), EngineId::LocalOllama);
+        assert_eq!(engine_for("  127.0.0.1  "), EngineId::Local);
 
         // Invalid formats
         assert_eq!(engine_for("not-an-ip"), EngineId::External);

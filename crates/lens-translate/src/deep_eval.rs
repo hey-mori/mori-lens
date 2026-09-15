@@ -1335,7 +1335,7 @@ fn prompt_ab_comparison() {
                 &body,
                 lens_core::analyse::DEEP_TIMEOUT,
             ) {
-                Ok(r) => r,
+                Ok((_status, r)) => r,
                 Err(e) => {
                     println!("  {label}: FAILED [{e}]");
                     continue;

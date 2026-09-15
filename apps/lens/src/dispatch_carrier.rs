@@ -270,7 +270,7 @@ mod tests {
         // into_result uses request.target_language.
         let result = job.into_result(Ok(QuickTranslation {
             text: "테스트".to_owned(),
-            engine: lens_core::translate::EngineId::LocalOllama,
+            engine: lens_core::translate::EngineId::Local,
             model: "test".to_owned(),
             latency_ms: 0,
             cached: false,
