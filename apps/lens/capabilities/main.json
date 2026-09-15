@@ -3,8 +3,8 @@
   "description": "Capabilities for the main settings window",
   "windows": ["main"],
   "permissions": [
-    "core:default",
-    "core:event:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "allow-check-ollama",
     "allow-export-diagnostics",
     "allow-get-diagnostics",
