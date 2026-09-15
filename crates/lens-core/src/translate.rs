@@ -682,10 +682,9 @@ pub enum EngineId {
     /// grant.
     ///
     /// **TODO(P5):** This name leaks Ollama assumptions. The actual semantics
-    /// is "local loopback provider" which includes LM Studio at 127.0.0.1:1234.
-    /// Before P5 LM Studio integration, rename to `Local` or similar
-    /// provider-neutral name. Check for persisted/API compatibility first.
-    LocalOllama,
+    /// Local loopback provider: Ollama, LM Studio, or any engine at 127.0.0.0/8,
+    /// localhost, or ::1. Text sent here never leaves the machine.
+    Local,
     /// Anything reached over the network. Requires an explicit per-provider
     /// grant, and the card says so.
     External,
@@ -723,7 +722,7 @@ pub fn engine_for(endpoint: &str) -> EngineId {
             .split_once('.')
             .is_some_and(|(first, _)| first == "127" && host.split('.').count() == 4);
     if loopback {
-        EngineId::LocalOllama
+        EngineId::Local
     } else {
         EngineId::External
     }
@@ -732,7 +731,7 @@ pub fn engine_for(endpoint: &str) -> EngineId {
 impl EngineId {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::LocalOllama => "local",
+            Self::Local => "local",
             Self::External => "external",
         }
     }
@@ -1016,7 +1015,7 @@ mod tests {
 
     #[test]
     fn a_local_engine_does_not_send_text_off_the_machine() {
-        assert!(!EngineId::LocalOllama.leaves_the_machine());
+        assert!(!EngineId::Local.leaves_the_machine());
         assert!(EngineId::External.leaves_the_machine());
     }
 
@@ -1353,7 +1352,7 @@ mod endpoint_tests {
         ] {
             assert_eq!(
                 engine_for(endpoint),
-                EngineId::LocalOllama,
+                EngineId::Local,
                 "{endpoint} is on this machine",
             );
         }
@@ -2051,17 +2050,17 @@ mod fence_tests {
     #[test]
     fn engine_for_classifies_loopback_addresses_as_local() {
         // Standard loopback forms
-        assert_eq!(engine_for("127.0.0.1"), EngineId::LocalOllama);
-        assert_eq!(engine_for("127.0.0.1:11434"), EngineId::LocalOllama);
-        assert_eq!(engine_for("localhost"), EngineId::LocalOllama);
-        assert_eq!(engine_for("localhost:11434"), EngineId::LocalOllama);
-        assert_eq!(engine_for("::1"), EngineId::LocalOllama);
-        assert_eq!(engine_for("[::1]:11434"), EngineId::LocalOllama);
+        assert_eq!(engine_for("127.0.0.1"), EngineId::Local);
+        assert_eq!(engine_for("127.0.0.1:11434"), EngineId::Local);
+        assert_eq!(engine_for("localhost"), EngineId::Local);
+        assert_eq!(engine_for("localhost:11434"), EngineId::Local);
+        assert_eq!(engine_for("::1"), EngineId::Local);
+        assert_eq!(engine_for("[::1]:11434"), EngineId::Local);
 
         // Any 127.x.x.x is loopback per RFC 1122
-        assert_eq!(engine_for("127.0.0.999"), EngineId::LocalOllama);
-        assert_eq!(engine_for("127.255.255.255"), EngineId::LocalOllama);
-        assert_eq!(engine_for("127.1.2.3:8080"), EngineId::LocalOllama);
+        assert_eq!(engine_for("127.0.0.999"), EngineId::Local);
+        assert_eq!(engine_for("127.255.255.255"), EngineId::Local);
+        assert_eq!(engine_for("127.1.2.3:8080"), EngineId::Local);
     }
 
     /// Adversarial cases: strings that contain "localhost" or "127" but are
@@ -2128,7 +2127,7 @@ mod fence_tests {
 
         // Whitespace
         assert_eq!(engine_for("   "), EngineId::External);
-        assert_eq!(engine_for("  127.0.0.1  "), EngineId::LocalOllama);
+        assert_eq!(engine_for("  127.0.0.1  "), EngineId::Local);
 
         // Invalid formats
         assert_eq!(engine_for("not-an-ip"), EngineId::External);

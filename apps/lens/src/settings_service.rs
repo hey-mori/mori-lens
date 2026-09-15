@@ -402,7 +402,7 @@ fn validate_engine(value: &str) -> String {
 }
 
 fn validate_endpoint(value: &str, default: &str, field_name: &str) -> String {
-    if lens_core::translate::engine_for(value) == lens_core::translate::EngineId::LocalOllama {
+    if lens_core::translate::engine_for(value) == lens_core::translate::EngineId::Local {
         value.to_owned()
     } else {
         eprintln!("settings  {field_name} = {value} is not a loopback address, using {default}");
