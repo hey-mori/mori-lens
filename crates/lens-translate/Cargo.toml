@@ -1,17 +1,20 @@
 [package]
 name = "lens-translate"
-description = "Quick translation for Mori Lens through a local Ollama, with no HTTP or JSON dependency."
+description = "Translation engine for Mori Lens through local Ollama and LM Studio, with loopback-only HTTP and typed JSON parsing for provider responses."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# No HTTP or JSON crate. The endpoint is loopback, the payload is one object,
-# and there are two verbs; see src/http.rs for why that is a reason rather than
-# an excuse, and for the line that says a remote provider must not reuse it.
+# Loopback-only HTTP (see src/http.rs); typed JSON parsing for provider responses
+# (see src/lmstudio_runtime.rs). The HTTP client remains hand-written because the
+# surface is tiny and loopback-only; the JSON parsing uses serde_json because
+# provider responses are nested external documents that require correct validation.
 [dependencies]
 lens-core.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [lints]
 workspace = true
