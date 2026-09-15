@@ -512,9 +512,7 @@ fn parse() -> Result<Options, String> {
     // A user who needs separate endpoints edits the settings file.
     if let Some(endpoint) = flags.endpoint {
         // Validate the endpoint is local before accepting it.
-        if lens_core::translate::engine_for(&endpoint)
-            != lens_core::translate::EngineId::Local
-        {
+        if lens_core::translate::engine_for(&endpoint) != lens_core::translate::EngineId::Local {
             return Err(format!(
                 // One line, deliberately. A `\`-continuation inside this
                 // literal came back from rustfmt rejoined with its
