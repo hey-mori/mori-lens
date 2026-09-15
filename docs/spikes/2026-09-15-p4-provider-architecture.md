@@ -1,7 +1,7 @@
 # P4 Provider Architecture Spike: Investigation
 
 **Date:** 2026-09-15
-**Status:** In Progress
+**Status:** COMPLETE (PR #567 merged)
 **Goal:** Discover abstraction boundary by comparing Ollama with second provider
 
 ## Current Ollama Implementation Inventory
@@ -382,8 +382,8 @@ Currently:
 | **Default endpoint** | `127.0.0.1:11434` | `127.0.0.1:1234` | Provider-specific defaults |
 | **Endpoint normalization** | User-provided or default | User-provided or default | Same pattern |
 | **Health / reachability** | GET `/api/tags` 2s timeout | GET `/v1/models` 2s timeout | Different endpoints, same concept |
-| **Downloaded model discovery** | GET `/api/tags` → `{name, size}` | GET `/api/v1/models` → `{id, name, size, state}` | Different response format |
-| **Loaded/resident model discovery** | GET `/api/ps` → check name in list | GET `/api/v1/models` → check state="loaded" | Different mechanism |
+| **Downloaded model discovery** | GET `/api/tags` → `{name, size}` | GET `/api/v1/models` → `{key, display_name, size_bytes, loaded_instances}` | Different response format |
+| **Loaded/resident model discovery** | GET `/api/ps` → check name in list | GET `/api/v1/models` → check `loaded_instances` non-empty | Different mechanism |
 | **Model identifier semantics** | `name:tag` (e.g., `qwen2.5:7b`) | `id` (e.g., `model-name`) | Different naming conventions |
 | **Explicit model selection** | `model` field in request | `model` field in request | Same concept |
 | **No-model behavior** | Empty list from `/api/tags` | Empty list from `/v1/models` | Same concept |
@@ -406,7 +406,7 @@ Currently:
 | **Cancellation possibility** | HTTP client cancellation | HTTP client cancellation | Same concept |
 | **Prewarm semantics** | Minimal generate request + keep_alive | Explicit load request | Different mechanism |
 | **Quick / Deep separate endpoint support** | Two Translator instances | Two Translator instances | Same pattern |
-| **Authentication possibility** | None (local-only) | None (local-only) | Same |
+| **Authentication possibility** | None (local-only) | API token authentication supported (`Authorization: Bearer $LM_API_TOKEN`) | LM Studio supports auth; Mori Lens P5 initially supports unauthenticated loopback only |
 | **Fully-local guarantee** | Yes | Yes | Same |
 
 ## State Model Analysis: Available vs Loaded vs Ready
