@@ -123,7 +123,9 @@ mod tests {
 
     #[test]
     fn reachability_returns_reachable_when_endpoint_answers() {
-        let server = FakeServer::start(vec![FakeResponse::ok_json(r#"{"models":[]}"#)]);
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(r#"{"models":[]}"#).expect_get("/api/tags")
+        ]);
 
         let runtime = OllamaRuntime::new(server.address());
         assert_eq!(runtime.reachability(), Reachability::Reachable);
@@ -138,7 +140,9 @@ mod tests {
 
     #[test]
     fn list_models_returns_empty_vec_when_no_models_installed() {
-        let server = FakeServer::start(vec![FakeResponse::ok_json(r#"{"models":[]}"#)]);
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(r#"{"models":[]}"#).expect_get("/api/tags")
+        ]);
 
         let runtime = OllamaRuntime::new(server.address());
         let models = runtime.list_models().unwrap();
@@ -153,7 +157,9 @@ mod tests {
                 {"name": "qwen2.5:7b", "size": 4300000000}
             ]
         }"#;
-        let server = FakeServer::start(vec![FakeResponse::ok_json(response_body)]);
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(response_body).expect_get("/api/tags")
+        ]);
 
         let runtime = OllamaRuntime::new(server.address());
         let models = runtime.list_models().unwrap();
@@ -180,8 +186,8 @@ mod tests {
         // Second call: is_model_loaded via /api/ps (model not loaded)
         let ps_response = r#"{"models":[]}"#;
         let server = FakeServer::start(vec![
-            FakeResponse::ok_json(tags_response),
-            FakeResponse::ok_json(ps_response),
+            FakeResponse::ok_json(tags_response).expect_get("/api/tags"),
+            FakeResponse::ok_json(ps_response).expect_get("/api/ps"),
         ]);
 
         let runtime = OllamaRuntime::new(server.address());
@@ -203,8 +209,8 @@ mod tests {
         // Second call: is_model_loaded via /api/ps (model is loaded)
         let ps_response = r#"{"models":[{"name":"llama3.1:8b"}]}"#;
         let server = FakeServer::start(vec![
-            FakeResponse::ok_json(tags_response),
-            FakeResponse::ok_json(ps_response),
+            FakeResponse::ok_json(tags_response).expect_get("/api/tags"),
+            FakeResponse::ok_json(ps_response).expect_get("/api/ps"),
         ]);
 
         let runtime = OllamaRuntime::new(server.address());
@@ -221,7 +227,9 @@ mod tests {
     #[test]
     fn model_state_returns_model_missing_when_model_not_installed() {
         let tags_response = r#"{"models":[]}"#;
-        let server = FakeServer::start(vec![FakeResponse::ok_json(tags_response)]);
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(tags_response).expect_get("/api/tags")
+        ]);
 
         let runtime = OllamaRuntime::new(server.address());
         let result = runtime.model_state("nonexistent-model");

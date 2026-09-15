@@ -198,7 +198,9 @@ mod tests {
 
     #[test]
     fn reachability_returns_reachable_when_endpoint_answers() {
-        let server = FakeServer::start(vec![FakeResponse::ok_json(LM_STUDIO_EMPTY_MODELS)]);
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_EMPTY_MODELS).expect_get("/v1/models")
+        ]);
 
         let runtime = LmStudioRuntime::new(server.address());
         assert_eq!(runtime.reachability(), Reachability::Reachable);
@@ -212,7 +214,9 @@ mod tests {
 
     #[test]
     fn list_models_returns_empty_vec_when_no_models() {
-        let server = FakeServer::start(vec![FakeResponse::ok_json(LM_STUDIO_EMPTY_MODELS)]);
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_EMPTY_MODELS).expect_get("/v1/models")
+        ]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let models = runtime.list_models().unwrap();
@@ -221,7 +225,9 @@ mod tests {
 
     #[test]
     fn list_models_filters_out_embedding_models() {
-        let server = FakeServer::start(vec![FakeResponse::ok_json(LM_STUDIO_MODELS_RESPONSE)]);
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_MODELS_RESPONSE).expect_get("/v1/models")
+        ]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let models = runtime.list_models().unwrap();
@@ -234,7 +240,9 @@ mod tests {
 
     #[test]
     fn list_models_returns_text_models_only() {
-        let server = FakeServer::start(vec![FakeResponse::ok_json(LM_STUDIO_TEXT_MODELS_ONLY)]);
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_TEXT_MODELS_ONLY).expect_get("/v1/models")
+        ]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let models = runtime.list_models().unwrap();
@@ -253,7 +261,9 @@ mod tests {
 
     #[test]
     fn model_state_returns_available_when_model_exists() {
-        let server = FakeServer::start(vec![FakeResponse::ok_json(LM_STUDIO_TEXT_MODELS_ONLY)]);
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_TEXT_MODELS_ONLY).expect_get("/v1/models")
+        ]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let state = runtime.model_state("llama-3.1-8b").unwrap();
@@ -269,7 +279,9 @@ mod tests {
 
     #[test]
     fn model_state_returns_model_missing_when_model_not_found() {
-        let server = FakeServer::start(vec![FakeResponse::ok_json(LM_STUDIO_TEXT_MODELS_ONLY)]);
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_TEXT_MODELS_ONLY).expect_get("/v1/models")
+        ]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let result = runtime.model_state("nonexistent-model");
@@ -279,7 +291,9 @@ mod tests {
 
     #[test]
     fn model_state_returns_model_missing_for_embedding_model() {
-        let server = FakeServer::start(vec![FakeResponse::ok_json(LM_STUDIO_MODELS_RESPONSE)]);
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_MODELS_RESPONSE).expect_get("/v1/models")
+        ]);
 
         let runtime = LmStudioRuntime::new(server.address());
         // nomic-embed-text exists but is an embedding model, so it should be filtered out
@@ -298,7 +312,9 @@ mod tests {
 
     #[test]
     fn list_models_returns_unavailable_on_401_unauthorized() {
-        let server = FakeServer::start(vec![FakeResponse::unauthorized()]);
+        let server = FakeServer::start(vec![FakeResponse::unauthorized()
+            .expect_get("/v1/models")
+            .expect_header("Authorization", "Bearer invalid-token")]);
 
         let runtime = LmStudioRuntime::with_token(server.address(), "invalid-token");
         let result = runtime.list_models();
@@ -309,7 +325,9 @@ mod tests {
 
     #[test]
     fn list_models_returns_unavailable_on_403_forbidden() {
-        let server = FakeServer::start(vec![FakeResponse::forbidden()]);
+        let server = FakeServer::start(vec![FakeResponse::forbidden()
+            .expect_get("/v1/models")
+            .expect_header("Authorization", "Bearer forbidden-token")]);
 
         let runtime = LmStudioRuntime::with_token(server.address(), "forbidden-token");
         let result = runtime.list_models();
@@ -320,7 +338,9 @@ mod tests {
 
     #[test]
     fn reachability_returns_unreachable_on_401_unauthorized() {
-        let server = FakeServer::start(vec![FakeResponse::unauthorized()]);
+        let server = FakeServer::start(vec![FakeResponse::unauthorized()
+            .expect_get("/v1/models")
+            .expect_header("Authorization", "Bearer invalid-token")]);
 
         let runtime = LmStudioRuntime::with_token(server.address(), "invalid-token");
         assert_eq!(runtime.reachability(), Reachability::Unreachable);
@@ -328,7 +348,9 @@ mod tests {
 
     #[test]
     fn reachability_returns_unreachable_on_403_forbidden() {
-        let server = FakeServer::start(vec![FakeResponse::forbidden()]);
+        let server = FakeServer::start(vec![FakeResponse::forbidden()
+            .expect_get("/v1/models")
+            .expect_header("Authorization", "Bearer forbidden-token")]);
 
         let runtime = LmStudioRuntime::with_token(server.address(), "forbidden-token");
         assert_eq!(runtime.reachability(), Reachability::Unreachable);

@@ -278,7 +278,9 @@ mod tests {
 
     #[test]
     fn quick_returns_translation_from_lmstudio() {
-        let server = FakeServer::start(vec![FakeResponse::ok_json(LM_STUDIO_CHAT_RESPONSE)]);
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_CHAT_RESPONSE).expect_post("/v1/chat/completions")
+        ]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
@@ -293,7 +295,9 @@ mod tests {
 
     #[test]
     fn quick_returns_unavailable_on_auth_error() {
-        let server = FakeServer::start(vec![FakeResponse::unauthorized()]);
+        let server = FakeServer::start(vec![
+            FakeResponse::unauthorized().expect_post("/v1/chat/completions")
+        ]);
 
         let runtime = LmStudioRuntime::with_token(server.address(), "invalid-token");
         let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
@@ -308,7 +312,8 @@ mod tests {
     fn quick_returns_model_missing_on_invalid_model() {
         let server = FakeServer::start(vec![FakeResponse::ok_json(
             LM_STUDIO_MODEL_NOT_FOUND_RESPONSE,
-        )]);
+        )
+        .expect_post("/v1/chat/completions")]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let translator = LmStudioTranslator::new(runtime, "nonexistent-model");
@@ -347,7 +352,9 @@ mod tests {
         }}"#,
             source
         );
-        let server = FakeServer::start(vec![FakeResponse::ok_json(&echo_response)]);
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(&echo_response).expect_post("/v1/chat/completions")
+        ]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
@@ -374,7 +381,9 @@ mod tests {
         }}"#,
             source
         );
-        let server = FakeServer::start(vec![FakeResponse::ok_json(&echo_response)]);
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(&echo_response).expect_post("/v1/chat/completions")
+        ]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
