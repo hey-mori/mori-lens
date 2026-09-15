@@ -412,13 +412,34 @@ mod tests {
         let body = translator.build_request(&request);
 
         // Verify structural fields
-        assert!(body.contains(r#""model":"test-model""#), "body names the model: {body}");
-        assert!(body.contains(r#""temperature":0"#), "body sets temperature: {body}");
-        assert!(body.contains(r#""stream":false"#), "body disables streaming: {body}");
-        assert!(body.contains(r#""max_tokens":"#), "body sets token budget: {body}");
-        assert!(body.contains(r#""role":"system""#), "body has system message: {body}");
-        assert!(body.contains(r#""role":"user""#), "body has user message: {body}");
-        assert!(body.contains(r#""messages":["#), "body has messages array: {body}");
+        assert!(
+            body.contains(r#""model":"test-model""#),
+            "body names the model: {body}"
+        );
+        assert!(
+            body.contains(r#""temperature":0"#),
+            "body sets temperature: {body}"
+        );
+        assert!(
+            body.contains(r#""stream":false"#),
+            "body disables streaming: {body}"
+        );
+        assert!(
+            body.contains(r#""max_tokens":"#),
+            "body sets token budget: {body}"
+        );
+        assert!(
+            body.contains(r#""role":"system""#),
+            "body has system message: {body}"
+        );
+        assert!(
+            body.contains(r#""role":"user""#),
+            "body has user message: {body}"
+        );
+        assert!(
+            body.contains(r#""messages":["#),
+            "body has messages array: {body}"
+        );
     }
 
     /// Verify the source text appears only in user content, not in system prompt.
@@ -491,7 +512,10 @@ mod tests {
 
         // The body must be valid JSON - unescaped quotes would break it.
         // Verify the raw quotes from source are escaped as \"
-        assert!(body.contains(r#"He said \"hello\""#), "quotes escaped in body: {body}");
+        assert!(
+            body.contains(r#"He said \"hello\""#),
+            "quotes escaped in body: {body}"
+        );
     }
 
     /// Source text with backslashes must be properly escaped.
@@ -504,7 +528,10 @@ mod tests {
         let body = translator.build_request(&request);
 
         // Backslashes must be escaped as \\
-        assert!(body.contains(r#"path\\to\\file"#), "backslashes escaped in body: {body}");
+        assert!(
+            body.contains(r#"path\\to\\file"#),
+            "backslashes escaped in body: {body}"
+        );
     }
 
     /// Source text with newlines must be properly escaped.
@@ -585,6 +612,9 @@ mod tests {
 
         // Count user message openings - must be exactly one
         let user_count = body.matches(r#""role":"user""#).count();
-        assert_eq!(user_count, 1, "exactly one user message despite fence lookalikes: {body}");
+        assert_eq!(
+            user_count, 1,
+            "exactly one user message despite fence lookalikes: {body}"
+        );
     }
 }
