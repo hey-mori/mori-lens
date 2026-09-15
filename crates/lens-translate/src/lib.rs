@@ -1120,20 +1120,18 @@ mod without_ollama {
     use super::*;
     use lens_core::card::{Card, CardBody};
 
-    /// What someone who installed Lens and not Ollama actually gets.
+    /// What someone who installed Lens and no translation engine actually gets.
     ///
     /// The most likely first experience of this product, and until the remedy
-    /// existed it ended at "Ollama에 연결할 수 없습니다": the name of something
-    /// they have never heard of, and no next step.
+    /// existed it ended at "로컬 번역 엔진에 연결할 수 없습니다": no next step.
     ///
     /// Not an ignored live test. Nothing listens on port 1, so the connection
     /// is refused immediately and deterministically, which is exactly the
-    /// state being modelled. Pointing this at the real endpoint and asking
-    /// someone to stop their Ollama would be a worse test and a ruder one.
+    /// state being modelled.
     const NOTHING_LISTENS: &str = "127.0.0.1:1";
 
     #[test]
-    fn a_first_run_with_no_ollama_says_where_to_get_it() {
+    fn a_first_run_with_no_engine_says_where_to_get_it() {
         let mut translator = OllamaTranslator::new(NOTHING_LISTENS, "qwen2.5:3b");
         let error = translator
             .resolve_model()
@@ -1141,7 +1139,7 @@ mod without_ollama {
 
         assert_eq!(error, TranslateError::Unavailable);
         let remedy = error.remedy().expect("a remedy");
-        assert!(remedy.contains("ollama.com"), "{remedy}");
+        assert!(remedy.contains("번역 엔진"), "{remedy}");
     }
 
     /// And the card says it too, since a user who double-clicked the binary
@@ -1165,7 +1163,7 @@ mod without_ollama {
             panic!("a failed translation produced a translation card");
         };
         assert!(
-            body.contains("ollama.com"),
+            body.contains("번역 엔진"),
             "the card names the problem and not the fix: {body}",
         );
     }

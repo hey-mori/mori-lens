@@ -800,7 +800,7 @@ impl TranslateError {
     /// messages based on EngineId).
     pub fn user_message(&self) -> String {
         match self {
-            Self::Unavailable => "Ollama에 연결할 수 없습니다".to_owned(),
+            Self::Unavailable => "로컬 번역 엔진에 연결할 수 없습니다".to_owned(),
             Self::ModelMissing(model) => format!("모델 {model}이(가) 설치되어 있지 않습니다"),
             Self::Timeout => "번역이 시간 안에 끝나지 않았습니다".to_owned(),
             Self::Malformed => "번역 결과를 이해할 수 없습니다".to_owned(),
@@ -819,21 +819,20 @@ impl TranslateError {
     /// [`Self::user_message`] says what went wrong. That is enough for a
     /// reader who already has the product working and hit a hiccup, and it is
     /// a dead end for the person this matters most to: someone who installed
-    /// Lens, has no Ollama, hovers over a sentence, and is told that Ollama
-    /// cannot be reached. They now know a name they have never heard and no
-    /// next step.
+    /// Lens, has no local engine, hovers over a sentence, and is told that the
+    /// translation engine cannot be reached. They now know no next step.
     ///
     /// `None` for the two states that are not the user's problem to fix. A
     /// cancelled hover with advice attached would be noise on a card that
     /// should barely register.
     pub fn remedy(&self) -> Option<String> {
         match self {
-            Self::Unavailable => {
-                Some("ollama.com 에서 Ollama를 설치한 뒤 실행해 주세요".to_owned())
+            Self::Unavailable => Some("번역 엔진을 설치하고 실행해 주세요".to_owned()),
+            // Provider-neutral: the specific command depends on which engine
+            // is configured. Phase 3 will make this provider-aware.
+            Self::ModelMissing(_model) => {
+                Some("번역 엔진에서 모델을 설치한 뒤 다시 시도해 주세요".to_owned())
             }
-            // Names the command, because the alternative is a user searching
-            // for how to install a model they did not choose.
-            Self::ModelMissing(model) => Some(format!("터미널에서 ollama pull {model}")),
             Self::Timeout => Some("더 작은 모델을 쓰거나 잠시 후 다시 시도해 주세요".to_owned()),
             Self::Malformed => Some("다른 모델로 바꿔 보세요".to_owned()),
             // The same advice, and it is the right advice: this failure is a
@@ -1025,16 +1024,16 @@ mod tests {
     fn the_failures_a_new_user_meets_say_what_to_do_about_them() {
         let unreachable = TranslateError::Unavailable.remedy().expect("a remedy");
         assert!(
-            unreachable.contains("ollama.com"),
-            "a user told only that Ollama is unreachable has nowhere to go: {unreachable}",
+            unreachable.contains("번역 엔진"),
+            "a user told the engine is unreachable needs a provider-neutral next step: {unreachable}",
         );
 
         let missing = TranslateError::ModelMissing("qwen2.5:3b".to_owned())
             .remedy()
             .expect("a remedy");
         assert!(
-            missing.contains("ollama pull qwen2.5:3b"),
-            "the remedy must be the command, not a description of it: {missing}",
+            missing.contains("모델"),
+            "the remedy must tell the user to install the model: {missing}",
         );
     }
 
