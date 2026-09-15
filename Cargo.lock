@@ -209,6 +209,8 @@ name = "lens-translate"
 version = "0.1.0"
 dependencies = [
  "lens-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

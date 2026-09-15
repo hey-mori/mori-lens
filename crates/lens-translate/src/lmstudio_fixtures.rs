@@ -346,6 +346,136 @@ pub const LM_STUDIO_LOADED_WHITESPACE: &str = r#"{
   ]
 }"#;
 
+/// Malformed: field name appearing only inside a string value, not as an actual field.
+/// The `has_field` helper must not mistake value text for a field key.
+pub const LM_STUDIO_MALFORMED_FIELD_NAME_IN_VALUE: &str = r#"{
+  "models": [
+    {
+      "type": "llm",
+      "key": "foo",
+      "display_name": "loaded_instances",
+      "size_bytes": 123
+    }
+  ]
+}"#;
+
+/// Malformed: missing comma between model objects.
+/// A structurally closed but syntactically invalid JSON must not parse successfully.
+pub const LM_STUDIO_MALFORMED_MISSING_COMMA: &str = r#"{
+  "models": [
+    {
+      "type": "llm",
+      "key": "one",
+      "display_name": "One",
+      "size_bytes": 1,
+      "loaded_instances": []
+    }
+    {
+      "type": "llm",
+      "key": "two",
+      "display_name": "Two",
+      "size_bytes": 2,
+      "loaded_instances": []
+    }
+  ]
+}"#;
+
+/// Malformed: size_bytes is a string instead of a number.
+/// Wrong JSON type for required field is malformed.
+pub const LM_STUDIO_MALFORMED_SIZE_AS_STRING: &str = r#"{
+  "models": [
+    {
+      "type": "llm",
+      "key": "bad-size",
+      "display_name": "Bad Size",
+      "size_bytes": "123",
+      "loaded_instances": []
+    }
+  ]
+}"#;
+
+/// Malformed: loaded_instances is an object instead of an array.
+/// Wrong JSON type for required field is malformed.
+pub const LM_STUDIO_MALFORMED_LOADED_AS_OBJECT: &str = r#"{
+  "models": [
+    {
+      "type": "llm",
+      "key": "bad-loaded",
+      "display_name": "Bad Loaded",
+      "size_bytes": 123,
+      "loaded_instances": {}
+    }
+  ]
+}"#;
+
+/// Malformed: key is null instead of a string.
+/// Wrong JSON type for required field is malformed.
+pub const LM_STUDIO_MALFORMED_KEY_NULL: &str = r#"{
+  "models": [
+    {
+      "type": "llm",
+      "key": null,
+      "display_name": "Null Key",
+      "size_bytes": 123,
+      "loaded_instances": []
+    }
+  ]
+}"#;
+
+/// Malformed: models is not an array (it's an object).
+pub const LM_STUDIO_MALFORMED_MODELS_NOT_ARRAY: &str = r#"{
+  "models": {}
+}"#;
+
+/// Malformed: an explicit LLM entry with no `display_name` field.
+pub const LM_STUDIO_MALFORMED_LLM_MISSING_DISPLAY_NAME: &str = r#"{
+  "models": [
+    {
+      "key": "no-display-model",
+      "type": "llm",
+      "size_bytes": 1000000000,
+      "loaded_instances": []
+    }
+  ]
+}"#;
+
+/// Valid: model with escaped characters in display_name.
+/// Tests that JSON string escaping is handled correctly by the parser.
+pub const LM_STUDIO_ESCAPED_DISPLAY_NAME: &str = r#"{
+  "models": [
+    {
+      "type": "llm",
+      "key": "escaped-model",
+      "display_name": "Model with \"quotes\" and \\backslash",
+      "size_bytes": 1000000000,
+      "loaded_instances": []
+    }
+  ]
+}"#;
+
+/// Valid: model with unknown extra fields.
+/// Tests that the parser tolerates additional fields not in the minimal schema.
+pub const LM_STUDIO_EXTRA_FIELDS: &str = r#"{
+  "models": [
+    {
+      "type": "llm",
+      "key": "extra-model",
+      "display_name": "Extra Model",
+      "size_bytes": 1000000000,
+      "loaded_instances": [],
+      "publisher": "test-publisher",
+      "architecture": "transformer",
+      "quantization": "q4_k_m",
+      "params_string": "1B",
+      "max_context_length": 4096,
+      "format": "gguf",
+      "capabilities": ["text-generation"],
+      "description": "A test model with extra fields",
+      "some_future_field": "value"
+    }
+  ]
+}"#;
+
 /// A 500 Internal Server Error response body.
 pub const LM_STUDIO_INTERNAL_ERROR: &str = r#"{
   "error": {
