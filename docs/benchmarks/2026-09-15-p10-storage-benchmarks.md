@@ -86,7 +86,7 @@ Benchmarks measure 9 distinct query patterns at 3 scale points (100, 1k, 10k ite
 4. **App filters are very fast**
    - Simple app filter: 433µs at 10k
    - Combined with query: 592µs at 10k
-   - Indexed column lookup
+   - Linear scan on unindexed column, but fast due to small dataset and simple equality check
 
 5. **Composed filters remain performant**
    - Query + tag + app: 1.46ms at 10k
