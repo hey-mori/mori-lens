@@ -646,6 +646,8 @@ pub fn main() -> std::process::ExitCode {
 
     // ADR-0005: Two separate translators for Quick and Deep paths.
     // Each has its own endpoint and model, configured independently.
+    // Phase 3: Provider identity is preserved in RuntimeEngine for factory use.
+    // Full LM Studio lifecycle integration (prewarm, release, is_resident) is Phase 4.
     let mut quick_translator = OllamaTranslator::choosing(&options.ai_config.quick.endpoint);
     if let Some(model) = &options.ai_config.quick.model {
         quick_translator = OllamaTranslator::new(&options.ai_config.quick.endpoint, model);
