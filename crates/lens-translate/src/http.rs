@@ -43,7 +43,6 @@ pub fn post(
     request(endpoint, "POST", path, Some(body), timeout, None)
 }
 
-#[allow(dead_code)] // Used by LmStudioTranslator after auth correction
 pub fn post_with_auth(
     endpoint: &str,
     path: &str,
