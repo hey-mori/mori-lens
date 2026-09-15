@@ -77,8 +77,6 @@ const COMMANDS: &[&str] = &[
 fn main() {
     lens_build_stamp::emit();
 
-    tauri_build::try_build(
-        Attributes::new().app_manifest(AppManifest::new().commands(COMMANDS)),
-    )
-    .expect("failed to run tauri-build with app command manifest");
+    tauri_build::try_build(Attributes::new().app_manifest(AppManifest::new().commands(COMMANDS)))
+        .expect("failed to run tauri-build with app command manifest");
 }
