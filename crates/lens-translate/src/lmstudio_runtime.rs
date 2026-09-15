@@ -7,9 +7,15 @@
 //! - Native v1: `GET /api/v1/models` (management plane, this module)
 //! - OpenAI-compatible: `POST /v1/chat/completions` (inference plane)
 //!
-//! The native v1 model schema uses `id`, `name`, `type`, `size`, and
-//! `loaded_instances[]`. A model is considered "loaded" if its
-//! `loaded_instances` array is non-empty.
+//! The native v1 model schema uses:
+//! - `key`: canonical model identifier (used as `ModelInfo.id`)
+//! - `display_name`: human-readable label (used as `ModelInfo.display_name`)
+//! - `type`: model type ("llm" for translation-capable models)
+//! - `size_bytes`: model size in bytes (used as `ModelInfo.size_bytes`)
+//! - `loaded_instances`: array of currently loaded instances (empty if not loaded)
+//!
+//! A model is considered "loaded" if its `loaded_instances` array is non-empty.
+//! Only models with `type == "llm"` are included in translation-capable lists.
 //!
 //! # Authentication
 //!
@@ -95,11 +101,12 @@ impl ProviderRuntime for LmStudioRuntime {
     fn model_state(&self, model: &str) -> Result<ModelState, TranslateError> {
         // Use the native v1 API response which includes loaded_instances.
         // A model is "loaded" if its loaded_instances array is non-empty.
+        // Identity resolution uses canonical ID (key) only, not display_name.
         let raw_models = list_models_with_loaded(&self.endpoint, self.api_token.as_deref())?;
 
         let raw_model = raw_models
             .iter()
-            .find(|m| m.key == model || m.display_name == model)
+            .find(|m| m.key == model)
             .ok_or_else(|| TranslateError::ModelMissing(model.to_owned()))?;
 
         if raw_model.is_loaded {
@@ -168,11 +175,12 @@ fn list_models_with_loaded(
     // "loaded_instances":[] means not loaded, "loaded_instances":[{...}] means loaded
     let is_loaded = check_loaded_instances(&body);
 
-    // Filter to only llm models (exclude embedding models)
+    // Filter to only llm models (exclude embedding models and unknown types).
+    // Fail closed: models with missing or unrecognized type are excluded.
     let models: Vec<RawLmStudioModel> = model_keys
         .into_iter()
         .enumerate()
-        .filter(|(i, _)| model_types.get(*i).map(|t| t == "llm").unwrap_or(true))
+        .filter(|(i, _)| model_types.get(*i).is_some_and(|t| t == "llm"))
         .map(|(i, key)| RawLmStudioModel {
             key,
             display_name: model_display_names.get(i).cloned().unwrap_or_default(),
@@ -210,21 +218,24 @@ fn check_loaded_instances(body: &str) -> Vec<bool> {
 
 /// List models from LM Studio's /api/v1/models endpoint.
 ///
-/// Filters out embedding models (type != "llm") since they are not suitable
-/// for translation. Returns only LLM models.
+/// Filters out embedding models and unknown types (only `type == "llm"` is
+/// included). Returns only translation-capable LLM models.
 fn list_models_with_auth(
     endpoint: &str,
     api_token: Option<&str>,
 ) -> Result<Vec<ModelInfo>, TranslateError> {
     let raw_models = list_models_with_loaded(endpoint, api_token)?;
 
-    // Convert to ModelInfo (discard loaded state and display_name)
-    // ModelInfo.name receives the canonical key identifier
+    // Convert to ModelInfo, preserving all three fields:
+    // - id: canonical key (used for API requests)
+    // - display_name: human-readable label (for UI)
+    // - size_bytes: model size on disk
     let models = raw_models
         .into_iter()
         .map(|m| ModelInfo {
-            name: m.key,
-            size: m.size_bytes,
+            id: m.key,
+            display_name: m.display_name,
+            size_bytes: m.size_bytes,
         })
         .collect();
 
@@ -308,8 +319,12 @@ mod tests {
 
         // Should only include llm models, not embedding models
         assert_eq!(models.len(), 2);
-        assert_eq!(models[0].name, "llama-3.1-8b");
-        assert_eq!(models[1].name, "qwen2.5-7b");
+        assert_eq!(models[0].id, "llama-3.1-8b");
+        assert_eq!(models[0].display_name, "LLaMA 3.1 8B");
+        assert_eq!(models[0].size_bytes, 4700000000);
+        assert_eq!(models[1].id, "qwen2.5-7b");
+        assert_eq!(models[1].display_name, "Qwen 2.5 7B");
+        assert_eq!(models[1].size_bytes, 4300000000);
     }
 
     #[test]
@@ -322,8 +337,12 @@ mod tests {
         let models = runtime.list_models().unwrap();
 
         assert_eq!(models.len(), 2);
-        assert_eq!(models[0].name, "llama-3.1-8b");
-        assert_eq!(models[1].name, "qwen2.5-7b");
+        assert_eq!(models[0].id, "llama-3.1-8b");
+        assert_eq!(models[0].display_name, "LLaMA 3.1 8B");
+        assert_eq!(models[0].size_bytes, 4700000000);
+        assert_eq!(models[1].id, "qwen2.5-7b");
+        assert_eq!(models[1].display_name, "Qwen 2.5 7B");
+        assert_eq!(models[1].size_bytes, 4300000000);
     }
 
     #[test]
