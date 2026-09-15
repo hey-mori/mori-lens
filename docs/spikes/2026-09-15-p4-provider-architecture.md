@@ -187,7 +187,7 @@ Currently:
 #### Endpoints
 
 **GET /v1/models**
-- Lists downloaded models
+- Lists downloaded models (behavior depends on JIT loading settings)
 - Response format (OpenAI-compatible):
 ```json
 {
@@ -202,8 +202,9 @@ Currently:
   ]
 }
 ```
-- Returns only downloaded models, not loaded/resident models
+- **Important:** Under JIT loading, this may expose all downloaded models, not just loaded ones
 - No size information in standard response
+- **Role:** Inference-facing model discovery (OpenAI-compatible clients)
 
 **POST /v1/chat/completions**
 - Main inference endpoint
@@ -259,7 +260,7 @@ Currently:
 #### Endpoints
 
 **GET /api/v1/models**
-- Lists downloaded models with more detail than /v1/models
+- Lists downloaded models with richer management metadata
 - Response includes:
 ```json
 {
@@ -271,13 +272,23 @@ Currently:
       "architecture": "llama",
       "quantization": "Q4_K_M",
       "size": 4131637248,
-      "state": "not-loaded" | "loaded" | "loading"
+      "loaded_instances": [
+        {
+          "instance_id": "inst_xxx",
+          "status": "loaded",
+          "loaded_at": 1234567890
+        }
+      ]
     }
   ]
 }
 ```
-- Includes model state (loaded/not-loaded)
+- **Key field:** `loaded_instances` array (empty if not loaded, non-empty if loaded)
+- Model state interpretation:
+  - `loaded_instances` is empty → MODEL_AVAILABLE (downloaded but not loaded)
+  - `loaded_instances` is non-empty → MODEL_LOADED (in memory)
 - Includes size and architecture information
+- **Role:** Provider management and lifecycle control
 
 **POST /api/v1/models/load**
 - Explicitly load a model into memory
@@ -291,17 +302,19 @@ Currently:
 ```json
 {
   "success": true,
-  "model": "model-name"
+  "model_instance_id": "inst_xxx"
 }
 ```
-- Model stays loaded until explicitly unloaded or server restarts
+- **Important:** Returns `model_instance_id` which is required for unload
+- Model stays loaded until explicitly unloaded or automatic eviction policy triggers
+- **Ownership:** Mori Lens becomes owner of this instance
 
 **POST /api/v1/models/unload**
 - Explicitly unload a model from memory
 - Request:
 ```json
 {
-  "model": "model-name"
+  "instance_id": "inst_xxx"
 }
 ```
 - Response:
@@ -310,6 +323,9 @@ Currently:
   "success": true
 }
 ```
+- **Important:** Requires `instance_id`, not model name
+- **Ownership semantics:** Only unload instances that Mori Lens created
+- Do not unload instances created by user or other clients
 
 **Model Download APIs**
 - Download models from Hugging Face or direct URLs
@@ -331,29 +347,32 @@ Currently:
 | **System Prompt** | Part of prompt string | Separate message with role: "system" |
 | **Streaming** | SSE with `{response: "chunk"}` | SSE with OpenAI format |
 
-### Two API Surfaces: Which to Use?
+### Two API Surfaces: Role Separation
 
 **Inference:** OpenAI-compatible `/v1/chat/completions`
 - Industry standard format
 - Well-documented
 - Compatible with many tools
 - Sufficient for Mori Lens needs
+- **Role:** Inference plane only
 
-**Model Discovery:** Either works, but `/api/v1/models` provides more information
-- Includes model state (loaded/not-loaded)
-- Includes size and architecture
-- More useful for status display
+**Model Discovery:** Native `/api/v1/models` (not `/v1/models`)
+- Includes `loaded_instances` for state detection
+- Includes size and architecture metadata
+- **Role:** Management plane (discovery, readiness, status)
+- **Note:** `/v1/models` may expose all downloaded models under JIT loading, making it unsuitable for precise state detection
 
 **Model Lifecycle:** Native `/api/v1/models/load` and `/api/v1/models/unload`
 - OpenAI-compatible API has no load/unload endpoints
-- Native API provides explicit control
-- Useful for prewarm and release semantics
+- Native API provides explicit control with instance ownership
+- **Role:** Management plane (lifecycle control)
+- **Important:** Lifecycle operations have ownership semantics (instance_id tracking)
 
-**Conclusion:** A single provider abstraction needs both surfaces:
-- OpenAI-compatible for inference
-- Native REST for model discovery and lifecycle
+**Conclusion:** Two-plane architecture
+- **Inference plane:** OpenAI-compatible API (Translator trait)
+- **Management plane:** Native REST API (ProviderRuntime trait)
 
-**Question:** Should these be unified under one Provider trait, or separated into InferencePlane and ControlPlane?
+**Key finding:** The two surfaces serve different concerns and should not be conflated.
 
 ## Concrete Comparison Matrix
 
@@ -421,19 +440,19 @@ UNREACHABLE
 REACHABLE
   ├─ NO_MODELS (empty /api/v1/models)
   └─ HAS_MODELS
-      ├─ MODEL_NOT_LOADED (state: "not-loaded")
-      ├─ MODEL_LOADING (state: "loading")
-      └─ MODEL_LOADED (state: "loaded")
+      ├─ MODEL_AVAILABLE (loaded_instances is empty)
+      └─ MODEL_LOADED (loaded_instances is non-empty)
           └─ (implicitly READY - can accept requests)
 ```
 
 **LM Studio-specific:**
-- `/api/v1/models` includes state field
-- Explicit "loading" state exists
-- No `keep_alive`; model stays until unloaded
-- Explicit load/unload APIs
+- `/api/v1/models` includes `loaded_instances` array
+- `loaded_instances` empty → model downloaded but not loaded
+- `loaded_instances` non-empty → model in memory
+- No `keep_alive`; model stays until unloaded or automatic eviction
+- Explicit load/unload APIs with instance_id tracking
 
-### Provider-Neutral State Model
+### Provider-Neutral State Model (Conceptual Vocabulary)
 
 Both providers support these conceptual states:
 
@@ -444,16 +463,15 @@ UNREACHABLE
 REACHABLE
   └─ HAS_MODELS
       ├─ MODEL_AVAILABLE (downloaded but not loaded)
-      ├─ MODEL_LOADING (transition state, LM Studio only)
       └─ MODEL_LOADED (loaded and ready)
 ```
 
-**Key insight:** LM Studio has an explicit "loading" state that Ollama doesn't expose. However, for Mori Lens UX, the distinction between "available" and "loaded" is what matters:
+**Key insight:** The distinction between "available" and "loaded" is what matters for UX:
 
 - **Available:** Model is downloaded and can be loaded
 - **Loaded:** Model is in memory and ready for inference
 
-**Mori Lens UX states needed:**
+**Conceptual UX states:**
 
 | State | Meaning | User sees |
 |-------|---------|-----------|
@@ -463,20 +481,14 @@ REACHABLE
 | MODEL_LOADED | Model in memory, ready | Model name with green indicator |
 | MODEL_MISSING | Requested model not downloaded | "Model X not installed · pull command" |
 
-**Conclusion:** Provider-neutral state model is possible:
-```rust
-enum ModelState {
-    Unreachable,
-    NoModels,
-    Available { name: String, size: u64 },
-    Loaded { name: String },
-    Missing { name: String },
-}
-```
+**Important:** This is conceptual vocabulary for spike analysis, not a production enum. The actual type in P5/P6 should be determined by UI/status requirements:
+- NO_MODELS and MODEL_MISSING are query-context-dependent
+- Some UIs may not need to distinguish them
+- Start with minimal types, expand if needed
 
-However, the **detection mechanism** is provider-specific:
+**Detection mechanism** is provider-specific:
 - Ollama: Check `/api/tags` and `/api/ps`
-- LM Studio: Check `/api/v1/models` state field
+- LM Studio: Check `/api/v1/models` `loaded_instances` field
 
 **Question:** Should this state model be part of Translator trait, or separate ProviderRuntime trait?
 
@@ -546,27 +558,71 @@ However, the **detection mechanism** is provider-specific:
 
 **Verdict:** Rejected. Current Translator trait is sufficient for inference.
 
-### Decision: Option B
+### Option B — Accepted, Refined
+
+**Approach:** Keep Translator for inference, introduce small provider-management boundary for discovery/readiness/status. Do NOT make explicit load/unload mandatory common operations yet.
 
 **Rationale:**
-1. Evidence shows two distinct concerns:
-   - Inference (Translator trait) - already provider-neutral
-   - Management (discovery, readiness, lifecycle) - needs provider abstraction
-2. Concrete operations identified:
-   - reachability
-   - list_models
-   - model_state
-   - prewarm
-   - release
-3. Both Ollama and LM Studio support these operations with different mechanisms
-4. Settings UI and status page benefit from provider-neutral management interface
+
+1. **Evidence shows two distinct concerns:**
+   - **Inference** (Translator trait) - already provider-neutral, no changes needed
+   - **Management** (discovery, readiness, status) - needs provider-aware boundary
+
+2. **Confirmed common management concerns:**
+   - Provider identity (which provider is configured)
+   - Reachability (is provider endpoint responding)
+   - Available model discovery (what models are downloaded)
+   - Readiness / loaded-state observation (is model in memory)
+
+3. **Provider-specific or capability-dependent concerns:**
+   - Explicit load (LM Studio has this, Ollama uses implicit/JIT)
+   - Explicit unload (LM Studio requires instance_id, Ollama uses keep_alive=0)
+   - Lease / keep_alive (Ollama-specific concept)
+   - Instance ownership (LM Studio tracks instance_id)
+   - JIT loading (LM Studio feature)
+   - Auto-eviction (LM Studio feature)
+
+4. **Lifecycle actions are NOT mandatory common denominator:**
+   - Ollama: prewarm = tiny generate request + keep_alive lease
+   - LM Studio: explicit load returns instance_id, unload requires instance_id
+   - These are different lifecycle models, not the same abstraction
+   - Ownership semantics differ (LM Studio tracks instance ownership, Ollama does not)
+
+5. **Architecture risk documented:**
+   - Current Ollama `release()` sends `keep_alive=0` for a model
+   - In multi-client local runtime, no guarantee Mori is the only owner
+   - This is existing behavior, not changed in P4
+   - P5 should not create generic `release(model)` that ignores ownership
+   - LM Studio unload requires `instance_id`, forcing explicit ownership tracking
+
+**Decision:**
+
+```rust
+// Minimal common boundary (confirmed by evidence)
+pub trait ProviderRuntime {
+    fn provider_identity(&self) -> Provider;
+    fn reachability(&self) -> Reachability;
+    fn list_models(&self) -> Result<Vec<ModelInfo>, TranslateError>;
+    fn model_state(&self, model: &str) -> Result<ModelState, TranslateError>;
+}
+
+// Lifecycle operations are capability-specific, NOT in trait
+// May be added later as optional capabilities after ownership semantics are defined
+```
+
+**What this means for P5:**
+- First PR introduces provider-aware discovery/readiness boundary
+- Production interface has only the 4 confirmed common methods
+- LM Studio explicit load/unload is NOT added unless necessity is confirmed
+- Lifecycle actions remain provider-specific implementation details
+- If lifecycle abstraction is needed later, it will be separate capability with ownership tracking
 
 ## P5 Implementation Plan
 
-### Phase 1: ProviderRuntime Abstraction
+### Phase 1: Provider-Aware Discovery/Readiness Boundary
 
 **Files to change:**
-- `crates/lens-core/src/translate.rs` - Add ProviderRuntime trait
+- `crates/lens-core/src/translate.rs` - Add ProviderRuntime trait (4 methods only)
 - `crates/lens-translate/src/lib.rs` - Refactor OllamaTranslator to use OllamaRuntime
 - `crates/lens-translate/src/ollama_runtime.rs` - New file: OllamaRuntime implementation
 - `crates/lens-translate/src/lm_studio_runtime.rs` - New file: LmStudioRuntime implementation (stub initially)
@@ -575,11 +631,15 @@ However, the **detection mechanism** is provider-specific:
 ```rust
 // In lens-core::translate
 pub trait ProviderRuntime {
+    fn provider_identity(&self) -> Provider;
     fn reachability(&self) -> Reachability;
     fn list_models(&self) -> Result<Vec<ModelInfo>, TranslateError>;
     fn model_state(&self, model: &str) -> Result<ModelState, TranslateError>;
-    fn prewarm(&self, model: &str) -> Result<Duration, TranslateError>;
-    fn release(&self, model: &str);
+}
+
+pub enum Provider {
+    Ollama,
+    LmStudio,
 }
 
 pub enum Reachability {
@@ -587,10 +647,12 @@ pub enum Reachability {
     Reachable,
 }
 
+// Conceptual vocabulary from spike - actual type determined by UI requirements
+// Start minimal, expand if needed
 pub enum ModelState {
     Available { name: String, size: u64 },
     Loaded { name: String },
-    Missing { name: String },
+    // Missing may be query-context-dependent, not added unless needed
 }
 
 // Existing ModelInfo moves from lens-translate to lens-core
@@ -605,6 +667,8 @@ pub enum ModelState {
 - Unit tests for ProviderRuntime trait
 - Contract tests for OllamaRuntime
 - Fake server tests for LmStudioRuntime (no real LM Studio required)
+
+**Note:** Lifecycle operations (prewarm, release, load, unload) remain as implementation details of each provider, not part of the common trait. If explicit lifecycle control is needed later, it will be added as optional capabilities with proper ownership semantics.
 
 ### Phase 2: LM Studio Implementation
 
@@ -688,9 +752,10 @@ pub enum ModelState {
 
 ### Sequencing
 
-**PR 1:** ProviderRuntime abstraction (Phase 1)
-- Add trait and types
-- Refactor Ollama to use runtime
+**PR 1:** ProviderRuntime common boundary (Phase 1)
+- Add trait with 4 confirmed common methods (provider_identity, reachability, list_models, model_state)
+- Refactor Ollama to use OllamaRuntime
+- No prewarm/release in trait (lifecycle remains implementation detail)
 - Tests pass
 - No behavior change
 
@@ -727,8 +792,22 @@ pub enum ModelState {
 
 ## Sources
 
-- LM Studio API documentation: https://lmstudio.ai/docs (official)
-- OpenAI API specification: https://platform.openai.com/docs/api-reference
-- Ollama API documentation: https://github.com/ollama/ollama/blob/main/docs/api.md
+### LM Studio (official)
 
-**Evidence level:** STATIC/SPEC VERIFIED for API contracts (no runtime testing performed)
+- REST API overview: https://lmstudio.ai/docs/developer/rest
+- List models: https://lmstudio.ai/docs/developer/rest/list
+- Load model: https://lmstudio.ai/docs/developer/rest/load
+- Unload model: https://lmstudio.ai/docs/developer/rest/unload
+- OpenAI compatibility: https://lmstudio.ai/docs/developer/openai-compat
+
+### Ollama (official)
+
+- API documentation: https://github.com/ollama/ollama/blob/main/docs/api.md
+
+### OpenAI
+
+- API specification: https://platform.openai.com/docs/api-reference
+
+### Evidence level
+
+STATIC/SPEC VERIFIED for all API contracts. No runtime testing performed against live LM Studio or Ollama instances during this spike.
