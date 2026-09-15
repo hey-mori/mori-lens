@@ -1340,8 +1340,10 @@ pub fn main() -> std::process::ExitCode {
     // Construct the active engine settings baseline from the initial configuration.
     // This is used to detect restart-required changes when settings are saved.
     let active_baseline = settings_service::ActiveEngineSettings {
+        quick_engine: options.ai_config.quick.provider.as_str().to_owned(),
         quick_model: options.ai_config.quick.model.clone(),
         quick_endpoint: options.ai_config.quick.endpoint.clone(),
+        deep_engine: options.ai_config.deep.provider.as_str().to_owned(),
         deep_model: options.ai_config.deep.model.clone(),
         deep_endpoint: options.ai_config.deep.endpoint.clone(),
         ocr_mode: options.ocr_mode.as_str().to_owned(),
