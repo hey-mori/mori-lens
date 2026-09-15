@@ -36,6 +36,7 @@ use lens_core::translate::{
 pub mod analyse;
 mod http;
 mod json;
+pub mod ollama_runtime;
 
 #[cfg(test)]
 mod deep_eval;
@@ -46,12 +47,8 @@ mod live_tests;
 /// Where Ollama listens when nobody has changed anything.
 pub const DEFAULT_ENDPOINT: &str = "127.0.0.1:11434";
 
-/// Information about a model installed on an Ollama endpoint.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ModelInfo {
-    pub name: String,
-    pub size: u64,
-}
+// Re-export ModelInfo from lens-core for backward compatibility
+pub use lens_core::translate::ModelInfo;
 
 /// List models installed on an Ollama endpoint, with their sizes.
 ///
