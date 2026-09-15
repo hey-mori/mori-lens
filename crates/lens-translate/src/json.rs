@@ -150,7 +150,7 @@ pub fn number_values_of_key(document: &str, key: &str) -> Vec<u64> {
 }
 
 /// Read a JSON string body up to its closing quote.
-fn unescape(after_open_quote: &str) -> String {
+pub fn unescape(after_open_quote: &str) -> String {
     let mut out = String::new();
     let mut chars = after_open_quote.chars();
     while let Some(character) = chars.next() {

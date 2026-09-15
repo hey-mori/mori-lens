@@ -283,7 +283,7 @@ mod tests {
     fn answer(text: &str, latency_ms: u128) -> QuickTranslation {
         QuickTranslation {
             text: text.to_owned(),
-            engine: EngineId::LocalOllama,
+            engine: EngineId::Local,
             model: "qwen2.5:3b".to_owned(),
             latency_ms,
             cached: false,

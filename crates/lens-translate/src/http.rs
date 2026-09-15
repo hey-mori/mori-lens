@@ -21,8 +21,17 @@ use lens_core::translate::TranslateError;
 /// an unbounded read from a misbehaving endpoint is a way to exhaust memory.
 const MAX_BODY: usize = 1 << 20;
 
-pub fn get(endpoint: &str, path: &str, timeout: Duration) -> Result<String, TranslateError> {
-    request(endpoint, "GET", path, None, timeout)
+pub fn get(endpoint: &str, path: &str, timeout: Duration) -> Result<(u16, String), TranslateError> {
+    request(endpoint, "GET", path, None, timeout, None)
+}
+
+pub fn get_with_auth(
+    endpoint: &str,
+    path: &str,
+    timeout: Duration,
+    token: &str,
+) -> Result<(u16, String), TranslateError> {
+    request(endpoint, "GET", path, None, timeout, Some(token))
 }
 
 pub fn post(
@@ -30,8 +39,18 @@ pub fn post(
     path: &str,
     body: &str,
     timeout: Duration,
-) -> Result<String, TranslateError> {
-    request(endpoint, "POST", path, Some(body), timeout)
+) -> Result<(u16, String), TranslateError> {
+    request(endpoint, "POST", path, Some(body), timeout, None)
+}
+
+pub fn post_with_auth(
+    endpoint: &str,
+    path: &str,
+    body: &str,
+    timeout: Duration,
+    token: &str,
+) -> Result<(u16, String), TranslateError> {
+    request(endpoint, "POST", path, Some(body), timeout, Some(token))
 }
 
 fn request(
@@ -40,7 +59,8 @@ fn request(
     path: &str,
     body: Option<&str>,
     timeout: Duration,
-) -> Result<String, TranslateError> {
+    auth_token: Option<&str>,
+) -> Result<(u16, String), TranslateError> {
     let address = resolve_loopback(endpoint)?;
 
     let stream =
@@ -60,6 +80,9 @@ fn request(
     let mut head = format!(
         "{method} {path} HTTP/1.1\r\nHost: {endpoint}\r\nConnection: close\r\nAccept: application/json\r\n",
     );
+    if let Some(token) = auth_token {
+        head.push_str(&format!("Authorization: Bearer {}\r\n", token));
+    }
     if body.is_some() {
         head.push_str(&format!(
             "Content-Type: application/json\r\nContent-Length: {}\r\n",
@@ -87,6 +110,13 @@ fn request(
         return Err(TranslateError::Unavailable);
     }
 
+    // Parse the status code from "HTTP/1.1 200 OK\r\n"
+    let status_code = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(0);
+
     let mut chunked = false;
     loop {
         let mut header = String::new();
@@ -106,7 +136,8 @@ fn request(
     }
 
     if chunked {
-        read_chunked(&mut reader)
+        let body = read_chunked(&mut reader)?;
+        Ok((status_code, body))
     } else {
         // `Connection: close` means the server ends the body by closing, so
         // reading to end is correct and Content-Length is not needed.
@@ -126,7 +157,7 @@ fn request(
         if body.len() > MAX_BODY {
             return Err(TranslateError::Malformed);
         }
-        Ok(String::from_utf8_lossy(&body).into_owned())
+        Ok((status_code, String::from_utf8_lossy(&body).into_owned()))
     }
 }
 
