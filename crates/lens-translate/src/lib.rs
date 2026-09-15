@@ -61,6 +61,9 @@ pub use lens_core::translate::ModelInfo;
 /// A standalone function rather than a method on [`OllamaTranslator`], because
 /// the settings UI needs to list models on an arbitrary endpoint before any
 /// translator is built.
+///
+/// For Ollama, the model `name` serves as both the canonical `id` and the
+/// `display_name` since Ollama has no separate human-readable label.
 pub fn list_models(endpoint: &str) -> Result<Vec<ModelInfo>, TranslateError> {
     let (_status, body) = http::get(endpoint, "/api/tags", Duration::from_secs(3))
         .map_err(|_| TranslateError::Unavailable)?;
@@ -69,7 +72,11 @@ pub fn list_models(endpoint: &str) -> Result<Vec<ModelInfo>, TranslateError> {
     Ok(names
         .into_iter()
         .zip(sizes)
-        .map(|(name, size)| ModelInfo { name, size })
+        .map(|(name, size)| ModelInfo {
+            id: name.clone(),
+            display_name: name,
+            size_bytes: size,
+        })
         .collect())
 }
 
@@ -195,7 +202,7 @@ impl OllamaTranslator {
     pub fn installed_models(&self) -> Result<Vec<String>, TranslateError> {
         Ok(list_models(&self.endpoint)?
             .into_iter()
-            .map(|m| m.name)
+            .map(|m| m.id)
             .collect())
     }
 
