@@ -175,13 +175,560 @@ Currently:
 - Different keep_alive semantics
 - Real-world usage (not just compatibility layer)
 
-## Next Steps
+## LM Studio API Investigation
 
-1. Investigate LM Studio API contract
-2. Compare with Ollama API contract
-3. Identify concrete differences
-4. Answer key questions:
-   - Should model discovery be in Translator trait?
-   - Should health/readiness be in Translator trait?
-   - What is the minimal abstraction needed?
-5. Decide: minimal change vs minimal abstraction
+**Evidence Level:** STATIC/SPEC VERIFIED (based on official LM Studio documentation and OpenAI API specification)
+
+### API Surface 1: OpenAI-Compatible API
+
+**Default Port:** 1234 (configurable)  
+**Base URL:** `http://localhost:1234`
+
+#### Endpoints
+
+**GET /v1/models**
+- Lists downloaded models
+- Response format (OpenAI-compatible):
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "model-name",
+      "object": "model",
+      "created": 1234567890,
+      "owned_by": "organization"
+    }
+  ]
+}
+```
+- Returns only downloaded models, not loaded/resident models
+- No size information in standard response
+
+**POST /v1/chat/completions**
+- Main inference endpoint
+- Request schema:
+```json
+{
+  "model": "model-name",
+  "messages": [
+    {"role": "system", "content": "You are a translation engine..."},
+    {"role": "user", "content": "Translate this text"}
+  ],
+  "temperature": 0.7,
+  "max_tokens": 1024,
+  "stream": false
+}
+```
+- Response schema (non-streaming):
+```json
+{
+  "id": "chatcmpl-xxx",
+  "object": "chat.completion",
+  "created": 1234567890,
+  "model": "model-name",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "translated text"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 100,
+    "completion_tokens": 50,
+    "total_tokens": 150
+  }
+}
+```
+- Streaming: `stream: true` returns SSE events
+- No keep_alive equivalent (model stays loaded until explicitly unloaded or server restarts)
+
+**POST /v1/responses** (newer endpoint)
+- Alternative to /v1/chat/completions
+- Similar schema, different response structure
+- Not needed for Mori Lens (chat/completions sufficient)
+
+### API Surface 2: Native REST API
+
+**Base URL:** `http://localhost:1234/api/v1`
+
+#### Endpoints
+
+**GET /api/v1/models**
+- Lists downloaded models with more detail than /v1/models
+- Response includes:
+```json
+{
+  "models": [
+    {
+      "id": "model-name",
+      "name": "Model Display Name",
+      "type": "gguf",
+      "architecture": "llama",
+      "quantization": "Q4_K_M",
+      "size": 4131637248,
+      "state": "not-loaded" | "loaded" | "loading"
+    }
+  ]
+}
+```
+- Includes model state (loaded/not-loaded)
+- Includes size and architecture information
+
+**POST /api/v1/models/load**
+- Explicitly load a model into memory
+- Request:
+```json
+{
+  "model": "model-name"
+}
+```
+- Response:
+```json
+{
+  "success": true,
+  "model": "model-name"
+}
+```
+- Model stays loaded until explicitly unloaded or server restarts
+
+**POST /api/v1/models/unload**
+- Explicitly unload a model from memory
+- Request:
+```json
+{
+  "model": "model-name"
+}
+```
+- Response:
+```json
+{
+  "success": true
+}
+```
+
+**Model Download APIs**
+- Download models from Hugging Face or direct URLs
+- Not needed for Mori Lens (user manages models manually)
+
+### Key Differences from Ollama
+
+| Aspect | Ollama | LM Studio |
+|--------|--------|-----------|
+| **Default Port** | 11434 | 1234 |
+| **Inference API** | `/api/generate` (native) | `/v1/chat/completions` (OpenAI-compatible) |
+| **Model Discovery** | `/api/tags` | `/v1/models` or `/api/v1/models` |
+| **Resident Model Check** | `/api/ps` | `/api/v1/models` (state field) |
+| **Model Loading** | Implicit (first request) or prewarm | Explicit load/unload or implicit |
+| **Model Lease** | `keep_alive` parameter (e.g., "30m") | No lease; model stays until unloaded |
+| **Request Format** | `{model, prompt, stream, options, keep_alive}` | `{model, messages, temperature, max_tokens, stream}` |
+| **Response Format** | `{response: "text"}` | `{choices: [{message: {content: "text"}}]}` |
+| **Error in Body** | 200 with error field possible | Standard HTTP error codes |
+| **System Prompt** | Part of prompt string | Separate message with role: "system" |
+| **Streaming** | SSE with `{response: "chunk"}` | SSE with OpenAI format |
+
+### Two API Surfaces: Which to Use?
+
+**Inference:** OpenAI-compatible `/v1/chat/completions`
+- Industry standard format
+- Well-documented
+- Compatible with many tools
+- Sufficient for Mori Lens needs
+
+**Model Discovery:** Either works, but `/api/v1/models` provides more information
+- Includes model state (loaded/not-loaded)
+- Includes size and architecture
+- More useful for status display
+
+**Model Lifecycle:** Native `/api/v1/models/load` and `/api/v1/models/unload`
+- OpenAI-compatible API has no load/unload endpoints
+- Native API provides explicit control
+- Useful for prewarm and release semantics
+
+**Conclusion:** A single provider abstraction needs both surfaces:
+- OpenAI-compatible for inference
+- Native REST for model discovery and lifecycle
+
+**Question:** Should these be unified under one Provider trait, or separated into InferencePlane and ControlPlane?
+
+## Concrete Comparison Matrix
+
+| Aspect | Ollama | LM Studio | Abstraction Impact |
+|--------|--------|-----------|-------------------|
+| **Provider identity** | Ollama | LM Studio | Need provider enum or identity |
+| **Default endpoint** | `127.0.0.1:11434` | `127.0.0.1:1234` | Provider-specific defaults |
+| **Endpoint normalization** | User-provided or default | User-provided or default | Same pattern |
+| **Health / reachability** | GET `/api/tags` 2s timeout | GET `/v1/models` 2s timeout | Different endpoints, same concept |
+| **Downloaded model discovery** | GET `/api/tags` → `{name, size}` | GET `/api/v1/models` → `{id, name, size, state}` | Different response format |
+| **Loaded/resident model discovery** | GET `/api/ps` → check name in list | GET `/api/v1/models` → check state="loaded" | Different mechanism |
+| **Model identifier semantics** | `name:tag` (e.g., `qwen2.5:7b`) | `id` (e.g., `model-name`) | Different naming conventions |
+| **Explicit model selection** | `model` field in request | `model` field in request | Same concept |
+| **No-model behavior** | Empty list from `/api/tags` | Empty list from `/v1/models` | Same concept |
+| **Missing-model behavior** | 200 with error in body | 404 or error response | Different error handling |
+| **Automatic/JIT loading** | Yes (first request loads model) | Yes (first request loads model) | Same behavior |
+| **Explicit load** | Implicit via prewarm | POST `/api/v1/models/load` | Different mechanism |
+| **Explicit unload** | `keep_alive=0` in generate request | POST `/api/v1/models/unload` | Different mechanism |
+| **Inference endpoint** | POST `/api/generate` | POST `/v1/chat/completions` | Completely different |
+| **Request schema** | `{model, prompt, stream, options, keep_alive}` | `{model, messages, temperature, max_tokens, stream}` | Incompatible formats |
+| **System prompt representation** | Part of `prompt` string | Separate `messages[{role: "system"}]` | Different structure |
+| **User prompt representation** | `prompt` field | `messages[{role: "user"}]` | Different structure |
+| **Response schema** | `{response: "text"}` | `{choices: [{message: {content: "text"}}]}` | Incompatible formats |
+| **Streaming support** | SSE with `{response: "chunk"}` | SSE with OpenAI format | Different event format |
+| **Non-streaming support** | Yes | Yes | Same concept |
+| **Timeout semantics** | Per-request Duration | Per-request Duration | Same concept |
+| **Connection refused** | HTTP error → Unavailable | HTTP error → Unavailable | Same mapping |
+| **HTTP non-2xx** | Mapped to TranslateError | Mapped to TranslateError | Same mapping |
+| **Malformed JSON** | Missing "response" key → Malformed | Missing "choices" → Malformed | Different detection |
+| **Provider error body** | Check "error" field in 200 response | Standard HTTP error codes | Different detection |
+| **Cancellation possibility** | HTTP client cancellation | HTTP client cancellation | Same concept |
+| **Prewarm semantics** | Minimal generate request + keep_alive | Explicit load request | Different mechanism |
+| **Quick / Deep separate endpoint support** | Two Translator instances | Two Translator instances | Same pattern |
+| **Authentication possibility** | None (local-only) | None (local-only) | Same |
+| **Fully-local guarantee** | Yes | Yes | Same |
+
+## State Model Analysis: Available vs Loaded vs Ready
+
+### Current Ollama States
+
+```
+UNREACHABLE
+  └─ (endpoint doesn't respond)
+
+REACHABLE
+  ├─ NO_MODELS (empty /api/tags)
+  └─ HAS_MODELS
+      ├─ MODEL_AVAILABLE (in /api/tags but not in /api/ps)
+      └─ MODEL_LOADED (in /api/ps)
+          └─ (implicitly READY - can accept requests)
+```
+
+**Ollama-specific:**
+- `/api/tags` = downloaded models
+- `/api/ps` = currently loaded models
+- No explicit "ready" state; loaded = ready
+- `keep_alive` controls how long model stays loaded
+
+### LM Studio States
+
+```
+UNREACHABLE
+  └─ (endpoint doesn't respond)
+
+REACHABLE
+  ├─ NO_MODELS (empty /api/v1/models)
+  └─ HAS_MODELS
+      ├─ MODEL_NOT_LOADED (state: "not-loaded")
+      ├─ MODEL_LOADING (state: "loading")
+      └─ MODEL_LOADED (state: "loaded")
+          └─ (implicitly READY - can accept requests)
+```
+
+**LM Studio-specific:**
+- `/api/v1/models` includes state field
+- Explicit "loading" state exists
+- No `keep_alive`; model stays until unloaded
+- Explicit load/unload APIs
+
+### Provider-Neutral State Model
+
+Both providers support these conceptual states:
+
+```
+UNREACHABLE
+  └─ endpoint doesn't respond
+
+REACHABLE
+  └─ HAS_MODELS
+      ├─ MODEL_AVAILABLE (downloaded but not loaded)
+      ├─ MODEL_LOADING (transition state, LM Studio only)
+      └─ MODEL_LOADED (loaded and ready)
+```
+
+**Key insight:** LM Studio has an explicit "loading" state that Ollama doesn't expose. However, for Mori Lens UX, the distinction between "available" and "loaded" is what matters:
+
+- **Available:** Model is downloaded and can be loaded
+- **Loaded:** Model is in memory and ready for inference
+
+**Mori Lens UX states needed:**
+
+| State | Meaning | User sees |
+|-------|---------|-----------|
+| UNREACHABLE | Provider not running | "Ollama/LM Studio not reachable" |
+| NO_MODELS | Provider running, no models | "No models installed" |
+| MODEL_AVAILABLE | Model downloaded, not loaded | Model name with "click to load" or auto-load on first use |
+| MODEL_LOADED | Model in memory, ready | Model name with green indicator |
+| MODEL_MISSING | Requested model not downloaded | "Model X not installed · pull command" |
+
+**Conclusion:** Provider-neutral state model is possible:
+```rust
+enum ModelState {
+    Unreachable,
+    NoModels,
+    Available { name: String, size: u64 },
+    Loaded { name: String },
+    Missing { name: String },
+}
+```
+
+However, the **detection mechanism** is provider-specific:
+- Ollama: Check `/api/tags` and `/api/ps`
+- LM Studio: Check `/api/v1/models` state field
+
+**Question:** Should this state model be part of Translator trait, or separate ProviderRuntime trait?
+
+## Architecture Decision
+
+### Option A: Current Translator Trait Sufficient
+
+**Approach:** Keep Translator trait as-is, add second implementation, minimal constructor/factory.
+
+**Changes:**
+- Rename `OllamaTranslator` → keep as-is
+- Add `LmStudioTranslator` with same trait
+- Settings: Add `provider` field (enum: Ollama, LmStudio)
+- Factory: Match on provider to construct appropriate translator
+- Model discovery: Add provider-specific `list_models` functions
+- Status: Add provider-specific `check_reachable` functions
+
+**Pros:**
+- Minimal change
+- No new abstractions
+- Translator trait remains simple
+
+**Cons:**
+- Model discovery and health checks are scattered (not in trait)
+- Settings UI needs to know about provider to call right functions
+- Code duplication for management operations
+
+**Verdict:** Viable but leads to scattered management code.
+
+### Option B: Translator Remains Inference-Only, Add ProviderRuntime
+
+**Approach:** Keep Translator for inference, add separate ProviderRuntime for discovery/readiness/status.
+
+**Changes:**
+- Translator trait: Unchanged (quick, quick_streaming)
+- New trait: `ProviderRuntime`
+  - `fn reachability(&self) -> Reachability`
+  - `fn list_models(&self) -> Result<Vec<ModelInfo>>`
+  - `fn model_state(&self, model: &str) -> ModelState`
+  - `fn prewarm(&self, model: &str) -> Result<Duration>`
+  - `fn release(&self, model: &str)`
+- Implementations: `OllamaRuntime`, `LmStudioRuntime`
+- Translator implementations hold reference to runtime
+- Settings UI uses ProviderRuntime for model discovery
+- Status page uses ProviderRuntime for health checks
+
+**Pros:**
+- Clear separation: inference vs management
+- Provider-neutral management operations
+- Settings UI works with any provider
+- Testable independently
+
+**Cons:**
+- New abstraction (but justified by concrete evidence)
+- Two traits instead of one
+
+**Verdict:** Clean separation, justified by evidence. Recommended.
+
+### Option C: Current Contracts Cannot Represent Second Provider
+
+**Approach:** Translator trait needs changes to support second provider.
+
+**Analysis:**
+- Translator trait (quick, quick_streaming) is already provider-neutral
+- No changes needed to inference abstraction
+- Only management operations need provider awareness
+
+**Verdict:** Rejected. Current Translator trait is sufficient for inference.
+
+### Decision: Option B
+
+**Rationale:**
+1. Evidence shows two distinct concerns:
+   - Inference (Translator trait) - already provider-neutral
+   - Management (discovery, readiness, lifecycle) - needs provider abstraction
+2. Concrete operations identified:
+   - reachability
+   - list_models
+   - model_state
+   - prewarm
+   - release
+3. Both Ollama and LM Studio support these operations with different mechanisms
+4. Settings UI and status page benefit from provider-neutral management interface
+
+## P5 Implementation Plan
+
+### Phase 1: ProviderRuntime Abstraction
+
+**Files to change:**
+- `crates/lens-core/src/translate.rs` - Add ProviderRuntime trait
+- `crates/lens-translate/src/lib.rs` - Refactor OllamaTranslator to use OllamaRuntime
+- `crates/lens-translate/src/ollama_runtime.rs` - New file: OllamaRuntime implementation
+- `crates/lens-translate/src/lm_studio_runtime.rs` - New file: LmStudioRuntime implementation (stub initially)
+
+**New types:**
+```rust
+// In lens-core::translate
+pub trait ProviderRuntime {
+    fn reachability(&self) -> Reachability;
+    fn list_models(&self) -> Result<Vec<ModelInfo>, TranslateError>;
+    fn model_state(&self, model: &str) -> Result<ModelState, TranslateError>;
+    fn prewarm(&self, model: &str) -> Result<Duration, TranslateError>;
+    fn release(&self, model: &str);
+}
+
+pub enum Reachability {
+    Unreachable,
+    Reachable,
+}
+
+pub enum ModelState {
+    Available { name: String, size: u64 },
+    Loaded { name: String },
+    Missing { name: String },
+}
+
+// Existing ModelInfo moves from lens-translate to lens-core
+```
+
+**Settings changes:**
+- `apps/lens/src/settings.rs` - Add `provider` field
+- `crates/lens-core/src/settings.rs` - Add `Provider` enum
+- Migration: Default to `Provider::Ollama` for backward compatibility
+
+**Tests:**
+- Unit tests for ProviderRuntime trait
+- Contract tests for OllamaRuntime
+- Fake server tests for LmStudioRuntime (no real LM Studio required)
+
+### Phase 2: LM Studio Implementation
+
+**Files to change:**
+- `crates/lens-translate/src/lm_studio_runtime.rs` - Implement LmStudioRuntime
+- `crates/lens-translate/src/lm_studio_translator.rs` - New file: LmStudioTranslator
+- `crates/lens-translate/src/lib.rs` - Export new types
+
+**New types:**
+- `LmStudioRuntime` - Implements ProviderRuntime for LM Studio
+- `LmStudioTranslator` - Implements Translator for LM Studio
+
+**Implementation details:**
+- Use `/v1/chat/completions` for inference
+- Use `/api/v1/models` for discovery and state
+- Use `/api/v1/models/load` and `/api/v1/models/unload` for lifecycle
+- Map LM Studio errors to TranslateError
+
+**Tests:**
+- Fake HTTP server tests for LM Studio API contract
+- Integration tests with mock LM Studio responses
+- Comparison tests: same request to Ollama and LM Studio should produce same result
+
+### Phase 3: Factory and Settings Integration
+
+**Files to change:**
+- `apps/lens/src/tauri_app.rs` - Factory to construct provider-appropriate translator
+- `apps/lens/src/settings.rs` - Wire provider field to translator construction
+- `apps/lens/web/js/settings.js` - UI for provider selection
+- `apps/lens/web/js/models.js` - Use provider-neutral model discovery
+- `apps/lens/web/js/status.js` - Use provider-neutral status checks
+
+**Changes:**
+- Settings page: Add provider dropdown (Ollama / LM Studio)
+- Models page: Use ProviderRuntime for model listing
+- Status page: Use ProviderRuntime for health checks
+- Factory: Match on provider to construct OllamaTranslator or LmStudioTranslator
+
+**Tests:**
+- Settings migration tests
+- Factory tests
+- UI tests (manual or automated)
+
+### Phase 4: Error Mapping and Edge Cases
+
+**Files to change:**
+- `crates/lens-translate/src/lm_studio_translator.rs` - Error mapping
+- `crates/lens-core/src/translate.rs` - TranslateError enum (if changes needed)
+
+**Error mapping:**
+- LM Studio 404 → TranslateError::ModelMissing
+- LM Studio connection refused → TranslateError::Unavailable
+- LM Studio malformed JSON → TranslateError::Malformed
+- LM Studio timeout → TranslateError::Timeout (already exists)
+
+**Edge cases:**
+- Model name format differences (Ollama `name:tag` vs LM Studio `id`)
+- Default model selection (provider-specific defaults)
+- Quick/Deep with different providers (supported)
+
+**Tests:**
+- Error mapping tests
+- Edge case tests
+
+### Phase 5: Documentation and Cleanup
+
+**Files to change:**
+- `docs/architecture.md` - Document ProviderRuntime
+- `docs/decisions/ADR-0008-provider-abstraction.md` - New ADR (if needed)
+- `README.md` - Mention LM Studio support
+
+**Documentation:**
+- ADR for provider abstraction (if decision is significant enough)
+- Architecture doc update
+- README update
+
+**Cleanup:**
+- Remove duplicate code
+- Ensure all tests pass
+- Update #527 to mark P4 COMPLETE, P5 next
+
+### Sequencing
+
+**PR 1:** ProviderRuntime abstraction (Phase 1)
+- Add trait and types
+- Refactor Ollama to use runtime
+- Tests pass
+- No behavior change
+
+**PR 2:** LM Studio implementation (Phase 2)
+- Implement LmStudioRuntime and LmStudioTranslator
+- Fake server tests
+- Not yet wired to settings
+
+**PR 3:** Factory and settings integration (Phase 3)
+- Wire provider field
+- Update UI
+- End-to-end tests
+
+**PR 4:** Error mapping and edge cases (Phase 4)
+- Complete error handling
+- Edge case tests
+
+**PR 5:** Documentation (Phase 5)
+- ADR, architecture doc, README
+
+### Backward Compatibility
+
+- Default provider: Ollama
+- Existing settings files work without migration
+- Ollama behavior unchanged
+- LM Studio is opt-in
+
+### Default Ollama Behavior Preservation
+
+- All existing Ollama tests pass
+- OllamaTranslator behavior unchanged
+- OllamaRuntime wraps existing logic
+- No breaking changes
+
+## Sources
+
+- LM Studio API documentation: https://lmstudio.ai/docs (official)
+- OpenAI API specification: https://platform.openai.com/docs/api-reference
+- Ollama API documentation: https://github.com/ollama/ollama/blob/main/docs/api.md
+
+**Evidence level:** STATIC/SPEC VERIFIED for API contracts (no runtime testing performed)
