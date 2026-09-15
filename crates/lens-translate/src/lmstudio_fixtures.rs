@@ -277,11 +277,60 @@ pub const LM_STUDIO_MALFORMED_STALE_ENVELOPE: &str = r#"{
 }"#;
 
 /// Malformed: truncated JSON. The "models" key is present but the array is
-/// incomplete, so no model objects can be parsed.
+/// incomplete: an object starts but never closes, and the array lacks `]`.
 pub const LM_STUDIO_MALFORMED_TRUNCATED: &str = r#"{
   "models": [
     {
       "key": "truncated"#;
+
+/// Malformed: an explicit LLM entry with no `key` field.
+/// A type=="llm" model without canonical identity is not a valid model.
+pub const LM_STUDIO_MALFORMED_LLM_MISSING_KEY: &str = r#"{
+  "models": [
+    {
+      "display_name": "No Key Model",
+      "type": "llm",
+      "size_bytes": 1000000000,
+      "loaded_instances": []
+    }
+  ]
+}"#;
+
+/// Malformed: an explicit LLM entry with no `size_bytes` field.
+pub const LM_STUDIO_MALFORMED_LLM_MISSING_SIZE: &str = r#"{
+  "models": [
+    {
+      "key": "no-size-model",
+      "display_name": "No Size Model",
+      "type": "llm",
+      "loaded_instances": []
+    }
+  ]
+}"#;
+
+/// Malformed: an explicit LLM entry with no `loaded_instances` field.
+pub const LM_STUDIO_MALFORMED_LLM_MISSING_LOADED: &str = r#"{
+  "models": [
+    {
+      "key": "no-loaded-model",
+      "display_name": "No Loaded Model",
+      "type": "llm",
+      "size_bytes": 1000000000
+    }
+  ]
+}"#;
+
+/// Malformed: the models array has complete objects but no closing `]`.
+pub const LM_STUDIO_MALFORMED_UNCLOSED_ARRAY: &str = r#"{
+  "models": [
+    {
+      "key": "orphan",
+      "display_name": "Orphan",
+      "type": "llm",
+      "size_bytes": 1000000000,
+      "loaded_instances": []
+    }
+"#;
 
 /// A model with whitespace in loaded_instances array.
 /// Tests that `[ ]` (empty with whitespace) is correctly detected as not loaded.
