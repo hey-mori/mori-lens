@@ -98,6 +98,7 @@ fn is_model_loaded(endpoint: &str, model: &str) -> Result<bool, TranslateError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fake_server::{FakeResponse, FakeServer};
 
     #[test]
     fn ollama_runtime_reports_ollama_identity() {
@@ -115,5 +116,134 @@ mod tests {
     fn ollama_runtime_accepts_custom_endpoint() {
         let runtime = OllamaRuntime::new("localhost:9999");
         assert_eq!(runtime.endpoint(), "localhost:9999");
+    }
+
+    // Contract tests using deterministic fake HTTP server.
+    // These are AUTOMATED CONTRACT PASS, not RUNTIME VERIFIED.
+
+    #[test]
+    fn reachability_returns_reachable_when_endpoint_answers() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(r#"{"models":[]}"#)]);
+
+        let runtime = OllamaRuntime::new(server.address());
+        assert_eq!(runtime.reachability(), Reachability::Reachable);
+    }
+
+    #[test]
+    fn reachability_returns_unreachable_when_endpoint_does_not_answer() {
+        // Use an endpoint that nothing listens on
+        let runtime = OllamaRuntime::new("127.0.0.1:1");
+        assert_eq!(runtime.reachability(), Reachability::Unreachable);
+    }
+
+    #[test]
+    fn list_models_returns_empty_vec_when_no_models_installed() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(r#"{"models":[]}"#)]);
+
+        let runtime = OllamaRuntime::new(server.address());
+        let models = runtime.list_models().unwrap();
+        assert!(models.is_empty());
+    }
+
+    #[test]
+    fn list_models_returns_models_with_name_and_size() {
+        let response_body = r#"{
+            "models": [
+                {"name": "llama3.1:8b", "size": 4700000000},
+                {"name": "qwen2.5:7b", "size": 4300000000}
+            ]
+        }"#;
+        let server = FakeServer::start(vec![FakeResponse::ok_json(response_body)]);
+
+        let runtime = OllamaRuntime::new(server.address());
+        let models = runtime.list_models().unwrap();
+
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].name, "llama3.1:8b");
+        assert_eq!(models[0].size, 4700000000);
+        assert_eq!(models[1].name, "qwen2.5:7b");
+        assert_eq!(models[1].size, 4300000000);
+    }
+
+    #[test]
+    fn list_models_returns_unavailable_when_endpoint_fails() {
+        // Use an endpoint that nothing listens on
+        let runtime = OllamaRuntime::new("127.0.0.1:1");
+        let result = runtime.list_models();
+        assert!(matches!(result, Err(TranslateError::Unavailable)));
+    }
+
+    #[test]
+    fn model_state_returns_available_when_model_is_installed_but_not_loaded() {
+        // First call: list_models via /api/tags
+        let tags_response = r#"{"models":[{"name":"llama3.1:8b","size":4700000000}]}"#;
+        // Second call: is_model_loaded via /api/ps (model not loaded)
+        let ps_response = r#"{"models":[]}"#;
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(tags_response),
+            FakeResponse::ok_json(ps_response),
+        ]);
+
+        let runtime = OllamaRuntime::new(server.address());
+        let state = runtime.model_state("llama3.1:8b").unwrap();
+
+        match state {
+            ModelState::Available { name, size } => {
+                assert_eq!(name, "llama3.1:8b");
+                assert_eq!(size, 4700000000);
+            }
+            _ => panic!("Expected ModelState::Available, got {:?}", state),
+        }
+    }
+
+    #[test]
+    fn model_state_returns_loaded_when_model_is_in_memory() {
+        // First call: list_models via /api/tags
+        let tags_response = r#"{"models":[{"name":"llama3.1:8b","size":4700000000}]}"#;
+        // Second call: is_model_loaded via /api/ps (model is loaded)
+        let ps_response = r#"{"models":[{"name":"llama3.1:8b"}]}"#;
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(tags_response),
+            FakeResponse::ok_json(ps_response),
+        ]);
+
+        let runtime = OllamaRuntime::new(server.address());
+        let state = runtime.model_state("llama3.1:8b").unwrap();
+
+        match state {
+            ModelState::Loaded { name } => {
+                assert_eq!(name, "llama3.1:8b");
+            }
+            _ => panic!("Expected ModelState::Loaded, got {:?}", state),
+        }
+    }
+
+    #[test]
+    fn model_state_returns_model_missing_when_model_not_installed() {
+        let tags_response = r#"{"models":[]}"#;
+        let server = FakeServer::start(vec![FakeResponse::ok_json(tags_response)]);
+
+        let runtime = OllamaRuntime::new(server.address());
+        let result = runtime.model_state("nonexistent-model");
+
+        assert!(matches!(result, Err(TranslateError::ModelMissing(_))));
+    }
+
+    #[test]
+    fn model_state_returns_unavailable_when_tags_endpoint_fails() {
+        // Use an endpoint that nothing listens on
+        let runtime = OllamaRuntime::new("127.0.0.1:1");
+        let result = runtime.model_state("llama3.1:8b");
+
+        assert!(matches!(result, Err(TranslateError::Unavailable)));
+    }
+
+    #[test]
+    fn model_state_returns_unavailable_when_ps_endpoint_fails() {
+        // Use an endpoint that nothing listens on
+        let runtime = OllamaRuntime::new("127.0.0.1:1");
+        let result = runtime.model_state("llama3.1:8b");
+
+        assert!(matches!(result, Err(TranslateError::Unavailable)));
     }
 }
