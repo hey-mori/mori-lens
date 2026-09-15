@@ -312,7 +312,10 @@ fn extract_number_field(obj: &str, field: &str) -> Option<u64> {
     };
     let after_colon = after_field[colon + 1..].trim_start();
     // Parse digits
-    let num_str: String = after_colon.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let num_str: String = after_colon
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     num_str.parse().ok()
 }
 
@@ -327,7 +330,8 @@ fn check_object_loaded(obj: &str) -> bool {
     };
     let after_colon = after[colon + 1..].trim_start();
     // Non-empty if it starts with [{ rather than []
-    after_colon.starts_with("[{") || (after_colon.starts_with('[') && !after_colon.starts_with("[]"))
+    after_colon.starts_with("[{")
+        || (after_colon.starts_with('[') && !after_colon.starts_with("[]"))
 }
 
 /// List models from LM Studio's /api/v1/models endpoint.
@@ -608,12 +612,9 @@ mod tests {
         // model_state calls list_models_with_loaded once per call.
         // Provide enough responses for all three model_state calls below.
         let server = FakeServer::start(vec![
-            FakeResponse::ok_json(LM_STUDIO_AMBIGUOUS_DISPLAY_NAMES)
-                .expect_get("/api/v1/models"),
-            FakeResponse::ok_json(LM_STUDIO_AMBIGUOUS_DISPLAY_NAMES)
-                .expect_get("/api/v1/models"),
-            FakeResponse::ok_json(LM_STUDIO_AMBIGUOUS_DISPLAY_NAMES)
-                .expect_get("/api/v1/models"),
+            FakeResponse::ok_json(LM_STUDIO_AMBIGUOUS_DISPLAY_NAMES).expect_get("/api/v1/models"),
+            FakeResponse::ok_json(LM_STUDIO_AMBIGUOUS_DISPLAY_NAMES).expect_get("/api/v1/models"),
+            FakeResponse::ok_json(LM_STUDIO_AMBIGUOUS_DISPLAY_NAMES).expect_get("/api/v1/models"),
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
@@ -634,8 +635,9 @@ mod tests {
     // Fail-closed: models with missing type field are excluded.
     #[test]
     fn list_models_excludes_models_with_missing_type() {
-        let server = FakeServer::start(vec![FakeResponse::ok_json(LM_STUDIO_MISSING_TYPE)
-            .expect_get("/api/v1/models")]);
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_MISSING_TYPE).expect_get("/api/v1/models")
+        ]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let models = runtime.list_models().unwrap();
@@ -648,8 +650,9 @@ mod tests {
     // Fail-closed: models with unknown type are excluded.
     #[test]
     fn list_models_excludes_models_with_unknown_type() {
-        let server = FakeServer::start(vec![FakeResponse::ok_json(LM_STUDIO_UNKNOWN_TYPE)
-            .expect_get("/api/v1/models")]);
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_UNKNOWN_TYPE).expect_get("/api/v1/models")
+        ]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let models = runtime.list_models().unwrap();
@@ -663,8 +666,9 @@ mod tests {
     // HTTP 500 must not become a successful empty list.
     #[test]
     fn list_models_returns_unavailable_on_500() {
-        let server = FakeServer::start(vec![FakeResponse::server_error()
-            .expect_get("/api/v1/models")]);
+        let server = FakeServer::start(vec![
+            FakeResponse::server_error().expect_get("/api/v1/models")
+        ]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let result = runtime.list_models();
@@ -675,8 +679,9 @@ mod tests {
     // HTTP 400 must not become a successful empty list.
     #[test]
     fn list_models_returns_unavailable_on_400() {
-        let server = FakeServer::start(vec![FakeResponse::bad_request()
-            .expect_get("/api/v1/models")]);
+        let server = FakeServer::start(vec![
+            FakeResponse::bad_request().expect_get("/api/v1/models")
+        ]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let result = runtime.list_models();
@@ -687,8 +692,8 @@ mod tests {
     // HTTP 404 must not become a successful empty list.
     #[test]
     fn list_models_returns_unavailable_on_404() {
-        let server = FakeServer::start(vec![FakeResponse::not_found()
-            .expect_get("/api/v1/models")]);
+        let server =
+            FakeServer::start(vec![FakeResponse::not_found().expect_get("/api/v1/models")]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let result = runtime.list_models();
@@ -699,8 +704,9 @@ mod tests {
     // Reachability: 500 must NOT become Reachable.
     #[test]
     fn reachability_returns_unreachable_on_500() {
-        let server = FakeServer::start(vec![FakeResponse::server_error()
-            .expect_get("/api/v1/models")]);
+        let server = FakeServer::start(vec![
+            FakeResponse::server_error().expect_get("/api/v1/models")
+        ]);
 
         let runtime = LmStudioRuntime::new(server.address());
         assert_eq!(runtime.reachability(), Reachability::Unreachable);
