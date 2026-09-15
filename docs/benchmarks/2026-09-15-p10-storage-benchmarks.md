@@ -118,11 +118,18 @@ cargo test --release --package lens-storage bench:: -- --nocapture
 
 ## Verification
 
-All benchmarks include correctness assertions:
-- Result counts match expected values
-- Pagination works correctly
-- Filters compose properly
-- Page.total is consistent with actual result count
+**Benchmark harness role:**
+- Performance measurement across 9 patterns × 3 scales
+- Basic sanity assertions (result counts, pagination structure)
+- Timing is environment-specific; correctness is verified separately
+
+**Full correctness verification:**
+- Query/filter semantics: `crates/lens-storage/src/lib.rs` regression tests
+- Pagination correctness: storage layer unit tests
+- Page.total consistency: storage layer unit tests
+- Filter composition: storage layer unit tests
+
+Benchmarks validate that performance is acceptable; storage regression tests validate semantic correctness.
 
 ## Next Steps
 
