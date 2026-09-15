@@ -216,7 +216,7 @@ impl Analyser for OllamaTranslator {
         // they did not ask for; this reader pressed a key and is watching the
         // screen. Cutting a deep call off at a hover's budget would fail on
         // exactly the slower models it is worth waiting for.
-        let response = http::post(&self.endpoint, "/api/generate", &body, DEEP_TIMEOUT)?;
+        let (_status, response) = http::post(&self.endpoint, "/api/generate", &body, DEEP_TIMEOUT)?;
         let latency_ms = started.elapsed().as_millis();
 
         if let Some(error) = self.error_in(&response) {
@@ -270,7 +270,7 @@ impl OllamaTranslator {
         }
         let (body, fence) = self.deep_body(request);
         let started = Instant::now();
-        let response = http::post(&self.endpoint, "/api/generate", &body, DEEP_TIMEOUT)?;
+        let (_status, response) = http::post(&self.endpoint, "/api/generate", &body, DEEP_TIMEOUT)?;
         let latency_ms = started.elapsed().as_millis();
         if let Some(error) = self.error_in(&response) {
             return Err(error);
@@ -413,7 +413,8 @@ impl OllamaTranslator {
             ),
             ("keep_alive", json::Value::Str(crate::MODEL_LEASE)),
         ]);
-        let response = http::post(&self.endpoint, "/api/generate", &body, DEEP_TIMEOUT).ok()?;
+        let (_status, response) =
+            http::post(&self.endpoint, "/api/generate", &body, DEEP_TIMEOUT).ok()?;
         if self.error_in(&response).is_some() {
             return None;
         }
