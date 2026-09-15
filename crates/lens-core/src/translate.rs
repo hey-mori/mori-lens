@@ -869,6 +869,94 @@ pub trait Translator {
     }
 }
 
+/// Provider identity, so the product can tell which engine is configured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Provider {
+    /// Ollama on this machine.
+    Ollama,
+    /// LM Studio local server.
+    LmStudio,
+}
+
+impl Provider {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ollama => "ollama",
+            Self::LmStudio => "lm-studio",
+        }
+    }
+}
+
+impl std::fmt::Display for Provider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Whether a provider endpoint is responding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reachability {
+    /// The endpoint did not respond or returned an error.
+    Unreachable,
+    /// The endpoint responded and is ready to serve requests.
+    Reachable,
+}
+
+/// Whether a model is loaded in memory and ready to translate.
+///
+/// This is a conceptual vocabulary from the P4 spike
+/// (`docs/spikes/2026-09-15-p4-provider-architecture.md`), not a production enum
+/// locked to a specific state machine. The two variants here are what the
+/// product UI needs: "is it available to load" and "is it loaded right now".
+///
+/// More states (e.g., "loading in progress") may be added if the UI needs them,
+/// but only when evidence shows they are common across providers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelState {
+    /// The model is downloaded and can be loaded, but is not in memory yet.
+    Available { name: String, size: u64 },
+    /// The model is loaded in memory and ready to translate.
+    Loaded { name: String },
+}
+
+/// Information about a model installed on a provider endpoint.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelInfo {
+    pub name: String,
+    pub size: u64,
+}
+
+/// Provider management operations: discovery, readiness, and status.
+///
+/// Separate from [`Translator`] because the two concerns have different shapes:
+/// inference is a trait that takes text and returns translations, while
+/// management is about discovering what is available and observing whether it
+/// is responding.
+///
+/// **Lifecycle operations (load, unload, prewarm, release) are not here.**
+/// They differ between providers: Ollama uses implicit JIT loading with a
+/// keep-alive lease, while LM Studio requires explicit load/unload with
+/// instance ownership tracking. Treating them as a common abstraction would
+/// force one provider's semantics onto the other, and the P4 spike found no
+/// evidence that a unified lifecycle is needed.
+///
+/// If lifecycle control becomes necessary later, it should be added as a
+/// separate capability with explicit ownership semantics, not as mandatory
+/// trait methods.
+pub trait ProviderRuntime {
+    /// Which provider this runtime is backed by.
+    fn provider_identity(&self) -> Provider;
+
+    /// Whether the provider endpoint is responding.
+    fn reachability(&self) -> Reachability;
+
+    /// List models installed on the provider endpoint.
+    fn list_models(&self) -> Result<Vec<ModelInfo>, TranslateError>;
+
+    /// Whether a specific model is loaded and ready to translate.
+    fn model_state(&self, model: &str) -> Result<ModelState, TranslateError>;
+}
+
 /// How often a partial answer may redraw the card.
 ///
 /// Slow enough that text does not shimmer, fast enough that it reads as
