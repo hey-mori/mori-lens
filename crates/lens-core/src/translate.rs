@@ -680,6 +680,11 @@ pub struct QuickTranslation {
 pub enum EngineId {
     /// An Ollama on this machine. The default, and the only one that needs no
     /// grant.
+    ///
+    /// **TODO(P5):** This name leaks Ollama assumptions. The actual semantics
+    /// is "local loopback provider" which includes LM Studio at 127.0.0.1:1234.
+    /// Before P5 LM Studio integration, rename to `Local` or similar
+    /// provider-neutral name. Check for persisted/API compatibility first.
     LocalOllama,
     /// Anything reached over the network. Requires an explicit per-provider
     /// grant, and the card says so.
@@ -788,6 +793,12 @@ impl TranslateError {
     /// Here rather than in the overlay because the mapping from a failure to
     /// an explanation is a product decision, and an adapter should not be able
     /// to invent its own wording.
+    ///
+    /// **TODO(P5):** These messages leak Ollama assumptions. The Translator
+    /// inference method shape is provider-neutral, but error presentation
+    /// still assumes Ollama. Before P5 LM Studio integration, make these
+    /// provider-aware (e.g., "로컬 AI에 연결할 수 없습니다" or provider-specific
+    /// messages based on EngineId).
     pub fn user_message(&self) -> String {
         match self {
             Self::Unavailable => "Ollama에 연결할 수 없습니다".to_owned(),
@@ -898,7 +909,8 @@ impl std::fmt::Display for Provider {
 pub enum Reachability {
     /// The endpoint did not respond or returned an error.
     Unreachable,
-    /// The endpoint responded and is ready to serve requests.
+    /// The provider management endpoint responded successfully.
+    /// This does not mean models are loaded or ready; use `model_state()` for that.
     Reachable,
 }
 

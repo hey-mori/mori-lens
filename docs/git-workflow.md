@@ -130,8 +130,33 @@ pulled. Never rewrite `main`. The pre-push hook enforces both rules
 
 ### Merge-readiness gate
 
-Before calling `gh pr merge`, run `scripts/check-pr-ready.sh <pr-number>`.
-This script validates:
+**Use the merge wrapper script**, not direct `gh pr merge` calls.
+
+```bash
+scripts/merge-pr.sh <pr-number>
+```
+
+This script enforces the full merge gate:
+1. Runs `scripts/check.sh --full` (code quality)
+2. Runs `scripts/check-pr-ready.sh` (PR readiness)
+3. Re-checks PR body attribution (catches late edits)
+4. Merges the PR with `--merge --delete-branch`
+5. Verifies postconditions (merged state, branch deletion)
+
+The wrapper exists because local gates were repeatedly bypassed when
+agents called `gh pr merge` directly. The contract is:
+
+```bash
+# Do NOT do this:
+scripts/check.sh --full
+scripts/check-pr-ready.sh <pr-number>
+gh pr merge <pr-number> --merge --delete-branch  # ✗ bypasses final check
+
+# Do this instead:
+scripts/merge-pr.sh <pr-number>  # ✓ enforces full gate
+```
+
+The gate validates:
 
 - PR exists and is open
 - Base branch is `main`
@@ -140,14 +165,6 @@ This script validates:
 - All commits have clean attribution
 - No unpushed commits on the branch
 - PR is mergeable (when queryable)
-
-The contract is:
-
-```bash
-scripts/check.sh --full
-scripts/check-pr-ready.sh <pr-number>
-gh pr merge <pr-number> --merge --delete-branch
-```
 
 This repository does not have CI running on every PR (GitHub Actions
 costs are metered), so the merge-readiness gate is a local check rather
