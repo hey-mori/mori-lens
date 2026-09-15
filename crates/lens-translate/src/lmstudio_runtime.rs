@@ -189,8 +189,12 @@ fn list_models_with_loaded(
 /// Each object in the "models" array is parsed individually so that missing
 /// fields in one model do not shift the indices of subsequent models.
 ///
-/// Returns `Err(TranslateError::Malformed)` if the `"models"` key is absent,
-/// because a 2xx response without it does not represent a valid model list.
+/// Returns `Err(TranslateError::Malformed)` when:
+/// - The `"models"` key is absent
+/// - The models array is not structurally closed (truncated JSON)
+/// - Any model object within the array is not structurally closed
+/// - An explicit `type == "llm"` entry is missing a required field:
+///   `key`, `display_name`, `size_bytes`, or `loaded_instances`
 fn parse_model_objects(body: &str) -> Result<Vec<RawLmStudioModel>, TranslateError> {
     let mut models = Vec::new();
 
@@ -204,25 +208,46 @@ fn parse_model_objects(body: &str) -> Result<Vec<RawLmStudioModel>, TranslateErr
     };
     let array_content = &after_data_key[array_start + 1..];
 
-    // Iterate through objects in the array
+    // Verify the models array is structurally closed. A truncated response
+    // where objects are complete but the array lacks ']' is malformed.
+    let Some(array_end) = find_matching_bracket(array_content) else {
+        return Err(TranslateError::Malformed);
+    };
+    let bounded_content = &array_content[..array_end];
+
+    // Iterate through objects in the bounded array content
     let mut pos = 0usize;
-    while let Some(obj_start) = array_content[pos..].find('{') {
+    while let Some(obj_start) = bounded_content[pos..].find('{') {
         let obj_begin = pos + obj_start;
-        // Find the matching closing brace
-        let Some(obj_end) = find_matching_brace(array_content, obj_begin) else {
-            break;
+        // Find the matching closing brace. An unterminated object within
+        // a bounded array means the JSON is structurally broken.
+        let Some(obj_end) = find_matching_brace(bounded_content, obj_begin) else {
+            return Err(TranslateError::Malformed);
         };
-        let obj_str = &array_content[obj_begin..=obj_end];
+        let obj_str = &bounded_content[obj_begin..=obj_end];
 
         // Extract fields from this single object
-        let key = extract_string_field(obj_str, "key").unwrap_or_default();
-        let display_name = extract_string_field(obj_str, "display_name").unwrap_or_default();
         let model_type = extract_string_field(obj_str, "type");
-        let size_bytes = extract_number_field(obj_str, "size_bytes").unwrap_or(0);
-        let is_loaded = check_object_loaded(obj_str);
 
-        // Fail closed: only include models with explicit type == "llm"
+        // Fail closed: only process models with explicit type == "llm"
         if model_type.as_deref() == Some("llm") {
+            // Required fields for an LLM model entry.
+            // A type=="llm" entry missing identity or metadata is malformed,
+            // not a valid model with defaults.
+            let key = extract_string_field(obj_str, "key")
+                .filter(|s| !s.is_empty())
+                .ok_or(TranslateError::Malformed)?;
+            let display_name = extract_string_field(obj_str, "display_name")
+                .filter(|s| !s.is_empty())
+                .ok_or(TranslateError::Malformed)?;
+            let size_bytes =
+                extract_number_field(obj_str, "size_bytes").ok_or(TranslateError::Malformed)?;
+            // loaded_instances must be structurally present (even if empty).
+            if !has_field(obj_str, "loaded_instances") {
+                return Err(TranslateError::Malformed);
+            }
+            let is_loaded = check_object_loaded(obj_str);
+
             models.push(RawLmStudioModel {
                 key,
                 display_name,
@@ -269,6 +294,54 @@ fn find_matching_brace(s: &str, start: usize) -> Option<usize> {
         }
     }
     None
+}
+
+/// Find the matching closing bracket `]` for an opening `[` that was already
+/// consumed. The string `s` starts after the `[`.
+///
+/// Returns the index of the matching `]` within `s`, or `None` if the bracket
+/// is unterminated (truncated JSON). Handles nested braces, strings, and escapes.
+fn find_matching_bracket(s: &str) -> Option<usize> {
+    // Start at depth 1 because the opening '[' was already consumed.
+    let mut depth = 1;
+    let mut in_string = false;
+    let mut escape = false;
+
+    for (i, ch) in s.char_indices() {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if ch == '\\' && in_string {
+            escape = true;
+            continue;
+        }
+        if ch == '"' {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
+        if ch == '[' {
+            depth += 1;
+        } else if ch == ']' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+/// Check if a JSON object string contains a given field key.
+///
+/// This only checks for the presence of the key, not its value.
+/// Used to verify that required fields are structurally present.
+fn has_field(obj: &str, field: &str) -> bool {
+    let needle = format!("\"{}\"", field);
+    obj.contains(&needle)
 }
 
 /// Extract a string field value from a JSON object string.
@@ -745,7 +818,8 @@ mod tests {
         assert!(matches!(result, Err(TranslateError::Malformed)));
     }
 
-    // 2xx with truncated JSON after "models": cannot parse any objects.
+    // 2xx with truncated JSON: unterminated object and array is malformed.
+    // A truncated HTTP 2xx JSON document is not a valid empty model list.
     #[test]
     fn list_models_returns_malformed_on_truncated_response() {
         let server = FakeServer::start(vec![
@@ -753,11 +827,65 @@ mod tests {
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
-        // Truncated response: "models" key is found but no complete objects.
-        // This should return Ok(empty) since the array exists but contains
-        // no parseable objects (the truncation means no matching braces).
         let result = runtime.list_models();
-        assert!(result.is_ok() || matches!(result, Err(TranslateError::Malformed)));
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    // 2xx with complete objects but unclosed array: structurally incomplete.
+    #[test]
+    fn list_models_returns_malformed_on_unclosed_array() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            LM_STUDIO_MALFORMED_UNCLOSED_ARRAY,
+        )
+        .expect_get("/api/v1/models")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.list_models();
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    // Fail-closed: an explicit type=="llm" entry missing key is malformed.
+    #[test]
+    fn list_models_returns_malformed_on_llm_missing_key() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            LM_STUDIO_MALFORMED_LLM_MISSING_KEY,
+        )
+        .expect_get("/api/v1/models")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.list_models();
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    // Fail-closed: an explicit type=="llm" entry missing size_bytes is malformed.
+    #[test]
+    fn list_models_returns_malformed_on_llm_missing_size() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            LM_STUDIO_MALFORMED_LLM_MISSING_SIZE,
+        )
+        .expect_get("/api/v1/models")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.list_models();
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    // Fail-closed: an explicit type=="llm" entry missing loaded_instances is malformed.
+    #[test]
+    fn list_models_returns_malformed_on_llm_missing_loaded_instances() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            LM_STUDIO_MALFORMED_LLM_MISSING_LOADED,
+        )
+        .expect_get("/api/v1/models")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.list_models();
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
     }
 
     // Official shape with all documented fields parses correctly.
