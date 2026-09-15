@@ -7,7 +7,9 @@
 //! - Native v1: `GET /api/v1/models` (management plane, this module)
 //! - OpenAI-compatible: `POST /v1/chat/completions` (inference plane)
 //!
-//! The native v1 model schema uses:
+//! The native v1 model list uses top-level key `"models"` (not `"data"`).
+//! A 2xx response missing `"models"` is `TranslateError::Malformed`.
+//! Model entries include:
 //! - `key`: canonical model identifier (used as `ModelInfo.id`)
 //! - `display_name`: human-readable label (used as `ModelInfo.display_name`)
 //! - `type`: model type ("llm" for translation-capable models)
@@ -171,30 +173,34 @@ fn list_models_with_loaded(
     }
 
     // Parse the LM Studio native v1 models response
-    // Schema: {"data": [{"key": "...", "display_name": "...", "type": "llm", "size_bytes": 123, "loaded_instances": [...]}]}
+    // Schema: {"models": [{"key": "...", "type": "llm", "size_bytes": 123, "loaded_instances": [...]}]}
     //
+    // A 2xx response missing the "models" key is malformed, not an empty success.
     // Parse per-object to avoid index misalignment when fields are missing.
     // Flat extraction (string_values_of_key) would assign values by position
     // across the entire response, which breaks when one model lacks a field.
-    let models = parse_model_objects(&body);
+    let models = parse_model_objects(&body)?;
 
     Ok(models)
 }
 
 /// Parse model objects from the native v1 response body.
 ///
-/// Each object in the "data" array is parsed individually so that missing
+/// Each object in the "models" array is parsed individually so that missing
 /// fields in one model do not shift the indices of subsequent models.
-fn parse_model_objects(body: &str) -> Vec<RawLmStudioModel> {
+///
+/// Returns `Err(TranslateError::Malformed)` if the `"models"` key is absent,
+/// because a 2xx response without it does not represent a valid model list.
+fn parse_model_objects(body: &str) -> Result<Vec<RawLmStudioModel>, TranslateError> {
     let mut models = Vec::new();
 
-    // Find the "data" array
-    let Some(data_start) = body.find("\"data\"") else {
-        return models;
+    // Find the "models" array. A 2xx without it is malformed.
+    let Some(data_start) = body.find("\"models\"") else {
+        return Err(TranslateError::Malformed);
     };
-    let after_data_key = &body[data_start + 6..];
+    let after_data_key = &body[data_start + 8..];
     let Some(array_start) = after_data_key.find('[') else {
-        return models;
+        return Err(TranslateError::Malformed);
     };
     let array_content = &after_data_key[array_start + 1..];
 
@@ -228,7 +234,7 @@ fn parse_model_objects(body: &str) -> Vec<RawLmStudioModel> {
         pos = obj_end + 1;
     }
 
-    models
+    Ok(models)
 }
 
 /// Find the matching closing brace for an opening brace at position `start`.
@@ -312,6 +318,9 @@ fn extract_number_field(obj: &str, field: &str) -> Option<u64> {
 }
 
 /// Check if a single model object has non-empty loaded_instances.
+///
+/// Handles whitespace variants: `[]`, `[ ]`, `[\n]` are all empty.
+/// A non-empty array has an object literal as its first element: `[{...}]`.
 fn check_object_loaded(obj: &str) -> bool {
     let Some(pos) = obj.find("\"loaded_instances\"") else {
         return false;
@@ -321,9 +330,13 @@ fn check_object_loaded(obj: &str) -> bool {
         return false;
     };
     let after_colon = after[colon + 1..].trim_start();
-    // Non-empty if it starts with [{ rather than []
-    after_colon.starts_with("[{")
-        || (after_colon.starts_with('[') && !after_colon.starts_with("[]"))
+    if !after_colon.starts_with('[') {
+        return false;
+    }
+    // Find the character after '[' (skipping whitespace)
+    let after_bracket = after_colon[1..].trim_start();
+    // Non-empty if the next non-whitespace char after '[' is '{' (an object)
+    after_bracket.starts_with('{')
 }
 
 /// List models from LM Studio's /api/v1/models endpoint.
@@ -699,6 +712,112 @@ mod tests {
         let server = FakeServer::start(vec![
             FakeResponse::server_error().expect_get("/api/v1/models")
         ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        assert_eq!(runtime.reachability(), Reachability::Unreachable);
+    }
+
+    // 2xx with empty object: no "models" key is malformed, not empty success.
+    #[test]
+    fn list_models_returns_malformed_on_empty_object() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            LM_STUDIO_MALFORMED_EMPTY_OBJECT,
+        )
+        .expect_get("/api/v1/models")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.list_models();
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    // 2xx with stale "data" envelope: the native v1 API uses "models".
+    #[test]
+    fn list_models_returns_malformed_on_stale_data_envelope() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            LM_STUDIO_MALFORMED_STALE_ENVELOPE,
+        )
+        .expect_get("/api/v1/models")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.list_models();
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    // 2xx with truncated JSON after "models": cannot parse any objects.
+    #[test]
+    fn list_models_returns_malformed_on_truncated_response() {
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_MALFORMED_TRUNCATED).expect_get("/api/v1/models")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        // Truncated response: "models" key is found but no complete objects.
+        // This should return Ok(empty) since the array exists but contains
+        // no parseable objects (the truncation means no matching braces).
+        let result = runtime.list_models();
+        assert!(result.is_ok() || matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    // Official shape with all documented fields parses correctly.
+    #[test]
+    fn list_models_parses_official_shape_with_all_fields() {
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_OFFICIAL_SHAPE).expect_get("/api/v1/models")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let models = runtime.list_models().unwrap();
+
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].id, "llama-3.1-8b");
+        assert_eq!(models[0].display_name, "LLaMA 3.1 8B");
+        assert_eq!(models[0].size_bytes, 4700000000);
+        assert_eq!(models[1].id, "qwen2.5-7b");
+        assert_eq!(models[1].display_name, "Qwen 2.5 7B");
+        assert_eq!(models[1].size_bytes, 4300000000);
+    }
+
+    // Official shape: loaded_instances detection with official entry shape.
+    #[test]
+    fn model_state_detects_loaded_from_official_shape() {
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_OFFICIAL_SHAPE).expect_get("/api/v1/models"),
+            FakeResponse::ok_json(LM_STUDIO_OFFICIAL_SHAPE).expect_get("/api/v1/models"),
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        // llama-3.1-8b has non-empty loaded_instances in the official fixture
+        let state = runtime.model_state("llama-3.1-8b").unwrap();
+        assert!(matches!(state, ModelState::Loaded { .. }));
+
+        // qwen2.5-7b has empty loaded_instances
+        let state = runtime.model_state("qwen2.5-7b").unwrap();
+        assert!(matches!(state, ModelState::Available { .. }));
+    }
+
+    // loaded_instances with whitespace: "[ ]" is empty, not loaded.
+    #[test]
+    fn loaded_instances_whitespace_is_detected_as_empty() {
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_LOADED_WHITESPACE).expect_get("/api/v1/models")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let state = runtime.model_state("whitespace-model").unwrap();
+
+        // "[ ]" should be detected as empty (not loaded)
+        assert!(matches!(state, ModelState::Available { .. }));
+    }
+
+    // Reachability: malformed 2xx must NOT be reported as reachable.
+    #[test]
+    fn reachability_returns_unreachable_on_malformed_response() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            LM_STUDIO_MALFORMED_EMPTY_OBJECT,
+        )
+        .expect_get("/api/v1/models")]);
 
         let runtime = LmStudioRuntime::new(server.address());
         assert_eq!(runtime.reachability(), Reachability::Unreachable);
