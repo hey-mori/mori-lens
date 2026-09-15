@@ -1,12 +1,15 @@
 //! LM Studio runtime: discovery, readiness, and status.
 //!
 //! Implements the [`ProviderRuntime`] trait for LM Studio, providing a
-//! provider-neutral interface over LM Studio's OpenAI-compatible API.
+//! provider-neutral interface over LM Studio's native v1 API.
 //!
-//! LM Studio uses the OpenAI-compatible `/v1/models` endpoint for model listing
-//! and `/v1/chat/completions` for inference. This module handles the management
-//! plane (model listing and status), while [`LmStudioTranslator`] handles the
-//! inference plane.
+//! LM Studio has two API surfaces:
+//! - Native v1: `GET /api/v1/models` (management plane, this module)
+//! - OpenAI-compatible: `POST /v1/chat/completions` (inference plane)
+//!
+//! The native v1 model schema uses `id`, `name`, `type`, `size`, and
+//! `loaded_instances[]`. A model is considered "loaded" if its
+//! `loaded_instances` array is non-empty.
 //!
 //! # Authentication
 //!
@@ -21,8 +24,8 @@ use lens_core::translate::{
 
 /// LM Studio runtime for provider management operations.
 ///
-/// Wraps HTTP calls to LM Studio's `/v1/models` endpoint, providing a
-/// provider-neutral interface over LM Studio's OpenAI-compatible API.
+/// Wraps HTTP calls to LM Studio's native v1 `/api/v1/models` endpoint,
+/// providing a provider-neutral interface over LM Studio's management API.
 #[derive(Debug, Clone)]
 pub struct LmStudioRuntime {
     endpoint: String,
@@ -73,7 +76,7 @@ impl ProviderRuntime for LmStudioRuntime {
     }
 
     fn reachability(&self) -> Reachability {
-        // Query /v1/models to check if LM Studio is reachable
+        // Query /api/v1/models to check if LM Studio is reachable
         match list_models_with_auth(&self.endpoint, self.api_token.as_deref()) {
             Ok(_) => Reachability::Reachable,
             Err(_) => Reachability::Unreachable,
@@ -85,39 +88,56 @@ impl ProviderRuntime for LmStudioRuntime {
     }
 
     fn model_state(&self, model: &str) -> Result<ModelState, TranslateError> {
-        // LM Studio doesn't expose a separate "loaded models" endpoint like Ollama's /api/ps.
-        // All models in /v1/models are available, and we don't distinguish loaded vs available.
-        // So we return Available if the model exists, ModelMissing if it doesn't.
-        let models = self.list_models()?;
-        let model_info = models
+        // Use the native v1 API response which includes loaded_instances.
+        // A model is "loaded" if its loaded_instances array is non-empty.
+        let raw_models = list_models_with_loaded(&self.endpoint, self.api_token.as_deref())?;
+
+        let raw_model = raw_models
             .iter()
-            .find(|m| m.name == model)
+            .find(|m| m.id == model || m.name == model)
             .ok_or_else(|| TranslateError::ModelMissing(model.to_owned()))?;
 
-        Ok(ModelState::Available {
-            name: model_info.name.clone(),
-            size: model_info.size,
-        })
+        if raw_model.is_loaded {
+            Ok(ModelState::Loaded {
+                name: raw_model.id.clone(),
+            })
+        } else {
+            Ok(ModelState::Available {
+                name: raw_model.id.clone(),
+                size: raw_model.size,
+            })
+        }
     }
 }
 
-/// List models from LM Studio's /v1/models endpoint.
+/// Internal model info including loaded state from native v1 API.
+struct RawLmStudioModel {
+    id: String,
+    name: String,
+    size: u64,
+    is_loaded: bool,
+}
+
+/// List models with loaded state from LM Studio's native v1 /api/v1/models endpoint.
 ///
-/// Filters out embedding models (type != "text") since they are not suitable
-/// for translation. Returns only text models.
-fn list_models_with_auth(
+/// Returns internal struct with loaded_instances information for model_state.
+fn list_models_with_loaded(
     endpoint: &str,
     api_token: Option<&str>,
-) -> Result<Vec<ModelInfo>, TranslateError> {
+) -> Result<Vec<RawLmStudioModel>, TranslateError> {
     let (status, body) = if let Some(token) = api_token {
         crate::http::get_with_auth(
             endpoint,
-            "/v1/models",
+            "/api/v1/models",
             std::time::Duration::from_secs(3),
             token,
         )?
     } else {
-        crate::http::get(endpoint, "/v1/models", std::time::Duration::from_secs(3))?
+        crate::http::get(
+            endpoint,
+            "/api/v1/models",
+            std::time::Duration::from_secs(3),
+        )?
     };
 
     // Check for authentication errors using HTTP status code
@@ -126,31 +146,79 @@ fn list_models_with_auth(
     }
 
     // Also check for authentication errors in the response body
-    // LM Studio returns {"error": {"type": "authentication_error"}} for 401
-    // and {"error": {"type": "permission_error"}} for 403
     if let Some(error_type) = crate::json::string_value_of_key(&body, "type") {
         if error_type == "authentication_error" || error_type == "permission_error" {
             return Err(TranslateError::Unavailable);
         }
     }
 
-    // Parse the LM Studio v1 models response
-    // Schema: {"object": "list", "data": [{"id": "...", "type": "...", ...}]}
+    // Parse the LM Studio native v1 models response
+    // Schema: {"data": [{"id": "...", "name": "...", "type": "llm", "size": 123, "loaded_instances": [...]}]}
     let model_ids = crate::json::string_values_of_key(&body, "id");
+    let model_names = crate::json::string_values_of_key(&body, "name");
     let model_types = crate::json::string_values_of_key(&body, "type");
+    let model_sizes = crate::json::number_values_of_key(&body, "size");
 
-    // Filter to only text models (exclude embedding models)
-    // LM Studio size is not in the v1 schema, so we use 0 as a placeholder
-    // If model_types is shorter than model_ids, assume missing types are "text"
-    let models: Vec<ModelInfo> = model_ids
+    // Check loaded state by looking for non-empty loaded_instances arrays
+    // "loaded_instances":[] means not loaded, "loaded_instances":[{"id":...}] means loaded
+    let is_loaded = check_loaded_instances(&body);
+
+    // Filter to only llm models (exclude embedding models)
+    let models: Vec<RawLmStudioModel> = model_ids
         .into_iter()
         .enumerate()
-        .filter(|(i, _)| {
-            model_types.get(*i).map(|t| t == "text").unwrap_or(true) // Default to text if type is missing
+        .filter(|(i, _)| model_types.get(*i).map(|t| t == "llm").unwrap_or(true))
+        .map(|(i, id)| RawLmStudioModel {
+            id,
+            name: model_names.get(i).cloned().unwrap_or_default(),
+            size: model_sizes.get(i).copied().unwrap_or(0),
+            is_loaded: is_loaded.get(i).copied().unwrap_or(false),
         })
-        .map(|(_, id)| ModelInfo {
-            name: id,
-            size: 0, // LM Studio v1 schema doesn't include size
+        .collect();
+
+    Ok(models)
+}
+
+/// Check which models have non-empty loaded_instances arrays.
+///
+/// Returns a vector of booleans, one per model in the response.
+/// True means the model has at least one loaded instance.
+fn check_loaded_instances(body: &str) -> Vec<bool> {
+    let mut result = Vec::new();
+    let needle = "\"loaded_instances\"";
+    let mut from = 0usize;
+
+    while let Some(at) = body[from..].find(needle) {
+        let after_key = from + at + needle.len();
+        from = after_key;
+        let rest = &body[after_key..];
+        let Some(colon) = rest.find(':') else { break };
+        let after_colon = rest[colon + 1..].trim_start();
+
+        // Check if it's an empty array [] or non-empty [{...}]
+        let is_loaded = !after_colon.starts_with("[]");
+        result.push(is_loaded);
+    }
+
+    result
+}
+
+/// List models from LM Studio's /api/v1/models endpoint.
+///
+/// Filters out embedding models (type != "llm") since they are not suitable
+/// for translation. Returns only LLM models.
+fn list_models_with_auth(
+    endpoint: &str,
+    api_token: Option<&str>,
+) -> Result<Vec<ModelInfo>, TranslateError> {
+    let raw_models = list_models_with_loaded(endpoint, api_token)?;
+
+    // Convert to ModelInfo (discard loaded state)
+    let models = raw_models
+        .into_iter()
+        .map(|m| ModelInfo {
+            name: m.id,
+            size: m.size,
         })
         .collect();
 
@@ -199,7 +267,7 @@ mod tests {
     #[test]
     fn reachability_returns_reachable_when_endpoint_answers() {
         let server = FakeServer::start(vec![
-            FakeResponse::ok_json(LM_STUDIO_EMPTY_MODELS).expect_get("/v1/models")
+            FakeResponse::ok_json(LM_STUDIO_EMPTY_MODELS).expect_get("/api/v1/models")
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
@@ -215,7 +283,7 @@ mod tests {
     #[test]
     fn list_models_returns_empty_vec_when_no_models() {
         let server = FakeServer::start(vec![
-            FakeResponse::ok_json(LM_STUDIO_EMPTY_MODELS).expect_get("/v1/models")
+            FakeResponse::ok_json(LM_STUDIO_EMPTY_MODELS).expect_get("/api/v1/models")
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
@@ -226,22 +294,22 @@ mod tests {
     #[test]
     fn list_models_filters_out_embedding_models() {
         let server = FakeServer::start(vec![
-            FakeResponse::ok_json(LM_STUDIO_MODELS_RESPONSE).expect_get("/v1/models")
+            FakeResponse::ok_json(LM_STUDIO_MODELS_RESPONSE).expect_get("/api/v1/models")
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let models = runtime.list_models().unwrap();
 
-        // Should only include text models, not embedding models
+        // Should only include llm models, not embedding models
         assert_eq!(models.len(), 2);
         assert_eq!(models[0].name, "llama-3.1-8b");
         assert_eq!(models[1].name, "qwen2.5-7b");
     }
 
     #[test]
-    fn list_models_returns_text_models_only() {
+    fn list_models_returns_llm_models_only() {
         let server = FakeServer::start(vec![
-            FakeResponse::ok_json(LM_STUDIO_TEXT_MODELS_ONLY).expect_get("/v1/models")
+            FakeResponse::ok_json(LM_STUDIO_LLM_MODELS_ONLY).expect_get("/api/v1/models")
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
@@ -262,7 +330,7 @@ mod tests {
     #[test]
     fn model_state_returns_available_when_model_exists() {
         let server = FakeServer::start(vec![
-            FakeResponse::ok_json(LM_STUDIO_TEXT_MODELS_ONLY).expect_get("/v1/models")
+            FakeResponse::ok_json(LM_STUDIO_LLM_MODELS_ONLY).expect_get("/api/v1/models")
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
@@ -271,7 +339,7 @@ mod tests {
         match state {
             ModelState::Available { name, size } => {
                 assert_eq!(name, "llama-3.1-8b");
-                assert_eq!(size, 0); // LM Studio v1 doesn't include size
+                assert_eq!(size, 4700000000);
             }
             _ => panic!("Expected ModelState::Available, got {:?}", state),
         }
@@ -280,7 +348,7 @@ mod tests {
     #[test]
     fn model_state_returns_model_missing_when_model_not_found() {
         let server = FakeServer::start(vec![
-            FakeResponse::ok_json(LM_STUDIO_TEXT_MODELS_ONLY).expect_get("/v1/models")
+            FakeResponse::ok_json(LM_STUDIO_LLM_MODELS_ONLY).expect_get("/api/v1/models")
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
@@ -292,7 +360,7 @@ mod tests {
     #[test]
     fn model_state_returns_model_missing_for_embedding_model() {
         let server = FakeServer::start(vec![
-            FakeResponse::ok_json(LM_STUDIO_MODELS_RESPONSE).expect_get("/v1/models")
+            FakeResponse::ok_json(LM_STUDIO_MODELS_RESPONSE).expect_get("/api/v1/models")
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
@@ -311,9 +379,46 @@ mod tests {
     }
 
     #[test]
+    fn model_state_returns_loaded_when_model_has_loaded_instances() {
+        // LM_STUDIO_MODELS_RESPONSE has qwen2.5-7b with non-empty loaded_instances
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_MODELS_RESPONSE).expect_get("/api/v1/models")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let state = runtime.model_state("qwen2.5-7b").unwrap();
+
+        match state {
+            ModelState::Loaded { name } => {
+                assert_eq!(name, "qwen2.5-7b");
+            }
+            _ => panic!("Expected ModelState::Loaded, got {:?}", state),
+        }
+    }
+
+    #[test]
+    fn model_state_returns_available_when_model_has_no_loaded_instances() {
+        // LM_STUDIO_MODELS_RESPONSE has llama-3.1-8b with empty loaded_instances
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_MODELS_RESPONSE).expect_get("/api/v1/models")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let state = runtime.model_state("llama-3.1-8b").unwrap();
+
+        match state {
+            ModelState::Available { name, size } => {
+                assert_eq!(name, "llama-3.1-8b");
+                assert_eq!(size, 4700000000);
+            }
+            _ => panic!("Expected ModelState::Available, got {:?}", state),
+        }
+    }
+
+    #[test]
     fn list_models_returns_unavailable_on_401_unauthorized() {
         let server = FakeServer::start(vec![FakeResponse::unauthorized()
-            .expect_get("/v1/models")
+            .expect_get("/api/v1/models")
             .expect_header("Authorization", "Bearer invalid-token")]);
 
         let runtime = LmStudioRuntime::with_token(server.address(), "invalid-token");
@@ -326,7 +431,7 @@ mod tests {
     #[test]
     fn list_models_returns_unavailable_on_403_forbidden() {
         let server = FakeServer::start(vec![FakeResponse::forbidden()
-            .expect_get("/v1/models")
+            .expect_get("/api/v1/models")
             .expect_header("Authorization", "Bearer forbidden-token")]);
 
         let runtime = LmStudioRuntime::with_token(server.address(), "forbidden-token");
@@ -339,7 +444,7 @@ mod tests {
     #[test]
     fn reachability_returns_unreachable_on_401_unauthorized() {
         let server = FakeServer::start(vec![FakeResponse::unauthorized()
-            .expect_get("/v1/models")
+            .expect_get("/api/v1/models")
             .expect_header("Authorization", "Bearer invalid-token")]);
 
         let runtime = LmStudioRuntime::with_token(server.address(), "invalid-token");
@@ -349,7 +454,7 @@ mod tests {
     #[test]
     fn reachability_returns_unreachable_on_403_forbidden() {
         let server = FakeServer::start(vec![FakeResponse::forbidden()
-            .expect_get("/v1/models")
+            .expect_get("/api/v1/models")
             .expect_header("Authorization", "Bearer forbidden-token")]);
 
         let runtime = LmStudioRuntime::with_token(server.address(), "forbidden-token");
