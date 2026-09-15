@@ -24,8 +24,10 @@ use serde::{Deserialize, Serialize};
 /// saved settings to determine if a restart is needed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ActiveEngineSettings {
+    pub quick_engine: String,
     pub quick_model: Option<String>,
     pub quick_endpoint: String,
+    pub deep_engine: String,
     pub deep_model: Option<String>,
     pub deep_endpoint: String,
     pub ocr_mode: String,
@@ -287,6 +289,10 @@ impl SettingsState {
         let mut restart_required = false;
         let mut reasons = Vec::new();
 
+        if saved_schema.quick.engine != self.active_baseline.quick_engine {
+            restart_required = true;
+            reasons.push("quick_engine".to_owned());
+        }
         if saved_schema.quick.model != self.active_baseline.quick_model {
             restart_required = true;
             reasons.push("quick_model".to_owned());
@@ -294,6 +300,10 @@ impl SettingsState {
         if saved_schema.quick.endpoint != self.active_baseline.quick_endpoint {
             restart_required = true;
             reasons.push("quick_endpoint".to_owned());
+        }
+        if saved_schema.deep.engine != self.active_baseline.deep_engine {
+            restart_required = true;
+            reasons.push("deep_engine".to_owned());
         }
         if saved_schema.deep.model != self.active_baseline.deep_model {
             restart_required = true;
@@ -393,7 +403,7 @@ fn is_valid_hover_scope(s: &str) -> bool {
 }
 
 fn validate_engine(value: &str) -> String {
-    if value == "ollama" {
+    if matches!(value, "ollama" | "lmstudio") {
         value.to_owned()
     } else {
         eprintln!("settings  engine = {value:?} is not recognized, using \"ollama\"");
@@ -453,8 +463,10 @@ mod tests {
 
     fn default_baseline() -> ActiveEngineSettings {
         ActiveEngineSettings {
+            quick_engine: "ollama".into(),
             quick_model: None,
             quick_endpoint: "127.0.0.1:11434".into(),
+            deep_engine: "ollama".into(),
             deep_model: None,
             deep_endpoint: "127.0.0.1:11434".into(),
             ocr_mode: "manual".into(),
@@ -807,6 +819,65 @@ mod tests {
         assert!(outcome.reasons.contains(&"quick_model".to_owned()));
         assert!(outcome.reasons.contains(&"deep_endpoint".to_owned()));
         assert!(outcome.reasons.contains(&"ocr_mode".to_owned()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validate_engine_accepts_ollama_and_lmstudio() {
+        assert_eq!(validate_engine("ollama"), "ollama");
+        assert_eq!(validate_engine("lmstudio"), "lmstudio");
+        assert_eq!(validate_engine("unknown"), "ollama"); // fallback
+        assert_eq!(validate_engine(""), "ollama"); // fallback
+    }
+
+    #[test]
+    fn apply_restart_required_when_quick_engine_changed() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        view.quick_engine = "lmstudio".into();
+        let outcome = state.apply(view).unwrap();
+        assert!(outcome.restart_required);
+        assert!(outcome.reasons.contains(&"quick_engine".to_owned()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_restart_required_when_deep_engine_changed() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        view.deep_engine = "lmstudio".into();
+        let outcome = state.apply(view).unwrap();
+        assert!(outcome.restart_required);
+        assert!(outcome.reasons.contains(&"deep_engine".to_owned()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_no_restart_required_when_engine_unchanged() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        view.quick_engine = "ollama".into(); // same as baseline
+        view.deep_engine = "ollama".into(); // same as baseline
+        let outcome = state.apply(view).unwrap();
+        assert!(!outcome.restart_required);
+        assert!(!outcome.reasons.contains(&"quick_engine".to_owned()));
+        assert!(!outcome.reasons.contains(&"deep_engine".to_owned()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_persists_lmstudio_engine() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        view.quick_engine = "lmstudio".into();
+        view.deep_engine = "lmstudio".into();
+        let outcome = state.apply(view).unwrap();
+        assert_eq!(outcome.settings.quick_engine, "lmstudio");
+        assert_eq!(outcome.settings.deep_engine, "lmstudio");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

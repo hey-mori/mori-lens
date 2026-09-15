@@ -5,19 +5,27 @@
 //! layer that bridges the settings schema (which has separate `[quick]`
 //! and `[deep]` sections) and the actual translator instances.
 
+use lens_core::translate::Provider;
 use lens_settings::schema::EngineConfig;
 
-/// One engine's runtime configuration: where it is, and which model to use.
+/// One engine's runtime configuration: which provider, where it is, and which model to use.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeEngine {
+    pub provider: Provider,
     pub endpoint: String,
     pub model: Option<String>,
 }
 
 impl RuntimeEngine {
     /// Build from a schema engine config.
+    ///
+    /// Unknown provider strings fall back to `Provider::Ollama` for safety.
+    /// Callers should validate provider tokens before this point if they
+    /// want stricter behavior.
     pub fn from_schema(config: &EngineConfig) -> Self {
+        let provider = Provider::from_str(&config.engine).unwrap_or(Provider::Ollama);
         Self {
+            provider,
             endpoint: config.endpoint.clone(),
             model: config.model.clone(),
         }
@@ -96,6 +104,67 @@ mod tests {
         assert_ne!(config.quick.endpoint, config.deep.endpoint);
         assert_eq!(config.quick.endpoint, "127.0.0.1:11434");
         assert_eq!(config.deep.endpoint, "127.0.0.1:11435");
+
+        // Quick and Deep should preserve provider identity
+        assert_eq!(config.quick.provider, Provider::Ollama);
+        assert_eq!(config.deep.provider, Provider::Ollama);
+    }
+
+    #[test]
+    fn provider_identity_preserved_from_schema() {
+        let mut schema = test_schema();
+        schema.quick.engine = "ollama".to_owned();
+        schema.deep.engine = "lmstudio".to_owned();
+
+        let config = AiRuntimeConfig::from_schema(&schema);
+
+        assert_eq!(config.quick.provider, Provider::Ollama);
+        assert_eq!(config.deep.provider, Provider::LmStudio);
+    }
+
+    #[test]
+    fn all_four_provider_combinations() {
+        // Quick=Ollama, Deep=Ollama
+        let mut schema = test_schema();
+        schema.quick.engine = "ollama".to_owned();
+        schema.deep.engine = "ollama".to_owned();
+        let config = AiRuntimeConfig::from_schema(&schema);
+        assert_eq!(config.quick.provider, Provider::Ollama);
+        assert_eq!(config.deep.provider, Provider::Ollama);
+
+        // Quick=LM Studio, Deep=LM Studio
+        schema.quick.engine = "lmstudio".to_owned();
+        schema.deep.engine = "lmstudio".to_owned();
+        let config = AiRuntimeConfig::from_schema(&schema);
+        assert_eq!(config.quick.provider, Provider::LmStudio);
+        assert_eq!(config.deep.provider, Provider::LmStudio);
+
+        // Quick=Ollama, Deep=LM Studio
+        schema.quick.engine = "ollama".to_owned();
+        schema.deep.engine = "lmstudio".to_owned();
+        let config = AiRuntimeConfig::from_schema(&schema);
+        assert_eq!(config.quick.provider, Provider::Ollama);
+        assert_eq!(config.deep.provider, Provider::LmStudio);
+
+        // Quick=LM Studio, Deep=Ollama
+        schema.quick.engine = "lmstudio".to_owned();
+        schema.deep.engine = "ollama".to_owned();
+        let config = AiRuntimeConfig::from_schema(&schema);
+        assert_eq!(config.quick.provider, Provider::LmStudio);
+        assert_eq!(config.deep.provider, Provider::Ollama);
+    }
+
+    #[test]
+    fn unknown_provider_falls_back_to_ollama() {
+        let mut schema = test_schema();
+        schema.quick.engine = "unknown".to_owned();
+        schema.deep.engine = "invalid".to_owned();
+
+        let config = AiRuntimeConfig::from_schema(&schema);
+
+        // Unknown providers should fall back to Ollama for safety
+        assert_eq!(config.quick.provider, Provider::Ollama);
+        assert_eq!(config.deep.provider, Provider::Ollama);
     }
 
     #[test]

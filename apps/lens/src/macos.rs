@@ -183,8 +183,10 @@ pub fn main() -> std::process::ExitCode {
     let initial_settings = settings_service::load_or_migrate(
         &settings_path,
         settings_service::ActiveEngineSettings {
+            quick_engine: String::new(),
             quick_model: None,
             quick_endpoint: String::new(),
+            deep_engine: String::new(),
             deep_model: None,
             deep_endpoint: String::new(),
             ocr_mode: String::new(),
@@ -193,8 +195,10 @@ pub fn main() -> std::process::ExitCode {
     // Construct the active baseline from the loaded settings and CLI flags.
     let active_baseline = {
         let guard = initial_settings.schema();
+        let quick_engine = guard.quick.engine.clone();
         let quick_model = guard.quick.model.clone();
         let quick_endpoint = guard.quick.endpoint.clone();
+        let deep_engine = guard.deep.engine.clone();
         let deep_model = guard.deep.model.clone();
         let deep_endpoint = guard.deep.endpoint.clone();
         let ocr_mode = guard.general.ocr.clone();
@@ -204,8 +208,10 @@ pub fn main() -> std::process::ExitCode {
         let quick_model = flags.model.clone().or(quick_model);
         let ocr_mode = flags.ocr.as_deref().map(String::from).unwrap_or(ocr_mode);
         settings_service::ActiveEngineSettings {
+            quick_engine,
             quick_model,
             quick_endpoint,
+            deep_engine,
             deep_model,
             deep_endpoint,
             ocr_mode,
