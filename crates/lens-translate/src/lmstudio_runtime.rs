@@ -99,17 +99,17 @@ impl ProviderRuntime for LmStudioRuntime {
 
         let raw_model = raw_models
             .iter()
-            .find(|m| m.id == model || m.name == model)
+            .find(|m| m.key == model || m.display_name == model)
             .ok_or_else(|| TranslateError::ModelMissing(model.to_owned()))?;
 
         if raw_model.is_loaded {
             Ok(ModelState::Loaded {
-                name: raw_model.id.clone(),
+                name: raw_model.key.clone(),
             })
         } else {
             Ok(ModelState::Available {
-                name: raw_model.id.clone(),
-                size: raw_model.size,
+                name: raw_model.key.clone(),
+                size: raw_model.size_bytes,
             })
         }
     }
@@ -117,9 +117,9 @@ impl ProviderRuntime for LmStudioRuntime {
 
 /// Internal model info including loaded state from native v1 API.
 struct RawLmStudioModel {
-    id: String,
-    name: String,
-    size: u64,
+    key: String,
+    display_name: String,
+    size_bytes: u64,
     is_loaded: bool,
 }
 
@@ -158,25 +158,25 @@ fn list_models_with_loaded(
     }
 
     // Parse the LM Studio native v1 models response
-    // Schema: {"data": [{"id": "...", "name": "...", "type": "llm", "size": 123, "loaded_instances": [...]}]}
-    let model_ids = crate::json::string_values_of_key(&body, "id");
-    let model_names = crate::json::string_values_of_key(&body, "name");
+    // Schema: {"data": [{"key": "...", "display_name": "...", "type": "llm", "size_bytes": 123, "loaded_instances": [...]}]}
+    let model_keys = crate::json::string_values_of_key(&body, "key");
+    let model_display_names = crate::json::string_values_of_key(&body, "display_name");
     let model_types = crate::json::string_values_of_key(&body, "type");
-    let model_sizes = crate::json::number_values_of_key(&body, "size");
+    let model_sizes = crate::json::number_values_of_key(&body, "size_bytes");
 
     // Check loaded state by looking for non-empty loaded_instances arrays
-    // "loaded_instances":[] means not loaded, "loaded_instances":[{"id":...}] means loaded
+    // "loaded_instances":[] means not loaded, "loaded_instances":[{...}] means loaded
     let is_loaded = check_loaded_instances(&body);
 
     // Filter to only llm models (exclude embedding models)
-    let models: Vec<RawLmStudioModel> = model_ids
+    let models: Vec<RawLmStudioModel> = model_keys
         .into_iter()
         .enumerate()
         .filter(|(i, _)| model_types.get(*i).map(|t| t == "llm").unwrap_or(true))
-        .map(|(i, id)| RawLmStudioModel {
-            id,
-            name: model_names.get(i).cloned().unwrap_or_default(),
-            size: model_sizes.get(i).copied().unwrap_or(0),
+        .map(|(i, key)| RawLmStudioModel {
+            key,
+            display_name: model_display_names.get(i).cloned().unwrap_or_default(),
+            size_bytes: model_sizes.get(i).copied().unwrap_or(0),
             is_loaded: is_loaded.get(i).copied().unwrap_or(false),
         })
         .collect();
@@ -218,12 +218,13 @@ fn list_models_with_auth(
 ) -> Result<Vec<ModelInfo>, TranslateError> {
     let raw_models = list_models_with_loaded(endpoint, api_token)?;
 
-    // Convert to ModelInfo (discard loaded state)
+    // Convert to ModelInfo (discard loaded state and display_name)
+    // ModelInfo.name receives the canonical key identifier
     let models = raw_models
         .into_iter()
         .map(|m| ModelInfo {
-            name: m.id,
-            size: m.size,
+            name: m.key,
+            size: m.size_bytes,
         })
         .collect();
 

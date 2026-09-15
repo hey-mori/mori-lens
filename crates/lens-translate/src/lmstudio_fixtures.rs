@@ -8,10 +8,10 @@
 //! - OpenAI-compatible: `POST /v1/chat/completions` (inference plane)
 //!
 //! The native v1 model schema uses:
-//! - `id`: Model identifier (e.g., "llama-3.1-8b")
-//! - `name`: Human-readable name (e.g., "LLaMA 3.1 8B")
+//! - `key`: Canonical model identifier (e.g., "llama-3.1-8b")
+//! - `display_name`: Human-readable label (e.g., "LLaMA 3.1 8B")
 //! - `type`: Model type ("llm" or "embedding")
-//! - `size`: Model size in bytes
+//! - `size_bytes`: Model size in bytes
 //! - `loaded_instances`: Array of currently loaded instances (empty if not loaded)
 //!
 //! All tests using these fixtures are AUTOMATED CONTRACT PASS, not RUNTIME VERIFIED.
@@ -23,26 +23,26 @@
 pub const LM_STUDIO_MODELS_RESPONSE: &str = r#"{
   "data": [
     {
-      "id": "llama-3.1-8b",
-      "name": "LLaMA 3.1 8B",
+      "key": "llama-3.1-8b",
+      "display_name": "LLaMA 3.1 8B",
       "type": "llm",
-      "size": 4700000000,
+      "size_bytes": 4700000000,
       "loaded_instances": []
     },
     {
-      "id": "qwen2.5-7b",
-      "name": "Qwen 2.5 7B",
+      "key": "qwen2.5-7b",
+      "display_name": "Qwen 2.5 7B",
       "type": "llm",
-      "size": 4300000000,
+      "size_bytes": 4300000000,
       "loaded_instances": [
         {"context_window": 4096}
       ]
     },
     {
-      "id": "nomic-embed-text",
-      "name": "Nomic Embed Text",
+      "key": "nomic-embed-text",
+      "display_name": "Nomic Embed Text",
       "type": "embedding",
-      "size": 278000000,
+      "size_bytes": 278000000,
       "loaded_instances": []
     }
   ]
@@ -52,17 +52,17 @@ pub const LM_STUDIO_MODELS_RESPONSE: &str = r#"{
 pub const LM_STUDIO_LLM_MODELS_ONLY: &str = r#"{
   "data": [
     {
-      "id": "llama-3.1-8b",
-      "name": "LLaMA 3.1 8B",
+      "key": "llama-3.1-8b",
+      "display_name": "LLaMA 3.1 8B",
       "type": "llm",
-      "size": 4700000000,
+      "size_bytes": 4700000000,
       "loaded_instances": []
     },
     {
-      "id": "qwen2.5-7b",
-      "name": "Qwen 2.5 7B",
+      "key": "qwen2.5-7b",
+      "display_name": "Qwen 2.5 7B",
       "type": "llm",
-      "size": 4300000000,
+      "size_bytes": 4300000000,
       "loaded_instances": []
     }
   ]
@@ -72,10 +72,10 @@ pub const LM_STUDIO_LLM_MODELS_ONLY: &str = r#"{
 pub const LM_STUDIO_EMBEDDING_MODELS_ONLY: &str = r#"{
   "data": [
     {
-      "id": "nomic-embed-text",
-      "name": "Nomic Embed Text",
+      "key": "nomic-embed-text",
+      "display_name": "Nomic Embed Text",
       "type": "embedding",
-      "size": 278000000,
+      "size_bytes": 278000000,
       "loaded_instances": []
     }
   ]
