@@ -109,7 +109,7 @@ fn list_models_with_auth(
     endpoint: &str,
     api_token: Option<&str>,
 ) -> Result<Vec<ModelInfo>, TranslateError> {
-    let body = if let Some(token) = api_token {
+    let (status, body) = if let Some(token) = api_token {
         crate::http::get_with_auth(
             endpoint,
             "/v1/models",
@@ -120,7 +120,12 @@ fn list_models_with_auth(
         crate::http::get(endpoint, "/v1/models", std::time::Duration::from_secs(3))?
     };
 
-    // Check for authentication errors in the response body
+    // Check for authentication errors using HTTP status code
+    if status == 401 || status == 403 {
+        return Err(TranslateError::Unavailable);
+    }
+
+    // Also check for authentication errors in the response body
     // LM Studio returns {"error": {"type": "authentication_error"}} for 401
     // and {"error": {"type": "permission_error"}} for 403
     if let Some(error_type) = crate::json::string_value_of_key(&body, "type") {

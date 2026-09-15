@@ -238,12 +238,7 @@ mod tests {
         let mut stream = TcpStream::connect(server.address()).unwrap();
         stream
             .write_all(
-                b"POST /api/generate HTTP/1.1\r\n\
-                  Host: localhost\r\n\
-                  Content-Type: application/json\r\n\
-                  Content-Length: 13\r\n\
-                  \r\n\
-                  {\"model\":\"test\"}",
+                b"POST /api/generate HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 13\r\n\r\n{\"model\":\"test\"}",
             )
             .unwrap();
         stream.flush().unwrap();

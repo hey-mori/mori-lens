@@ -87,7 +87,7 @@ impl ProviderRuntime for OllamaRuntime {
 /// Queries `/api/ps` and checks if the model name appears in the response.
 /// This is the same check used by the settings UI and the worker.
 fn is_model_loaded(endpoint: &str, model: &str) -> Result<bool, TranslateError> {
-    let body = crate::http::get(endpoint, "/api/ps", std::time::Duration::from_secs(2))
+    let (_status, body) = crate::http::get(endpoint, "/api/ps", std::time::Duration::from_secs(2))
         .map_err(|_| TranslateError::Unavailable)?;
 
     // Use canonical JSON parsing path (same as lib.rs)
