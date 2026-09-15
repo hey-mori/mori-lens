@@ -68,6 +68,11 @@ impl LmStudioRuntime {
     pub fn has_auth(&self) -> bool {
         self.api_token.is_some()
     }
+
+    /// The API token, if configured.
+    pub fn api_token(&self) -> Option<&str> {
+        self.api_token.as_deref()
+    }
 }
 
 impl ProviderRuntime for LmStudioRuntime {
