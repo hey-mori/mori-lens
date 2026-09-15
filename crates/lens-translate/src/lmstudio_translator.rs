@@ -71,22 +71,21 @@ impl LmStudioTranslator {
         );
 
         // Build OpenAI-compatible chat completion request
+        let messages = format!(
+            "[{},{}]",
+            crate::json::object(&[
+                ("role", crate::json::Value::Str("system")),
+                ("content", crate::json::Value::Str(&system_prompt))
+            ]),
+            crate::json::object(&[
+                ("role", crate::json::Value::Str("user")),
+                ("content", crate::json::Value::Str(&fenced_text))
+            ])
+        );
+
         crate::json::object(&[
             ("model", crate::json::Value::Str(&self.model)),
-            (
-                "messages",
-                crate::json::Value::RawOwned(format!(
-                    "[{{\"role\":\"system\",\"content\":{}}},{{\"role\":\"user\",\"content\":{}}}]",
-                    crate::json::object(&[
-                        ("role", crate::json::Value::Str("system")),
-                        ("content", crate::json::Value::Str(&system_prompt))
-                    ]),
-                    crate::json::object(&[
-                        ("role", crate::json::Value::Str("user")),
-                        ("content", crate::json::Value::Str(&fenced_text))
-                    ])
-                )),
-            ),
+            ("messages", crate::json::Value::RawOwned(messages)),
             ("temperature", crate::json::Value::Raw("0")),
             (
                 "max_tokens",
@@ -182,14 +181,13 @@ impl Translator for LmStudioTranslator {
         let body = self.build_request(request);
         let started = Instant::now();
 
-        let (_status, response) = if self.runtime.has_auth() {
-            // Extract token from runtime (not ideal, but works for now)
-            // In a real implementation, the runtime would provide a method to make authenticated requests
-            crate::http::post(
+        let (_status, response) = if let Some(token) = self.runtime.api_token() {
+            crate::http::post_with_auth(
                 self.runtime.endpoint(),
                 "/v1/chat/completions",
                 &body,
                 self.timeout,
+                token,
             )?
         } else {
             crate::http::post(
@@ -241,16 +239,6 @@ impl Translator for LmStudioTranslator {
             name_changed,
         })
     }
-
-    fn quick_streaming(
-        &self,
-        _request: &QuickRequest,
-        _on_partial: &mut dyn FnMut(&str),
-    ) -> Result<QuickTranslation, TranslateError> {
-        // LM Studio streaming not yet implemented; fall back to non-streaming
-        // This is a TODO for Phase 3
-        Err(TranslateError::Malformed)
-    }
 }
 
 #[cfg(test)]
@@ -295,9 +283,9 @@ mod tests {
 
     #[test]
     fn quick_returns_unavailable_on_auth_error() {
-        let server = FakeServer::start(vec![
-            FakeResponse::unauthorized().expect_post("/v1/chat/completions")
-        ]);
+        let server = FakeServer::start(vec![FakeResponse::unauthorized()
+            .expect_post("/v1/chat/completions")
+            .expect_header("Authorization", "Bearer invalid-token")]);
 
         let runtime = LmStudioRuntime::with_token(server.address(), "invalid-token");
         let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
@@ -306,6 +294,21 @@ mod tests {
         let result = translator.quick(&request);
 
         assert!(matches!(result, Err(TranslateError::Unavailable)));
+    }
+
+    #[test]
+    fn quick_sends_auth_header_when_token_configured() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(LM_STUDIO_CHAT_RESPONSE)
+            .expect_post("/v1/chat/completions")
+            .expect_header("Authorization", "Bearer my-secret-token")]);
+
+        let runtime = LmStudioRuntime::with_token(server.address(), "my-secret-token");
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request).unwrap();
+
+        assert_eq!(result.text, "안녕 세상");
     }
 
     #[test]

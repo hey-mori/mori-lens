@@ -103,7 +103,6 @@ impl FakeResponse {
     }
 
     /// Set the expectation that the request is a POST to the given path.
-    #[allow(dead_code)] // Used by translator contract tests
     pub fn expect_post(mut self, path: &str) -> Self {
         self.expect = Some(RequestExpectation {
             method: Some("POST".to_owned()),
