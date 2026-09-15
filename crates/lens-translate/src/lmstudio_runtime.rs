@@ -29,6 +29,35 @@
 use lens_core::translate::{
     ModelInfo, ModelState, Provider, ProviderRuntime, Reachability, TranslateError,
 };
+use serde::Deserialize;
+
+/// LM Studio native v1 models response.
+///
+/// Schema: `{"models": [...]}`
+/// Per https://lmstudio.ai/docs/developer/rest/list
+#[derive(Debug, Deserialize)]
+struct ModelsResponse {
+    models: Vec<NativeModel>,
+}
+
+/// A model entry from LM Studio's native v1 API.
+///
+/// Required fields for `type == "llm"`:
+/// - `key`: non-empty canonical identifier
+/// - `display_name`: non-empty human-readable label
+/// - `size_bytes`: numeric model size
+/// - `loaded_instances`: array (empty if not loaded)
+///
+/// Unknown optional fields are tolerated (serde ignores them by default).
+#[derive(Debug, Deserialize)]
+struct NativeModel {
+    #[serde(rename = "type")]
+    model_type: Option<String>,
+    key: Option<serde_json::Value>,
+    display_name: Option<serde_json::Value>,
+    size_bytes: Option<serde_json::Value>,
+    loaded_instances: Option<serde_json::Value>,
+}
 
 /// LM Studio runtime for provider management operations.
 ///
@@ -184,232 +213,80 @@ fn list_models_with_loaded(
     Ok(models)
 }
 
-/// Parse model objects from the native v1 response body.
+/// Parse model objects from the native v1 response body using serde_json.
 ///
-/// Each object in the "models" array is parsed individually so that missing
-/// fields in one model do not shift the indices of subsequent models.
+/// The LM Studio native v1 API returns a nested JSON document with:
+/// - top-level object with "models" array
+/// - model objects with string, number, array, and nested object fields
+/// - optional fields that must be tolerated
+/// - required fields (for type=="llm") that must be present and correctly typed
+///
+/// A hand-written substring scanner cannot correctly validate this structure:
+/// - Field names can appear inside string values
+/// - JSON syntax (commas, brackets) must be validated
+/// - Field types must be checked (string vs number vs array)
+/// - Escaped strings must be handled correctly
+///
+/// Using serde_json provides correct JSON parsing with minimal code.
 ///
 /// Returns `Err(TranslateError::Malformed)` when:
-/// - The `"models"` key is absent
-/// - The models array is not structurally closed (truncated JSON)
-/// - Any model object within the array is not structurally closed
-/// - An explicit `type == "llm"` entry is missing a required field:
-///   `key`, `display_name`, `size_bytes`, or `loaded_instances`
+/// - The JSON is syntactically invalid (missing commas, unclosed brackets, etc.)
+/// - The `"models"` key is absent or not an array
+/// - An explicit `type == "llm"` entry has missing or wrong-typed required fields:
+///   `key` (non-empty string), `display_name` (non-empty string),
+///   `size_bytes` (number), `loaded_instances` (array)
 fn parse_model_objects(body: &str) -> Result<Vec<RawLmStudioModel>, TranslateError> {
+    // Parse the JSON document. Any syntax error is malformed.
+    let response: ModelsResponse =
+        serde_json::from_str(body).map_err(|_| TranslateError::Malformed)?;
+
     let mut models = Vec::new();
 
-    // Find the "models" array. A 2xx without it is malformed.
-    let Some(data_start) = body.find("\"models\"") else {
-        return Err(TranslateError::Malformed);
-    };
-    let after_data_key = &body[data_start + 8..];
-    let Some(array_start) = after_data_key.find('[') else {
-        return Err(TranslateError::Malformed);
-    };
-    let array_content = &after_data_key[array_start + 1..];
-
-    // Verify the models array is structurally closed. A truncated response
-    // where objects are complete but the array lacks ']' is malformed.
-    let Some(array_end) = find_matching_bracket(array_content) else {
-        return Err(TranslateError::Malformed);
-    };
-    let bounded_content = &array_content[..array_end];
-
-    // Iterate through objects in the bounded array content
-    let mut pos = 0usize;
-    while let Some(obj_start) = bounded_content[pos..].find('{') {
-        let obj_begin = pos + obj_start;
-        // Find the matching closing brace. An unterminated object within
-        // a bounded array means the JSON is structurally broken.
-        let Some(obj_end) = find_matching_brace(bounded_content, obj_begin) else {
-            return Err(TranslateError::Malformed);
-        };
-        let obj_str = &bounded_content[obj_begin..=obj_end];
-
-        // Extract fields from this single object
-        let model_type = extract_string_field(obj_str, "type");
-
-        // Fail closed: only process models with explicit type == "llm"
-        if model_type.as_deref() == Some("llm") {
-            // Required fields for an LLM model entry.
-            // A type=="llm" entry missing identity or metadata is malformed,
-            // not a valid model with defaults.
-            let key = extract_string_field(obj_str, "key")
-                .filter(|s| !s.is_empty())
-                .ok_or(TranslateError::Malformed)?;
-            let display_name = extract_string_field(obj_str, "display_name")
-                .filter(|s| !s.is_empty())
-                .ok_or(TranslateError::Malformed)?;
-            let size_bytes =
-                extract_number_field(obj_str, "size_bytes").ok_or(TranslateError::Malformed)?;
-            // loaded_instances must be structurally present (even if empty).
-            if !has_field(obj_str, "loaded_instances") {
-                return Err(TranslateError::Malformed);
-            }
-            let is_loaded = check_object_loaded(obj_str);
-
-            models.push(RawLmStudioModel {
-                key,
-                display_name,
-                size_bytes,
-                is_loaded,
-            });
+    for model in response.models {
+        // Only process models with explicit type == "llm"
+        if model.model_type.as_deref() != Some("llm") {
+            continue;
         }
 
-        pos = obj_end + 1;
+        // Required fields for an LLM model entry.
+        // A type=="llm" entry missing identity or metadata is malformed.
+
+        // key must be a non-empty string
+        let key = match model.key {
+            Some(serde_json::Value::String(s)) if !s.is_empty() => s,
+            _ => return Err(TranslateError::Malformed),
+        };
+
+        // display_name must be a non-empty string
+        let display_name = match model.display_name {
+            Some(serde_json::Value::String(s)) if !s.is_empty() => s,
+            _ => return Err(TranslateError::Malformed),
+        };
+
+        // size_bytes must be a number (u64)
+        let size_bytes = match model.size_bytes {
+            Some(serde_json::Value::Number(n)) => n.as_u64().ok_or(TranslateError::Malformed)?,
+            _ => return Err(TranslateError::Malformed),
+        };
+
+        // loaded_instances must be an array
+        let loaded_instances = match model.loaded_instances {
+            Some(serde_json::Value::Array(arr)) => arr,
+            _ => return Err(TranslateError::Malformed),
+        };
+
+        // A model is loaded if its loaded_instances array is non-empty
+        let is_loaded = !loaded_instances.is_empty();
+
+        models.push(RawLmStudioModel {
+            key,
+            display_name,
+            size_bytes,
+            is_loaded,
+        });
     }
 
     Ok(models)
-}
-
-/// Find the matching closing brace for an opening brace at position `start`.
-fn find_matching_brace(s: &str, start: usize) -> Option<usize> {
-    let mut depth = 0;
-    let mut in_string = false;
-    let mut escape = false;
-
-    for (i, ch) in s[start..].char_indices() {
-        if escape {
-            escape = false;
-            continue;
-        }
-        if ch == '\\' && in_string {
-            escape = true;
-            continue;
-        }
-        if ch == '"' {
-            in_string = !in_string;
-            continue;
-        }
-        if in_string {
-            continue;
-        }
-        if ch == '{' {
-            depth += 1;
-        } else if ch == '}' {
-            depth -= 1;
-            if depth == 0 {
-                return Some(start + i);
-            }
-        }
-    }
-    None
-}
-
-/// Find the matching closing bracket `]` for an opening `[` that was already
-/// consumed. The string `s` starts after the `[`.
-///
-/// Returns the index of the matching `]` within `s`, or `None` if the bracket
-/// is unterminated (truncated JSON). Handles nested braces, strings, and escapes.
-fn find_matching_bracket(s: &str) -> Option<usize> {
-    // Start at depth 1 because the opening '[' was already consumed.
-    let mut depth = 1;
-    let mut in_string = false;
-    let mut escape = false;
-
-    for (i, ch) in s.char_indices() {
-        if escape {
-            escape = false;
-            continue;
-        }
-        if ch == '\\' && in_string {
-            escape = true;
-            continue;
-        }
-        if ch == '"' {
-            in_string = !in_string;
-            continue;
-        }
-        if in_string {
-            continue;
-        }
-        if ch == '[' {
-            depth += 1;
-        } else if ch == ']' {
-            depth -= 1;
-            if depth == 0 {
-                return Some(i);
-            }
-        }
-    }
-    None
-}
-
-/// Check if a JSON object string contains a given field key.
-///
-/// This only checks for the presence of the key, not its value.
-/// Used to verify that required fields are structurally present.
-fn has_field(obj: &str, field: &str) -> bool {
-    let needle = format!("\"{}\"", field);
-    obj.contains(&needle)
-}
-
-/// Extract a string field value from a JSON object string.
-fn extract_string_field(obj: &str, field: &str) -> Option<String> {
-    let needle = format!("\"{}\"", field);
-    let field_pos = obj.find(&needle)?;
-    let after_field = &obj[field_pos + needle.len()..];
-    let colon = after_field.find(':')?;
-    let after_colon = after_field[colon + 1..].trim_start();
-    if !after_colon.starts_with('"') {
-        return None;
-    }
-    // Find the closing quote (handling escapes)
-    let content = &after_colon[1..];
-    let mut end = 0;
-    let mut escape = false;
-    for (i, ch) in content.char_indices() {
-        if escape {
-            escape = false;
-            continue;
-        }
-        if ch == '\\' {
-            escape = true;
-            continue;
-        }
-        if ch == '"' {
-            end = i;
-            break;
-        }
-    }
-    Some(content[..end].to_owned())
-}
-
-/// Extract a number field value from a JSON object string.
-fn extract_number_field(obj: &str, field: &str) -> Option<u64> {
-    let needle = format!("\"{}\"", field);
-    let field_pos = obj.find(&needle)?;
-    let after_field = &obj[field_pos + needle.len()..];
-    let colon = after_field.find(':')?;
-    let after_colon = after_field[colon + 1..].trim_start();
-    // Parse digits
-    let num_str: String = after_colon
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
-    num_str.parse().ok()
-}
-
-/// Check if a single model object has non-empty loaded_instances.
-///
-/// Handles whitespace variants: `[]`, `[ ]`, `[\n]` are all empty.
-/// A non-empty array has an object literal as its first element: `[{...}]`.
-fn check_object_loaded(obj: &str) -> bool {
-    let Some(pos) = obj.find("\"loaded_instances\"") else {
-        return false;
-    };
-    let after = &obj[pos + 18..];
-    let Some(colon) = after.find(':') else {
-        return false;
-    };
-    let after_colon = after[colon + 1..].trim_start();
-    if !after_colon.starts_with('[') {
-        return false;
-    }
-    // Find the character after '[' (skipping whitespace)
-    let after_bracket = after_colon[1..].trim_start();
-    // Non-empty if the next non-whitespace char after '[' is '{' (an object)
-    after_bracket.starts_with('{')
 }
 
 /// List models from LM Studio's /api/v1/models endpoint.
@@ -886,6 +763,146 @@ mod tests {
         let result = runtime.list_models();
 
         assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    // Parser defect: field name appearing only inside a string value must not
+    // be mistaken for an actual field key. The display_name is "loaded_instances"
+    // but there is no actual loaded_instances field.
+    #[test]
+    fn list_models_returns_malformed_when_field_name_appears_only_in_value() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            LM_STUDIO_MALFORMED_FIELD_NAME_IN_VALUE,
+        )
+        .expect_get("/api/v1/models")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.list_models();
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    // Parser defect: missing comma between objects. A structurally closed but
+    // syntactically invalid JSON must not parse successfully.
+    #[test]
+    fn list_models_returns_malformed_on_missing_comma_between_objects() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            LM_STUDIO_MALFORMED_MISSING_COMMA,
+        )
+        .expect_get("/api/v1/models")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.list_models();
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    // Parser defect: size_bytes as string instead of number. Wrong JSON type
+    // for required field is malformed.
+    #[test]
+    fn list_models_returns_malformed_on_size_bytes_as_string() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            LM_STUDIO_MALFORMED_SIZE_AS_STRING,
+        )
+        .expect_get("/api/v1/models")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.list_models();
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    // Parser defect: loaded_instances as object instead of array. Wrong JSON
+    // type for required field is malformed.
+    #[test]
+    fn list_models_returns_malformed_on_loaded_instances_as_object() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            LM_STUDIO_MALFORMED_LOADED_AS_OBJECT,
+        )
+        .expect_get("/api/v1/models")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.list_models();
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    // Parser defect: key as null instead of string. Wrong JSON type for
+    // required field is malformed.
+    #[test]
+    fn list_models_returns_malformed_on_key_as_null() {
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_MALFORMED_KEY_NULL).expect_get("/api/v1/models")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.list_models();
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    // Malformed: models is not an array (it's an object).
+    #[test]
+    fn list_models_returns_malformed_when_models_is_not_array() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            LM_STUDIO_MALFORMED_MODELS_NOT_ARRAY,
+        )
+        .expect_get("/api/v1/models")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.list_models();
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    // Fail-closed: an explicit type=="llm" entry missing display_name is malformed.
+    #[test]
+    fn list_models_returns_malformed_on_llm_missing_display_name() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            LM_STUDIO_MALFORMED_LLM_MISSING_DISPLAY_NAME,
+        )
+        .expect_get("/api/v1/models")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.list_models();
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    // Valid: model with escaped characters in display_name.
+    // JSON string escaping must be handled correctly by the parser.
+    #[test]
+    fn list_models_handles_escaped_characters_in_display_name() {
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_ESCAPED_DISPLAY_NAME).expect_get("/api/v1/models")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let models = runtime.list_models().unwrap();
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "escaped-model");
+        assert_eq!(
+            models[0].display_name,
+            r#"Model with "quotes" and \backslash"#
+        );
+        assert_eq!(models[0].size_bytes, 1000000000);
+    }
+
+    // Valid: model with unknown extra fields.
+    // The parser must tolerate additional fields not in the minimal schema.
+    #[test]
+    fn list_models_tolerates_unknown_extra_fields() {
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_EXTRA_FIELDS).expect_get("/api/v1/models")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let models = runtime.list_models().unwrap();
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "extra-model");
+        assert_eq!(models[0].display_name, "Extra Model");
+        assert_eq!(models[0].size_bytes, 1000000000);
     }
 
     // Official shape with all documented fields parses correctly.
