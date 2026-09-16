@@ -899,7 +899,7 @@ impl Provider {
     ///
     /// Returns `None` for unknown provider strings. Callers should decide
     /// whether to fall back to a default provider or treat this as an error.
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_token(s: &str) -> Option<Self> {
         match s {
             "ollama" => Some(Self::Ollama),
             "lmstudio" => Some(Self::LmStudio),
@@ -2013,7 +2013,7 @@ mod focus_tests {
 
 #[cfg(test)]
 mod fence_tests {
-    use super::{engine_for, without_the_fence, EngineId, FENCE_OPENING, Provider};
+    use super::{engine_for, without_the_fence, EngineId, Provider, FENCE_OPENING};
 
     const FENCE: &str = "#LENS-5a23bfc686af5a74#";
 
@@ -2178,16 +2178,16 @@ mod fence_tests {
 
     #[test]
     fn provider_from_str_parses_known_tokens() {
-        assert_eq!(Provider::from_str("ollama"), Some(Provider::Ollama));
-        assert_eq!(Provider::from_str("lmstudio"), Some(Provider::LmStudio));
+        assert_eq!(Provider::from_token("ollama"), Some(Provider::Ollama));
+        assert_eq!(Provider::from_token("lmstudio"), Some(Provider::LmStudio));
     }
 
     #[test]
     fn provider_from_str_returns_none_for_unknown() {
-        assert_eq!(Provider::from_str("unknown"), None);
-        assert_eq!(Provider::from_str(""), None);
-        assert_eq!(Provider::from_str("OLLAMA"), None);
-        assert_eq!(Provider::from_str("lm-studio"), None);
+        assert_eq!(Provider::from_token("unknown"), None);
+        assert_eq!(Provider::from_token(""), None);
+        assert_eq!(Provider::from_token("OLLAMA"), None);
+        assert_eq!(Provider::from_token("lm-studio"), None);
     }
 
     #[test]

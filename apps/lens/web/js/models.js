@@ -4,34 +4,40 @@ import { invoke } from './tauri.js';
 import { formatSize, escapeHtml } from './ui.js';
 import { state } from './state.js';
 
+function providerDisplayName(provider) {
+  return provider === 'lmstudio' ? 'LM Studio' : 'Ollama';
+}
+
 export async function refreshModels(selectedModel) {
+  const provider = document.getElementById('f-quick-engine').value || 'ollama';
   const endpoint = document.getElementById('f-quick-endpoint').value || '127.0.0.1:11434';
-  const dot = document.getElementById('ollama-dot');
-  const label = document.getElementById('ollama-label');
-  const epLabel = document.getElementById('ollama-endpoint');
+  const dot = document.getElementById('provider-dot');
+  const label = document.getElementById('provider-label');
+  const epLabel = document.getElementById('provider-endpoint');
   const listEl = document.getElementById('models-list');
   const selectEl = document.getElementById('f-quick-model-select');
 
   if (!dot || !label || !epLabel || !listEl || !selectEl) return;
 
+  const providerName = providerDisplayName(provider);
   epLabel.textContent = endpoint;
 
-  const reachable = await invoke('check_ollama', { endpoint });
+  const reachable = await invoke('check_provider', { provider, endpoint });
   if (!reachable) {
     dot.style.background = '#c00';
-    label.textContent = 'Ollama not reachable';
+    label.textContent = providerName + ' not reachable';
     label.style.color = '#c00';
-    listEl.innerHTML = '<p style="color:#888;font-size:13px">Start Ollama and refresh.</p>';
+    listEl.innerHTML = '<p style="color:#888;font-size:13px">Start ' + providerName + ' and refresh.</p>';
     selectEl.innerHTML = '<option value="">Auto (best available)</option>';
     return;
   }
 
   dot.style.background = '#2a2';
-  label.textContent = 'Ollama running';
+  label.textContent = providerName + ' running';
   label.style.color = '#2a2';
 
   try {
-    const models = await invoke('list_models', { endpoint });
+    const models = await invoke('list_models', { provider, endpoint });
     if (!models || models.length === 0) {
       listEl.innerHTML = '<p style="color:#888;font-size:13px">No models installed.</p>';
       selectEl.innerHTML = '<option value="">Auto (best available)</option>';
@@ -59,6 +65,7 @@ export async function refreshModels(selectedModel) {
 }
 
 export async function testModel() {
+  const provider = document.getElementById('f-quick-engine').value || 'ollama';
   const endpoint = document.getElementById('f-quick-endpoint').value || '127.0.0.1:11434';
   const model = document.getElementById('f-quick-model-select').value;
   const resultEl = document.getElementById('test-result');
@@ -71,7 +78,7 @@ export async function testModel() {
   btn.textContent = 'Testing...';
   resultEl.innerHTML = '';
   try {
-    const result = await invoke('test_model', { endpoint, model });
+    const result = await invoke('test_model', { provider, endpoint, model });
     resultEl.innerHTML = '<strong>' + escapeHtml(String(result.model)) + '</strong> (' + escapeHtml(String(result.latency_ms)) + 'ms)<br>' + escapeHtml(String(result.translated));
   } catch (e) {
     resultEl.innerHTML = '<span class="error">Error: ' + escapeHtml(String(e)) + '</span>';
