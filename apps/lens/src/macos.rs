@@ -559,9 +559,9 @@ fn product_loop(
                     },
                 };
                 // Rebuild translator only if model resolved successfully
-                translator = resolved_model.as_ref().map(|model| {
-                    lens_translate::build_translator(provider, &ep, model)
-                });
+                translator = resolved_model
+                    .as_ref()
+                    .map(|model| lens_translate::build_translator(provider, &ep, model));
                 current_model = resolved_model;
             }
             // Drain pending Quick jobs — keep only the latest.
@@ -602,8 +602,7 @@ fn product_loop(
                     Err("AI engine not ready".to_owned())
                 }
             };
-            let _ = quick_result_tx
-                .send(current.into_result(result.map_err(|e| e.to_owned())));
+            let _ = quick_result_tx.send(current.into_result(result.map_err(|e| e.to_owned())));
         }
     });
 

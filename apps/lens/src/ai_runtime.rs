@@ -156,9 +156,19 @@ mod tests {
         let config = AiRuntimeConfig::from_schema(&schema);
 
         assert_eq!(config.quick.provider, Provider::Ollama);
-        assert_eq!(config.deep.provider, Provider::Ollama, "Phase 3: Deep must be forced to Ollama");
-        assert_eq!(config.deep.endpoint, "127.0.0.1:11434", "Deep endpoint must be reset to Ollama default");
-        assert_eq!(config.deep.model, None, "Deep model must be reset to None (auto)");
+        assert_eq!(
+            config.deep.provider,
+            Provider::Ollama,
+            "Phase 3: Deep must be forced to Ollama"
+        );
+        assert_eq!(
+            config.deep.endpoint, "127.0.0.1:11434",
+            "Deep endpoint must be reset to Ollama default"
+        );
+        assert_eq!(
+            config.deep.model, None,
+            "Deep model must be reset to None (auto)"
+        );
     }
 
     #[test]
@@ -191,8 +201,15 @@ mod tests {
         schema.deep.model = Some("lm-model".to_owned());
         let config = AiRuntimeConfig::from_schema(&schema);
         assert_eq!(config.quick.provider, Provider::Ollama);
-        assert_eq!(config.deep.provider, Provider::Ollama, "Deep LM Studio must be forced to Ollama");
-        assert_eq!(config.deep.endpoint, "127.0.0.1:11434", "Deep endpoint must reset to Ollama default");
+        assert_eq!(
+            config.deep.provider,
+            Provider::Ollama,
+            "Deep LM Studio must be forced to Ollama"
+        );
+        assert_eq!(
+            config.deep.endpoint, "127.0.0.1:11434",
+            "Deep endpoint must reset to Ollama default"
+        );
         assert_eq!(config.deep.model, None, "Deep model must reset to None");
 
         // Quick=LM Studio, Deep=LM Studio (invalid, forced to Ollama with defaults)
@@ -202,8 +219,15 @@ mod tests {
         schema.deep.model = Some("lm-model".to_owned());
         let config = AiRuntimeConfig::from_schema(&schema);
         assert_eq!(config.quick.provider, Provider::LmStudio);
-        assert_eq!(config.deep.provider, Provider::Ollama, "Deep LM Studio must be forced to Ollama");
-        assert_eq!(config.deep.endpoint, "127.0.0.1:11434", "Deep endpoint must reset to Ollama default");
+        assert_eq!(
+            config.deep.provider,
+            Provider::Ollama,
+            "Deep LM Studio must be forced to Ollama"
+        );
+        assert_eq!(
+            config.deep.endpoint, "127.0.0.1:11434",
+            "Deep endpoint must reset to Ollama default"
+        );
         assert_eq!(config.deep.model, None, "Deep model must reset to None");
     }
 
