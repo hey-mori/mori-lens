@@ -267,7 +267,11 @@ impl SettingsState {
                     default_endpoint_for_engine(&new_quick_engine).to_owned()
                 } else {
                     // User has custom endpoint, but still validate it (privacy constraint)
-                    validate_endpoint(current_endpoint, default_endpoint_for_engine(&new_quick_engine), "quick_endpoint")
+                    validate_endpoint(
+                        current_endpoint,
+                        default_endpoint_for_engine(&new_quick_engine),
+                        "quick_endpoint",
+                    )
                 }
             } else {
                 validate_endpoint(&view.quick_endpoint, &defaults.endpoint, "quick_endpoint")
@@ -292,7 +296,11 @@ impl SettingsState {
                     default_endpoint_for_engine(&new_deep_engine).to_owned()
                 } else {
                     // User has custom endpoint, but still validate it (privacy constraint)
-                    validate_endpoint(current_endpoint, default_endpoint_for_engine(&new_deep_engine), "deep_endpoint")
+                    validate_endpoint(
+                        current_endpoint,
+                        default_endpoint_for_engine(&new_deep_engine),
+                        "deep_endpoint",
+                    )
                 }
             } else {
                 validate_endpoint(&view.deep_endpoint, &defaults.endpoint, "deep_endpoint")
@@ -461,7 +469,9 @@ fn validate_deep_engine(value: &str) -> String {
     if value == "ollama" {
         value.to_owned()
     } else {
-        eprintln!("settings  deep_engine = {value:?} is not supported in Phase 3, using \"ollama\"");
+        eprintln!(
+            "settings  deep_engine = {value:?} is not supported in Phase 3, using \"ollama\""
+        );
         "ollama".to_owned()
     }
 }
