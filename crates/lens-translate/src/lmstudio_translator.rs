@@ -13,11 +13,47 @@
 //! the same as Ollama: text does not leave the machine unless the user
 //! configures a remote endpoint.
 
+use serde::Deserialize;
 use std::time::{Duration, Instant};
 
 use lens_core::translate::{QuickRequest, QuickTranslation, TranslateError, Translator};
 
 use crate::lmstudio_runtime::LmStudioRuntime;
+
+/// Typed response from OpenAI-compatible chat completions API.
+///
+/// LM Studio returns this shape for `POST /v1/chat/completions`.
+/// Extra fields (id, object, created, model, usage) are tolerated by serde.
+#[derive(Deserialize)]
+struct ChatCompletionResponse {
+    choices: Vec<ChatChoice>,
+}
+
+/// A single choice in the chat completion response.
+#[derive(Deserialize)]
+struct ChatChoice {
+    message: ChatMessage,
+}
+
+/// The message content from a chat choice.
+#[derive(Deserialize)]
+struct ChatMessage {
+    content: String,
+}
+
+/// Error response body from LM Studio.
+///
+/// Used to extract the error code for model-not-found detection.
+#[derive(Deserialize)]
+struct ErrorBody {
+    error: ErrorDetail,
+}
+
+/// Error detail within an error response.
+#[derive(Deserialize)]
+struct ErrorDetail {
+    code: Option<String>,
+}
 
 /// A translator backed by an LM Studio HTTP endpoint.
 ///
@@ -99,61 +135,25 @@ impl LmStudioTranslator {
     }
 
     /// Parse the translation from an OpenAI chat completion response.
+    ///
+    /// Uses typed serde deserialization instead of substring scanning.
+    /// Rejects missing choices, empty choices, and null/empty content.
     fn parse_response(&self, response: &str) -> Result<String, TranslateError> {
-        // OpenAI response format:
-        // {"choices": [{"message": {"content": "..."}}]}
-        // Use nested JSON parsing to extract the content
+        let parsed: ChatCompletionResponse =
+            serde_json::from_str(response).map_err(|_| TranslateError::Malformed)?;
 
-        // Find the choices array
-        let choices_start = response
-            .find("\"choices\"")
+        let choice = parsed
+            .choices
+            .into_iter()
+            .next()
             .ok_or(TranslateError::Malformed)?;
-        let choices_rest = &response[choices_start..];
 
-        // Find the message content
-        let content_key = "\"content\"";
-        let content_pos = choices_rest
-            .find(content_key)
-            .ok_or(TranslateError::Malformed)?;
-        let after_content = &choices_rest[content_pos + content_key.len()..];
-
-        // Skip whitespace and colon
-        let after_colon = after_content
-            .trim_start()
-            .strip_prefix(':')
-            .ok_or(TranslateError::Malformed)?;
-        let value_start = after_colon.trim_start();
-
-        // Extract the string value
-        if !value_start.starts_with('"') {
-            return Err(TranslateError::Malformed);
-        }
-        let value_rest = &value_start[1..];
-
-        // Find the closing quote (handling escapes)
-        let mut escaped = false;
-        let mut end_pos = 0;
-        for (i, c) in value_rest.char_indices() {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if c == '\\' {
-                escaped = true;
-                continue;
-            }
-            if c == '"' {
-                end_pos = i;
-                break;
-            }
-        }
-
-        if end_pos == 0 {
+        let content = choice.message.content;
+        if content.is_empty() {
             return Err(TranslateError::Malformed);
         }
 
-        let content = &value_rest[..end_pos];
-        Ok(crate::json::unescape(content))
+        Ok(content)
     }
 }
 
@@ -181,7 +181,7 @@ impl Translator for LmStudioTranslator {
         let body = self.build_request(request);
         let started = Instant::now();
 
-        let (_status, response) = if let Some(token) = self.runtime.api_token() {
+        let (status, response) = if let Some(token) = self.runtime.api_token() {
             crate::http::post_with_auth(
                 self.runtime.endpoint(),
                 "/v1/chat/completions",
@@ -200,17 +200,25 @@ impl Translator for LmStudioTranslator {
 
         let latency_ms = started.elapsed().as_millis();
 
-        // Check for error responses
-        if let Some(error_type) = crate::json::string_value_of_key(&response, "type") {
-            if error_type == "authentication_error" || error_type == "permission_error" {
-                return Err(TranslateError::Unavailable);
-            }
-            if error_type == "invalid_request_error" {
-                // Model not found or other request error
+        // HTTP status is the first-class boundary. Check BEFORE parsing body.
+        // A 500 with valid-looking body must not succeed.
+        match status {
+            200..=299 => {} // success, continue to parse body
+            401 | 403 => return Err(TranslateError::Unavailable), // auth failure
+            404 => {
+                // Model not found. Try to extract error code for precise error.
+                if let Ok(err_body) = serde_json::from_str::<ErrorBody>(&response) {
+                    if err_body.error.code.as_deref() == Some("model_not_found") {
+                        return Err(TranslateError::ModelMissing(self.model.clone()));
+                    }
+                }
+                // Generic 404 on inference endpoint is still model-missing
                 return Err(TranslateError::ModelMissing(self.model.clone()));
             }
+            _ => return Err(TranslateError::Unavailable), // other non-2xx
         }
 
+        // Parse the success body
         let text = self.parse_response(&response)?;
 
         if text.is_empty() {
@@ -244,7 +252,7 @@ impl Translator for LmStudioTranslator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fake_server::{FakeResponse, FakeServer};
+    use crate::fake_server::{FakeResponse, FakeServer, RequestExpectation};
     use crate::lmstudio_fixtures::*;
 
     #[test]
@@ -313,7 +321,7 @@ mod tests {
 
     #[test]
     fn quick_returns_model_missing_on_invalid_model() {
-        let server = FakeServer::start(vec![FakeResponse::ok_json(
+        let server = FakeServer::start(vec![FakeResponse::not_found_with_body(
             LM_STUDIO_MODEL_NOT_FOUND_RESPONSE,
         )
         .expect_post("/v1/chat/completions")]);
@@ -616,5 +624,326 @@ mod tests {
             user_count, 1,
             "exactly one user message despite fence lookalikes: {body}"
         );
+    }
+
+    // Phase 4: HTTP status first-class boundary tests
+    // AUTOMATED CONTRACT PASS
+
+    /// HTTP 500 with valid-looking body must fail.
+    /// Status is checked BEFORE parsing body.
+    #[test]
+    fn http_500_with_valid_body_is_unavailable() {
+        let server = FakeServer::start(vec![FakeResponse {
+            status: 500,
+            status_text: "Internal Server Error".to_owned(),
+            headers: vec![("Content-Type".to_owned(), "application/json".to_owned())],
+            body: LM_STUDIO_CHAT_RESPONSE.to_owned(), // valid body, but wrong status
+            expect: Some(RequestExpectation {
+                method: Some("POST".to_owned()),
+                path: Some("/v1/chat/completions".to_owned()),
+                ..Default::default()
+            }),
+        }]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request);
+
+        assert!(
+            matches!(result, Err(TranslateError::Unavailable)),
+            "500 must fail even with valid body: {:?}",
+            result
+        );
+    }
+
+    /// HTTP 403 (forbidden) must return Unavailable.
+    #[test]
+    fn http_403_is_unavailable() {
+        let server = FakeServer::start(vec![FakeResponse::forbidden()
+            .expect_post("/v1/chat/completions")
+            .expect_header("Authorization", "Bearer bad-token")]);
+
+        let runtime = LmStudioRuntime::with_token(server.address(), "bad-token");
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request);
+
+        assert!(matches!(result, Err(TranslateError::Unavailable)));
+    }
+
+    /// HTTP 404 without model_not_found code still returns ModelMissing.
+    #[test]
+    fn http_404_generic_is_model_missing() {
+        let server = FakeServer::start(vec![
+            FakeResponse::not_found().expect_post("/v1/chat/completions")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "unknown-model");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request);
+
+        assert!(matches!(result, Err(TranslateError::ModelMissing(_))));
+    }
+
+    /// HTTP 400 (bad request) must return Unavailable.
+    #[test]
+    fn http_400_is_unavailable() {
+        let server = FakeServer::start(vec![
+            FakeResponse::bad_request().expect_post("/v1/chat/completions")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request);
+
+        assert!(matches!(result, Err(TranslateError::Unavailable)));
+    }
+
+    // Phase 4: Parser correctness tests
+    // AUTOMATED PASS
+
+    /// Response with extra fields (id, object, created, model, usage) must parse.
+    /// Serde tolerates unknown fields by default.
+    #[test]
+    fn parser_tolerates_extra_fields() {
+        let response_with_extras = r#"{
+            "id": "chatcmpl-123",
+            "object": "chat.completion",
+            "created": 1725000003,
+            "model": "llama-3.1-8b",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "안녕 세상"},
+                    "finish_reason": "stop"
+                }
+            ],
+            "usage": {"prompt_tokens": 20, "completion_tokens": 5, "total_tokens": 25}
+        }"#;
+
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(response_with_extras).expect_post("/v1/chat/completions")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request).unwrap();
+
+        assert_eq!(result.text, "안녕 세상");
+    }
+
+    /// Response with empty choices array must fail with Malformed.
+    #[test]
+    fn parser_rejects_empty_choices() {
+        let empty_choices = r#"{"choices": []}"#;
+
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(empty_choices).expect_post("/v1/chat/completions")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request);
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    /// Response missing choices field must fail with Malformed.
+    #[test]
+    fn parser_rejects_missing_choices() {
+        let no_choices = r#"{"id": "chatcmpl-123"}"#;
+
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(no_choices).expect_post("/v1/chat/completions")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request);
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    /// Response with null content must fail with Malformed.
+    #[test]
+    fn parser_rejects_null_content() {
+        let null_content = r#"{"choices": [{"message": {"role": "assistant", "content": null}}]}"#;
+
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(null_content).expect_post("/v1/chat/completions")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request);
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    /// Response with empty content string must fail with Malformed.
+    #[test]
+    fn parser_rejects_empty_content() {
+        let empty_content = r#"{"choices": [{"message": {"role": "assistant", "content": ""}}]}"#;
+
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(empty_content).expect_post("/v1/chat/completions")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request);
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    /// Truncated JSON must fail with Malformed.
+    #[test]
+    fn parser_rejects_truncated_json() {
+        let truncated = r#"{"choices": [{"message": {"role": "assistant", "content": "안녕"#;
+
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(truncated).expect_post("/v1/chat/completions")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request);
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    /// Completely invalid JSON must fail with Malformed.
+    #[test]
+    fn parser_rejects_invalid_json() {
+        let invalid = r#"this is not json at all"#;
+
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(invalid).expect_post("/v1/chat/completions")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request);
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    /// Content in wrong location (not in choices[0].message.content) must fail.
+    #[test]
+    fn parser_rejects_content_in_wrong_location() {
+        let wrong_location = r#"{
+            "content": "안녕 세상",
+            "choices": [{"message": {"role": "assistant"}}]
+        }"#;
+
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(wrong_location).expect_post("/v1/chat/completions")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request);
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    /// Response with choices but missing message field must fail.
+    #[test]
+    fn parser_rejects_missing_message() {
+        let no_message = r#"{"choices": [{}]}"#;
+
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(no_message).expect_post("/v1/chat/completions")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request);
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    /// Response with message but missing content field must fail.
+    #[test]
+    fn parser_rejects_missing_content_field() {
+        let no_content = r#"{"choices": [{"message": {"role": "assistant"}}]}"#;
+
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(no_content).expect_post("/v1/chat/completions")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request);
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    /// Content with escaped characters must be correctly unescaped by serde.
+    #[test]
+    fn parser_handles_escaped_content() {
+        let escaped = r#"{"choices": [{"message": {"content": "line1\nline2\t\"quoted\""}}]}"#;
+
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(escaped).expect_post("/v1/chat/completions")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request).unwrap();
+
+        assert_eq!(result.text, "line1\nline2\t\"quoted\"");
+    }
+
+    /// Multiple choices: parser uses first choice only.
+    #[test]
+    fn parser_uses_first_choice() {
+        let multi_choice = r#"{
+            "choices": [
+                {"message": {"content": "first"}},
+                {"message": {"content": "second"}}
+            ]
+        }"#;
+
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(multi_choice).expect_post("/v1/chat/completions")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request).unwrap();
+
+        assert_eq!(result.text, "first");
     }
 }
