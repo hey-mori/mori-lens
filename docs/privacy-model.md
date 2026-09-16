@@ -9,9 +9,10 @@ it is also the reason the rules below are not adjustable defaults.
 ## 1. The promises
 
 **Nothing leaves the machine by default.** Translation runs against a
-local Ollama on `127.0.0.1`. A cloud provider requires an explicit
-per-provider grant, an unknown endpoint counts as external, and a remote
-Ollama address is a cloud provider because the text leaves the machine
+local provider (Ollama or LM Studio) on `127.0.0.1`. A cloud provider
+requires an explicit per-provider grant, an unknown endpoint counts as
+external, and a remote provider address is a cloud provider because the
+text leaves the machine
 ([ADR-0007](decisions/ADR-0007-local-first-inference.md)).
 
 **Nothing is recorded by default.** There is no screen recording, no keylogging, no
@@ -377,7 +378,7 @@ Claims are worth what a user can check.
 
 Updated 2026-08-04, when `apps/lens` began to exist. The previous
 version of this section described the probe and said "makes no network
-call", which stopped being true the moment the app called Ollama. A
+call", which stopped being true the moment the app called a local provider. A
 privacy document that has gone stale is worse than none, because it is
 believed.
 
