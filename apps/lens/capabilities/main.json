@@ -5,7 +5,7 @@
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",
-    "allow-check-ollama",
+    "allow-check-provider",
     "allow-export-diagnostics",
     "allow-get-diagnostics",
     "allow-get-local-ai-status",

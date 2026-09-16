@@ -317,15 +317,17 @@ fn save_settings(
     state.lock().unwrap().apply(settings)
 }
 
-/// Tauri command: list models on an Ollama endpoint.
+/// Tauri command: list models on a provider endpoint.
 ///
 /// Runs the blocking HTTP call on a background thread so the Tauri
 /// runtime is not stalled for the duration.
 #[tauri::command]
-async fn list_models(endpoint: String) -> Result<Vec<ModelInfoView>, String> {
+async fn list_models(provider: String, endpoint: String) -> Result<Vec<ModelInfoView>, String> {
+    let provider = lens_core::translate::Provider::from_token(&provider)
+        .unwrap_or(lens_core::translate::Provider::Ollama);
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let result = lens_translate::list_models(&endpoint);
+        let result = lens_translate::list_models_for_provider(provider, &endpoint);
         let _ = tx.send(result);
     });
     rx.recv()
@@ -343,14 +345,43 @@ async fn list_models(endpoint: String) -> Result<Vec<ModelInfoView>, String> {
         .map_err(|e| format!("{e}"))
 }
 
-/// Tauri command: check whether an Ollama endpoint is reachable.
+/// Tauri command: check whether a provider endpoint is reachable.
 #[tauri::command]
-async fn check_ollama(endpoint: String) -> bool {
+async fn check_provider(provider: String, endpoint: String) -> bool {
+    let provider = lens_core::translate::Provider::from_token(&provider)
+        .unwrap_or(lens_core::translate::Provider::Ollama);
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(lens_translate::check_reachable(&endpoint));
+        let _ = tx.send(lens_translate::check_provider_reachable(
+            provider, &endpoint,
+        ));
     });
     rx.recv().unwrap_or(false)
+}
+
+/// Internal helper: list models for a given provider (not a Tauri command).
+async fn list_provider_models(
+    provider: lens_core::translate::Provider,
+    endpoint: String,
+) -> Result<Vec<ModelInfoView>, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = lens_translate::list_models_for_provider(provider, &endpoint);
+        let _ = tx.send(result);
+    });
+    rx.recv()
+        .map_err(|_| "thread error".to_string())?
+        .map(|models| {
+            models
+                .into_iter()
+                .map(|m| ModelInfoView {
+                    id: m.id,
+                    display_name: m.display_name,
+                    size_bytes: m.size_bytes,
+                })
+                .collect()
+        })
+        .map_err(|e| format!("{e}"))
 }
 
 /// Local AI readiness status for the webview.
@@ -359,6 +390,8 @@ async fn check_ollama(endpoint: String) -> bool {
 pub struct LocalAiStatusView {
     pub quick_reachable: bool,
     pub deep_reachable: bool,
+    pub quick_provider: String,
+    pub deep_provider: String,
     pub quick_status: String,
     pub quick_model: Option<String>,
     pub quick_pull_command: Option<String>,
@@ -418,66 +451,99 @@ fn classify_model_readiness(
 
 /// Tauri command: get Local AI readiness status.
 ///
-/// Checks Ollama reachability and model availability for Quick and Deep engines.
+/// Checks provider reachability and model availability for Quick and Deep engines.
 /// Returns structured status for frontend display without polling.
 #[tauri::command]
 async fn get_local_ai_status(
     settings: tauri::State<'_, SharedSettings>,
 ) -> Result<LocalAiStatusView, String> {
-    let (quick_endpoint, deep_endpoint, quick_model, deep_model) = {
+    let (quick_provider, deep_provider, quick_endpoint, deep_endpoint, quick_model, deep_model) = {
         let s = settings.lock().unwrap();
         let view = s.view();
+        let qp = lens_core::translate::Provider::from_token(&view.quick_engine)
+            .unwrap_or(lens_core::translate::Provider::Ollama);
+        let dp_raw = lens_core::translate::Provider::from_token(&view.deep_engine)
+            .unwrap_or(lens_core::translate::Provider::Ollama);
+
+        // Phase 3: Deep is Ollama-only. Apply the same constraint as ai_runtime::from_schema_deep.
+        // This ensures Tauri readiness uses the SAME Deep capability truth as the runtime.
+        let (dp, deep_ep, deep_m) = if dp_raw == lens_core::translate::Provider::Ollama {
+            (
+                lens_core::translate::Provider::Ollama,
+                view.deep_endpoint.clone(),
+                view.deep_model.clone(),
+            )
+        } else {
+            // Deep is forced to Ollama with defaults
+            eprintln!(
+                "get_local_ai_status  Deep engine {:?} is not supported in Phase 3, forcing Ollama",
+                view.deep_engine
+            );
+            (
+                lens_core::translate::Provider::Ollama,
+                lens_core::translate::Provider::Ollama
+                    .default_endpoint()
+                    .to_owned(),
+                None,
+            )
+        };
+
         (
+            qp,
+            dp,
             view.quick_endpoint.clone(),
-            view.deep_endpoint.clone(),
+            deep_ep,
             view.quick_model.clone(),
-            view.deep_model.clone(),
+            deep_m,
         )
     };
 
-    // Check Ollama reachability and model list (deduplicate if endpoints are the same).
-    let quick_reachable = check_ollama(quick_endpoint.clone()).await;
-    let (deep_reachable, quick_model_state, deep_model_state) = if quick_endpoint == deep_endpoint {
-        // Same endpoint: fetch model list once.
-        let state = if quick_reachable {
-            match list_models(quick_endpoint.clone()).await {
-                Ok(models) => {
-                    let names = models.into_iter().map(|info| info.id).collect::<Vec<_>>();
-                    ModelListState::Models(names)
+    // Check provider reachability and model list.
+    let quick_reachable =
+        check_provider(quick_provider.as_str().to_owned(), quick_endpoint.clone()).await;
+    let (deep_reachable, quick_model_state, deep_model_state) =
+        if quick_provider == deep_provider && quick_endpoint == deep_endpoint {
+            // Same provider and endpoint: fetch model list once.
+            let state = if quick_reachable {
+                match list_provider_models(quick_provider, quick_endpoint.clone()).await {
+                    Ok(models) => {
+                        let names = models.into_iter().map(|info| info.id).collect::<Vec<_>>();
+                        ModelListState::Models(names)
+                    }
+                    Err(e) => ModelListState::Error(e),
                 }
-                Err(e) => ModelListState::Error(e),
-            }
+            } else {
+                ModelListState::Unreachable
+            };
+            (quick_reachable, state.clone(), state)
         } else {
-            ModelListState::Unreachable
-        };
-        (quick_reachable, state.clone(), state)
-    } else {
-        // Different endpoints: fetch separately.
-        let deep_reachable = check_ollama(deep_endpoint.clone()).await;
-        let quick_state = if quick_reachable {
-            match list_models(quick_endpoint.clone()).await {
-                Ok(models) => {
-                    let names = models.into_iter().map(|info| info.id).collect::<Vec<_>>();
-                    ModelListState::Models(names)
+            // Different providers or endpoints: fetch separately.
+            let deep_reachable =
+                check_provider(deep_provider.as_str().to_owned(), deep_endpoint.clone()).await;
+            let quick_state = if quick_reachable {
+                match list_provider_models(quick_provider, quick_endpoint.clone()).await {
+                    Ok(models) => {
+                        let names = models.into_iter().map(|info| info.id).collect::<Vec<_>>();
+                        ModelListState::Models(names)
+                    }
+                    Err(e) => ModelListState::Error(e),
                 }
-                Err(e) => ModelListState::Error(e),
-            }
-        } else {
-            ModelListState::Unreachable
-        };
-        let deep_state = if deep_reachable {
-            match list_models(deep_endpoint.clone()).await {
-                Ok(models) => {
-                    let names = models.into_iter().map(|info| info.id).collect::<Vec<_>>();
-                    ModelListState::Models(names)
+            } else {
+                ModelListState::Unreachable
+            };
+            let deep_state = if deep_reachable {
+                match list_provider_models(deep_provider, deep_endpoint.clone()).await {
+                    Ok(models) => {
+                        let names = models.into_iter().map(|info| info.id).collect::<Vec<_>>();
+                        ModelListState::Models(names)
+                    }
+                    Err(e) => ModelListState::Error(e),
                 }
-                Err(e) => ModelListState::Error(e),
-            }
-        } else {
-            ModelListState::Unreachable
+            } else {
+                ModelListState::Unreachable
+            };
+            (deep_reachable, quick_state, deep_state)
         };
-        (deep_reachable, quick_state, deep_state)
-    };
 
     // Classify Quick model.
     let (quick_status, quick_model_name, quick_pull_cmd) = match quick_model_state {
@@ -492,11 +558,15 @@ async fn get_local_ai_status(
                     ("auto_ready".to_string(), Some("Auto".to_string()), None)
                 }
                 ModelReadiness::Ready(model) => ("ready".to_string(), Some(model), None),
-                ModelReadiness::Missing(model) => (
-                    "missing".to_string(),
-                    Some(model.clone()),
-                    Some(format!("ollama pull {}", model)),
-                ),
+                ModelReadiness::Missing(model) => {
+                    let pull_cmd = match quick_provider {
+                        lens_core::translate::Provider::Ollama => {
+                            Some(format!("ollama pull {}", model))
+                        }
+                        lens_core::translate::Provider::LmStudio => None,
+                    };
+                    ("missing".to_string(), Some(model.clone()), pull_cmd)
+                }
             }
         }
     };
@@ -514,11 +584,15 @@ async fn get_local_ai_status(
                     ("auto_ready".to_string(), Some("Auto".to_string()), None)
                 }
                 ModelReadiness::Ready(model) => ("ready".to_string(), Some(model), None),
-                ModelReadiness::Missing(model) => (
-                    "missing".to_string(),
-                    Some(model.clone()),
-                    Some(format!("ollama pull {}", model)),
-                ),
+                ModelReadiness::Missing(model) => {
+                    let pull_cmd = match deep_provider {
+                        lens_core::translate::Provider::Ollama => {
+                            Some(format!("ollama pull {}", model))
+                        }
+                        lens_core::translate::Provider::LmStudio => None,
+                    };
+                    ("missing".to_string(), Some(model.clone()), pull_cmd)
+                }
             }
         }
     };
@@ -526,6 +600,8 @@ async fn get_local_ai_status(
     Ok(LocalAiStatusView {
         quick_reachable,
         deep_reachable,
+        quick_provider: quick_provider.as_str().to_owned(),
+        deep_provider: deep_provider.as_str().to_owned(),
         quick_status,
         quick_model: quick_model_name,
         quick_pull_command: quick_pull_cmd,
@@ -537,11 +613,17 @@ async fn get_local_ai_status(
 
 /// Tauri command: translate a fixed sentence to test a model.
 #[tauri::command]
-async fn test_model(endpoint: String, model: String) -> Result<TestResultView, String> {
+async fn test_model(
+    provider: String,
+    endpoint: String,
+    model: String,
+) -> Result<TestResultView, String> {
+    let provider = lens_core::translate::Provider::from_token(&provider)
+        .unwrap_or(lens_core::translate::Provider::Ollama);
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        use lens_core::translate::{QuickRequest, Translator};
-        let translator = lens_translate::OllamaTranslator::new(&endpoint, &model);
+        use lens_core::translate::QuickRequest;
+        let translator = lens_translate::build_translator(provider, &endpoint, &model);
         let request = QuickRequest::new("The output files came back empty.", "ko");
         let result = translator.quick(&request);
         let _ = tx.send(result);
@@ -1015,7 +1097,7 @@ pub fn build(
             get_settings,
             save_settings,
             list_models,
-            check_ollama,
+            check_provider,
             get_local_ai_status,
             test_model,
             library_query,

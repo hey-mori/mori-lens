@@ -44,7 +44,7 @@ export async function loadStatus() {
       const quickEndpointText = localAi.quick_reachable ? '연결됨' : '연결 안 됨';
       html += '<tr><td>Quick</td><td>' + quickIcon + ' ' + quickEndpointText + '</td></tr>';
 
-      const quickModelStatus = formatAiStatus(localAi.quick_status, localAi.quick_model, localAi.quick_pull_command, 'quick');
+      const quickModelStatus = formatAiStatus(localAi.quick_provider, localAi.quick_status, localAi.quick_model, localAi.quick_pull_command, 'quick');
       html += '<tr><td></td><td>' + quickModelStatus + '</td></tr>';
 
       const deepIcon = localAi.deep_reachable
@@ -53,7 +53,7 @@ export async function loadStatus() {
       const deepEndpointText = localAi.deep_reachable ? '연결됨' : '연결 안 됨';
       html += '<tr><td>Deep</td><td>' + deepIcon + ' ' + deepEndpointText + '</td></tr>';
 
-      const deepModelStatus = formatAiStatus(localAi.deep_status, localAi.deep_model, localAi.deep_pull_command, 'deep');
+      const deepModelStatus = formatAiStatus(localAi.deep_provider, localAi.deep_status, localAi.deep_model, localAi.deep_pull_command, 'deep');
       html += '<tr><td></td><td>' + deepModelStatus + '</td></tr>';
     } else if (state.localAiLoadState === 'ERROR') {
       html += '<tr><td>Quick</td><td><span style="color:#c00">상태 확인 실패</span></td></tr>';
@@ -83,8 +83,10 @@ export async function loadStatus() {
       // Restart status
       if (runtime.restart_required) {
         var reasonLabels = {
+          'quick_engine': 'Quick 엔진',
           'quick_model': 'Quick 모델',
           'quick_endpoint': 'Quick 엔드포인트',
+          'deep_engine': 'Deep 엔진',
           'deep_model': 'Deep 모델',
           'deep_endpoint': 'Deep 엔드포인트',
           'ocr_mode': 'OCR 모드'

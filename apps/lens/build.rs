@@ -20,7 +20,7 @@ use tauri_build::{AppManifest, Attributes};
 /// capabilities can reference for per-window access control.
 const COMMANDS: &[&str] = &[
     // System/diagnostics
-    "check_ollama",
+    "check_provider",
     "export_diagnostics",
     "get_diagnostics",
     "get_local_ai_status",

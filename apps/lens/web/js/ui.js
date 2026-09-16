@@ -24,9 +24,10 @@ export function setStatus(msg, persistent = false) {
   }
 }
 
-export function formatAiStatus(status, model, pullCommand, _lane) {
+export function formatAiStatus(provider, status, model, pullCommand, _lane) {
+  const providerName = provider === 'lmstudio' ? 'LM Studio' : 'Ollama';
   if (status === 'unreachable') {
-    return '<span style="color:#888">Ollama 연결 필요</span>';
+    return '<span style="color:#888">' + providerName + ' 연결 필요</span>';
   } else if (status === 'ready') {
     return '<span style="color:#2e7d32">✓</span> ' + escapeHtml(model || '');
   } else if (status === 'missing') {
