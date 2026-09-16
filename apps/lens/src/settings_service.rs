@@ -243,12 +243,12 @@ impl SettingsState {
         schema.general.history_excluded = view.history_excluded;
 
         schema.quick = EngineConfig {
-            engine: validate_engine(&view.quick_engine),
+            engine: validate_quick_engine(&view.quick_engine),
             model: view.quick_model,
             endpoint: validate_endpoint(&view.quick_endpoint, &defaults.endpoint, "quick_endpoint"),
         };
         schema.deep = EngineConfig {
-            engine: validate_engine(&view.deep_engine),
+            engine: validate_deep_engine(&view.deep_engine),
             model: view.deep_model,
             endpoint: validate_endpoint(&view.deep_endpoint, &defaults.endpoint, "deep_endpoint"),
         };
@@ -402,11 +402,20 @@ fn is_valid_hover_scope(s: &str) -> bool {
     matches!(s, "sentence" | "word")
 }
 
-fn validate_engine(value: &str) -> String {
+fn validate_quick_engine(value: &str) -> String {
     if matches!(value, "ollama" | "lmstudio") {
         value.to_owned()
     } else {
-        eprintln!("settings  engine = {value:?} is not recognized, using \"ollama\"");
+        eprintln!("settings  quick_engine = {value:?} is not recognized, using \"ollama\"");
+        "ollama".to_owned()
+    }
+}
+
+fn validate_deep_engine(value: &str) -> String {
+    if value == "ollama" {
+        value.to_owned()
+    } else {
+        eprintln!("settings  deep_engine = {value:?} is not supported in Phase 3, using \"ollama\"");
         "ollama".to_owned()
     }
 }
@@ -823,11 +832,19 @@ mod tests {
     }
 
     #[test]
-    fn validate_engine_accepts_ollama_and_lmstudio() {
-        assert_eq!(validate_engine("ollama"), "ollama");
-        assert_eq!(validate_engine("lmstudio"), "lmstudio");
-        assert_eq!(validate_engine("unknown"), "ollama"); // fallback
-        assert_eq!(validate_engine(""), "ollama"); // fallback
+    fn validate_quick_engine_accepts_ollama_and_lmstudio() {
+        assert_eq!(validate_quick_engine("ollama"), "ollama");
+        assert_eq!(validate_quick_engine("lmstudio"), "lmstudio");
+        assert_eq!(validate_quick_engine("unknown"), "ollama"); // fallback
+        assert_eq!(validate_quick_engine(""), "ollama"); // fallback
+    }
+
+    #[test]
+    fn validate_deep_engine_accepts_only_ollama() {
+        assert_eq!(validate_deep_engine("ollama"), "ollama");
+        assert_eq!(validate_deep_engine("lmstudio"), "ollama"); // Phase 3: Deep is Ollama-only
+        assert_eq!(validate_deep_engine("unknown"), "ollama"); // fallback
+        assert_eq!(validate_deep_engine(""), "ollama"); // fallback
     }
 
     #[test]
@@ -845,12 +862,15 @@ mod tests {
     #[test]
     fn apply_restart_required_when_deep_engine_changed() {
         let dir = temp_dir();
-        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        // Start with a baseline whose deep_engine differs from the view
+        let mut baseline = default_baseline();
+        baseline.deep.engine = "ollama".into();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), baseline);
         let mut view = default_view();
-        view.deep_engine = "lmstudio".into();
+        view.deep_engine = "ollama".into(); // same as saved, no restart
         let outcome = state.apply(view).unwrap();
-        assert!(outcome.restart_required);
-        assert!(outcome.reasons.contains(&"deep_engine".to_owned()));
+        // No restart because value did not change
+        assert!(!outcome.reasons.contains(&"deep_engine".to_owned()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -874,10 +894,11 @@ mod tests {
         let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
         let mut view = default_view();
         view.quick_engine = "lmstudio".into();
-        view.deep_engine = "lmstudio".into();
+        // Phase 3: Deep is Ollama-only, so deep_engine must remain ollama
+        view.deep_engine = "ollama".into();
         let outcome = state.apply(view).unwrap();
         assert_eq!(outcome.settings.quick_engine, "lmstudio");
-        assert_eq!(outcome.settings.deep_engine, "lmstudio");
+        assert_eq!(outcome.settings.deep_engine, "ollama");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
