@@ -74,8 +74,14 @@ crates/lens-core/          no OS dependencies, no async runtime
   contract_tests.rs        property-based tests for the acquisition contract
   stress_tests.rs          load and stress tests for concurrent acquisition
 
-crates/lens-translate/     provider-aware translation and runtime management
-  lib.rs                   Translator and ProviderRuntime traits, factory dispatch
+crates/lens-core/          provider-neutral domain contracts: Translator,
+                           ProviderRuntime, Provider, ModelInfo, ModelState,
+                           Reachability, Analyser. No OS types.
+
+crates/lens-translate/     provider implementations and construction:
+                           OllamaTranslator, LmStudioTranslator, OllamaRuntime,
+                           LmStudioRuntime, provider factories, HTTP/parsing
+  lib.rs                   provider factories (build_translator, build_provider_runtime)
   ollama_translator.rs     OllamaTranslator: quick translation and streaming
   ollama_runtime.rs        OllamaRuntime: model discovery, reachability, state
   lmstudio_translator.rs   LmStudioTranslator: OpenAI-compatible inference
@@ -163,6 +169,71 @@ apps/lens/                 the product
 The dependency arrow only ever points from an adapter to the core. A
 pull request that adds `windows` to `lens-core`'s manifest does not
 merge.
+
+## 2b. The provider architecture: two planes
+
+([ADR-0019](decisions/ADR-0019-provider-runtime.md))
+
+Inference and management are separate contracts. The split matters
+because the two planes have different callers, different failure modes,
+and different provider semantics.
+
+```
+                     Quick inference
+
+                  lens_core::Translator
+                           │
+                  ┌────────┴────────┐
+                  │                 │
+          OllamaTranslator    LmStudioTranslator
+
+                  Provider management
+
+              lens_core::ProviderRuntime
+                           │
+                  ┌────────┴────────┐
+                  │                 │
+             OllamaRuntime     LmStudioRuntime
+
+                      Deep analysis
+
+                   lens_core::Analyser
+                           │
+                     Ollama path
+```
+
+**Translator != ProviderRuntime.** A translator answers "translate this
+sentence". A runtime answers "what models are available and can the
+endpoint be reached". Neither calls the other.
+
+**Translator != Analyser.** Quick translation runs on every settled
+hover and has a tight latency budget. Deep analysis runs on explicit
+request and has minutes to work. They are different contracts with
+different callers.
+
+**ProviderRuntime != lifecycle abstraction.** Provider lifecycle
+semantics differ materially: Ollama uses keep-alive leases on each
+request; LM Studio has JIT loading and explicit native load/unload APIs.
+Forcing a common lifecycle contract would be a lie. The runtime trait
+exposes only what both providers share: identity, reachability, model
+list, and model state.
+
+**Factories live in lens-translate**, not lens-core. The core defines
+the contracts; the adapter builds concrete instances:
+
+```
+settings → Provider identity + endpoint + model
+         → lens_translate::build_translator()
+         → Box<dyn Translator>
+
+         → lens_translate::build_provider_runtime()
+         → Box<dyn ProviderRuntime>
+```
+
+**Deep is Ollama-only.** No `LmStudioAnalyser` exists. When the
+configured Deep provider is not Ollama, the runtime normalizes the
+configuration to the Ollama lane. This is a deliberate capability gap
+the UI respects.
 
 ## 3. The acquisition contract
 
