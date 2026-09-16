@@ -1,6 +1,6 @@
 # ADR-0007 · Local-first inference over an external Ollama
 
-**Status** · Accepted, 2026-08-04
+**Status** · Accepted, 2026-08-04. Partly superseded by ADR-0019, 2026-09-17
 
 Not yet built. Recorded now because it fixes the trust model, which
 cannot be retrofitted.
@@ -118,8 +118,11 @@ twice without a line of routing code being written for either.
 
 ---
 
-*Implementation status (updated 2026-09-07):* Implemented. Lens
-communicates with a local Ollama over `127.0.0.1` via hand-written HTTP.
-No models are bundled (per this ADR's constraint). The endpoint is
-configurable in `settings.toml` and restricted to localhost by one
-check; a remote address is refused.
+*Implementation status (updated 2026-09-17):* Implemented. Lens
+communicates with a local provider (Ollama or LM Studio) over
+`127.0.0.1` via hand-written HTTP. No models are bundled (per this
+ADR's constraint). The endpoint is configurable in `settings.toml` and
+restricted to localhost by one check; a remote address is refused.
+LM Studio support was added in Phase 3; this ADR's local-first trust
+model is unchanged, and the two-plane provider architecture that
+supports multiple providers is recorded in ADR-0019.
