@@ -678,10 +678,6 @@ pub struct QuickTranslation {
 /// Which engine produced an answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineId {
-    /// An Ollama on this machine. The default, and the only one that needs no
-    /// grant.
-    ///
-    /// **TODO(P5):** This name leaks Ollama assumptions. The actual semantics
     /// Local loopback provider: Ollama, LM Studio, or any engine at 127.0.0.0/8,
     /// localhost, or ::1. Text sent here never leaves the machine.
     Local,
@@ -793,11 +789,8 @@ impl TranslateError {
     /// an explanation is a product decision, and an adapter should not be able
     /// to invent its own wording.
     ///
-    /// **TODO(P5):** These messages leak Ollama assumptions. The Translator
-    /// inference method shape is provider-neutral, but error presentation
-    /// still assumes Ollama. Before P5 LM Studio integration, make these
-    /// provider-aware (e.g., "로컬 AI에 연결할 수 없습니다" or provider-specific
-    /// messages based on EngineId).
+    /// The messages are provider-neutral. They say "local translation engine"
+    /// rather than naming a specific provider.
     pub fn user_message(&self) -> String {
         match self {
             Self::Unavailable => "로컬 번역 엔진에 연결할 수 없습니다".to_owned(),
