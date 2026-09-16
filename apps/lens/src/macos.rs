@@ -580,7 +580,7 @@ fn product_loop(
             // Cache key uses the pre-resolved model string for ADR-0005 identity.
             let key = CacheKey::of(
                 request,
-                current_model.as_deref().unwrap_or("unknown"),
+                current_model.as_deref().unwrap_or("auto"),
                 QUICK_PROMPT_VERSION,
             );
             // Check cache before paying for translation.
@@ -687,7 +687,7 @@ fn product_loop(
             // Cache key uses the pre-resolved model string for ADR-0005 identity.
             let key = CacheKey::for_analysis(
                 &deep_req,
-                current_model.as_deref().unwrap_or("unknown"),
+                current_model.as_deref().unwrap_or("auto"),
                 DEEP_PROMPT_VERSION,
             );
             // Check cache first — avoid re-generating the same analysis.
