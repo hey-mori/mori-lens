@@ -25,6 +25,7 @@ export function applySettingsToForm(settings) {
   document.getElementById('f-history-days').value = settings.history_days;
   document.getElementById('f-history-store-app').checked = settings.history_store_app;
   document.getElementById('f-history-excluded').value = (settings.history_excluded || []).join(',');
+  document.getElementById('f-quick-engine').value = settings.quick_engine || 'ollama';
   document.getElementById('f-quick-endpoint').value = settings.quick_endpoint;
   document.getElementById('f-quick-model-select').value = settings.quick_model || '';
   document.getElementById('f-deep-engine').value = settings.deep_engine;
@@ -48,7 +49,7 @@ export async function saveSettings() {
     history_store_app: document.getElementById('f-history-store-app').checked,
     history_excluded: document.getElementById('f-history-excluded').value
       .split(',').map(s => s.trim().toLowerCase()).filter(s => s.length > 0),
-    quick_engine: state.currentSettings.quick_engine,
+    quick_engine: document.getElementById('f-quick-engine').value,
     quick_model: document.getElementById('f-quick-model-select').value || null,
     quick_endpoint: document.getElementById('f-quick-endpoint').value,
     deep_engine: document.getElementById('f-deep-engine').value,

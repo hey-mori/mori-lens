@@ -6,7 +6,7 @@
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use lens_core::analyse::{Analyser, DeepRequest, Profile};
+use lens_core::analyse::{DeepRequest, Profile};
 use lens_core::cache::{AnalysisCache, CacheKey, TranslationCache};
 use lens_core::card::Card;
 use lens_core::geometry::{ScreenPoint, ScreenRect};
@@ -24,12 +24,11 @@ use lens_core::policy::{AppPolicy, AppTier};
 use lens_core::session::{HoverSession, InputState, OcrMode, Resolution};
 use lens_core::settings::{Problem, Settings};
 use lens_core::theme::{Preset, TextScale, Theme, Translucency};
-use lens_core::translate::{QuickRequest, Translator};
+use lens_core::translate::QuickRequest;
 use lens_platform_windows::{
     declare_dpi_awareness, monitor_scale_at, ocr, system_preferences, Overlay, Tray, TrayEvent,
     UiaTextAcquirer,
 };
-use lens_translate::OllamaTranslator;
 
 mod console;
 mod hover_worker;
@@ -645,39 +644,123 @@ pub fn main() -> std::process::ExitCode {
     let dpi = declare_dpi_awareness();
 
     // ADR-0005: Two separate translators for Quick and Deep paths.
-    // Each has its own endpoint and model, configured independently.
-    // Phase 3: Provider identity is preserved in RuntimeEngine for factory use.
-    // Full LM Studio lifecycle integration (prewarm, release, is_resident) is Phase 4.
-    let mut quick_translator = OllamaTranslator::choosing(&options.ai_config.quick.endpoint);
-    if let Some(model) = &options.ai_config.quick.model {
-        quick_translator = OllamaTranslator::new(&options.ai_config.quick.endpoint, model);
-    }
+    // Each has its own provider, endpoint, and model, configured independently.
+    // Phase 3: Provider-aware construction using the factory.
+    // Lifecycle operations (prewarm, release, is_resident) remain Ollama-specific.
 
-    let mut deep_translator = OllamaTranslator::choosing(&options.ai_config.deep.endpoint);
-    if let Some(model) = &options.ai_config.deep.model {
-        deep_translator = OllamaTranslator::new(&options.ai_config.deep.endpoint, model);
-    }
+    // Resolve models provider-specifically before construction
+    let (quick_model, quick_ollama) = match options.ai_config.quick.provider {
+        lens_core::translate::Provider::Ollama => {
+            let mut t =
+                lens_translate::OllamaTranslator::choosing(&options.ai_config.quick.endpoint);
+            if let Some(model) = &options.ai_config.quick.model {
+                t = lens_translate::OllamaTranslator::new(&options.ai_config.quick.endpoint, model);
+            }
+            let resolved = match t.resolve_model() {
+                Ok(m) => Some(m.to_owned()),
+                Err(_) => options.ai_config.quick.model.clone(),
+            };
+            (resolved, Some(t))
+        }
+        lens_core::translate::Provider::LmStudio => {
+            // LM Studio: use configured model or first available
+            let model = match &options.ai_config.quick.model {
+                Some(m) => Some(m.clone()),
+                None => {
+                    match lens_translate::list_models_for_provider(
+                        lens_core::translate::Provider::LmStudio,
+                        &options.ai_config.quick.endpoint,
+                    ) {
+                        Ok(models) if !models.is_empty() => Some(models[0].id.clone()),
+                        _ => None,
+                    }
+                }
+            };
+            (model, None)
+        }
+    };
 
-    // Resolved once at startup rather than per hover, so the first hover does
-    // not pay for a listing, and so an absent Ollama is reported now instead of
-    // as a mysteriously empty card later.
-    // Carries the remedy, not just the failure. This string reaches three
-    // places: the banner, the tray tooltip, and nowhere else a first-time user
-    // would look. Someone who unzipped Lens without Ollama and double-clicked
-    // it never sees a terminal, so the tooltip is the only thing standing
-    // between them and a product that silently does nothing.
-    let engine_line = match quick_translator.resolve_model() {
-        Ok(model) => model.to_owned(),
-        Err(error) => match error.remedy() {
-            Some(remedy) => format!("{} · {remedy}", error.user_message()),
-            None => error.user_message(),
+    let (deep_model, deep_ollama) = match options.ai_config.deep.provider {
+        lens_core::translate::Provider::Ollama => {
+            let mut t =
+                lens_translate::OllamaTranslator::choosing(&options.ai_config.deep.endpoint);
+            if let Some(model) = &options.ai_config.deep.model {
+                t = lens_translate::OllamaTranslator::new(&options.ai_config.deep.endpoint, model);
+            }
+            let resolved = match t.resolve_model() {
+                Ok(m) => Some(m.to_owned()),
+                Err(_) => options.ai_config.deep.model.clone(),
+            };
+            (resolved, Some(t))
+        }
+        lens_core::translate::Provider::LmStudio => {
+            let model = match &options.ai_config.deep.model {
+                Some(m) => Some(m.clone()),
+                None => {
+                    match lens_translate::list_models_for_provider(
+                        lens_core::translate::Provider::LmStudio,
+                        &options.ai_config.deep.endpoint,
+                    ) {
+                        Ok(models) if !models.is_empty() => Some(models[0].id.clone()),
+                        _ => None,
+                    }
+                }
+            };
+            (model, None)
+        }
+    };
+
+    // Construct the Quick translator using the provider factory.
+    // Deep path uses Analyser through deep_ollama directly (Ollama-only in Phase 3).
+    let quick_translator: Box<dyn lens_core::translate::Translator + Send + Sync> =
+        match &quick_model {
+            Some(model) => lens_translate::build_translator(
+                options.ai_config.quick.provider,
+                &options.ai_config.quick.endpoint,
+                model,
+            ),
+            None => {
+                // No model resolved: cannot construct a working translator.
+                // The banner already reports the condition. Exit early.
+                eprintln!("engine    no model available for the quick path");
+                return std::process::ExitCode::from(1);
+            }
+        };
+
+    // Build engine display lines for startup banner
+    let engine_line = match &quick_model {
+        Some(m) => m.clone(),
+        None => match options.ai_config.quick.provider {
+            lens_core::translate::Provider::Ollama => {
+                match lens_translate::list_models_for_provider(
+                    options.ai_config.quick.provider,
+                    &options.ai_config.quick.endpoint,
+                ) {
+                    Ok(models) if !models.is_empty() => {
+                        format!("{} · {}", models[0].id, "auto-selected")
+                    }
+                    _ => "no models available".to_owned(),
+                }
+            }
+            lens_core::translate::Provider::LmStudio => "no model configured".to_owned(),
         },
     };
-    let deep_engine_line = match deep_translator.resolve_model() {
-        Ok(model) => model.to_owned(),
-        Err(error) => match error.remedy() {
-            Some(remedy) => format!("{} · {remedy}", error.user_message()),
-            None => error.user_message(),
+
+    let deep_engine_line = match &deep_model {
+        Some(m) => m.clone(),
+        None => match options.ai_config.deep.provider {
+            lens_core::translate::Provider::Ollama => {
+                match lens_translate::list_models_for_provider(
+                    options.ai_config.deep.provider,
+                    &options.ai_config.deep.endpoint,
+                ) {
+                    Ok(models) if !models.is_empty() => {
+                        format!("{} · {}", models[0].id, "auto-selected")
+                    }
+                    _ => "no models available".to_owned(),
+                }
+            }
+            lens_core::translate::Provider::LmStudio => "no model configured".to_owned(),
         },
     };
 
@@ -853,27 +936,40 @@ pub fn main() -> std::process::ExitCode {
         // would be reported as translation latency.
         // Prewarm both Quick and Deep translators for selftest.
         // Selftest is a diagnostic, so it's worth the time to verify both engines.
-        match quick_translator.prewarm() {
-            Ok(elapsed) => println!("quick warm after {}ms", elapsed.as_millis()),
-            Err(error) => eprintln!("could not warm quick engine: {}", error.reason()),
+        // Phase 3: Lifecycle operations are Ollama-specific.
+        if let Some(ref ollama) = quick_ollama {
+            match ollama.prewarm() {
+                Ok(elapsed) => println!("quick warm after {}ms", elapsed.as_millis()),
+                Err(error) => eprintln!("could not warm quick engine: {}", error.reason()),
+            }
         }
-        match deep_translator.prewarm() {
-            Ok(elapsed) => println!("deep warm after {}ms", elapsed.as_millis()),
-            Err(error) => eprintln!("could not warm deep engine: {}", error.reason()),
+        if let Some(ref ollama) = deep_ollama {
+            match ollama.prewarm() {
+                Ok(elapsed) => println!("deep warm after {}ms", elapsed.as_millis()),
+                Err(error) => eprintln!("could not warm deep engine: {}", error.reason()),
+            }
         }
         println!();
         let code = selftest(
             &overlay,
-            &quick_translator,
-            &deep_translator,
+            &*quick_translator,
+            &quick_model,
+            quick_ollama.as_ref(),
+            deep_ollama.as_ref(),
+            &deep_model,
             &options.language,
             options.profile,
             theme,
             &facts,
             options.ocr_mode,
         );
-        quick_translator.release();
-        deep_translator.release();
+        // Release Ollama translators if present (LM Studio has no lifecycle operations)
+        if let Some(ref ollama) = quick_ollama {
+            ollama.release();
+        }
+        if let Some(ref ollama) = deep_ollama {
+            ollama.release();
+        }
         return code;
     }
 
@@ -881,11 +977,14 @@ pub fn main() -> std::process::ExitCode {
     let (answers_tx, answers_rx) = mpsc::channel::<Answer>();
 
     let mut cache = TranslationCache::new(CACHE_ENTRIES);
-    let warm_translator = quick_translator.clone();
+    // Phase 3: Lifecycle operations are Ollama-specific.
+    // Clone the OllamaTranslator instances for the warm thread and exit path.
+    let warm_ollama = quick_ollama.clone();
     // Kept for the exit path: the worker takes ownership of the translators.
     // ADR-0005: Both Quick and Deep must be released on shutdown.
-    let quick_releaser = quick_translator.clone();
-    let deep_releaser = deep_translator.clone();
+    // Phase 3: Only Ollama translators have lifecycle operations.
+    let quick_releaser = quick_ollama.clone();
+    let deep_releaser = deep_ollama.clone();
     // Off the main thread so the window and the pointer loop come up
     // immediately; a user should not wait on a model to see the app start.
     // Whether the model has finished loading, for the waiting card to say
@@ -899,14 +998,17 @@ pub fn main() -> std::process::ExitCode {
     let engine_warm = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let warmed = engine_warm.clone();
     std::thread::spawn(move || {
-        // Failure is reported so a first-run user knows Ollama is not
+        // Failure is reported so a first-run user knows the provider is not
         // reachable. It is not an error state: the first hover will show
         // the same fact on the card, and a warm that succeeded costs nothing.
-        match warm_translator.prewarm() {
-            Ok(elapsed) => println!("engine warm after {}ms", elapsed.as_millis()),
-            Err(_) => eprintln!(
-                "engine    Ollama did not respond; the first hover will say so on the card"
-            ),
+        // Phase 3: Lifecycle operations are Ollama-specific.
+        if let Some(ref ollama) = warm_ollama {
+            match ollama.prewarm() {
+                Ok(elapsed) => println!("engine warm after {}ms", elapsed.as_millis()),
+                Err(_) => eprintln!(
+                    "engine    Ollama did not respond; the first hover will say so on the card"
+                ),
+            }
         }
         // **Set on failure too.** An absent Ollama answers a hover with a card
         // naming ollama.com, not with a wait, so a flag left false would leave
@@ -917,11 +1019,17 @@ pub fn main() -> std::process::ExitCode {
 
     // Copied out before the move, the same way `worker_ocr` is further down.
     let worker_profile = options.profile;
+    let worker_deep_model = deep_model.clone();
+    let worker_quick_model = quick_model.clone();
     std::thread::spawn(move || {
         // ADR-0005: Two translators, one for each path. Quick and Deep are
         // separate engines with separate models and endpoints.
+        // Phase 3: Quick uses Box<dyn Translator>, Deep uses Analyser through OllamaTranslator.
         let quick_translator = quick_translator;
-        let deep_translator = deep_translator;
+        // Phase 3: Lifecycle operations are Ollama-specific.
+        // Move the OllamaTranslator instances into the worker for is_resident() and deep analysis.
+        let worker_quick_ollama = quick_ollama;
+        let worker_deep_ollama = deep_ollama;
         // The translator lives on the worker, not shared: it holds no state
         // worth sharing and this keeps the loop free of a lock.
         // When the last answer came back. Ollama's lease is thirty minutes and
@@ -967,7 +1075,7 @@ pub fn main() -> std::process::ExitCode {
 
                     let key = CacheKey::for_analysis(
                         &request,
-                        deep_translator.model(),
+                        worker_deep_model.as_deref().unwrap_or("unknown"),
                         DEEP_PROMPT_VERSION,
                     );
                     if let Some(hit) = explanations.get(&key) {
@@ -983,19 +1091,30 @@ pub fn main() -> std::process::ExitCode {
                         continue;
                     }
 
-                    let card = match deep_translator.deep(&request) {
-                        Ok(analysis) => {
-                            println!(
-                                "deep  {} lines in {}ms",
-                                analysis.lines().len(),
-                                analysis.latency_ms,
-                            );
-                            explanations.insert(key, analysis.clone());
-                            Card::analysed(&job.original, &analysis)
+                    // Phase 3: Deep analysis uses Analyser through OllamaTranslator.
+                    // LM Studio Deep is not yet implemented; if the deep provider is
+                    // LM Studio, report it honestly rather than faking success.
+                    let card = match &worker_deep_ollama {
+                        Some(analyser) => {
+                            match lens_core::analyse::Analyser::deep(analyser, &request) {
+                                Ok(analysis) => {
+                                    println!(
+                                        "deep  {} lines in {}ms",
+                                        analysis.lines().len(),
+                                        analysis.latency_ms,
+                                    );
+                                    explanations.insert(key, analysis.clone());
+                                    Card::analysed(&job.original, &analysis)
+                                }
+                                Err(error) => {
+                                    eprintln!("deep  no analysis [{}]", error.reason());
+                                    Card::not_readable(error.user_message())
+                                }
+                            }
                         }
-                        Err(error) => {
-                            eprintln!("deep  no analysis [{}]", error.reason());
-                            Card::not_readable(error.user_message())
+                        None => {
+                            eprintln!("deep  LM Studio deep analysis is not yet supported");
+                            Card::not_readable("deep analysis requires Ollama")
                         }
                     };
                     last_answer = Some(Instant::now());
@@ -1025,8 +1144,10 @@ pub fn main() -> std::process::ExitCode {
             // all of it the card said only "번역 중", which reads as a hung
             // application rather than as a machine doing something. Asked only
             // when the lease may have lapsed, because the question costs 8ms.
+            // Phase 3: is_resident() is Ollama-specific.
             let may_have_unloaded = last_answer.is_none_or(|at| at.elapsed() > LEASE_IS_SAFE_FOR);
-            if may_have_unloaded && !quick_translator.is_resident() {
+            let is_resident = worker_quick_ollama.as_ref().is_none_or(|o| o.is_resident());
+            if may_have_unloaded && !is_resident {
                 let _ = answers_tx.send(Answer {
                     generation: job.generation,
                     card: Card::loading_model(&job.display_text),
@@ -1037,7 +1158,11 @@ pub fn main() -> std::process::ExitCode {
                 });
             }
 
-            let key = CacheKey::of(&request, quick_translator.model(), PROMPT_VERSION);
+            let key = CacheKey::of(
+                &request,
+                worker_quick_model.as_deref().unwrap_or("unknown"),
+                PROMPT_VERSION,
+            );
             if let Some(hit) = cache.get(&key) {
                 let mut card = Card::translated(&job.display_text, &hit);
                 if job.doubtful {
@@ -2633,11 +2758,17 @@ pub fn main() -> std::process::ExitCode {
         // Hand the models back. Without this the runtime holds them for the rest of
         // the lease, so a tool that has exited goes on occupying gigabytes of
         // somebody's memory. ADR-0005: Both Quick and Deep must be released.
+        // Phase 3: Lifecycle operations are Ollama-specific.
         if let Some(line) = capture_cost.summary() {
             println!("{line}");
         }
-        quick_releaser.release();
-        deep_releaser.release();
+        // Release Ollama translators if present (LM Studio has no lifecycle operations)
+        if let Some(ref ollama) = quick_releaser {
+            ollama.release();
+        }
+        if let Some(ref ollama) = deep_releaser {
+            ollama.release();
+        }
         println!("\nstopped, and the models released");
         // Tell Tauri to exit now that the polling loop is done.
         loop_tauri.exit();
@@ -3179,8 +3310,11 @@ fn configuration_facts(
 #[allow(clippy::too_many_arguments)]
 fn selftest(
     overlay: &Overlay,
-    quick_translator: &OllamaTranslator,
-    deep_translator: &OllamaTranslator,
+    quick_translator: &dyn lens_core::translate::Translator,
+    quick_model: &Option<String>,
+    quick_ollama: Option<&lens_translate::OllamaTranslator>,
+    deep_ollama: Option<&lens_translate::OllamaTranslator>,
+    deep_model: &Option<String>,
     language: &str,
     profile: Profile,
     theme: Theme,
@@ -3209,17 +3343,22 @@ fn selftest(
     // sentence, skipped the translation correctly, and printed
     // `selftest passed`. The reader's whole reason for running it was to find
     // out whether the thing works.
-    if let Err(error) = quick_translator.installed_models() {
-        println!(
-            "0. no engine  {} ({})",
-            error.user_message(),
-            error.reason()
-        );
-        if let Some(remedy) = error.remedy() {
-            println!("              {remedy}");
+    // Phase 3: installed_models() is Ollama-specific.
+    if let Some(ollama) = quick_ollama {
+        if let Err(error) = ollama.installed_models() {
+            println!(
+                "0. no engine  {} ({})",
+                error.user_message(),
+                error.reason()
+            );
+            if let Some(remedy) = error.remedy() {
+                println!("              {remedy}");
+            }
+            println!(
+                "\nselftest FAILED: there is nothing to translate with, so nothing was tested."
+            );
+            return std::process::ExitCode::from(1);
         }
-        println!("\nselftest FAILED: there is nothing to translate with, so nothing was tested.");
-        return std::process::ExitCode::from(1);
     }
     let context = AcquireContext::new(Generation(1));
 
@@ -3374,7 +3513,11 @@ language you do not read and run it again."
     };
 
     let mut cache = TranslationCache::new(CACHE_ENTRIES);
-    let key = CacheKey::of(&request, quick_translator.model(), PROMPT_VERSION);
+    let key = CacheKey::of(
+        &request,
+        quick_model.as_deref().unwrap_or("unknown"),
+        PROMPT_VERSION,
+    );
     // Kept, because step 4 explains what step 2 translated rather than
     // translating it again. That grounding is the deep path's whole shape.
     let mut translated: Option<String> = None;
@@ -3454,143 +3597,159 @@ total {}ms from acquisition to card",
             "4. explaining  word={} structure={}",
             answerable.the_word, answerable.the_structure
         );
-        match deep_translator.deep(&deep) {
-            Ok(analysis) => {
-                println!(
-                    "   analysed   {} lines in {}ms via {}",
-                    analysis.lines().len(),
-                    analysis.latency_ms,
-                    analysis.model,
-                );
-                // The headings, not the values. The headings are this
-                // repository's own strings; the values are a model's account
-                // of text off somebody's screen (`docs/privacy-model.md` §3).
-                for (heading, text) in analysis.lines() {
-                    println!("   {heading:<12} {} chars", text.chars().count());
-                }
-                // The same press again, which is what a reader who lost the
-                // card and pressed the key a second time produces. Its own
-                // cache, its own key (ADR-0005), and four seconds either way.
-                let mut explanations = AnalysisCache::new(ANALYSIS_ENTRIES);
-                let key =
-                    CacheKey::for_analysis(&deep, deep_translator.model(), DEEP_PROMPT_VERSION);
-                explanations.insert(key.clone(), analysis.clone());
-                let again = Instant::now();
-                match explanations.get(&key) {
-                    Some(hit) => println!(
-                        "   cache      the same sentence again in {}us, {} lines, cached={}",
-                        again.elapsed().as_micros(),
-                        hit.lines().len(),
-                        hit.cached,
-                    ),
-                    None => println!("   cache      MISS on an analysis just inserted"),
-                }
-
-                let card = Card::analysed(&sentence, &analysis);
-
-                // Step 5, before the card is drawn, because drawing sleeps for
-                // four seconds and this is the part that can fail.
-                //
-                // **Into a temporary file, never the reader's own.** A
-                // diagnostic that appended to somebody's notes every time they
-                // ran it would be writing their file for them, and the whole
-                // point of that file is that they decide what goes in it.
-                let scratch = std::env::temp_dir().join("mori-lens-selftest-saved.md");
-                let _ = std::fs::remove_file(&scratch);
-                match card
-                    .kept_as(Some("selftest"))
-                    .ok_or(keeping::NotKept::NothingToKeep)
-                    .and_then(|entry| {
-                        let selftest_lib =
-                            lens_storage::Library::open(std::path::Path::new(":memory:"))
-                                .expect("in-memory library for selftest");
-                        keeping::append(
-                            &scratch,
-                            &entry,
-                            std::time::SystemTime::now(),
-                            &selftest_lib,
-                        )
-                    }) {
-                    Ok(_save) => {
-                        let written = std::fs::read_to_string(&scratch).unwrap_or_default();
-                        // Shape, not content: the file holds a sentence off
-                        // this machine's screen (`docs/privacy-model.md` §3).
+        // Phase 3: Deep analysis uses Analyser through OllamaTranslator.
+        match deep_ollama {
+            Some(analyser) => {
+                match lens_core::analyse::Analyser::deep(analyser, &deep) {
+                    Ok(analysis) => {
                         println!(
-                            "5. saved      {} lines, {} chars, label {}",
-                            written.lines().count(),
-                            written.chars().count(),
-                            written.contains(lens_core::analyse::DeepAnalysis::LABEL),
+                            "   analysed   {} lines in {}ms via {}",
+                            analysis.lines().len(),
+                            analysis.latency_ms,
+                            analysis.model,
                         );
-                        if !written.contains(lens_core::analyse::DeepAnalysis::LABEL) {
-                            println!("   REFUSED    an explanation was saved without its label");
-                            return std::process::ExitCode::from(1);
+                        // The headings, not the values. The headings are this
+                        // repository's own strings; the values are a model's account
+                        // of text off somebody's screen (`docs/privacy-model.md` §3).
+                        for (heading, text) in analysis.lines() {
+                            println!("   {heading:<12} {} chars", text.chars().count());
                         }
-                        let _ = std::fs::remove_file(&scratch);
-                    }
-                    Err(refusal) => {
-                        println!(
-                            "5. not saved: {} ({})",
-                            refusal.user_message(),
-                            refusal.reason()
+                        // The same press again, which is what a reader who lost the
+                        // card and pressed the key a second time produces. Its own
+                        // cache, its own key (ADR-0005), and four seconds either way.
+                        let mut explanations = AnalysisCache::new(ANALYSIS_ENTRIES);
+                        let key = CacheKey::for_analysis(
+                            &deep,
+                            deep_model.as_deref().unwrap_or("unknown"),
+                            DEEP_PROMPT_VERSION,
                         );
-                        return std::process::ExitCode::from(1);
-                    }
-                }
+                        explanations.insert(key.clone(), analysis.clone());
+                        let again = Instant::now();
+                        match explanations.get(&key) {
+                            Some(hit) => println!(
+                                "   cache      the same sentence again in {}us, {} lines, cached={}",
+                                again.elapsed().as_micros(),
+                                hit.lines().len(),
+                                hit.cached,
+                            ),
+                            None => println!("   cache      MISS on an analysis just inserted"),
+                        }
 
-                if !overlay.show(card.clone(), anchor) {
-                    println!("   REFUSED    the analysis card was not showable");
-                    return std::process::ExitCode::from(1);
-                }
-                println!("   shown      on screen for 4 seconds");
-                std::thread::sleep(Duration::from_secs(4));
+                        let card = Card::analysed(&sentence, &analysis);
 
-                // Step 6, the pinned detail, on the card that was just drawn.
-                //
-                // **The product's own path, not the platform type's.** The live
-                // check in `platform-windows` calls `DetailPanel::open` with a
-                // card it made itself; nothing had ever run
-                // `Detail::from_card` on a card this binary built, with this
-                // binary's theme. The one part still out of reach is the
-                // keypress: `RegisterHotKey` succeeding is not `WM_HOTKEY`
-                // arriving, and a machine cannot press a key.
-                match lens_core::detail::Detail::from_card(&card) {
-                    Some(detail) => {
-                        let explained = detail.is_explained();
-                        let hint = lens_core::detail::Detail::nothing_explained_yet("Ctrl+Alt+D");
-                        match lens_platform_windows::PanelWindow::open(
-                            detail.as_panel(&hint),
-                            theme,
-                        ) {
-                            Some(panel) => {
-                                std::thread::sleep(Duration::from_millis(600));
+                        // Step 5, before the card is drawn, because drawing sleeps for
+                        // four seconds and this is the part that can fail.
+                        //
+                        // **Into a temporary file, never the reader's own.** A
+                        // diagnostic that appended to somebody's notes every time they
+                        // ran it would be writing their file for them, and the whole
+                        // point of that file is that they decide what goes in it.
+                        let scratch = std::env::temp_dir().join("mori-lens-selftest-saved.md");
+                        let _ = std::fs::remove_file(&scratch);
+                        match card
+                            .kept_as(Some("selftest"))
+                            .ok_or(keeping::NotKept::NothingToKeep)
+                            .and_then(|entry| {
+                                let selftest_lib =
+                                    lens_storage::Library::open(std::path::Path::new(":memory:"))
+                                        .expect("in-memory library for selftest");
+                                keeping::append(
+                                    &scratch,
+                                    &entry,
+                                    std::time::SystemTime::now(),
+                                    &selftest_lib,
+                                )
+                            }) {
+                            Ok(_save) => {
+                                let written = std::fs::read_to_string(&scratch).unwrap_or_default();
+                                // Shape, not content: the file holds a sentence off
+                                // this machine's screen (`docs/privacy-model.md` §3).
                                 println!(
-                                    "6. pinned     open={} explained={} · 3 seconds, Esc closes it",
-                                    panel.is_open(),
-                                    explained,
+                                    "5. saved      {} lines, {} chars, label {}",
+                                    written.lines().count(),
+                                    written.chars().count(),
+                                    written.contains(lens_core::analyse::DeepAnalysis::LABEL),
                                 );
-                                if !panel.is_open() {
-                                    println!("   REFUSED    the panel closed itself");
+                                if !written.contains(lens_core::analyse::DeepAnalysis::LABEL) {
+                                    println!(
+                                        "   REFUSED    an explanation was saved without its label"
+                                    );
                                     return std::process::ExitCode::from(1);
                                 }
-                                std::thread::sleep(Duration::from_secs(3));
+                                let _ = std::fs::remove_file(&scratch);
+                            }
+                            Err(refusal) => {
+                                println!(
+                                    "5. not saved: {} ({})",
+                                    refusal.user_message(),
+                                    refusal.reason()
+                                );
+                                return std::process::ExitCode::from(1);
+                            }
+                        }
+
+                        if !overlay.show(card.clone(), anchor) {
+                            println!("   REFUSED    the analysis card was not showable");
+                            return std::process::ExitCode::from(1);
+                        }
+                        println!("   shown      on screen for 4 seconds");
+                        std::thread::sleep(Duration::from_secs(4));
+
+                        // Step 6, the pinned detail, on the card that was just drawn.
+                        //
+                        // **The product's own path, not the platform type's.** The live
+                        // check in `platform-windows` calls `DetailPanel::open` with a
+                        // card it made itself; nothing had ever run
+                        // `Detail::from_card` on a card this binary built, with this
+                        // binary's theme. The one part still out of reach is the
+                        // keypress: `RegisterHotKey` succeeding is not `WM_HOTKEY`
+                        // arriving, and a machine cannot press a key.
+                        match lens_core::detail::Detail::from_card(&card) {
+                            Some(detail) => {
+                                let explained = detail.is_explained();
+                                let hint =
+                                    lens_core::detail::Detail::nothing_explained_yet("Ctrl+Alt+D");
+                                match lens_platform_windows::PanelWindow::open(
+                                    detail.as_panel(&hint),
+                                    theme,
+                                ) {
+                                    Some(panel) => {
+                                        std::thread::sleep(Duration::from_millis(600));
+                                        println!(
+                                            "6. pinned     open={} explained={} · 3 seconds, Esc closes it",
+                                            panel.is_open(),
+                                            explained,
+                                        );
+                                        if !panel.is_open() {
+                                            println!("   REFUSED    the panel closed itself");
+                                            return std::process::ExitCode::from(1);
+                                        }
+                                        std::thread::sleep(Duration::from_secs(3));
+                                    }
+                                    None => {
+                                        println!("6. REFUSED    the panel did not open");
+                                        return std::process::ExitCode::from(1);
+                                    }
+                                }
                             }
                             None => {
-                                println!("6. REFUSED    the panel did not open");
+                                println!("6. REFUSED    the analysis card made no detail");
                                 return std::process::ExitCode::from(1);
                             }
                         }
                     }
-                    None => {
-                        println!("6. REFUSED    the analysis card made no detail");
-                        return std::process::ExitCode::from(1);
-                    }
+                    Err(error) => println!(
+                        "4. not explained: {} ({})",
+                        error.user_message(),
+                        error.reason(),
+                    ),
                 }
             }
-            Err(error) => println!(
-                "4. not explained: {} ({})",
-                error.user_message(),
-                error.reason(),
-            ),
+            None => {
+                println!(
+                    "4. not explained: deep analysis requires Ollama (LM Studio not yet supported)"
+                );
+            }
         }
     }
 
