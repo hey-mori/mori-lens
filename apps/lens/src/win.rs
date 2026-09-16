@@ -1255,7 +1255,10 @@ pub fn main() -> std::process::ExitCode {
                 }
                 _ => {
                     // No model or translator available - return not-ready card without calling provider
-                    let card = Card::not_translated(&job.display_text, &lens_core::translate::TranslateError::Unavailable);
+                    let card = Card::not_translated(
+                        &job.display_text,
+                        &lens_core::translate::TranslateError::Unavailable,
+                    );
                     let card = if job.doubtful {
                         card.built_on_a_doubtful_reading()
                     } else if job.from_pixels {
@@ -3617,7 +3620,14 @@ language you do not read and run it again."
         _ => {
             // No model or translator available
             println!("2. not translated: no model or translator available");
-            (Card::not_translated(&sentence, &lens_core::translate::TranslateError::Unavailable), true, None)
+            (
+                Card::not_translated(
+                    &sentence,
+                    &lens_core::translate::TranslateError::Unavailable,
+                ),
+                true,
+                None,
+            )
         }
     };
 
