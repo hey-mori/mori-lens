@@ -1,7 +1,7 @@
 // Models page: refreshModels, testModel, refreshLocalAiStatus
 
 import { invoke } from './tauri.js';
-import { formatSize, escapeHtml } from './ui.js';
+import { formatSize } from './ui.js';
 import { state } from './state.js';
 
 const PROVIDER_DEFAULT_ENDPOINTS = {
@@ -36,8 +36,17 @@ export async function refreshModels(selectedModel) {
     dot.style.background = '#c00';
     label.textContent = providerName + ' not reachable';
     label.style.color = '#c00';
-    listEl.innerHTML = '<p style="color:#888;font-size:13px">Start ' + providerName + ' and refresh.</p>';
-    selectEl.innerHTML = '<option value="">Auto (best available)</option>';
+    listEl.textContent = '';
+    const p = document.createElement('p');
+    p.style.color = '#888';
+    p.style.fontSize = '13px';
+    p.textContent = 'Start ' + providerName + ' and refresh.';
+    listEl.appendChild(p);
+    selectEl.textContent = '';
+    const autoOption = document.createElement('option');
+    autoOption.value = '';
+    autoOption.textContent = provider === 'ollama' ? 'Auto (best available)' : 'Select a model';
+    selectEl.appendChild(autoOption);
     return;
   }
 
@@ -48,28 +57,74 @@ export async function refreshModels(selectedModel) {
   try {
     const models = await invoke('list_models', { provider, endpoint });
     if (!models || models.length === 0) {
-      listEl.innerHTML = '<p style="color:#888;font-size:13px">No models installed.</p>';
-      selectEl.innerHTML = '<option value="">Auto (best available)</option>';
+      listEl.textContent = '';
+      const p = document.createElement('p');
+      p.style.color = '#888';
+      p.style.fontSize = '13px';
+      p.textContent = 'No models installed.';
+      listEl.appendChild(p);
+      selectEl.textContent = '';
+      const autoOption = document.createElement('option');
+      autoOption.value = '';
+      autoOption.textContent = provider === 'ollama' ? 'Auto (best available)' : 'Select a model';
+      selectEl.appendChild(autoOption);
       return;
     }
-    let html = '<table>';
-    for (const m of models) {
-      const isSel = selectedModel === m.id;
-      html += '<tr><td style="width:60%">' + escapeHtml(m.display_name) + '</td><td>' + formatSize(m.size_bytes) + '</td>';
-      html += '<td style="width:80px;text-align:right">';
-      if (isSel) html += '<span style="color:#0066cc;font-size:12px">selected</span>';
-      html += '</td></tr>';
-    }
-    html += '</table>';
-    listEl.innerHTML = html;
 
-    let opts = '<option value="">Auto (best available)</option>';
+    // Build table using DOM APIs (no innerHTML with string concatenation)
+    listEl.textContent = '';
+    const table = document.createElement('table');
     for (const m of models) {
-      opts += '<option value="' + escapeHtml(m.id) + '"' + (selectedModel === m.id ? ' selected' : '') + '>' + escapeHtml(m.display_name) + '</option>';
+      const tr = document.createElement('tr');
+
+      const tdName = document.createElement('td');
+      tdName.style.width = '60%';
+      tdName.textContent = m.display_name;
+      tr.appendChild(tdName);
+
+      const tdSize = document.createElement('td');
+      tdSize.textContent = formatSize(m.size_bytes);
+      tr.appendChild(tdSize);
+
+      const tdStatus = document.createElement('td');
+      tdStatus.style.width = '80px';
+      tdStatus.style.textAlign = 'right';
+      if (selectedModel === m.id) {
+        const span = document.createElement('span');
+        span.style.color = '#0066cc';
+        span.style.fontSize = '12px';
+        span.textContent = 'selected';
+        tdStatus.appendChild(span);
+      }
+      tr.appendChild(tdStatus);
+
+      table.appendChild(tr);
     }
-    selectEl.innerHTML = opts;
+    listEl.appendChild(table);
+
+    // Build select options using DOM APIs
+    selectEl.textContent = '';
+    const autoOption = document.createElement('option');
+    autoOption.value = '';
+    // Ollama supports auto-selection; LM Studio requires explicit model selection
+    autoOption.textContent = provider === 'ollama' ? 'Auto (best available)' : 'Select a model';
+    selectEl.appendChild(autoOption);
+
+    for (const m of models) {
+      const option = document.createElement('option');
+      option.value = m.id;
+      option.textContent = m.display_name;
+      if (selectedModel === m.id) {
+        option.selected = true;
+      }
+      selectEl.appendChild(option);
+    }
   } catch (e) {
-    listEl.innerHTML = '<p class="error">Error: ' + escapeHtml(String(e)) + '</p>';
+    listEl.textContent = '';
+    const p = document.createElement('p');
+    p.className = 'error';
+    p.textContent = 'Error: ' + String(e);
+    listEl.appendChild(p);
   }
 }
 
@@ -80,17 +135,29 @@ export async function testModel() {
   const resultEl = document.getElementById('test-result');
   const btn = document.getElementById('test-btn');
   if (!model) {
-    resultEl.innerHTML = '<span class="error">Select a model first.</span>';
+    resultEl.textContent = '';
+    const span = document.createElement('span');
+    span.className = 'error';
+    span.textContent = 'Select a model first.';
+    resultEl.appendChild(span);
     return;
   }
   btn.disabled = true;
   btn.textContent = 'Testing...';
-  resultEl.innerHTML = '';
+  resultEl.textContent = '';
   try {
     const result = await invoke('test_model', { provider, endpoint, model });
-    resultEl.innerHTML = '<strong>' + escapeHtml(String(result.model)) + '</strong> (' + escapeHtml(String(result.latency_ms)) + 'ms)<br>' + escapeHtml(String(result.translated));
+    const strong = document.createElement('strong');
+    strong.textContent = String(result.model);
+    resultEl.appendChild(strong);
+    resultEl.appendChild(document.createTextNode(' (' + String(result.latency_ms) + 'ms)'));
+    resultEl.appendChild(document.createElement('br'));
+    resultEl.appendChild(document.createTextNode(String(result.translated)));
   } catch (e) {
-    resultEl.innerHTML = '<span class="error">Error: ' + escapeHtml(String(e)) + '</span>';
+    const span = document.createElement('span');
+    span.className = 'error';
+    span.textContent = 'Error: ' + String(e);
+    resultEl.appendChild(span);
   }
   btn.disabled = false;
   btn.textContent = 'Test';
