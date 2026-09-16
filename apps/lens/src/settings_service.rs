@@ -24,8 +24,10 @@ use serde::{Deserialize, Serialize};
 /// saved settings to determine if a restart is needed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ActiveEngineSettings {
+    pub quick_engine: String,
     pub quick_model: Option<String>,
     pub quick_endpoint: String,
+    pub deep_engine: String,
     pub deep_model: Option<String>,
     pub deep_endpoint: String,
     pub ocr_mode: String,
@@ -193,12 +195,19 @@ impl SettingsState {
     /// replaced with the default and a warning is printed, because a setting
     /// the user cannot see being ignored is worse than one that is refused.
     ///
+    /// Engine changes clear the model (models are provider-specific) and reset
+    /// the endpoint to the provider default.
+    ///
     /// Returns a [`SettingsSaveOutcome`] indicating whether a restart is required.
     /// A restart is required if any engine-related settings (model, endpoint, OCR mode)
     /// differ from the active baseline captured at startup.
     pub fn apply(&mut self, view: SettingsView) -> Result<SettingsSaveOutcome, String> {
         let schema = self.file.schema_mut();
         let defaults = lens_core::settings::Settings::default();
+
+        // Capture old engine values before modification to detect provider changes.
+        let old_quick_engine = schema.quick.engine.clone();
+        let old_deep_engine = schema.deep.engine.clone();
 
         schema.general.language = view.language;
         schema.general.dwell_ms = view.dwell_ms.clamp(80, 3000);
@@ -240,15 +249,62 @@ impl SettingsState {
         schema.general.history_store_app = view.history_store_app;
         schema.general.history_excluded = view.history_excluded;
 
+        let new_quick_engine = validate_quick_engine(&view.quick_engine);
+        let quick_engine_changed = new_quick_engine != old_quick_engine;
         schema.quick = EngineConfig {
-            engine: validate_engine(&view.quick_engine),
-            model: view.quick_model,
-            endpoint: validate_endpoint(&view.quick_endpoint, &defaults.endpoint, "quick_endpoint"),
+            engine: new_quick_engine.clone(),
+            model: if quick_engine_changed {
+                None // Clear model when provider changes
+            } else {
+                view.quick_model
+            },
+            endpoint: if quick_engine_changed {
+                // Preserve custom endpoint if user has entered one
+                let current_endpoint = &view.quick_endpoint;
+                let old_default = default_endpoint_for_engine(&old_quick_engine);
+                if current_endpoint == old_default {
+                    // User hasn't customized endpoint, reset to new provider's default
+                    default_endpoint_for_engine(&new_quick_engine).to_owned()
+                } else {
+                    // User has custom endpoint, but still validate it (privacy constraint)
+                    validate_endpoint(
+                        current_endpoint,
+                        default_endpoint_for_engine(&new_quick_engine),
+                        "quick_endpoint",
+                    )
+                }
+            } else {
+                validate_endpoint(&view.quick_endpoint, &defaults.endpoint, "quick_endpoint")
+            },
         };
+
+        let new_deep_engine = validate_deep_engine(&view.deep_engine);
+        let deep_engine_changed = new_deep_engine != old_deep_engine;
         schema.deep = EngineConfig {
-            engine: validate_engine(&view.deep_engine),
-            model: view.deep_model,
-            endpoint: validate_endpoint(&view.deep_endpoint, &defaults.endpoint, "deep_endpoint"),
+            engine: new_deep_engine.clone(),
+            model: if deep_engine_changed {
+                None // Clear model when provider changes
+            } else {
+                view.deep_model
+            },
+            endpoint: if deep_engine_changed {
+                // Preserve custom endpoint if user has entered one
+                let current_endpoint = &view.deep_endpoint;
+                let old_default = default_endpoint_for_engine(&old_deep_engine);
+                if current_endpoint == old_default {
+                    // User hasn't customized endpoint, reset to new provider's default
+                    default_endpoint_for_engine(&new_deep_engine).to_owned()
+                } else {
+                    // User has custom endpoint, but still validate it (privacy constraint)
+                    validate_endpoint(
+                        current_endpoint,
+                        default_endpoint_for_engine(&new_deep_engine),
+                        "deep_endpoint",
+                    )
+                }
+            } else {
+                validate_endpoint(&view.deep_endpoint, &defaults.endpoint, "deep_endpoint")
+            },
         };
 
         schema.applications = view
@@ -287,6 +343,10 @@ impl SettingsState {
         let mut restart_required = false;
         let mut reasons = Vec::new();
 
+        if saved_schema.quick.engine != self.active_baseline.quick_engine {
+            restart_required = true;
+            reasons.push("quick_engine".to_owned());
+        }
         if saved_schema.quick.model != self.active_baseline.quick_model {
             restart_required = true;
             reasons.push("quick_model".to_owned());
@@ -294,6 +354,10 @@ impl SettingsState {
         if saved_schema.quick.endpoint != self.active_baseline.quick_endpoint {
             restart_required = true;
             reasons.push("quick_endpoint".to_owned());
+        }
+        if saved_schema.deep.engine != self.active_baseline.deep_engine {
+            restart_required = true;
+            reasons.push("deep_engine".to_owned());
         }
         if saved_schema.deep.model != self.active_baseline.deep_model {
             restart_required = true;
@@ -392,12 +456,30 @@ fn is_valid_hover_scope(s: &str) -> bool {
     matches!(s, "sentence" | "word")
 }
 
-fn validate_engine(value: &str) -> String {
+fn validate_quick_engine(value: &str) -> String {
+    if matches!(value, "ollama" | "lmstudio") {
+        value.to_owned()
+    } else {
+        eprintln!("settings  quick_engine = {value:?} is not recognized, using \"ollama\"");
+        "ollama".to_owned()
+    }
+}
+
+fn validate_deep_engine(value: &str) -> String {
     if value == "ollama" {
         value.to_owned()
     } else {
-        eprintln!("settings  engine = {value:?} is not recognized, using \"ollama\"");
+        eprintln!(
+            "settings  deep_engine = {value:?} is not supported in Phase 3, using \"ollama\""
+        );
         "ollama".to_owned()
+    }
+}
+
+fn default_endpoint_for_engine(engine: &str) -> &'static str {
+    match engine {
+        "lmstudio" => "127.0.0.1:1234",
+        _ => "127.0.0.1:11434", // Ollama is the default
     }
 }
 
@@ -453,8 +535,10 @@ mod tests {
 
     fn default_baseline() -> ActiveEngineSettings {
         ActiveEngineSettings {
+            quick_engine: "ollama".into(),
             quick_model: None,
             quick_endpoint: "127.0.0.1:11434".into(),
+            deep_engine: "ollama".into(),
             deep_model: None,
             deep_endpoint: "127.0.0.1:11434".into(),
             ocr_mode: "manual".into(),
@@ -807,6 +891,184 @@ mod tests {
         assert!(outcome.reasons.contains(&"quick_model".to_owned()));
         assert!(outcome.reasons.contains(&"deep_endpoint".to_owned()));
         assert!(outcome.reasons.contains(&"ocr_mode".to_owned()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validate_quick_engine_accepts_ollama_and_lmstudio() {
+        assert_eq!(validate_quick_engine("ollama"), "ollama");
+        assert_eq!(validate_quick_engine("lmstudio"), "lmstudio");
+        assert_eq!(validate_quick_engine("unknown"), "ollama"); // fallback
+        assert_eq!(validate_quick_engine(""), "ollama"); // fallback
+    }
+
+    #[test]
+    fn validate_deep_engine_accepts_only_ollama() {
+        assert_eq!(validate_deep_engine("ollama"), "ollama");
+        assert_eq!(validate_deep_engine("lmstudio"), "ollama"); // Phase 3: Deep is Ollama-only
+        assert_eq!(validate_deep_engine("unknown"), "ollama"); // fallback
+        assert_eq!(validate_deep_engine(""), "ollama"); // fallback
+    }
+
+    #[test]
+    fn apply_restart_required_when_quick_engine_changed() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        view.quick_engine = "lmstudio".into();
+        let outcome = state.apply(view).unwrap();
+        assert!(outcome.restart_required);
+        assert!(outcome.reasons.contains(&"quick_engine".to_owned()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn deep_lmstudio_is_canonicalized_to_ollama() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        // Try to set Deep to LM Studio
+        view.deep_engine = "lmstudio".into();
+        let outcome = state.apply(view).unwrap();
+        // Phase 3: Deep is Ollama-only, so LM Studio is canonicalized to Ollama
+        assert_eq!(outcome.settings.deep_engine, "ollama");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn valid_deep_ollama_does_not_trigger_restart() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        view.deep_engine = "ollama".into(); // same as baseline
+        let outcome = state.apply(view).unwrap();
+        // No restart because value did not change
+        assert!(!outcome.reasons.contains(&"deep_engine".to_owned()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_no_restart_required_when_engine_unchanged() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        view.quick_engine = "ollama".into(); // same as baseline
+        view.deep_engine = "ollama".into(); // same as baseline
+        let outcome = state.apply(view).unwrap();
+        assert!(!outcome.restart_required);
+        assert!(!outcome.reasons.contains(&"quick_engine".to_owned()));
+        assert!(!outcome.reasons.contains(&"deep_engine".to_owned()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_persists_lmstudio_engine() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        view.quick_engine = "lmstudio".into();
+        // Phase 3: Deep is Ollama-only, so deep_engine must remain ollama
+        view.deep_engine = "ollama".into();
+        let outcome = state.apply(view).unwrap();
+        assert_eq!(outcome.settings.quick_engine, "lmstudio");
+        assert_eq!(outcome.settings.deep_engine, "ollama");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_clears_model_and_resets_default_endpoint_when_quick_engine_changes() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        // First, set up with ollama and the default endpoint
+        let mut view = default_view();
+        view.quick_engine = "ollama".into();
+        view.quick_model = Some("llama2".into());
+        view.quick_endpoint = "127.0.0.1:11434".into(); // Ollama default
+        state.apply(view).unwrap();
+
+        // Now switch to lmstudio, still with Ollama's default endpoint
+        let mut view = default_view();
+        view.quick_engine = "lmstudio".into();
+        view.quick_model = Some("some-lmstudio-model".into());
+        view.quick_endpoint = "127.0.0.1:11434".into(); // Still Ollama default
+        let outcome = state.apply(view).unwrap();
+
+        // Model should be cleared because engine changed
+        assert_eq!(outcome.settings.quick_model, None);
+        // Endpoint should be reset to lmstudio default because user hadn't customized it
+        assert_eq!(outcome.settings.quick_endpoint, "127.0.0.1:1234");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_validates_custom_endpoint_when_quick_engine_changes() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        // First, set up with ollama and a loopback custom endpoint
+        let mut view = default_view();
+        view.quick_engine = "ollama".into();
+        view.quick_model = Some("llama2".into());
+        view.quick_endpoint = "127.0.0.2:11434".into(); // Loopback custom endpoint (different from default)
+        state.apply(view).unwrap();
+
+        // Now switch to lmstudio, keep the loopback custom endpoint
+        let mut view = default_view();
+        view.quick_engine = "lmstudio".into();
+        view.quick_model = Some("some-lmstudio-model".into());
+        view.quick_endpoint = "127.0.0.2:11434".into(); // Still the loopback custom endpoint
+        let outcome = state.apply(view).unwrap();
+
+        // Model should be cleared because engine changed
+        assert_eq!(outcome.settings.quick_model, None);
+        // Loopback custom endpoint should be preserved
+        assert_eq!(outcome.settings.quick_endpoint, "127.0.0.2:11434");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_rejects_non_loopback_endpoint_when_quick_engine_changes() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        // First, set up with ollama
+        let mut view = default_view();
+        view.quick_engine = "ollama".into();
+        view.quick_endpoint = "127.0.0.1:11434".into(); // Ollama default
+        state.apply(view).unwrap();
+
+        // Now switch to lmstudio with a non-loopback endpoint
+        let mut view = default_view();
+        view.quick_engine = "lmstudio".into();
+        view.quick_endpoint = "192.168.1.100:1234".into(); // Non-loopback (privacy violation)
+        let outcome = state.apply(view).unwrap();
+
+        // Non-loopback endpoint should be rejected and reset to new provider's default
+        assert_eq!(outcome.settings.quick_endpoint, "127.0.0.1:1234"); // LM Studio default
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_empty_endpoint_falls_back_to_default() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        view.quick_endpoint = "".into(); // Empty endpoint
+        state.apply(view).unwrap();
+        // Empty endpoint is not a loopback address, so it falls back to default
+        assert_eq!(state.current().endpoint, Settings::default().endpoint);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_keeps_model_when_quick_engine_unchanged() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        view.quick_engine = "ollama".into();
+        view.quick_model = Some("llama2".into());
+        let outcome = state.apply(view).unwrap();
+
+        // Model should be kept because engine did not change
+        assert_eq!(outcome.settings.quick_model, Some("llama2".to_owned()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
