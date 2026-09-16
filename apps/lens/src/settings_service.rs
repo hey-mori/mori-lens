@@ -266,8 +266,8 @@ impl SettingsState {
                     // User hasn't customized endpoint, reset to new provider's default
                     default_endpoint_for_engine(&new_quick_engine).to_owned()
                 } else {
-                    // User has custom endpoint, preserve it
-                    current_endpoint.clone()
+                    // User has custom endpoint, but still validate it (privacy constraint)
+                    validate_endpoint(current_endpoint, default_endpoint_for_engine(&new_quick_engine), "quick_endpoint")
                 }
             } else {
                 validate_endpoint(&view.quick_endpoint, &defaults.endpoint, "quick_endpoint")
@@ -291,8 +291,8 @@ impl SettingsState {
                     // User hasn't customized endpoint, reset to new provider's default
                     default_endpoint_for_engine(&new_deep_engine).to_owned()
                 } else {
-                    // User has custom endpoint, preserve it
-                    current_endpoint.clone()
+                    // User has custom endpoint, but still validate it (privacy constraint)
+                    validate_endpoint(current_endpoint, default_endpoint_for_engine(&new_deep_engine), "deep_endpoint")
                 }
             } else {
                 validate_endpoint(&view.deep_endpoint, &defaults.endpoint, "deep_endpoint")
@@ -991,27 +991,60 @@ mod tests {
     }
 
     #[test]
-    fn apply_preserves_custom_endpoint_when_quick_engine_changes() {
+    fn apply_validates_custom_endpoint_when_quick_engine_changes() {
         let dir = temp_dir();
         let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
-        // First, set up with ollama and a CUSTOM endpoint (not the default)
+        // First, set up with ollama and a loopback custom endpoint
         let mut view = default_view();
         view.quick_engine = "ollama".into();
         view.quick_model = Some("llama2".into());
-        view.quick_endpoint = "192.168.1.100:11434".into(); // Custom endpoint
+        view.quick_endpoint = "127.0.0.2:11434".into(); // Loopback custom endpoint (different from default)
         state.apply(view).unwrap();
 
-        // Now switch to lmstudio, but keep the custom endpoint
+        // Now switch to lmstudio, keep the loopback custom endpoint
         let mut view = default_view();
         view.quick_engine = "lmstudio".into();
         view.quick_model = Some("some-lmstudio-model".into());
-        view.quick_endpoint = "192.168.1.100:11434".into(); // Still the custom endpoint
+        view.quick_endpoint = "127.0.0.2:11434".into(); // Still the loopback custom endpoint
         let outcome = state.apply(view).unwrap();
 
         // Model should be cleared because engine changed
         assert_eq!(outcome.settings.quick_model, None);
-        // Custom endpoint should be preserved
-        assert_eq!(outcome.settings.quick_endpoint, "192.168.1.100:11434");
+        // Loopback custom endpoint should be preserved
+        assert_eq!(outcome.settings.quick_endpoint, "127.0.0.2:11434");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_rejects_non_loopback_endpoint_when_quick_engine_changes() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        // First, set up with ollama
+        let mut view = default_view();
+        view.quick_engine = "ollama".into();
+        view.quick_endpoint = "127.0.0.1:11434".into(); // Ollama default
+        state.apply(view).unwrap();
+
+        // Now switch to lmstudio with a non-loopback endpoint
+        let mut view = default_view();
+        view.quick_engine = "lmstudio".into();
+        view.quick_endpoint = "192.168.1.100:1234".into(); // Non-loopback (privacy violation)
+        let outcome = state.apply(view).unwrap();
+
+        // Non-loopback endpoint should be rejected and reset to new provider's default
+        assert_eq!(outcome.settings.quick_endpoint, "127.0.0.1:1234"); // LM Studio default
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_empty_endpoint_falls_back_to_default() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        view.quick_endpoint = "".into(); // Empty endpoint
+        state.apply(view).unwrap();
+        // Empty endpoint is not a loopback address, so it falls back to default
+        assert_eq!(state.current().endpoint, Settings::default().endpoint);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
