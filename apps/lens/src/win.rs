@@ -1099,7 +1099,7 @@ pub fn main() -> std::process::ExitCode {
 
                     let key = CacheKey::for_analysis(
                         &request,
-                        worker_deep_model.as_deref().unwrap_or("unknown"),
+                        worker_deep_model.as_deref().unwrap_or("auto"),
                         DEEP_PROMPT_VERSION,
                     );
                     if let Some(hit) = explanations.get(&key) {
@@ -1184,7 +1184,7 @@ pub fn main() -> std::process::ExitCode {
 
             let key = CacheKey::of(
                 &request,
-                worker_quick_model.as_deref().unwrap_or("unknown"),
+                worker_quick_model.as_deref().unwrap_or("auto"),
                 PROMPT_VERSION,
             );
             if let Some(hit) = cache.get(&key) {
@@ -3539,7 +3539,7 @@ language you do not read and run it again."
     let mut cache = TranslationCache::new(CACHE_ENTRIES);
     let key = CacheKey::of(
         &request,
-        quick_model.as_deref().unwrap_or("unknown"),
+        quick_model.as_deref().unwrap_or("auto"),
         PROMPT_VERSION,
     );
     // Kept, because step 4 explains what step 2 translated rather than
@@ -3644,7 +3644,7 @@ total {}ms from acquisition to card",
                         let mut explanations = AnalysisCache::new(ANALYSIS_ENTRIES);
                         let key = CacheKey::for_analysis(
                             &deep,
-                            deep_model.as_deref().unwrap_or("unknown"),
+                            deep_model.as_deref().unwrap_or("auto"),
                             DEEP_PROMPT_VERSION,
                         );
                         explanations.insert(key.clone(), analysis.clone());
