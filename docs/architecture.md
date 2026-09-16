@@ -74,13 +74,16 @@ crates/lens-core/          no OS dependencies, no async runtime
   contract_tests.rs        property-based tests for the acquisition contract
   stress_tests.rs          load and stress tests for concurrent acquisition
 
-crates/lens-translate/     the Ollama client, no HTTP or JSON dependency
-  lib.rs                   OllamaTranslator: quick, streaming, deep
-  http.rs                  just enough HTTP/1.1 for a loopback socket
-  json.rs                  just enough JSON, with the escaping that matters
-  analyse.rs               schema, prompt, and parse for deep analysis
+crates/lens-translate/     provider-aware translation and runtime management
+  lib.rs                   Translator and ProviderRuntime traits, factory dispatch
+  ollama_translator.rs     OllamaTranslator: quick translation and streaming
+  ollama_runtime.rs        OllamaRuntime: model discovery, reachability, state
+  lmstudio_translator.rs   LmStudioTranslator: OpenAI-compatible inference
+  lmstudio_runtime.rs      LmStudioRuntime: native v1 management, dual API
+  analyse.rs               schema, prompt, and parse for deep analysis (Ollama only)
   deep_eval.rs             deep evaluation and linkage quality benchmarks
-  live_tests.rs            integration tests against a running Ollama instance
+  fake_server.rs           HTTP contract test harness for provider APIs
+  live_tests.rs            integration tests against running provider instances
 
 crates/lens-settings/      versioned TOML settings, round-trip preservation
   schema.rs                the V1 schema: general, quick, deep, applications
