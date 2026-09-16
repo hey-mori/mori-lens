@@ -712,14 +712,15 @@ pub fn main() -> std::process::ExitCode {
 
     // Construct the Quick translator using the provider factory.
     // Deep path uses Analyser through deep_ollama directly (Ollama-only in Phase 3).
-    // If no model is available, use a placeholder that will fail gracefully when used.
-    let quick_model_for_translator = quick_model.clone().unwrap_or_else(|| "unavailable".to_owned());
-    let quick_translator: Box<dyn lens_core::translate::Translator + Send + Sync> =
-        lens_translate::build_translator(
-            options.ai_config.quick.provider,
-            &options.ai_config.quick.endpoint,
-            &quick_model_for_translator,
-        );
+    // If no model is available, translator is None and the app continues running.
+    let quick_translator: Option<Box<dyn lens_core::translate::Translator + Send + Sync>> =
+        quick_model.as_ref().map(|model| {
+            lens_translate::build_translator(
+                options.ai_config.quick.provider,
+                &options.ai_config.quick.endpoint,
+                model,
+            )
+        });
 
     // Build engine display lines for startup banner
     let engine_line = match &quick_model {
@@ -970,7 +971,7 @@ pub fn main() -> std::process::ExitCode {
         println!();
         let code = selftest(
             &overlay,
-            &*quick_translator,
+            quick_translator.as_deref(),
             &quick_model,
             quick_ollama.as_ref(),
             deep_ollama.as_ref(),
@@ -1176,81 +1177,106 @@ pub fn main() -> std::process::ExitCode {
                 });
             }
 
-            let key = CacheKey::of(
-                &request,
-                worker_quick_model.as_deref().unwrap_or("unavailable"),
-                PROMPT_VERSION,
-            );
-            if let Some(hit) = cache.get(&key) {
-                let mut card = Card::translated(&job.display_text, &hit);
-                if job.doubtful {
-                    card = card.built_on_a_doubtful_reading();
-                } else if job.from_pixels {
-                    card = card.read_from_the_screen();
-                }
-                let _ = answers_tx.send(Answer {
-                    generation: job.generation,
-                    card,
-                    anchor: job.anchor,
-                    final_answer: true,
-                    app: job.app.clone(),
-                    target_language: job.language.clone(),
-                });
-                continue;
-            }
+            // Only create cache key and perform translation when we have a real model and translator
+            match (&worker_quick_model, &quick_translator) {
+                (Some(model), Some(translator)) => {
+                    let key = CacheKey::of(&request, model.as_str(), PROMPT_VERSION);
+                    if let Some(hit) = cache.get(&key) {
+                        let mut card = Card::translated(&job.display_text, &hit);
+                        if job.doubtful {
+                            card = card.built_on_a_doubtful_reading();
+                        } else if job.from_pixels {
+                            card = card.read_from_the_screen();
+                        }
+                        let _ = answers_tx.send(Answer {
+                            generation: job.generation,
+                            card,
+                            anchor: job.anchor,
+                            final_answer: true,
+                            app: job.app.clone(),
+                            target_language: job.language.clone(),
+                        });
+                        continue;
+                    }
 
-            // Report the answer as it forms. Each partial is a complete card
-            // carrying the original, so the rule that a translation never
-            // appears without it holds for a half-finished one too.
-            let partial_tx = answers_tx.clone();
-            let generation = job.generation;
-            let anchor = job.anchor;
-            let original = job.display_text.clone();
-            // Cloned out before the move, so the job stays whole for the
-            // finished answer below.
-            let partial_app = job.app.clone();
-            let partial_language = job.language.clone();
-            let mut on_partial = move |text: &str| {
-                let card = Card::partial(&original, text);
-                let _ = partial_tx.send(Answer {
-                    generation,
-                    card,
-                    anchor,
-                    final_answer: false,
-                    app: partial_app.clone(),
-                    target_language: partial_language.clone(),
-                });
-            };
+                    // Report the answer as it forms. Each partial is a complete card
+                    // carrying the original, so the rule that a translation never
+                    // appears without it holds for a half-finished one too.
+                    let partial_tx = answers_tx.clone();
+                    let generation = job.generation;
+                    let anchor = job.anchor;
+                    let original = job.display_text.clone();
+                    // Cloned out before the move, so the job stays whole for the
+                    // finished answer below.
+                    let partial_app = job.app.clone();
+                    let partial_language = job.language.clone();
+                    let mut on_partial = move |text: &str| {
+                        let card = Card::partial(&original, text);
+                        let _ = partial_tx.send(Answer {
+                            generation,
+                            card,
+                            anchor,
+                            final_answer: false,
+                            app: partial_app.clone(),
+                            target_language: partial_language.clone(),
+                        });
+                    };
 
-            let card = match quick_translator.quick_streaming(&request, &mut on_partial) {
-                Ok(translation) => {
-                    cache.insert(key, translation.clone());
-                    Card::translated(&job.display_text, &translation)
+                    let card = match translator.quick_streaming(&request, &mut on_partial) {
+                        Ok(translation) => {
+                            cache.insert(key, translation.clone());
+                            Card::translated(&job.display_text, &translation)
+                        }
+                        Err(error) => Card::not_translated(&job.display_text, &error),
+                    };
+                    // The caveat rides the answer rather than preceding it, so it is
+                    // on the card the reader is still looking at a second later.
+                    let card = if job.doubtful {
+                        card.built_on_a_doubtful_reading()
+                    } else if job.from_pixels {
+                        card.read_from_the_screen()
+                    } else {
+                        card
+                    };
+                    last_answer = Some(Instant::now());
+                    if answers_tx
+                        .send(Answer {
+                            generation: job.generation,
+                            card,
+                            anchor: job.anchor,
+                            final_answer: true,
+                            app: job.app.clone(),
+                            target_language: job.language.clone(),
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
-                Err(error) => Card::not_translated(&job.display_text, &error),
-            };
-            // The caveat rides the answer rather than preceding it, so it is
-            // on the card the reader is still looking at a second later.
-            let card = if job.doubtful {
-                card.built_on_a_doubtful_reading()
-            } else if job.from_pixels {
-                card.read_from_the_screen()
-            } else {
-                card
-            };
-            last_answer = Some(Instant::now());
-            if answers_tx
-                .send(Answer {
-                    generation: job.generation,
-                    card,
-                    anchor: job.anchor,
-                    final_answer: true,
-                    app: job.app.clone(),
-                    target_language: job.language.clone(),
-                })
-                .is_err()
-            {
-                break;
+                _ => {
+                    // No model or translator available - return not-ready card without calling provider
+                    let card = Card::not_translated(&job.display_text, &lens_core::translate::TranslateError::Unavailable);
+                    let card = if job.doubtful {
+                        card.built_on_a_doubtful_reading()
+                    } else if job.from_pixels {
+                        card.read_from_the_screen()
+                    } else {
+                        card
+                    };
+                    if answers_tx
+                        .send(Answer {
+                            generation: job.generation,
+                            card,
+                            anchor: job.anchor,
+                            final_answer: true,
+                            app: job.app.clone(),
+                            target_language: job.language.clone(),
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
             }
         }
     });
@@ -3328,7 +3354,7 @@ fn configuration_facts(
 #[allow(clippy::too_many_arguments)]
 fn selftest(
     overlay: &Overlay,
-    quick_translator: &dyn lens_core::translate::Translator,
+    quick_translator: Option<&(dyn lens_core::translate::Translator + Send + Sync)>,
     quick_model: &Option<String>,
     quick_ollama: Option<&lens_translate::OllamaTranslator>,
     deep_ollama: Option<&lens_translate::OllamaTranslator>,
@@ -3531,61 +3557,69 @@ language you do not read and run it again."
     };
 
     let mut cache = TranslationCache::new(CACHE_ENTRIES);
-    let key = CacheKey::of(
-        &request,
-        quick_model.as_deref().unwrap_or("unavailable"),
-        PROMPT_VERSION,
-    );
-    // Kept, because step 4 explains what step 2 translated rather than
-    // translating it again. That grounding is the deep path's whole shape.
-    let mut translated: Option<String> = None;
-    let card = match quick_translator.quick_streaming(&request, &mut on_partial) {
-        Ok(translation) => {
-            println!(
-                "2. translated {} chars in {}ms via {}",
-                translation.text.chars().count(),
-                translation.latency_ms,
-                translation.model,
-            );
-            match first_text {
-                Some(at) => println!(
-                    "   streaming  first text at {}ms, {redraws} redraws",
-                    at.as_millis(),
+    // Only create cache key and perform translation when we have a real model and translator
+    let (card, translation_failed, translated) = match (&quick_model, &quick_translator) {
+        (Some(model), Some(translator)) => {
+            let key = CacheKey::of(&request, model.as_str(), PROMPT_VERSION);
+            // Kept, because step 4 explains what step 2 translated rather than
+            // translating it again. That grounding is the deep path's whole shape.
+            let mut translated: Option<String> = None;
+            let card = match translator.quick_streaming(&request, &mut on_partial) {
+                Ok(translation) => {
+                    println!(
+                        "2. translated {} chars in {}ms via {}",
+                        translation.text.chars().count(),
+                        translation.latency_ms,
+                        translation.model,
+                    );
+                    match first_text {
+                        Some(at) => println!(
+                            "   streaming  first text at {}ms, {redraws} redraws",
+                            at.as_millis(),
+                        ),
+                        None => println!("   streaming  no partial arrived"),
+                    }
+                    cache.insert(key.clone(), translation.clone());
+                    translated = Some(translation.text.clone());
+                    Card::translated(&sentence, &translation)
+                }
+                Err(error) => {
+                    println!(
+                        "2. not translated: {} ({})",
+                        error.user_message(),
+                        error.reason()
+                    );
+                    if let Some(remedy) = error.remedy() {
+                        println!("              {remedy}");
+                    }
+                    Card::not_translated(&sentence, &error)
+                }
+            };
+            let translation_failed = translated.is_none();
+
+            // Remembered, because the card is still worth showing and drawing it is
+            // still worth checking: the reader should see what the product does when
+            // the model refuses. What must not happen is calling that a pass.
+
+            // The same sentence again, which is what a reader moving back along a line
+            // produces several times a minute.
+            let again = Instant::now();
+            match cache.get(&key) {
+                Some(hit) => println!(
+                    "   cache      the same sentence again in {}us, {} chars",
+                    again.elapsed().as_micros(),
+                    hit.text.chars().count(),
                 ),
-                None => println!("   streaming  no partial arrived"),
+                None => println!("   cache      MISS on a sentence just inserted"),
             }
-            cache.insert(key.clone(), translation.clone());
-            translated = Some(translation.text.clone());
-            Card::translated(&sentence, &translation)
+            (card, translation_failed, translated)
         }
-        Err(error) => {
-            println!(
-                "2. not translated: {} ({})",
-                error.user_message(),
-                error.reason()
-            );
-            if let Some(remedy) = error.remedy() {
-                println!("              {remedy}");
-            }
-            Card::not_translated(&sentence, &error)
+        _ => {
+            // No model or translator available
+            println!("2. not translated: no model or translator available");
+            (Card::not_translated(&sentence, &lens_core::translate::TranslateError::Unavailable), true, None)
         }
     };
-    // Remembered, because the card is still worth showing and drawing it is
-    // still worth checking: the reader should see what the product does when
-    // the model refuses. What must not happen is calling that a pass.
-    let translation_failed = translated.is_none();
-
-    // The same sentence again, which is what a reader moving back along a line
-    // produces several times a minute.
-    let again = Instant::now();
-    match cache.get(&key) {
-        Some(hit) => println!(
-            "   cache      the same sentence again in {}us, {} chars",
-            again.elapsed().as_micros(),
-            hit.text.chars().count(),
-        ),
-        None => println!("   cache      MISS on a sentence just inserted"),
-    }
 
     if !overlay.show(card, anchor) {
         println!("3. REFUSED    the card was not showable");

@@ -462,15 +462,33 @@ async fn get_local_ai_status(
         let view = s.view();
         let qp = lens_core::translate::Provider::from_token(&view.quick_engine)
             .unwrap_or(lens_core::translate::Provider::Ollama);
-        let dp = lens_core::translate::Provider::from_token(&view.deep_engine)
+        let dp_raw = lens_core::translate::Provider::from_token(&view.deep_engine)
             .unwrap_or(lens_core::translate::Provider::Ollama);
+
+        // Phase 3: Deep is Ollama-only. Apply the same constraint as ai_runtime::from_schema_deep.
+        // This ensures Tauri readiness uses the SAME Deep capability truth as the runtime.
+        let (dp, deep_ep, deep_m) = if dp_raw == lens_core::translate::Provider::Ollama {
+            (lens_core::translate::Provider::Ollama, view.deep_endpoint.clone(), view.deep_model.clone())
+        } else {
+            // Deep is forced to Ollama with defaults
+            eprintln!(
+                "get_local_ai_status  Deep engine {:?} is not supported in Phase 3, forcing Ollama",
+                view.deep_engine
+            );
+            (
+                lens_core::translate::Provider::Ollama,
+                lens_core::translate::Provider::Ollama.default_endpoint().to_owned(),
+                None,
+            )
+        };
+
         (
             qp,
             dp,
             view.quick_endpoint.clone(),
-            view.deep_endpoint.clone(),
+            deep_ep,
             view.quick_model.clone(),
-            view.deep_model.clone(),
+            deep_m,
         )
     };
 

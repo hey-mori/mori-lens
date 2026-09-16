@@ -512,14 +512,15 @@ fn product_loop(
     // Drains pending jobs and keeps only the latest (stale coalescing).
     // This ensures Deep never blocks Quick hover latency.
     // ADR-0005: Quick translator uses the quick lane's own config.
-    // If no model is available, use a placeholder that will fail gracefully when used.
-    let quick_model_for_translator = quick_model.clone().unwrap_or_else(|| "unavailable".to_owned());
-    let quick_translator: Box<dyn lens_core::translate::Translator + Send + Sync> =
-        lens_translate::build_translator(
-            ai_config.quick.provider,
-            &ai_config.quick.endpoint,
-            &quick_model_for_translator,
-        );
+    // If no model is available, translator is None and the app continues running.
+    let quick_translator: Option<Box<dyn lens_core::translate::Translator + Send + Sync>> =
+        quick_model.as_ref().map(|model| {
+            lens_translate::build_translator(
+                ai_config.quick.provider,
+                &ai_config.quick.endpoint,
+                model,
+            )
+        });
     let quick_cache = cache.clone();
     let quick_result_tx = result_tx.clone();
     let quick_provider = ai_config.quick.provider;
@@ -557,9 +558,10 @@ fn product_loop(
                         }
                     },
                 };
-                // Always rebuild translator, even if model is None (use placeholder)
-                let model_for_translator = resolved_model.clone().unwrap_or_else(|| "unavailable".to_owned());
-                translator = lens_translate::build_translator(provider, &ep, &model_for_translator);
+                // Rebuild translator only if model resolved successfully
+                translator = resolved_model.as_ref().map(|model| {
+                    lens_translate::build_translator(provider, &ep, model)
+                });
                 current_model = resolved_model;
             }
             // Drain pending Quick jobs — keep only the latest.
@@ -573,29 +575,35 @@ fn product_loop(
             // Use the production seam: into_result derives target_language
             // from the job's request, ensuring dispatch-time provenance.
             let QuickJob::Quick { ref request, .. } = current;
-            // Cache key uses the pre-resolved model string for ADR-0005 identity.
-            let key = CacheKey::of(
-                request,
-                current_model.as_deref().unwrap_or("unavailable"),
-                QUICK_PROMPT_VERSION,
-            );
-            // Check cache before paying for translation.
-            {
-                if let Ok(mut c) = quick_cache.lock() {
-                    if let Some(cached) = c.get(&key) {
-                        let _ = quick_result_tx.send(current.into_result(Ok(cached)));
-                        continue;
+
+            // Only create cache key and perform translation when we have a real model and translator
+            let result = match (&current_model, &translator) {
+                (Some(model), Some(trans)) => {
+                    let key = CacheKey::of(request, model.as_str(), QUICK_PROMPT_VERSION);
+                    // Check cache before paying for translation.
+                    {
+                        if let Ok(mut c) = quick_cache.lock() {
+                            if let Some(cached) = c.get(&key) {
+                                let _ = quick_result_tx.send(current.into_result(Ok(cached)));
+                                continue;
+                            }
+                        }
                     }
+                    let result = trans.quick(request);
+                    if let Ok(ref t) = result {
+                        if let Ok(mut c) = quick_cache.lock() {
+                            c.insert(key, t.clone());
+                        }
+                    }
+                    result
                 }
-            }
-            let result = translator.quick(request);
-            if let Ok(ref t) = result {
-                if let Ok(mut c) = quick_cache.lock() {
-                    c.insert(key, t.clone());
+                _ => {
+                    // No model or translator available
+                    Err("AI engine not ready".to_owned())
                 }
-            }
+            };
             let _ = quick_result_tx
-                .send(current.into_result(result.map_err(|e| e.user_message().to_owned())));
+                .send(current.into_result(result.map_err(|e| e.to_owned())));
         }
     });
 
