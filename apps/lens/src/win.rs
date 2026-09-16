@@ -712,20 +712,14 @@ pub fn main() -> std::process::ExitCode {
 
     // Construct the Quick translator using the provider factory.
     // Deep path uses Analyser through deep_ollama directly (Ollama-only in Phase 3).
+    // If no model is available, use a placeholder that will fail gracefully when used.
+    let quick_model_for_translator = quick_model.clone().unwrap_or_else(|| "unavailable".to_owned());
     let quick_translator: Box<dyn lens_core::translate::Translator + Send + Sync> =
-        match &quick_model {
-            Some(model) => lens_translate::build_translator(
-                options.ai_config.quick.provider,
-                &options.ai_config.quick.endpoint,
-                model,
-            ),
-            None => {
-                // No model resolved: cannot construct a working translator.
-                // The banner already reports the condition. Exit early.
-                eprintln!("engine    no model available for the quick path");
-                return std::process::ExitCode::from(1);
-            }
-        };
+        lens_translate::build_translator(
+            options.ai_config.quick.provider,
+            &options.ai_config.quick.endpoint,
+            &quick_model_for_translator,
+        );
 
     // Build engine display lines for startup banner
     let engine_line = match &quick_model {
@@ -1184,7 +1178,7 @@ pub fn main() -> std::process::ExitCode {
 
             let key = CacheKey::of(
                 &request,
-                worker_quick_model.as_deref().unwrap_or("auto"),
+                worker_quick_model.as_deref().unwrap_or("unavailable"),
                 PROMPT_VERSION,
             );
             if let Some(hit) = cache.get(&key) {
@@ -3539,7 +3533,7 @@ language you do not read and run it again."
     let mut cache = TranslationCache::new(CACHE_ENTRIES);
     let key = CacheKey::of(
         &request,
-        quick_model.as_deref().unwrap_or("auto"),
+        quick_model.as_deref().unwrap_or("unavailable"),
         PROMPT_VERSION,
     );
     // Kept, because step 4 explains what step 2 translated rather than

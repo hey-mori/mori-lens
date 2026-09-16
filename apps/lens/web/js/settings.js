@@ -85,7 +85,6 @@ function attachProviderChangeHandler() {
 
   quickEngineSelect.addEventListener('change', () => {
     const newProvider = quickEngineSelect.value;
-    const defaultEndpoint = PROVIDER_DEFAULT_ENDPOINTS[newProvider] || PROVIDER_DEFAULT_ENDPOINTS.ollama;
 
     // Clear model selection (models are provider-specific)
     const modelSelect = document.getElementById('f-quick-model-select');
@@ -93,11 +92,8 @@ function attachProviderChangeHandler() {
       modelSelect.value = '';
     }
 
-    // Reset endpoint to provider default
-    const endpointInput = document.getElementById('f-quick-endpoint');
-    if (endpointInput) {
-      endpointInput.value = defaultEndpoint;
-    }
+    // Do NOT reset endpoint here - backend will decide whether to preserve
+    // the user's custom endpoint or reset to the new provider's default
 
     // Refresh model list for the new provider
     import('./models.js').then(m => m.refreshModels(null));
