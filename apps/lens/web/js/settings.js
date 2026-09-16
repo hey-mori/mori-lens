@@ -4,9 +4,15 @@ import { invoke } from './tauri.js';
 import { setStatus } from './ui.js';
 import { state } from './state.js';
 
+const PROVIDER_DEFAULT_ENDPOINTS = {
+  ollama: '127.0.0.1:11434',
+  lmstudio: '127.0.0.1:1234'
+};
+
 export async function loadSettings() {
   state.currentSettings = await invoke('get_settings');
   applySettingsToForm(state.currentSettings);
+  attachProviderChangeHandler();
   import('./apps.js').then(m => m.renderApps());
   import('./models.js').then(m => m.refreshModels(state.currentSettings.quick_model));
 }
@@ -70,4 +76,30 @@ export async function saveSettings() {
   } catch (e) {
     setStatus('Error: ' + e);
   }
+}
+
+function attachProviderChangeHandler() {
+  const quickEngineSelect = document.getElementById('f-quick-engine');
+  if (!quickEngineSelect || quickEngineSelect.dataset.providerHandlerAttached) return;
+  quickEngineSelect.dataset.providerHandlerAttached = 'true';
+
+  quickEngineSelect.addEventListener('change', () => {
+    const newProvider = quickEngineSelect.value;
+    const defaultEndpoint = PROVIDER_DEFAULT_ENDPOINTS[newProvider] || PROVIDER_DEFAULT_ENDPOINTS.ollama;
+
+    // Clear model selection (models are provider-specific)
+    const modelSelect = document.getElementById('f-quick-model-select');
+    if (modelSelect) {
+      modelSelect.value = '';
+    }
+
+    // Reset endpoint to provider default
+    const endpointInput = document.getElementById('f-quick-endpoint');
+    if (endpointInput) {
+      endpointInput.value = defaultEndpoint;
+    }
+
+    // Refresh model list for the new provider
+    import('./models.js').then(m => m.refreshModels(null));
+  });
 }
