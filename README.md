@@ -116,20 +116,23 @@ docs/benchmarks/           latency, idle cost, and which model to use
 
 ### Prerequisites
 
-Lens does not bundle a model. Install [Ollama](https://ollama.com) or
-[LM Studio](https://lmstudio.ai), then pull a small model:
+Lens does not bundle a model. Install a supported local provider and
+make a model available:
+
+**Ollama:**
 
 ```bash
-# Ollama
 ollama pull qwen2.5:7b
-
-# LM Studio
-# Download and load a model through the LM Studio UI
 ```
 
+**LM Studio:**
+
+Download a model through LM Studio and start its local server.
+
 A 3B model is fast and visibly wrong; 7B costs 200ms more and is right
-every time. Lens picks the best of what is installed, so pulling a
-better one is the whole configuration step.
+every time. Model resolution is provider-specific: Ollama's router picks
+the best installed model when none is named; LM Studio uses the
+configured or discovered model.
 
 ### From the repository
 
@@ -178,7 +181,7 @@ settings file.
 
 The first run writes `%APPDATA%\Mori Lens\settings.toml` with every
 option in it, commented. That is where the target language, the theme,
-the Ollama address, and the per-application rules live.
+the provider endpoint, the model, and the per-application rules live.
 
 Password managers are denied before that file is read, and writing
 `default = allow` does not switch that off.
@@ -215,8 +218,8 @@ Local-first is a constraint, not a marketing line. The short version:
 - Password and protected fields are refused before their contents are read.
 - Nothing captured is written to disk.
 - No screen image is taken at all in the default configuration.
-- No network call is made; translation runs against a local provider
-  (Ollama or LM Studio).
+- No network call leaves the machine; translation runs against a local
+  provider (Ollama or LM Studio) over `127.0.0.1` only.
 
 The full model, with what each promise depends on and how to verify it:
 [docs/privacy-model.md](docs/privacy-model.md).
