@@ -69,3 +69,4 @@ Each file is `ADR-NNNN-kebab-slug.md` and holds:
 | [ADR-0016](ADR-0016-no-account-in-v1.md) | No account in v1 | Accepted |
 | [ADR-0017](ADR-0017-signed-binary-distribution.md) | Signed binary distribution | Accepted |
 | [ADR-0018](ADR-0018-mori-process-boundary.md) | The Mori process boundary | Accepted |
+| [ADR-0019](ADR-0019-provider-runtime.md) | Two-plane provider architecture | Accepted |
