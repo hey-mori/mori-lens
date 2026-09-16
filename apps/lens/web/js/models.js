@@ -55,7 +55,7 @@ export async function refreshModels(selectedModel) {
     let html = '<table>';
     for (const m of models) {
       const isSel = selectedModel === m.id;
-      html += '<tr><td style="width:60%">' + m.display_name + '</td><td>' + formatSize(m.size_bytes) + '</td>';
+      html += '<tr><td style="width:60%">' + escapeHtml(m.display_name) + '</td><td>' + formatSize(m.size_bytes) + '</td>';
       html += '<td style="width:80px;text-align:right">';
       if (isSel) html += '<span style="color:#0066cc;font-size:12px">selected</span>';
       html += '</td></tr>';
@@ -65,7 +65,7 @@ export async function refreshModels(selectedModel) {
 
     let opts = '<option value="">Auto (best available)</option>';
     for (const m of models) {
-      opts += '<option value="' + m.id + '"' + (selectedModel === m.id ? ' selected' : '') + '>' + m.display_name + '</option>';
+      opts += '<option value="' + escapeHtml(m.id) + '"' + (selectedModel === m.id ? ' selected' : '') + '>' + escapeHtml(m.display_name) + '</option>';
     }
     selectEl.innerHTML = opts;
   } catch (e) {

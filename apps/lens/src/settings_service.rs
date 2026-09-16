@@ -259,7 +259,16 @@ impl SettingsState {
                 view.quick_model
             },
             endpoint: if quick_engine_changed {
-                default_endpoint_for_engine(&new_quick_engine).to_owned()
+                // Preserve custom endpoint if user has entered one
+                let current_endpoint = &view.quick_endpoint;
+                let old_default = default_endpoint_for_engine(&old_quick_engine);
+                if current_endpoint == old_default {
+                    // User hasn't customized endpoint, reset to new provider's default
+                    default_endpoint_for_engine(&new_quick_engine).to_owned()
+                } else {
+                    // User has custom endpoint, preserve it
+                    current_endpoint.clone()
+                }
             } else {
                 validate_endpoint(&view.quick_endpoint, &defaults.endpoint, "quick_endpoint")
             },
@@ -275,7 +284,16 @@ impl SettingsState {
                 view.deep_model
             },
             endpoint: if deep_engine_changed {
-                default_endpoint_for_engine(&new_deep_engine).to_owned()
+                // Preserve custom endpoint if user has entered one
+                let current_endpoint = &view.deep_endpoint;
+                let old_default = default_endpoint_for_engine(&old_deep_engine);
+                if current_endpoint == old_default {
+                    // User hasn't customized endpoint, reset to new provider's default
+                    default_endpoint_for_engine(&new_deep_engine).to_owned()
+                } else {
+                    // User has custom endpoint, preserve it
+                    current_endpoint.clone()
+                }
             } else {
                 validate_endpoint(&view.deep_endpoint, &defaults.endpoint, "deep_endpoint")
             },
@@ -895,14 +913,24 @@ mod tests {
     }
 
     #[test]
-    fn apply_restart_required_when_deep_engine_changed() {
+    fn deep_lmstudio_is_canonicalized_to_ollama() {
         let dir = temp_dir();
-        // Start with a baseline whose deep_engine differs from the view
-        let mut baseline = default_baseline();
-        baseline.deep.engine = "ollama".into();
-        let mut state = load_or_migrate(&dir.join("settings.toml"), baseline);
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
         let mut view = default_view();
-        view.deep_engine = "ollama".into(); // same as saved, no restart
+        // Try to set Deep to LM Studio
+        view.deep_engine = "lmstudio".into();
+        let outcome = state.apply(view).unwrap();
+        // Phase 3: Deep is Ollama-only, so LM Studio is canonicalized to Ollama
+        assert_eq!(outcome.settings.deep_engine, "ollama");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn valid_deep_ollama_does_not_trigger_restart() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        view.deep_engine = "ollama".into(); // same as baseline
         let outcome = state.apply(view).unwrap();
         // No restart because value did not change
         assert!(!outcome.reasons.contains(&"deep_engine".to_owned()));
@@ -938,27 +966,52 @@ mod tests {
     }
 
     #[test]
-    fn apply_clears_model_and_resets_endpoint_when_quick_engine_changes() {
+    fn apply_clears_model_and_resets_default_endpoint_when_quick_engine_changes() {
         let dir = temp_dir();
         let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
-        // First, set up with ollama and a specific model
+        // First, set up with ollama and the default endpoint
         let mut view = default_view();
         view.quick_engine = "ollama".into();
         view.quick_model = Some("llama2".into());
-        view.quick_endpoint = "127.0.0.1:11434".into();
+        view.quick_endpoint = "127.0.0.1:11434".into(); // Ollama default
         state.apply(view).unwrap();
 
-        // Now switch to lmstudio with a model set
+        // Now switch to lmstudio, still with Ollama's default endpoint
         let mut view = default_view();
         view.quick_engine = "lmstudio".into();
         view.quick_model = Some("some-lmstudio-model".into());
-        view.quick_endpoint = "127.0.0.1:1234".into();
+        view.quick_endpoint = "127.0.0.1:11434".into(); // Still Ollama default
         let outcome = state.apply(view).unwrap();
 
         // Model should be cleared because engine changed
         assert_eq!(outcome.settings.quick_model, None);
-        // Endpoint should be reset to lmstudio default
+        // Endpoint should be reset to lmstudio default because user hadn't customized it
         assert_eq!(outcome.settings.quick_endpoint, "127.0.0.1:1234");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_preserves_custom_endpoint_when_quick_engine_changes() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        // First, set up with ollama and a CUSTOM endpoint (not the default)
+        let mut view = default_view();
+        view.quick_engine = "ollama".into();
+        view.quick_model = Some("llama2".into());
+        view.quick_endpoint = "192.168.1.100:11434".into(); // Custom endpoint
+        state.apply(view).unwrap();
+
+        // Now switch to lmstudio, but keep the custom endpoint
+        let mut view = default_view();
+        view.quick_engine = "lmstudio".into();
+        view.quick_model = Some("some-lmstudio-model".into());
+        view.quick_endpoint = "192.168.1.100:11434".into(); // Still the custom endpoint
+        let outcome = state.apply(view).unwrap();
+
+        // Model should be cleared because engine changed
+        assert_eq!(outcome.settings.quick_model, None);
+        // Custom endpoint should be preserved
+        assert_eq!(outcome.settings.quick_endpoint, "192.168.1.100:11434");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
