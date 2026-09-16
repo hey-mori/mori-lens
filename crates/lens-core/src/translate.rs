@@ -899,10 +899,12 @@ impl Provider {
     ///
     /// Returns `None` for unknown provider strings. Callers should decide
     /// whether to fall back to a default provider or treat this as an error.
+    ///
+    /// Backward compatibility: "lm-studio" is accepted as a legacy alias for "lmstudio".
     pub fn from_token(s: &str) -> Option<Self> {
         match s {
             "ollama" => Some(Self::Ollama),
-            "lmstudio" => Some(Self::LmStudio),
+            "lmstudio" | "lm-studio" => Some(Self::LmStudio),
             _ => None,
         }
     }
@@ -2180,6 +2182,8 @@ mod fence_tests {
     fn provider_from_str_parses_known_tokens() {
         assert_eq!(Provider::from_token("ollama"), Some(Provider::Ollama));
         assert_eq!(Provider::from_token("lmstudio"), Some(Provider::LmStudio));
+        // Backward compatibility: legacy alias
+        assert_eq!(Provider::from_token("lm-studio"), Some(Provider::LmStudio));
     }
 
     #[test]
@@ -2187,7 +2191,6 @@ mod fence_tests {
         assert_eq!(Provider::from_token("unknown"), None);
         assert_eq!(Provider::from_token(""), None);
         assert_eq!(Provider::from_token("OLLAMA"), None);
-        assert_eq!(Provider::from_token("lm-studio"), None);
     }
 
     #[test]
