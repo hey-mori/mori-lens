@@ -745,7 +745,7 @@ impl EngineId {
 /// a user whose model is missing need different words on screen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TranslateError {
-    /// No engine answered at all. Usually Ollama is not running.
+    /// No engine answered at all. Usually the provider is not running.
     Unavailable,
     /// The engine is there and the model is not.
     ModelMissing(String),
