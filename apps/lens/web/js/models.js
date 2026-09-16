@@ -4,13 +4,22 @@ import { invoke } from './tauri.js';
 import { formatSize, escapeHtml } from './ui.js';
 import { state } from './state.js';
 
+const PROVIDER_DEFAULT_ENDPOINTS = {
+  ollama: '127.0.0.1:11434',
+  lmstudio: '127.0.0.1:1234'
+};
+
 function providerDisplayName(provider) {
   return provider === 'lmstudio' ? 'LM Studio' : 'Ollama';
 }
 
+function getDefaultEndpoint(provider) {
+  return PROVIDER_DEFAULT_ENDPOINTS[provider] || PROVIDER_DEFAULT_ENDPOINTS.ollama;
+}
+
 export async function refreshModels(selectedModel) {
   const provider = document.getElementById('f-quick-engine').value || 'ollama';
-  const endpoint = document.getElementById('f-quick-endpoint').value || '127.0.0.1:11434';
+  const endpoint = document.getElementById('f-quick-endpoint').value || getDefaultEndpoint(provider);
   const dot = document.getElementById('provider-dot');
   const label = document.getElementById('provider-label');
   const epLabel = document.getElementById('provider-endpoint');
@@ -66,7 +75,7 @@ export async function refreshModels(selectedModel) {
 
 export async function testModel() {
   const provider = document.getElementById('f-quick-engine').value || 'ollama';
-  const endpoint = document.getElementById('f-quick-endpoint').value || '127.0.0.1:11434';
+  const endpoint = document.getElementById('f-quick-endpoint').value || getDefaultEndpoint(provider);
   const model = document.getElementById('f-quick-model-select').value;
   const resultEl = document.getElementById('test-result');
   const btn = document.getElementById('test-btn');
