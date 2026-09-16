@@ -739,10 +739,22 @@ pub fn main() -> std::process::ExitCode {
                     Ok(models) if !models.is_empty() => {
                         format!("{} · {}", models[0].id, "auto-selected")
                     }
-                    _ => "no models available".to_owned(),
+                    Ok(_) => "no models available".to_owned(),
+                    Err(_) => "unreachable".to_owned(),
                 }
             }
-            lens_core::translate::Provider::LmStudio => "no model configured".to_owned(),
+            lens_core::translate::Provider::LmStudio => {
+                match lens_translate::list_models_for_provider(
+                    options.ai_config.quick.provider,
+                    &options.ai_config.quick.endpoint,
+                ) {
+                    Ok(models) if !models.is_empty() => {
+                        format!("{} · {}", models[0].id, "auto-selected")
+                    }
+                    Ok(_) => "no models available".to_owned(),
+                    Err(_) => "unreachable".to_owned(),
+                }
+            }
         },
     };
 
@@ -757,10 +769,22 @@ pub fn main() -> std::process::ExitCode {
                     Ok(models) if !models.is_empty() => {
                         format!("{} · {}", models[0].id, "auto-selected")
                     }
-                    _ => "no models available".to_owned(),
+                    Ok(_) => "no models available".to_owned(),
+                    Err(_) => "unreachable".to_owned(),
                 }
             }
-            lens_core::translate::Provider::LmStudio => "no model configured".to_owned(),
+            lens_core::translate::Provider::LmStudio => {
+                match lens_translate::list_models_for_provider(
+                    options.ai_config.deep.provider,
+                    &options.ai_config.deep.endpoint,
+                ) {
+                    Ok(models) if !models.is_empty() => {
+                        format!("{} · {}", models[0].id, "auto-selected")
+                    }
+                    Ok(_) => "no models available".to_owned(),
+                    Err(_) => "unreachable".to_owned(),
+                }
+            }
         },
     };
 
