@@ -110,7 +110,7 @@ coupling.
 | Model discovery | Yes | Yes |
 | Reachability check | Yes | Yes |
 | Model state query | Yes | Yes |
-| Model lifecycle (load/unload) | Implicit (Ollama manages) | Explicit (LM Studio requires it) |
+| Model lifecycle (load/unload) | Implicit (Ollama manages) | Explicit API (LM Studio supports load/unload; JIT on first request) |
 
 Deep analysis is Ollama-only because the `Analyser` trait is implemented
 only by `OllamaTranslator`. LM Studio honestly returns `None` when asked
