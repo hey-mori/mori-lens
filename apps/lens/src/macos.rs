@@ -512,18 +512,14 @@ fn product_loop(
     // Drains pending jobs and keeps only the latest (stale coalescing).
     // This ensures Deep never blocks Quick hover latency.
     // ADR-0005: Quick translator uses the quick lane's own config.
+    // If no model is available, use a placeholder that will fail gracefully when used.
+    let quick_model_for_translator = quick_model.clone().unwrap_or_else(|| "unavailable".to_owned());
     let quick_translator: Box<dyn lens_core::translate::Translator + Send + Sync> =
-        match &quick_model {
-            Some(model) => lens_translate::build_translator(
-                ai_config.quick.provider,
-                &ai_config.quick.endpoint,
-                model,
-            ),
-            None => {
-                eprintln!("engine    no model available for the quick path");
-                return std::process::ExitCode::from(1);
-            }
-        };
+        lens_translate::build_translator(
+            ai_config.quick.provider,
+            &ai_config.quick.endpoint,
+            &quick_model_for_translator,
+        );
     let quick_cache = cache.clone();
     let quick_result_tx = result_tx.clone();
     let quick_provider = ai_config.quick.provider;
@@ -561,9 +557,9 @@ fn product_loop(
                         }
                     },
                 };
-                if let Some(ref model) = resolved_model {
-                    translator = lens_translate::build_translator(provider, &ep, model);
-                }
+                // Always rebuild translator, even if model is None (use placeholder)
+                let model_for_translator = resolved_model.clone().unwrap_or_else(|| "unavailable".to_owned());
+                translator = lens_translate::build_translator(provider, &ep, &model_for_translator);
                 current_model = resolved_model;
             }
             // Drain pending Quick jobs — keep only the latest.
@@ -580,7 +576,7 @@ fn product_loop(
             // Cache key uses the pre-resolved model string for ADR-0005 identity.
             let key = CacheKey::of(
                 request,
-                current_model.as_deref().unwrap_or("auto"),
+                current_model.as_deref().unwrap_or("unavailable"),
                 QUICK_PROMPT_VERSION,
             );
             // Check cache before paying for translation.

@@ -30,6 +30,29 @@ impl RuntimeEngine {
             model: config.model.clone(),
         }
     }
+
+    /// Build from a schema engine config for Deep lane.
+    ///
+    /// Phase 3: Deep is Ollama-only. Any non-Ollama provider is forced to Ollama.
+    /// This enforces the Phase 3 capability boundary at load time.
+    pub fn from_schema_deep(config: &EngineConfig) -> Self {
+        // Deep is Ollama-only in Phase 3
+        let provider = if config.engine == "ollama" {
+            Provider::Ollama
+        } else {
+            // Log the override for diagnostics
+            eprintln!(
+                "ai_runtime  Deep engine {:?} is not supported in Phase 3, forcing Ollama",
+                config.engine
+            );
+            Provider::Ollama
+        };
+        Self {
+            provider,
+            endpoint: config.endpoint.clone(),
+            model: config.model.clone(),
+        }
+    }
 }
 
 /// The complete AI runtime configuration for both translation paths.
@@ -44,10 +67,13 @@ pub struct AiRuntimeConfig {
 
 impl AiRuntimeConfig {
     /// Build from the settings schema.
+    ///
+    /// Quick lane accepts both Ollama and LM Studio.
+    /// Deep lane is Ollama-only in Phase 3.
     pub fn from_schema(schema: &lens_settings::schema::Schema) -> Self {
         Self {
             quick: RuntimeEngine::from_schema(&schema.quick),
-            deep: RuntimeEngine::from_schema(&schema.deep),
+            deep: RuntimeEngine::from_schema_deep(&schema.deep),
         }
     }
 }
@@ -111,7 +137,9 @@ mod tests {
     }
 
     #[test]
-    fn provider_identity_preserved_from_schema() {
+    fn deep_lmstudio_forced_to_ollama_at_load() {
+        // Phase 3: Deep is Ollama-only. If schema has Deep=LM Studio,
+        // AiRuntimeConfig::from_schema must force it to Ollama.
         let mut schema = test_schema();
         schema.quick.engine = "ollama".to_owned();
         schema.deep.engine = "lmstudio".to_owned();
@@ -119,12 +147,17 @@ mod tests {
         let config = AiRuntimeConfig::from_schema(&schema);
 
         assert_eq!(config.quick.provider, Provider::Ollama);
-        assert_eq!(config.deep.provider, Provider::LmStudio);
+        assert_eq!(config.deep.provider, Provider::Ollama, "Phase 3: Deep must be forced to Ollama");
     }
 
     #[test]
-    fn all_four_provider_combinations() {
-        // Quick=Ollama, Deep=Ollama
+    fn phase3_provider_combinations() {
+        // Phase 3 reality: Quick can be Ollama or LM Studio, but Deep is always Ollama.
+        // Only 2 valid combinations exist:
+        //   1. Quick=Ollama, Deep=Ollama
+        //   2. Quick=LM Studio, Deep=Ollama
+
+        // Quick=Ollama, Deep=Ollama (valid)
         let mut schema = test_schema();
         schema.quick.engine = "ollama".to_owned();
         schema.deep.engine = "ollama".to_owned();
@@ -132,26 +165,26 @@ mod tests {
         assert_eq!(config.quick.provider, Provider::Ollama);
         assert_eq!(config.deep.provider, Provider::Ollama);
 
-        // Quick=LM Studio, Deep=LM Studio
-        schema.quick.engine = "lmstudio".to_owned();
-        schema.deep.engine = "lmstudio".to_owned();
-        let config = AiRuntimeConfig::from_schema(&schema);
-        assert_eq!(config.quick.provider, Provider::LmStudio);
-        assert_eq!(config.deep.provider, Provider::LmStudio);
-
-        // Quick=Ollama, Deep=LM Studio
-        schema.quick.engine = "ollama".to_owned();
-        schema.deep.engine = "lmstudio".to_owned();
-        let config = AiRuntimeConfig::from_schema(&schema);
-        assert_eq!(config.quick.provider, Provider::Ollama);
-        assert_eq!(config.deep.provider, Provider::LmStudio);
-
-        // Quick=LM Studio, Deep=Ollama
+        // Quick=LM Studio, Deep=Ollama (valid)
         schema.quick.engine = "lmstudio".to_owned();
         schema.deep.engine = "ollama".to_owned();
         let config = AiRuntimeConfig::from_schema(&schema);
         assert_eq!(config.quick.provider, Provider::LmStudio);
         assert_eq!(config.deep.provider, Provider::Ollama);
+
+        // Quick=Ollama, Deep=LM Studio (invalid, forced to Ollama)
+        schema.quick.engine = "ollama".to_owned();
+        schema.deep.engine = "lmstudio".to_owned();
+        let config = AiRuntimeConfig::from_schema(&schema);
+        assert_eq!(config.quick.provider, Provider::Ollama);
+        assert_eq!(config.deep.provider, Provider::Ollama, "Deep LM Studio must be forced to Ollama");
+
+        // Quick=LM Studio, Deep=LM Studio (invalid, forced to Ollama)
+        schema.quick.engine = "lmstudio".to_owned();
+        schema.deep.engine = "lmstudio".to_owned();
+        let config = AiRuntimeConfig::from_schema(&schema);
+        assert_eq!(config.quick.provider, Provider::LmStudio);
+        assert_eq!(config.deep.provider, Provider::Ollama, "Deep LM Studio must be forced to Ollama");
     }
 
     #[test]
