@@ -31,7 +31,7 @@ use lens_core::language::decide;
 use lens_core::policy::AppPolicy;
 use lens_core::session::OcrMode;
 use lens_core::tally::Tally;
-use lens_core::translate::{QuickRequest, Translator};
+use lens_core::translate::{Provider, QuickRequest, Translator};
 use lens_platform_macos::{
     clipboard, hotkey, overlay, AxPermission, Lifecycle, MacTextAcquirer, MenuBar, OcrTextAcquirer,
     Overlay, ProductCommand, SingleInstance,
@@ -473,38 +473,98 @@ fn product_loop(
         std::sync::mpsc::Sender<TransResult>,
         std::sync::mpsc::Receiver<TransResult>,
     ) = mpsc::channel();
-    // Config update channels: (endpoint, model) sent when settings change.
-    let (quick_config_tx, quick_config_rx) = mpsc::channel::<(String, Option<String>)>();
-    let (deep_config_tx, deep_config_rx) = mpsc::channel::<(String, Option<String>)>();
+    // Config update channels: (provider, endpoint, model) sent when settings change.
+    let (quick_config_tx, quick_config_rx) = mpsc::channel::<(Provider, String, Option<String>)>();
+    let (deep_config_tx, deep_config_rx) = mpsc::channel::<(Provider, String, Option<String>)>();
 
     // Shared cache between product loop and translation threads.
     let cache: Arc<Mutex<TranslationCache>> =
         Arc::new(Mutex::new(TranslationCache::new(CACHE_ENTRIES)));
 
+    // Phase 3: Provider-aware Quick and Deep construction.
+    // Resolve models provider-specifically before construction.
+    let quick_model = match ai_config.quick.provider {
+        Provider::Ollama => {
+            let mut t = OllamaTranslator::choosing(&ai_config.quick.endpoint);
+            if let Some(model) = &ai_config.quick.model {
+                t = OllamaTranslator::new(&ai_config.quick.endpoint, model);
+            }
+            match t.resolve_model() {
+                Ok(m) => Some(m.to_owned()),
+                Err(_) => ai_config.quick.model.clone(),
+            }
+        }
+        Provider::LmStudio => match &ai_config.quick.model {
+            Some(m) => Some(m.clone()),
+            None => {
+                match lens_translate::list_models_for_provider(
+                    Provider::LmStudio,
+                    &ai_config.quick.endpoint,
+                ) {
+                    Ok(models) if !models.is_empty() => Some(models[0].id.clone()),
+                    _ => None,
+                }
+            }
+        },
+    };
+
     // Quick lane: dedicated thread for hover translations.
     // Drains pending jobs and keeps only the latest (stale coalescing).
     // This ensures Deep never blocks Quick hover latency.
     // ADR-0005: Quick translator uses the quick lane's own config.
-    let quick_translator = if let Some(ref m) = ai_config.quick.model {
-        OllamaTranslator::new(&ai_config.quick.endpoint, m)
-    } else {
-        OllamaTranslator::choosing(&ai_config.quick.endpoint)
-    };
+    let quick_translator: Box<dyn lens_core::translate::Translator + Send + Sync> =
+        match &quick_model {
+            Some(model) => lens_translate::build_translator(
+                ai_config.quick.provider,
+                &ai_config.quick.endpoint,
+                model,
+            ),
+            None => {
+                eprintln!("engine    no model available for the quick path");
+                return std::process::ExitCode::from(1);
+            }
+        };
     let quick_cache = cache.clone();
     let quick_result_tx = result_tx.clone();
+    let quick_provider = ai_config.quick.provider;
+    let quick_endpoint = ai_config.quick.endpoint.clone();
     std::thread::spawn(move || {
         let mut translator = quick_translator;
-        let _ = translator.resolve_model();
+        let mut current_model = quick_model;
+        let mut current_provider = quick_provider;
+        let mut current_endpoint = quick_endpoint;
         while let Ok(job) = quick_rx.recv() {
             // Check for config updates (non-blocking) BEFORE any cache operation.
-            // After this drain, translator.model() is authoritative for the
-            // cache key: no stale model name can reach cache lookup or insert.
-            while let Ok((ep, m)) = quick_config_rx.try_recv() {
-                translator = match m {
-                    Some(ref model) => OllamaTranslator::new(&ep, model),
-                    None => OllamaTranslator::choosing(&ep),
+            // After this drain, current_model is authoritative for the cache key.
+            while let Ok((provider, ep, m)) = quick_config_rx.try_recv() {
+                current_provider = provider;
+                current_endpoint = ep.clone();
+                let resolved_model = match provider {
+                    Provider::Ollama => {
+                        let mut t = OllamaTranslator::choosing(&ep);
+                        if let Some(ref model) = m {
+                            t = OllamaTranslator::new(&ep, model);
+                        }
+                        match t.resolve_model() {
+                            Ok(rm) => Some(rm.to_owned()),
+                            Err(_) => m.clone(),
+                        }
+                    }
+                    Provider::LmStudio => match &m {
+                        Some(model) => Some(model.clone()),
+                        None => {
+                            match lens_translate::list_models_for_provider(Provider::LmStudio, &ep)
+                            {
+                                Ok(models) if !models.is_empty() => Some(models[0].id.clone()),
+                                _ => None,
+                            }
+                        }
+                    },
                 };
-                let _ = translator.resolve_model();
+                if let Some(ref model) = resolved_model {
+                    translator = lens_translate::build_translator(provider, &ep, model);
+                }
+                current_model = resolved_model;
             }
             // Drain pending Quick jobs — keep only the latest.
             let mut current = job;
@@ -517,10 +577,12 @@ fn product_loop(
             // Use the production seam: into_result derives target_language
             // from the job's request, ensuring dispatch-time provenance.
             let QuickJob::Quick { ref request, .. } = current;
-            // Cache key is computed here, where translator.model() is
-            // authoritative. The hover loop never builds cache keys;
-            // it cannot know the resolved model without a race.
-            let key = CacheKey::of(request, translator.model(), QUICK_PROMPT_VERSION);
+            // Cache key uses the pre-resolved model string for ADR-0005 identity.
+            let key = CacheKey::of(
+                request,
+                current_model.as_deref().unwrap_or("unknown"),
+                QUICK_PROMPT_VERSION,
+            );
             // Check cache before paying for translation.
             {
                 if let Ok(mut c) = quick_cache.lock() {
@@ -544,38 +606,101 @@ fn product_loop(
     // Deep lane: dedicated thread for deep analysis.
     // Single-flight: processes one Deep at a time, in order.
     // ADR-0005: Deep translator uses the deep lane's own config.
-    let deep_translator = if let Some(ref m) = ai_config.deep.model {
-        OllamaTranslator::new(&ai_config.deep.endpoint, m)
-    } else {
-        OllamaTranslator::choosing(&ai_config.deep.endpoint)
+    // Phase 3: Deep uses Analyser through OllamaTranslator. LM Studio deep not yet supported.
+    let (deep_model, deep_ollama) = match ai_config.deep.provider {
+        Provider::Ollama => {
+            let mut t = OllamaTranslator::choosing(&ai_config.deep.endpoint);
+            if let Some(model) = &ai_config.deep.model {
+                t = OllamaTranslator::new(&ai_config.deep.endpoint, model);
+            }
+            let resolved = match t.resolve_model() {
+                Ok(m) => Some(m.to_owned()),
+                Err(_) => ai_config.deep.model.clone(),
+            };
+            (resolved, Some(t))
+        }
+        Provider::LmStudio => {
+            let model = match &ai_config.deep.model {
+                Some(m) => Some(m.clone()),
+                None => {
+                    match lens_translate::list_models_for_provider(
+                        Provider::LmStudio,
+                        &ai_config.deep.endpoint,
+                    ) {
+                        Ok(models) if !models.is_empty() => Some(models[0].id.clone()),
+                        _ => None,
+                    }
+                }
+            };
+            (model, None)
+        }
     };
     let deep_result_tx = result_tx;
+    let deep_provider = ai_config.deep.provider;
+    let deep_endpoint = ai_config.deep.endpoint.clone();
     std::thread::spawn(move || {
-        let mut translator = deep_translator;
-        let _ = translator.resolve_model();
+        let mut analyser = deep_ollama;
+        let mut current_model = deep_model;
+        let mut current_provider = deep_provider;
+        let mut current_endpoint = deep_endpoint;
         // Deep analysis cache — separate from translation cache per ADR-0005.
         let mut explanations = AnalysisCache::new(ANALYSIS_ENTRIES);
         while let Ok(job) = deep_rx.recv() {
             // Check for config updates (non-blocking).
-            while let Ok((ep, m)) = deep_config_rx.try_recv() {
-                translator = match m {
-                    Some(ref model) => OllamaTranslator::new(&ep, model),
-                    None => OllamaTranslator::choosing(&ep),
+            while let Ok((provider, ep, m)) = deep_config_rx.try_recv() {
+                current_provider = provider;
+                current_endpoint = ep.clone();
+                analyser = match provider {
+                    Provider::Ollama => {
+                        let mut t = OllamaTranslator::choosing(&ep);
+                        if let Some(ref model) = m {
+                            t = OllamaTranslator::new(&ep, model);
+                        }
+                        let _ = t.resolve_model();
+                        Some(t)
+                    }
+                    Provider::LmStudio => None,
                 };
-                let _ = translator.resolve_model();
+                current_model = match provider {
+                    Provider::Ollama => {
+                        match analyser.as_ref().and_then(|a| a.resolve_model().ok()) {
+                            Some(m) => Some(m.to_owned()),
+                            None => m.clone(),
+                        }
+                    }
+                    Provider::LmStudio => match &m {
+                        Some(model) => Some(model.clone()),
+                        None => {
+                            match lens_translate::list_models_for_provider(Provider::LmStudio, &ep)
+                            {
+                                Ok(models) if !models.is_empty() => Some(models[0].id.clone()),
+                                _ => None,
+                            }
+                        }
+                    },
+                };
             }
             // Use the production seam: build_request creates the DeepRequest
             // from the job's fields, and into_result produces TransResult
             // with the job's dispatch-time target_language.
             let (deep_req, _result_word) = job.build_request();
-            // Cache key uses model + prompt version for ADR-0005 separation.
-            let key = CacheKey::for_analysis(&deep_req, translator.model(), DEEP_PROMPT_VERSION);
+            // Cache key uses the pre-resolved model string for ADR-0005 identity.
+            let key = CacheKey::for_analysis(
+                &deep_req,
+                current_model.as_deref().unwrap_or("unknown"),
+                DEEP_PROMPT_VERSION,
+            );
             // Check cache first — avoid re-generating the same analysis.
             if let Some(hit) = explanations.get(&key) {
                 let _ = deep_result_tx.send(job.into_result(Ok(hit)));
                 continue;
             }
-            let result = translator.deep(&deep_req);
+            // Phase 3: Deep analysis uses Analyser through OllamaTranslator.
+            // LM Studio deep is not yet implemented.
+            let result = match &analyser {
+                Some(a) => lens_core::analyse::Analyser::deep(a, &deep_req),
+                None => Err(lens_core::translate::TranslateError::Unavailable),
+            };
             // Cache successful results for future reuse.
             if let Ok(ref analysis) = result {
                 explanations.insert(key, analysis.clone());
@@ -1008,13 +1133,23 @@ fn product_loop(
             }
             // Release the Ollama model so it doesn't stay resident after exit.
             // Best-effort: if Ollama is unreachable this is silently skipped.
-            // ADR-0005: release the quick lane's model (the primary hover path).
-            let release_translator = if let Some(ref m) = ai_config.quick.model {
-                OllamaTranslator::new(&ai_config.quick.endpoint, m)
-            } else {
-                OllamaTranslator::choosing(&ai_config.quick.endpoint)
-            };
-            release_translator.release();
+            // ADR-0005: release both lanes. Phase 3: lifecycle is Ollama-specific.
+            if ai_config.quick.provider == Provider::Ollama {
+                let release_translator = if let Some(ref m) = ai_config.quick.model {
+                    OllamaTranslator::new(&ai_config.quick.endpoint, m)
+                } else {
+                    OllamaTranslator::choosing(&ai_config.quick.endpoint)
+                };
+                release_translator.release();
+            }
+            if ai_config.deep.provider == Provider::Ollama {
+                let release_deep = if let Some(ref m) = ai_config.deep.model {
+                    OllamaTranslator::new(&ai_config.deep.endpoint, m)
+                } else {
+                    OllamaTranslator::choosing(&ai_config.deep.endpoint)
+                };
+                release_deep.release();
+            }
 
             tauri_handle.exit();
             break;
@@ -1072,12 +1207,14 @@ fn product_loop(
                 // endpoint or model changed.
                 if new_ai_config.quick != ai_config.quick {
                     let _ = quick_config_tx.send((
+                        new_ai_config.quick.provider,
                         new_ai_config.quick.endpoint.clone(),
                         new_ai_config.quick.model.clone(),
                     ));
                 }
                 if new_ai_config.deep != ai_config.deep {
                     let _ = deep_config_tx.send((
+                        new_ai_config.deep.provider,
                         new_ai_config.deep.endpoint.clone(),
                         new_ai_config.deep.model.clone(),
                     ));

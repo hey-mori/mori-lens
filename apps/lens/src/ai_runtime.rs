@@ -23,7 +23,7 @@ impl RuntimeEngine {
     /// Callers should validate provider tokens before this point if they
     /// want stricter behavior.
     pub fn from_schema(config: &EngineConfig) -> Self {
-        let provider = Provider::from_str(&config.engine).unwrap_or(Provider::Ollama);
+        let provider = Provider::from_token(&config.engine).unwrap_or(Provider::Ollama);
         Self {
             provider,
             endpoint: config.endpoint.clone(),

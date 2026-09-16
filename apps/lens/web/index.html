@@ -206,10 +206,10 @@
     <!-- Models -->
     <div class="section" id="section-models">
       <h1>Models</h1>
-      <div id="ollama-status" style="margin-bottom:16px">
-        <span id="ollama-dot" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#888;margin-right:8px"></span>
-        <span id="ollama-label">Checking...</span>
-        <span id="ollama-endpoint" style="color:#888;font-size:12px;margin-left:8px"></span>
+      <div id="provider-status" style="margin-bottom:16px">
+        <span id="provider-dot" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#888;margin-right:8px"></span>
+        <span id="provider-label">Checking...</span>
+        <span id="provider-endpoint" style="color:#888;font-size:12px;margin-left:8px"></span>
       </div>
       <h2>Installed models</h2>
       <div id="models-list"><p class="loading">Loading...</p></div>
@@ -217,6 +217,13 @@
         <button class="btn" id="models-refresh-btn" style="padding:4px 12px;font-size:12px">Refresh</button>
       </div>
       <h2 style="margin-top:24px">Quick translation</h2>
+      <div class="field">
+        <label>Engine</label>
+        <select id="f-quick-engine">
+          <option value="ollama">Ollama</option>
+          <option value="lmstudio">LM Studio</option>
+        </select>
+      </div>
       <div class="field">
         <label>Model</label>
         <select id="f-quick-model-select">
@@ -230,7 +237,10 @@
       <h2>Deep analysis</h2>
       <div class="field">
         <label>Engine</label>
-        <input type="text" id="f-deep-engine" readonly>
+        <select id="f-deep-engine">
+          <option value="ollama">Ollama</option>
+          <option value="lmstudio">LM Studio</option>
+        </select>
       </div>
       <div class="field">
         <label>Model (empty = auto)</label>
