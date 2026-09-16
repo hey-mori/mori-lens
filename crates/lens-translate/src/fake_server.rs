@@ -101,6 +101,19 @@ impl FakeResponse {
         }
     }
 
+    /// Create a 404 response with a custom JSON body.
+    ///
+    /// Used for model-not-found tests where the body contains error details.
+    pub fn not_found_with_body(body: &str) -> Self {
+        Self {
+            status: 404,
+            status_text: "Not Found".to_owned(),
+            headers: vec![("Content-Type".to_owned(), "application/json".to_owned())],
+            body: body.to_owned(),
+            expect: None,
+        }
+    }
+
     /// Set the expectation that the request is a GET to the given path.
     pub fn expect_get(mut self, path: &str) -> Self {
         self.expect = Some(RequestExpectation {
