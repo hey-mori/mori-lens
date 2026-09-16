@@ -137,7 +137,8 @@ impl LmStudioTranslator {
     /// Parse the translation from an OpenAI chat completion response.
     ///
     /// Uses typed serde deserialization instead of substring scanning.
-    /// Rejects missing choices, empty choices, and null/empty content.
+    /// Rejects missing choices, empty choices, null/empty content, and
+    /// whitespace-only content (which would produce a visually blank hover).
     fn parse_response(&self, response: &str) -> Result<String, TranslateError> {
         let parsed: ChatCompletionResponse =
             serde_json::from_str(response).map_err(|_| TranslateError::Malformed)?;
@@ -149,7 +150,10 @@ impl LmStudioTranslator {
             .ok_or(TranslateError::Malformed)?;
 
         let content = choice.message.content;
-        if content.is_empty() {
+        // Reject empty and whitespace-only content. A whitespace-only response
+        // would produce a visually blank hover card. Do not strip the content;
+        // just reject it so the caller sees Malformed.
+        if content.trim().is_empty() {
             return Err(TranslateError::Malformed);
         }
 
@@ -206,24 +210,22 @@ impl Translator for LmStudioTranslator {
             200..=299 => {} // success, continue to parse body
             401 | 403 => return Err(TranslateError::Unavailable), // auth failure
             404 => {
-                // Model not found. Try to extract error code for precise error.
+                // Only return ModelMissing when we have structured evidence
+                // that the configured model is missing. A generic 404 can mean
+                // route mismatch, API surface incompatibility, or proxy issues,
+                // which must not be falsely reported as a missing model.
                 if let Ok(err_body) = serde_json::from_str::<ErrorBody>(&response) {
                     if err_body.error.code.as_deref() == Some("model_not_found") {
                         return Err(TranslateError::ModelMissing(self.model.clone()));
                     }
                 }
-                // Generic 404 on inference endpoint is still model-missing
-                return Err(TranslateError::ModelMissing(self.model.clone()));
+                return Err(TranslateError::Unavailable);
             }
             _ => return Err(TranslateError::Unavailable), // other non-2xx
         }
 
         // Parse the success body
         let text = self.parse_response(&response)?;
-
-        if text.is_empty() {
-            return Err(TranslateError::Malformed);
-        }
 
         // Check if the translation is in the target language
         if lens_core::translate::reads_as_the_source(&request.source_text, &text) {
@@ -674,15 +676,34 @@ mod tests {
         assert!(matches!(result, Err(TranslateError::Unavailable)));
     }
 
-    /// HTTP 404 without model_not_found code still returns ModelMissing.
+    /// HTTP 404 without structured model_not_found evidence returns Unavailable.
+    /// A generic 404 can mean route mismatch, API surface incompatibility,
+    /// or proxy issues, which must not be falsely reported as a missing model.
     #[test]
-    fn http_404_generic_is_model_missing() {
+    fn http_404_generic_is_unavailable() {
         let server = FakeServer::start(vec![
             FakeResponse::not_found().expect_post("/v1/chat/completions")
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let translator = LmStudioTranslator::new(runtime, "unknown-model");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request);
+
+        assert!(matches!(result, Err(TranslateError::Unavailable)));
+    }
+
+    /// HTTP 404 with structured model_not_found evidence returns ModelMissing.
+    #[test]
+    fn http_404_model_not_found_is_model_missing() {
+        let server = FakeServer::start(vec![FakeResponse::not_found_with_body(
+            LM_STUDIO_MODEL_NOT_FOUND_RESPONSE,
+        )
+        .expect_post("/v1/chat/completions")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "nonexistent-model");
 
         let request = QuickRequest::new("Hello world", "ko");
         let result = translator.quick(&request);
@@ -945,5 +966,99 @@ mod tests {
         let result = translator.quick(&request).unwrap();
 
         assert_eq!(result.text, "first");
+    }
+
+    // Phase 4 correction: typed parser failure matrix
+    // AUTOMATED PASS
+
+    /// choices wrong type (object instead of array) must fail with Malformed.
+    #[test]
+    fn parser_rejects_choices_wrong_type() {
+        let wrong_type = r#"{"choices": {}}"#;
+
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(wrong_type).expect_post("/v1/chat/completions")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request);
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    /// message wrong type (string instead of object) must fail with Malformed.
+    #[test]
+    fn parser_rejects_message_wrong_type() {
+        let wrong_type = r#"{"choices": [{"message": "invalid"}]}"#;
+
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(wrong_type).expect_post("/v1/chat/completions")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request);
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    /// content as object instead of string must fail with Malformed.
+    #[test]
+    fn parser_rejects_content_object() {
+        let wrong_type = r#"{"choices": [{"message": {"content": {}}}]}"#;
+
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(wrong_type).expect_post("/v1/chat/completions")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request);
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    /// content as array instead of string must fail with Malformed.
+    #[test]
+    fn parser_rejects_content_array() {
+        let wrong_type = r#"{"choices": [{"message": {"content": []}}]}"#;
+
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(wrong_type).expect_post("/v1/chat/completions")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request);
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
+    }
+
+    /// Whitespace-only content must fail with Malformed.
+    /// A whitespace-only response would produce a visually blank hover card.
+    #[test]
+    fn parser_rejects_whitespace_only_content() {
+        let whitespace = r#"{"choices": [{"message": {"content": "   \n\t  "}}]}"#;
+
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(whitespace).expect_post("/v1/chat/completions")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let translator = LmStudioTranslator::new(runtime, "llama-3.1-8b");
+
+        let request = QuickRequest::new("Hello world", "ko");
+        let result = translator.quick(&request);
+
+        assert!(matches!(result, Err(TranslateError::Malformed)));
     }
 }
