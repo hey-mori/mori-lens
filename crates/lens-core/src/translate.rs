@@ -891,7 +891,32 @@ impl Provider {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Ollama => "ollama",
-            Self::LmStudio => "lm-studio",
+            Self::LmStudio => "lmstudio",
+        }
+    }
+
+    /// Parse a provider from its persisted string representation.
+    ///
+    /// Returns `None` for unknown provider strings. Callers should decide
+    /// whether to fall back to a default provider or treat this as an error.
+    ///
+    /// Backward compatibility: "lm-studio" is accepted as a legacy alias for "lmstudio".
+    pub fn from_token(s: &str) -> Option<Self> {
+        match s {
+            "ollama" => Some(Self::Ollama),
+            "lmstudio" | "lm-studio" => Some(Self::LmStudio),
+            _ => None,
+        }
+    }
+
+    /// The default endpoint for this provider.
+    ///
+    /// Ollama: `127.0.0.1:11434`
+    /// LM Studio: `127.0.0.1:1234`
+    pub const fn default_endpoint(self) -> &'static str {
+        match self {
+            Self::Ollama => "127.0.0.1:11434",
+            Self::LmStudio => "127.0.0.1:1234",
         }
     }
 }
@@ -1990,7 +2015,7 @@ mod focus_tests {
 
 #[cfg(test)]
 mod fence_tests {
-    use super::{engine_for, without_the_fence, EngineId, FENCE_OPENING};
+    use super::{engine_for, without_the_fence, EngineId, Provider, FENCE_OPENING};
 
     const FENCE: &str = "#LENS-5a23bfc686af5a74#";
 
@@ -2145,5 +2170,38 @@ mod fence_tests {
 
         // Port without IP
         assert_eq!(engine_for(":11434"), EngineId::External);
+    }
+
+    #[test]
+    fn provider_as_str_returns_canonical_token() {
+        assert_eq!(Provider::Ollama.as_str(), "ollama");
+        assert_eq!(Provider::LmStudio.as_str(), "lmstudio");
+    }
+
+    #[test]
+    fn provider_from_str_parses_known_tokens() {
+        assert_eq!(Provider::from_token("ollama"), Some(Provider::Ollama));
+        assert_eq!(Provider::from_token("lmstudio"), Some(Provider::LmStudio));
+        // Backward compatibility: legacy alias
+        assert_eq!(Provider::from_token("lm-studio"), Some(Provider::LmStudio));
+    }
+
+    #[test]
+    fn provider_from_str_returns_none_for_unknown() {
+        assert_eq!(Provider::from_token("unknown"), None);
+        assert_eq!(Provider::from_token(""), None);
+        assert_eq!(Provider::from_token("OLLAMA"), None);
+    }
+
+    #[test]
+    fn provider_default_endpoint_returns_correct_values() {
+        assert_eq!(Provider::Ollama.default_endpoint(), "127.0.0.1:11434");
+        assert_eq!(Provider::LmStudio.default_endpoint(), "127.0.0.1:1234");
+    }
+
+    #[test]
+    fn provider_display_matches_as_str() {
+        assert_eq!(format!("{}", Provider::Ollama), "ollama");
+        assert_eq!(format!("{}", Provider::LmStudio), "lmstudio");
     }
 }

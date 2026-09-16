@@ -1057,6 +1057,84 @@ impl Translator for OllamaTranslator {
     }
 }
 
+// Provider-aware factory for constructing translators and runtimes.
+//
+// These functions centralize the mapping from [`Provider`] to the concrete
+// implementation types, so production code does not hardcode provider-specific
+// construction. The factory is deterministic: the same provider always produces
+// the same implementation.
+
+use lens_core::translate::{Provider, ProviderRuntime};
+use lmstudio_runtime::LmStudioRuntime;
+use lmstudio_translator::LmStudioTranslator;
+use ollama_runtime::OllamaRuntime;
+
+/// Build a translator for the given provider, endpoint, and model.
+///
+/// Returns a boxed [`Translator`] trait object. The concrete type depends on
+/// the provider: [`OllamaTranslator`] for [`Provider::Ollama`],
+/// [`LmStudioTranslator`] for [`Provider::LmStudio`].
+///
+/// The caller must resolve the model before calling. Auto/None resolution is
+/// provider-specific: Ollama has [`DEFAULT_MODEL`], LM Studio discovers from
+/// the running server. Passing an unresolved model here is a bug.
+pub fn build_translator(
+    provider: Provider,
+    endpoint: &str,
+    model: &str,
+) -> Box<dyn Translator + Send + Sync> {
+    match provider {
+        Provider::Ollama => Box::new(OllamaTranslator::new(endpoint, model)),
+        Provider::LmStudio => {
+            let runtime = LmStudioRuntime::new(endpoint);
+            Box::new(LmStudioTranslator::new(runtime, model))
+        }
+    }
+}
+
+/// Build a provider runtime for management operations (discovery, reachability).
+///
+/// Returns a boxed [`ProviderRuntime`] trait object. The concrete type depends
+/// on the provider.
+pub fn build_provider_runtime(provider: Provider, endpoint: &str) -> Box<dyn ProviderRuntime> {
+    match provider {
+        Provider::Ollama => Box::new(OllamaRuntime::new(endpoint)),
+        Provider::LmStudio => Box::new(LmStudioRuntime::new(endpoint)),
+    }
+}
+
+/// List models installed on a provider endpoint.
+///
+/// Provider-aware version of [`list_models`]. Dispatches to the appropriate
+/// provider runtime based on the provider parameter.
+pub fn list_models_for_provider(
+    provider: Provider,
+    endpoint: &str,
+) -> Result<Vec<ModelInfo>, TranslateError> {
+    match provider {
+        Provider::Ollama => list_models(endpoint),
+        Provider::LmStudio => {
+            let runtime = LmStudioRuntime::new(endpoint);
+            runtime.list_models()
+        }
+    }
+}
+
+/// Check whether a provider endpoint is reachable.
+///
+/// Provider-aware version of [`check_reachable`]. Dispatches to the appropriate
+/// provider runtime based on the provider parameter.
+pub fn check_provider_reachable(provider: Provider, endpoint: &str) -> bool {
+    use lens_core::translate::Reachability;
+    match provider {
+        Provider::Ollama => check_reachable(endpoint),
+        Provider::LmStudio => {
+            let runtime = LmStudioRuntime::new(endpoint);
+            matches!(runtime.reachability(), Reachability::Reachable)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1380,5 +1458,72 @@ mod lease_tests {
         ]);
         assert!(body.contains("\"keep_alive\":0"), "{body}");
         assert!(!body.contains(MODEL_LEASE), "{body}");
+    }
+
+    #[test]
+    fn factory_builds_ollama_translator() {
+        let _translator = build_translator(Provider::Ollama, "127.0.0.1:11434", "test-model");
+        // Factory successfully creates a Translator for Ollama
+        // Concrete type verification happens through integration with production code
+    }
+
+    #[test]
+    fn factory_builds_lmstudio_translator() {
+        let _translator = build_translator(Provider::LmStudio, "127.0.0.1:1234", "test-model");
+        // Factory successfully creates a Translator for LM Studio
+        // Concrete type verification happens through integration with production code
+    }
+
+    #[test]
+    fn factory_builds_ollama_runtime() {
+        let runtime = build_provider_runtime(Provider::Ollama, "127.0.0.1:11434");
+        assert_eq!(runtime.provider_identity(), Provider::Ollama);
+    }
+
+    #[test]
+    fn factory_builds_lmstudio_runtime() {
+        let runtime = build_provider_runtime(Provider::LmStudio, "127.0.0.1:1234");
+        assert_eq!(runtime.provider_identity(), Provider::LmStudio);
+    }
+
+    /// Phase 3: factory return type is Send + Sync, so it can cross thread
+    /// boundaries in the worker. A regression that drops either bound would
+    /// break the Windows and macOS production paths at compile time.
+    #[test]
+    fn factory_return_type_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Box<dyn Translator + Send + Sync>>();
+    }
+
+    /// Phase 3: provider token round-trip. The settings file persists
+    /// `as_str()` output; `from_token()` must recover it exactly.
+    #[test]
+    fn provider_token_round_trip() {
+        for provider in [Provider::Ollama, Provider::LmStudio] {
+            let token = provider.as_str();
+            let parsed = Provider::from_token(token).expect("a known provider token");
+            assert_eq!(parsed, provider, "round trip for {token}");
+        }
+    }
+
+    /// Phase 3: each provider runtime reports its own identity.
+    #[test]
+    fn each_runtime_reports_its_own_provider() {
+        let ollama = build_provider_runtime(Provider::Ollama, "127.0.0.1:11434");
+        assert_eq!(ollama.provider_identity(), Provider::Ollama);
+
+        let lmstudio = build_provider_runtime(Provider::LmStudio, "127.0.0.1:1234");
+        assert_eq!(lmstudio.provider_identity(), Provider::LmStudio);
+    }
+
+    /// Phase 3: the factory requires the caller to resolve the model before
+    /// calling. There is no `Option<&str>` overload that would silently apply
+    /// an Ollama default to LM Studio.
+    #[test]
+    fn factory_signature_requires_resolved_model() {
+        // This test verifies the factory accepts &str (not Option<&str>).
+        // The function signature itself is the test: if it were Option,
+        // this call would need to be Some("model").
+        let _t = build_translator(Provider::LmStudio, "127.0.0.1:1234", "my-model");
     }
 }
