@@ -89,8 +89,8 @@ dependency in either direction.
 - Windows: `windows-rs`, UI Automation, Win32, Direct2D and DirectWrite
   for the card
 - macOS: Accessibility, AppKit, ScreenCaptureKit, Vision
-- Local inference: Ollama over `127.0.0.1`, never bundled, spoken to
-  over hand-written HTTP with no client dependency
+- Local inference: Ollama or LM Studio over `127.0.0.1`, never bundled,
+  spoken to over hand-written HTTP with no client dependency
 - Storage: `settings.toml` (versioned, round-trip TOML via `lens-settings`);
   `library.db` (SQLite, [ADR-0013](docs/decisions/ADR-0013-the-local-library.md),
   [ADR-0015](docs/decisions/ADR-0015-the-library-schema.md))
@@ -102,7 +102,7 @@ crates/lens-core/          domain types, hover machine, segmentation, theme,
                            card layout, settings, model choice. No OS types.
 crates/lens-settings/      versioned TOML settings, round-trip preservation
 crates/lens-storage/       SQLite library for saved items
-crates/lens-translate/     the Ollama client, HTTP and JSON by hand
+crates/lens-translate/     provider-aware translation and runtime management
 crates/platform-windows/   UI Automation, the Direct2D card, tray, autostart
 apps/lens/                 the product
 apps/hover-probe/          the measurement instrument
@@ -116,11 +116,15 @@ docs/benchmarks/           latency, idle cost, and which model to use
 
 ### Prerequisites
 
-Lens does not bundle a model. Install [Ollama](https://ollama.com), then
-pull a small model:
+Lens does not bundle a model. Install [Ollama](https://ollama.com) or
+[LM Studio](https://lmstudio.ai), then pull a small model:
 
 ```bash
+# Ollama
 ollama pull qwen2.5:7b
+
+# LM Studio
+# Download and load a model through the LM Studio UI
 ```
 
 A 3B model is fast and visibly wrong; 7B costs 200ms more and is right
@@ -211,7 +215,8 @@ Local-first is a constraint, not a marketing line. The short version:
 - Password and protected fields are refused before their contents are read.
 - Nothing captured is written to disk.
 - No screen image is taken at all in the default configuration.
-- No network call is made; translation runs against a local Ollama.
+- No network call is made; translation runs against a local provider
+  (Ollama or LM Studio).
 
 The full model, with what each promise depends on and how to verify it:
 [docs/privacy-model.md](docs/privacy-model.md).

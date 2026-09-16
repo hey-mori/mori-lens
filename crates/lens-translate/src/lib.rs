@@ -1,10 +1,10 @@
-//! Quick translation through an Ollama on this machine.
+//! Quick translation through a local provider (Ollama or LM Studio).
 //!
-//! Ollama is an **external runtime**, not a dependency
-//! (`docs/decisions/ADR-0007-local-first-inference.md`). It is not bundled, not
-//! installed, and not started by Lens. Its absence is an ordinary state that
-//! produces a typed error and a sentence the user can act on, never a crash and
-//! never a modal.
+//! Local providers are **external runtimes**, not dependencies
+//! (`docs/decisions/ADR-0007-local-first-inference.md`). They are not bundled,
+//! not installed, and not started by Lens. Their absence is an ordinary state
+//! that produces a typed error and a sentence the user can act on, never a
+//! crash and never a modal.
 //!
 //! # The rule that shapes every function here
 //!
