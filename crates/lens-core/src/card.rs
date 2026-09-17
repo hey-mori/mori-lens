@@ -70,6 +70,9 @@ pub struct CardMetadata {
     pub provenance: CardProvenance,
     pub provider_scope: Option<CardProviderScope>,
     pub model: Option<String>,
+    /// Which inference provider produced the answer: `"ollama"`, `"lmstudio"`, or `None` for legacy unknown provenance.
+    /// Bound at inference time from the resolved runtime lane, not read from live settings.
+    pub provider: Option<String>,
 }
 
 /// The contents of one card.
@@ -250,6 +253,7 @@ impl Card {
                 provenance: CardProvenance::Accessibility,
                 provider_scope,
                 model: Some(translation.model.clone()),
+                provider: translation.provider.clone(),
             }),
         };
         // Said on the card the reader ends up looking at, for the same reason
@@ -386,6 +390,7 @@ impl Card {
                 provenance: CardProvenance::Accessibility,
                 provider_scope: None,
                 model: Some(analysis.model.clone()),
+                provider: analysis.provider.clone(),
             }),
         }
     }
@@ -830,6 +835,7 @@ impl Card {
             source_language: None,
             target_language: None,
             model: self.metadata.as_ref().and_then(|m| m.model.clone()),
+            provider: self.metadata.as_ref().and_then(|m| m.provider.clone()),
         })
     }
 
@@ -991,6 +997,7 @@ mod tests {
             text: text.to_owned(),
             engine: EngineId::Local,
             model: "qwen2.5:3b".to_owned(),
+            provider: None,
             latency_ms: 900,
             cached: false,
             part_was_removed: false,
@@ -1246,6 +1253,7 @@ mod streaming_tests {
                 text: "나는 다른 파일에서 삽입 스크립트를".to_owned(),
                 engine: crate::translate::EngineId::Local,
                 model: "m".to_owned(),
+                provider: None,
                 latency_ms: 900,
                 cached: false,
                 part_was_removed: false,
@@ -1291,6 +1299,7 @@ mod footer_tests {
                 text: "번역".to_owned(),
                 engine: EngineId::Local,
                 model: "qwen2.5-coder:7b".to_owned(),
+                provider: None,
                 latency_ms,
                 cached,
             },
@@ -1391,6 +1400,7 @@ mod footer_tests {
                 text: "번역".to_owned(),
                 engine: EngineId::Local,
                 model: "qwen2.5:7b".to_owned(),
+                provider: None,
                 latency_ms: 3900,
                 cached: false,
                 part_was_removed: true,
@@ -1423,6 +1433,7 @@ mod footer_tests {
                 text: "번역".to_owned(),
                 engine: EngineId::Local,
                 model: "qwen2.5:7b".to_owned(),
+                provider: None,
                 latency_ms: 3900,
                 cached: false,
                 part_was_removed: true,
@@ -1595,6 +1606,7 @@ mod copy_tests {
                     structure: "제한 조건을 설정하는 구문".to_owned(),
                     note: String::new(),
                     model: "qwen2.5-coder:7b".to_owned(),
+                    provider: None,
                     latency_ms: 3670,
                     cached: false,
                     links: vec![],
@@ -1686,6 +1698,7 @@ mod copy_tests {
                 part_of_speech: "동사".to_owned(),
                 structure: "제한 조건을 설정하는 구문".to_owned(),
                 model: "qwen2.5-coder:7b".to_owned(),
+                provider: None,
                 latency_ms: 3670,
                 ..crate::analyse::DeepAnalysis::default()
             },
@@ -1729,6 +1742,7 @@ mod copy_tests {
             &crate::analyse::DeepAnalysis {
                 sense: "뜻".to_owned(),
                 model: "qwen2.5-coder:7b".to_owned(),
+                provider: None,
                 latency_ms: 3670,
                 ..crate::analyse::DeepAnalysis::default()
             },
@@ -1782,6 +1796,7 @@ mod cutting_tests {
                 text: text.to_owned(),
                 engine: EngineId::Local,
                 model: "fixture".to_owned(),
+                provider: None,
                 latency_ms: 900,
                 cached: false,
                 part_was_removed: false,
@@ -1848,6 +1863,7 @@ mod clipboard_tests {
             text: "포인터가 멈춘 뒤에야 무엇이든 읽습니다.".to_owned(),
             engine: EngineId::Local,
             model: "qwen2.5:7b".to_owned(),
+            provider: None,
             latency_ms: 2644,
             cached: false,
             part_was_removed: false,
@@ -1893,6 +1909,7 @@ mod clipboard_tests {
                 lemma: "rest".to_owned(),
                 part_of_speech: "동사".to_owned(),
                 model: "qwen2.5:7b".to_owned(),
+                provider: None,
                 latency_ms: 3670,
                 ..DeepAnalysis::default()
             },
@@ -2067,6 +2084,7 @@ mod name_changed_tests {
                 text: "엔진데이터시트서비스는 한 장당 한 행씩 반환합니다.".to_owned(),
                 engine: EngineId::Local,
                 model: "qwen2.5:7b".to_owned(),
+                provider: None,
                 latency_ms: 1500,
                 cached: false,
                 part_was_removed: false,
@@ -2094,6 +2112,7 @@ mod name_changed_tests {
                 text: "엔진데이터시트서비스는 한 장당".to_owned(),
                 engine: EngineId::Local,
                 model: "qwen2.5:7b".to_owned(),
+                provider: None,
                 latency_ms: 1500,
                 cached: false,
                 part_was_removed: true,

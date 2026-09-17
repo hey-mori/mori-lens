@@ -635,6 +635,9 @@ pub struct QuickTranslation {
     /// (`docs/privacy-model.md` §1).
     pub engine: EngineId,
     pub model: String,
+    /// Which inference provider produced the answer: `"ollama"`, `"lmstudio"`, or `None` for legacy unknown provenance.
+    /// Bound at inference time from the resolved runtime lane.
+    pub provider: Option<String>,
     /// How long the engine took, the first time it was asked.
     ///
     /// Kept as measured even when the answer came back from the cache, because

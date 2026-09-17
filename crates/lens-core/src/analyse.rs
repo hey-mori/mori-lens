@@ -308,6 +308,9 @@ pub struct DeepAnalysis {
     pub counterpart: Option<String>,
     /// Which model said it, for the same reason a translation carries one.
     pub model: String,
+    /// Which inference provider produced the answer: `"ollama"`, `"lmstudio"`, or `None` for legacy unknown provenance.
+    /// Bound at inference time from the resolved runtime lane.
+    pub provider: Option<String>,
     pub latency_ms: u64,
     /// Whether this came back from memory rather than from the model.
     ///
@@ -1576,6 +1579,7 @@ mod profile_tests {
             counterpart: Some("counterpart".to_owned()),
             translation: None,
             model: "test".to_owned(),
+            provider: None,
             latency_ms: 100,
             cached: false,
             links: vec![],
@@ -1606,6 +1610,7 @@ mod profile_tests {
             counterpart: None,
             translation: None,
             model: "test".to_owned(),
+            provider: None,
             latency_ms: 100,
             cached: false,
             links: vec![],
@@ -1634,6 +1639,7 @@ mod profile_tests {
             counterpart: Some("counterpart".to_owned()),
             translation: None,
             model: "test".to_owned(),
+            provider: None,
             latency_ms: 100,
             cached: false,
             links: vec![],

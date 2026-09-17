@@ -41,6 +41,9 @@ pub struct Item {
     pub target_language: Option<String>,
     /// The model that produced the answer.
     pub model: Option<String>,
+    /// Which inference provider produced the answer: `"ollama"`, `"lmstudio"`, or `None` for legacy unknown provenance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
     /// The reader's own note.
     pub note: Option<String>,
     /// Tags for this item, populated on demand.
@@ -79,6 +82,9 @@ pub struct HistoryEntry {
     pub target_language: Option<String>,
     /// The model that produced the answer.
     pub model: Option<String>,
+    /// Which inference provider produced the answer: `"ollama"`, `"lmstudio"`, or `None` for legacy unknown provenance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
     /// The source application's process name. Only stored when
     /// `history_store_app` is on.
     pub app: Option<String>,
@@ -250,7 +256,7 @@ impl Library {
     /// Review state starts as `"later"`.
     pub fn insert(&self, item: &Item) -> Result<i64, Error> {
         self.conn.execute(
-            "INSERT INTO library (original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'later')",
+            "INSERT INTO library (original, answer, caveat, app, created_at, kind, source_language, target_language, model, provider, note, review_state) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'later')",
             params![
                 item.original,
                 item.answer,
@@ -261,6 +267,7 @@ impl Library {
                 item.source_language,
                 item.target_language,
                 item.model,
+                item.provider,
                 item.note,
             ],
         )?;
@@ -270,7 +277,7 @@ impl Library {
     /// Insert one item with an explicit review state (used by JSONL import).
     fn insert_with_review_state(&self, item: &Item, review_state: &str) -> Result<i64, Error> {
         self.conn.execute(
-            "INSERT INTO library (original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO library (original, answer, caveat, app, created_at, kind, source_language, target_language, model, provider, note, review_state) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 item.original,
                 item.answer,
@@ -281,6 +288,7 @@ impl Library {
                 item.source_language,
                 item.target_language,
                 item.model,
+                item.provider,
                 item.note,
                 review_state,
             ],
@@ -292,7 +300,7 @@ impl Library {
     pub fn list(&self, offset: i64) -> Result<Page, Error> {
         let limit = PAGE_SIZE + 1;
         let mut stmt = self.conn.prepare(
-            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state FROM library ORDER BY created_at DESC, id DESC LIMIT ?1 OFFSET ?2",
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, provider, note, review_state FROM library ORDER BY created_at DESC, id DESC LIMIT ?1 OFFSET ?2",
         )?;
         let items: Vec<Item> = stmt
             .query_map(params![limit, offset], row_to_item)?
@@ -311,7 +319,7 @@ impl Library {
     /// Get one item by id.
     pub fn get(&self, id: i64) -> Result<Option<Item>, Error> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state FROM library WHERE id = ?1",
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, provider, note, review_state FROM library WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id], row_to_item)?;
         match rows.next() {
@@ -321,46 +329,50 @@ impl Library {
         }
     }
 
-    /// Check whether an item with the same original text, kind, model, and
+    /// Check whether an item with the same original text, kind, provider, model, and
     /// target language already exists.
     ///
     /// ADR-0013 requires that the library can store more than one answer for
     /// the same sentence when they come from different models or target
     /// different languages. Duplicate identity is therefore
-    /// `original + kind + model + target_language`, not `original + kind` alone.
+    /// `original + kind + provider + model + target_language`, not `original + kind` alone.
+    /// Provider distinguishes answers from different inference engines (e.g., Ollama vs LM Studio).
     pub fn has_duplicate(
         &self,
         original: &str,
         kind: &str,
+        provider: Option<&str>,
         model: Option<&str>,
         target_language: Option<&str>,
     ) -> Result<bool, Error> {
         let exists: bool = self
             .conn
             .prepare(
-                "SELECT 1 FROM library WHERE original = ?1 AND kind = ?2 AND model IS ?3 AND target_language IS ?4",
+                "SELECT 1 FROM library WHERE original = ?1 AND kind = ?2 AND provider IS ?3 AND model IS ?4 AND target_language IS ?5",
             )?
-            .exists(params![original, kind, model, target_language])?;
+            .exists(params![original, kind, provider, model, target_language])?;
         Ok(exists)
     }
 
-    /// Find the id of an existing item with the same original text, kind,
+    /// Find the id of an existing item with the same original text, kind, provider,
     /// model, and target language. Returns `Ok(None)` if no duplicate exists.
     ///
-    /// Duplicate identity follows ADR-0013: `original + kind + model +
+    /// Duplicate identity follows ADR-0013: `original + kind + provider + model +
     /// target_language`. When multiple rows match (should not happen but
     /// the schema allows it), returns the newest (highest id).
+    /// Provider distinguishes answers from different inference engines.
     pub fn find_duplicate_id(
         &self,
         original: &str,
         kind: &str,
+        provider: Option<&str>,
         model: Option<&str>,
         target_language: Option<&str>,
     ) -> Result<Option<i64>, Error> {
         let mut stmt = self.conn.prepare(
-            "SELECT id FROM library WHERE original = ?1 AND kind = ?2 AND model IS ?3 AND target_language IS ?4 ORDER BY id DESC LIMIT 1",
+            "SELECT id FROM library WHERE original = ?1 AND kind = ?2 AND provider IS ?3 AND model IS ?4 AND target_language IS ?5 ORDER BY id DESC LIMIT 1",
         )?;
-        let mut rows = stmt.query(params![original, kind, model, target_language])?;
+        let mut rows = stmt.query(params![original, kind, provider, model, target_language])?;
         match rows.next()? {
             Some(row) => Ok(Some(row.get(0)?)),
             None => Ok(None),
@@ -467,7 +479,7 @@ impl Library {
         let pattern = format!("%{escaped}%");
         let limit = PAGE_SIZE + 1;
         let mut stmt = self.conn.prepare(
-            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state FROM library WHERE original LIKE ?1 ESCAPE '\\' OR answer LIKE ?1 ESCAPE '\\' OR note LIKE ?1 ESCAPE '\\' ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3",
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, provider, note, review_state FROM library WHERE original LIKE ?1 ESCAPE '\\' OR answer LIKE ?1 ESCAPE '\\' OR note LIKE ?1 ESCAPE '\\' ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3",
         )?;
         let items: Vec<Item> = stmt
             .query_map(params![pattern, limit, offset], row_to_item)?
@@ -531,7 +543,7 @@ impl Library {
 
         let limit = PAGE_SIZE + 1;
         let sql = format!(
-            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state FROM library{where_clause} ORDER BY created_at DESC, id DESC LIMIT ?{} OFFSET ?{}",
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, provider, note, review_state FROM library{where_clause} ORDER BY created_at DESC, id DESC LIMIT ?{} OFFSET ?{}",
             param_values.len() + 1,
             param_values.len() + 2
         );
@@ -637,7 +649,7 @@ impl Library {
 
         let limit = PAGE_SIZE + 1;
         let sql = format!(
-            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state FROM library{where_clause} ORDER BY created_at DESC, id DESC LIMIT ?{} OFFSET ?{}",
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, provider, note, review_state FROM library{where_clause} ORDER BY created_at DESC, id DESC LIMIT ?{} OFFSET ?{}",
             param_values.len() + 1,
             param_values.len() + 2
         );
@@ -862,7 +874,7 @@ impl Library {
             offset += PAGE_SIZE;
         }
 
-        let mut out = String::from("{\"version\":2}\n");
+        let mut out = String::from("{\"version\":3}\n");
         for item in &all_items {
             let line = serde_json::to_string(item)
                 .map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
@@ -874,14 +886,15 @@ impl Library {
 
     /// Import items from a versioned JSONL string.
     ///
-    /// The first line must be a version header (`{"version": 1}` or
-    /// `{"version": 2}`). Each subsequent line is one JSON object. Items
-    /// with the same original text and kind as an existing row are skipped
+    /// The first line must be a version header (`{"version": 1}`,
+    /// `{"version": 2}`, or `{"version": 3}`). Each subsequent line is one JSON object. Items
+    /// with the same original text, kind, provider, and model as an existing row are skipped
     /// (duplicate detection).
     ///
     /// Version 1 items are inserted with review state `"later"`. Version 2
     /// items preserve their `review_state` field; unknown values default
-    /// to `"later"`.
+    /// to `"later"`. Version 3 items include the `provider` field for
+    /// inference engine provenance.
     ///
     /// Returns the number of items imported (not counting skipped
     /// duplicates).
@@ -899,7 +912,7 @@ impl Library {
                 let header: serde_json::Value = serde_json::from_str(trimmed)
                     .map_err(|e| Error::Io(std::io::Error::other(format!("line 1: {e}"))))?;
                 format_version = header.get("version").and_then(|v| v.as_i64()).unwrap_or(0);
-                if format_version != 1 && format_version != 2 {
+                if format_version != 1 && format_version != 2 && format_version != 3 {
                     return Err(Error::Io(std::io::Error::other(format!(
                         "unsupported JSONL version: {format_version}"
                     ))));
@@ -921,6 +934,7 @@ impl Library {
                 .has_duplicate(
                     &item.original,
                     &item.kind,
+                    item.provider.as_deref(),
                     item.model.as_deref(),
                     item.target_language.as_deref(),
                 )
@@ -953,6 +967,7 @@ impl Library {
                 source_language: item.source_language,
                 target_language: item.target_language,
                 model: item.model,
+                provider: item.provider,
                 note: item.note,
                 tags: None,
                 review_state: None,
@@ -995,7 +1010,7 @@ impl Library {
     pub fn list_later(&self, offset: i64) -> Result<Page, Error> {
         let limit = PAGE_SIZE + 1;
         let mut stmt = self.conn.prepare(
-            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state FROM library WHERE review_state = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3",
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, provider, note, review_state FROM library WHERE review_state = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3",
         )?;
         let items: Vec<Item> = stmt
             .query_map(params![REVIEW_LATER, limit, offset], row_to_item)?
@@ -1030,7 +1045,7 @@ impl Library {
     /// be incorrect on a mutating dataset.
     pub fn list_later_session(&self) -> Result<Vec<Item>, Error> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state FROM library WHERE review_state = ?1 ORDER BY created_at DESC, id DESC",
+            "SELECT id, original, answer, caveat, app, created_at, kind, source_language, target_language, model, provider, note, review_state FROM library WHERE review_state = ?1 ORDER BY created_at DESC, id DESC",
         )?;
         let items: Vec<Item> = stmt
             .query_map(params![REVIEW_LATER], row_to_item)?
@@ -1098,7 +1113,7 @@ impl Library {
         // The highest version this build understands. If the database has
         // migrations beyond this, a newer build wrote them and this build
         // must not mutate the schema.
-        const CURRENT_SCHEMA: i64 = 7;
+        const CURRENT_SCHEMA: i64 = 8;
         let max_applied = applied.iter().copied().max().unwrap_or(0);
         if max_applied > CURRENT_SCHEMA {
             return Err(Error::FutureSchema {
@@ -1248,6 +1263,20 @@ impl Library {
             tx.commit()?;
         }
 
+        // Provider provenance: which inference provider produced the answer.
+        // P6 Phase 2: distinguish provider (Ollama/LM Studio) from provider_scope (trust location).
+        // Legacy rows: NULL = unknown provenance, never guessed from model or endpoint.
+        if !applied.contains(&8) {
+            let tx = self.conn.unchecked_transaction()?;
+            tx.execute_batch(
+                "ALTER TABLE history ADD COLUMN provider TEXT;
+                 ALTER TABLE library ADD COLUMN provider TEXT;
+
+                 INSERT INTO schema_migrations (version) VALUES (8);",
+            )?;
+            tx.commit()?;
+        }
+
         Ok(())
     }
 
@@ -1259,7 +1288,7 @@ impl Library {
     /// count by removing the oldest entries if needed.
     pub fn record_history(&self, entry: &HistoryEntry) -> Result<i64, Error> {
         self.conn.execute(
-            "INSERT INTO history (original, answer, kind, source_language, target_language, model, app, provenance, provider_scope, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO history (original, answer, kind, source_language, target_language, model, provider, app, provenance, provider_scope, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 entry.original,
                 entry.answer,
@@ -1267,6 +1296,7 @@ impl Library {
                 entry.source_language,
                 entry.target_language,
                 entry.model,
+                entry.provider,
                 entry.app,
                 entry.provenance,
                 entry.provider_scope,
@@ -1295,7 +1325,7 @@ impl Library {
             .conn
             .query_row("SELECT COUNT(*) FROM history", [], |row| row.get(0))?;
         let mut stmt = self.conn.prepare(
-            "SELECT id, original, answer, kind, source_language, target_language, model, app, provenance, provider_scope, created_at FROM history ORDER BY created_at DESC, id DESC LIMIT ?1 OFFSET ?2",
+            "SELECT id, original, answer, kind, source_language, target_language, model, provider, app, provenance, provider_scope, created_at FROM history ORDER BY created_at DESC, id DESC LIMIT ?1 OFFSET ?2",
         )?;
         let entries: Vec<HistoryEntry> = stmt
             .query_map(params![limit, offset], row_to_history_entry)?
@@ -1341,7 +1371,7 @@ impl Library {
     /// the library (ADR-0014).
     pub fn history_promote(&self, history_id: i64) -> Result<i64, Error> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, original, answer, kind, source_language, target_language, model, app, provenance, provider_scope, created_at FROM history WHERE id = ?1",
+            "SELECT id, original, answer, kind, source_language, target_language, model, provider, app, provenance, provider_scope, created_at FROM history WHERE id = ?1",
         )?;
         let entry = stmt
             .query_row(params![history_id], row_to_history_entry)
@@ -1353,7 +1383,7 @@ impl Library {
             })?;
 
         self.conn.execute(
-            "INSERT INTO library (original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, review_state) VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, NULL, 'later')",
+            "INSERT INTO library (original, answer, caveat, app, created_at, kind, source_language, target_language, model, provider, note, review_state) VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, 'later')",
             params![
                 entry.original,
                 entry.answer,
@@ -1363,6 +1393,7 @@ impl Library {
                 entry.source_language,
                 entry.target_language,
                 entry.model,
+                entry.provider,
             ],
         )?;
         let library_id = self.conn.last_insert_rowid();
@@ -1457,8 +1488,9 @@ fn row_to_item(row: &rusqlite::Row) -> rusqlite::Result<Item> {
         source_language: row.get(7)?,
         target_language: row.get(8)?,
         model: row.get(9)?,
-        note: row.get(10)?,
-        review_state: row.get::<_, Option<String>>(11)?,
+        provider: row.get(10)?,
+        note: row.get(11)?,
+        review_state: row.get::<_, Option<String>>(12)?,
         tags: None,
     })
 }
@@ -1473,10 +1505,11 @@ fn row_to_history_entry(row: &rusqlite::Row) -> rusqlite::Result<HistoryEntry> {
         source_language: row.get(4)?,
         target_language: row.get(5)?,
         model: row.get(6)?,
-        app: row.get(7)?,
-        provenance: row.get(8)?,
-        provider_scope: row.get(9)?,
-        created_at: row.get(10)?,
+        provider: row.get(7)?,
+        app: row.get(8)?,
+        provenance: row.get(9)?,
+        provider_scope: row.get(10)?,
+        created_at: row.get(11)?,
     })
 }
 
@@ -1711,6 +1744,7 @@ mod tests {
             source_language: Some("en".to_owned()),
             target_language: Some("ko".to_owned()),
             model: None,
+            provider: None,
             note: None,
             tags: None,
             review_state: None,
@@ -1729,6 +1763,7 @@ mod tests {
             source_language: Some("ko".to_owned()),
             target_language: Some("ko".to_owned()),
             model: Some("qwen2.5:7b".to_owned()),
+            provider: None,
             note: None,
             tags: None,
             review_state: None,
@@ -1752,7 +1787,7 @@ mod tests {
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
-        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
         cleanup(&path);
     }
 
@@ -2529,6 +2564,7 @@ mod tests {
             source_language: Some("en".to_owned()),
             target_language: Some("ko".to_owned()),
             model: None,
+            provider: None,
             note: None,
             tags: None,
             review_state: None,
@@ -2563,6 +2599,7 @@ mod tests {
             source_language: Some("en".to_owned()),
             target_language: Some("ko".to_owned()),
             model: Some("qwen".to_owned()),
+            provider: None,
             note: Some("my note".to_owned()),
             tags: None,
             review_state: None,
@@ -2603,6 +2640,7 @@ mod tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
             note: None,
             tags: None,
             review_state: None,
@@ -2618,7 +2656,7 @@ mod tests {
         assert_eq!(lines.len(), 3);
 
         let header: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
-        assert_eq!(header["version"], 2);
+        assert_eq!(header["version"], 3);
 
         let first: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
         let second: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
@@ -2645,6 +2683,7 @@ mod tests {
             source_language: Some("en".to_owned()),
             target_language: Some("ko".to_owned()),
             model: None,
+            provider: None,
             note: Some("a note".to_owned()),
             tags: None,
             review_state: None,
@@ -2921,30 +2960,31 @@ mod tests {
         let item = a_translation();
         lib.insert(&item).unwrap();
 
-        // Same original + kind + model(None) + target_language(Some("ko")) is a duplicate.
+        // Same original + kind + provider(None) + model(None) + target_language(Some("ko")) is a duplicate.
         assert!(lib
-            .has_duplicate(&item.original, "translation", None, Some("ko"))
+            .has_duplicate(&item.original, "translation", None, None, Some("ko"))
             .unwrap());
         // Different kind is not a duplicate.
         assert!(!lib
-            .has_duplicate(&item.original, "analysis", None, Some("ko"))
+            .has_duplicate(&item.original, "analysis", None, None, Some("ko"))
             .unwrap());
         // Different original is not a duplicate.
         assert!(!lib
-            .has_duplicate("different text", "translation", None, Some("ko"))
+            .has_duplicate("different text", "translation", None, None, Some("ko"))
             .unwrap());
         // Different model is not a duplicate (ADR-0013).
         assert!(!lib
             .has_duplicate(
                 &item.original,
                 "translation",
+                None,
                 Some("qwen2.5:7b"),
                 Some("ko")
             )
             .unwrap());
         // Different target language is not a duplicate (ADR-0013).
         assert!(!lib
-            .has_duplicate(&item.original, "translation", None, Some("ja"))
+            .has_duplicate(&item.original, "translation", None, None, Some("ja"))
             .unwrap());
         cleanup(&path);
     }
@@ -2962,13 +3002,13 @@ mod tests {
 
         // Same key: returns the existing id.
         let found = lib
-            .find_duplicate_id(&item.original, "translation", None, Some("ko"))
+            .find_duplicate_id(&item.original, "translation", None, None, Some("ko"))
             .unwrap();
         assert_eq!(found, Some(id), "duplicate must return the existing id");
 
         // Different kind: no match.
         let found = lib
-            .find_duplicate_id(&item.original, "analysis", None, Some("ko"))
+            .find_duplicate_id(&item.original, "analysis", None, None, Some("ko"))
             .unwrap();
         assert_eq!(found, None, "different kind is not a duplicate");
 
@@ -2977,11 +3017,194 @@ mod tests {
             .find_duplicate_id(
                 &item.original,
                 "translation",
+                None,
                 Some("qwen2.5:7b"),
                 Some("ko"),
             )
             .unwrap();
         assert_eq!(found, None, "different model is not a duplicate");
+
+        cleanup(&path);
+    }
+
+    /// Provider-aware duplicate detection: same sentence with different providers
+    /// are NOT duplicates (P6 Phase 2).
+    #[test]
+    fn provider_makes_items_distinct() {
+        let path = temp_db("provider-distinct");
+        let lib = Library::open(&path).unwrap();
+
+        // Insert with provider = None (legacy)
+        let item1 = Item {
+            id: 0,
+            original: "test sentence".to_owned(),
+            answer: "answer 1".to_owned(),
+            caveat: None,
+            app: None,
+            created_at: 1000,
+            kind: "translation".to_owned(),
+            source_language: None,
+            target_language: Some("ko".to_owned()),
+            model: None,
+            provider: None,
+            note: None,
+            tags: None,
+            review_state: None,
+        };
+        let id1 = lib.insert(&item1).unwrap();
+
+        // Same sentence with provider = Some("ollama") is NOT a duplicate
+        let item2 = Item {
+            id: 0,
+            original: "test sentence".to_owned(),
+            answer: "answer 2".to_owned(),
+            caveat: None,
+            app: None,
+            created_at: 2000,
+            kind: "translation".to_owned(),
+            source_language: None,
+            target_language: Some("ko".to_owned()),
+            model: None,
+            provider: Some("ollama".to_owned()),
+            note: None,
+            tags: None,
+            review_state: None,
+        };
+        let id2 = lib.insert(&item2).unwrap();
+        assert_ne!(id1, id2, "different providers create distinct items");
+
+        // Same sentence with provider = Some("lmstudio") is also NOT a duplicate
+        let item3 = Item {
+            id: 0,
+            original: "test sentence".to_owned(),
+            answer: "answer 3".to_owned(),
+            caveat: None,
+            app: None,
+            created_at: 3000,
+            kind: "translation".to_owned(),
+            source_language: None,
+            target_language: Some("ko".to_owned()),
+            model: None,
+            provider: Some("lmstudio".to_owned()),
+            note: None,
+            tags: None,
+            review_state: None,
+        };
+        let id3 = lib.insert(&item3).unwrap();
+        assert_ne!(id1, id3, "different providers create distinct items");
+        assert_ne!(id2, id3, "different providers create distinct items");
+
+        // Same provider is a duplicate
+        assert!(lib
+            .has_duplicate(
+                "test sentence",
+                "translation",
+                Some("ollama"),
+                None,
+                Some("ko")
+            )
+            .unwrap());
+
+        cleanup(&path);
+    }
+
+    /// Migration v7 → v8: provider column is added, legacy rows have provider = NULL.
+    #[test]
+    fn migration_v8_adds_provider_column() {
+        let path = temp_db("migration-v8");
+        let lib = Library::open(&path).unwrap();
+
+        // Verify schema version is 8
+        let version: i64 = lib
+            .conn()
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, 8, "schema must be at version 8");
+
+        // Insert an item and verify provider can be read back
+        let item = Item {
+            id: 0,
+            original: "test".to_owned(),
+            answer: "answer".to_owned(),
+            caveat: None,
+            app: None,
+            created_at: 1000,
+            kind: "translation".to_owned(),
+            source_language: None,
+            target_language: Some("ko".to_owned()),
+            model: None,
+            provider: Some("ollama".to_owned()),
+            note: None,
+            tags: None,
+            review_state: None,
+        };
+        let id = lib.insert(&item).unwrap();
+
+        let retrieved = lib.get(id).unwrap().unwrap();
+        assert_eq!(retrieved.provider, Some("ollama".to_owned()));
+
+        // Insert an item with provider = None (legacy simulation)
+        let legacy_item = Item {
+            id: 0,
+            original: "legacy".to_owned(),
+            answer: "old answer".to_owned(),
+            caveat: None,
+            app: None,
+            created_at: 500,
+            kind: "translation".to_owned(),
+            source_language: None,
+            target_language: Some("ko".to_owned()),
+            model: None,
+            provider: None,
+            note: None,
+            tags: None,
+            review_state: None,
+        };
+        let legacy_id = lib.insert(&legacy_item).unwrap();
+
+        let legacy_retrieved = lib.get(legacy_id).unwrap().unwrap();
+        assert_eq!(
+            legacy_retrieved.provider, None,
+            "legacy items have NULL provider"
+        );
+
+        cleanup(&path);
+    }
+
+    /// History preserves provider through promotion to library.
+    #[test]
+    fn history_promote_preserves_provider() {
+        let path = temp_db("history-promote-provider");
+        let lib = Library::open(&path).unwrap();
+
+        let entry = HistoryEntry {
+            id: 0,
+            original: "promoted text".to_owned(),
+            answer: "promoted answer".to_owned(),
+            kind: "translation".to_owned(),
+            source_language: None,
+            target_language: Some("ko".to_owned()),
+            model: Some("qwen2.5:7b".to_owned()),
+            provider: Some("ollama".to_owned()),
+            app: None,
+            provenance: "accessibility".to_owned(),
+            provider_scope: "local".to_owned(),
+            created_at: 1000,
+        };
+        let history_id = lib.record_history(&entry).unwrap();
+
+        let library_id = lib.history_promote(history_id).unwrap();
+
+        let promoted = lib.get(library_id).unwrap().unwrap();
+        assert_eq!(promoted.original, "promoted text");
+        assert_eq!(
+            promoted.provider,
+            Some("ollama".to_owned()),
+            "provider must survive promotion"
+        );
+        assert_eq!(promoted.model, Some("qwen2.5:7b".to_owned()));
 
         cleanup(&path);
     }
@@ -3037,6 +3260,7 @@ mod tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
             app: Some("chrome.exe".to_owned()),
             provenance: "accessibility".to_owned(),
             provider_scope: "local".to_owned(),
@@ -3076,6 +3300,7 @@ mod tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
             app: None,
             provenance: "accessibility".to_owned(),
             provider_scope: "local".to_owned(),
@@ -3119,14 +3344,14 @@ mod tests {
         assert!(tables.contains(&"history".to_owned()));
         assert!(tables.contains(&"schema_migrations".to_owned()));
 
-        // Verify schema version is 7
+        // Verify schema version is 8
         let version: i64 = lib
             .conn
             .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
 
         // Verify library table has review_state column (from migration 4)
         // and archived_at column (from migration 7)
@@ -3163,6 +3388,7 @@ mod tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
             app: None,
             provenance: "accessibility".to_owned(),
             provider_scope: "local".to_owned(),
@@ -3183,14 +3409,14 @@ mod tests {
         assert_eq!(lib2.count().unwrap(), count_before);
         assert_eq!(lib2.history_count().unwrap(), history_before);
 
-        // Verify schema version is still 7
+        // Verify schema version is still 8
         let version: i64 = lib2
             .conn
             .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
 
         cleanup(&path);
     }
@@ -3486,6 +3712,7 @@ mod tests {
             source_language: Some("zh".to_owned()),
             target_language: Some("en".to_owned()),
             model: Some("qwen2.5:7b".to_owned()),
+            provider: None,
             note: Some("User's personal note".to_owned()),
             tags: None,
             review_state: None,
@@ -3553,6 +3780,7 @@ mod tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
             app: Some("chrome.exe".to_owned()),
             provenance: "accessibility".to_owned(),
             provider_scope: "local".to_owned(),
@@ -3596,6 +3824,7 @@ mod tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
             app: None,
             provenance: "accessibility".to_owned(),
             provider_scope: "local".to_owned(),
@@ -3630,6 +3859,7 @@ mod tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
             app: None,
             provenance: "accessibility".to_owned(),
             provider_scope: "local".to_owned(),
@@ -3666,6 +3896,7 @@ mod tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
             app: None,
             provenance: "accessibility".to_owned(),
             provider_scope: "local".to_owned(),
@@ -4319,6 +4550,7 @@ mod tests {
             source_language: Some("en".to_owned()),
             target_language: Some("ko".to_owned()),
             model: Some("qwen2.5:3b".to_owned()),
+            provider: None,
             app: None,
             provenance: "accessibility".to_owned(),
             provider_scope: "local".to_owned(),
@@ -4559,6 +4791,7 @@ mod tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
             app: None,
             provenance: "accessibility".to_owned(),
             provider_scope: "local".to_owned(),
@@ -4595,6 +4828,7 @@ mod tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
             app: None,
             provenance: "accessibility".to_owned(),
             provider_scope: "local".to_owned(),
@@ -4644,6 +4878,7 @@ mod tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
             app: None,
             provenance: "accessibility".to_owned(),
             provider_scope: "local".to_owned(),
@@ -4723,6 +4958,7 @@ mod tests {
             source_language: Some("en".to_owned()),
             target_language: Some("ko".to_owned()),
             model: Some("qwen2.5:7b".to_owned()),
+            provider: None,
             note: Some("important".to_owned()),
             tags: None,
             review_state: Some(REVIEW_KNOWN.to_owned()),
@@ -4852,6 +5088,7 @@ mod tests {
                 source_language: None,
                 target_language: None,
                 model: None,
+                provider: None,
                 note: None,
                 tags: None,
                 review_state: None,
