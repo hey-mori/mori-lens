@@ -741,8 +741,8 @@ impl EngineId {
 /// Every way a translation can fail to arrive.
 ///
 /// Closed and typed for the same reason [`crate::acquire::AcquireError`] is:
-/// "it did not work" is not a measurement. A user with no Ollama installed and
-/// a user whose model is missing need different words on screen.
+/// "it did not work" is not a measurement. A user with no local provider
+/// running and a user whose model is missing need different words on screen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TranslateError {
     /// No engine answered at all. Usually the provider is not running.
