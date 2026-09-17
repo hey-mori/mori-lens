@@ -184,6 +184,7 @@ mod tests {
                 text: "제공자는 각 렌더링된 줄당 하나의 직사각형을 반환합니다.".to_owned(),
                 engine: EngineId::Local,
                 model: "qwen2.5:7b".to_owned(),
+                provider: None,
                 latency_ms: 1500,
                 cached: false,
                 part_was_removed: false,

@@ -483,6 +483,7 @@ fn parse(
         structure: field(FIELDS[3]),
         note: field(FIELDS[4]),
         model,
+        provider: Some("ollama".to_string()),
         latency_ms,
         cached: false,
         links: vec![],

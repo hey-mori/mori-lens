@@ -146,6 +146,7 @@ fn deep_analysis_bounded_handles_pathological_field_lengths() {
         model: "test".to_owned(),
         latency_ms: 0,
         cached: false,
+        provider: None,
         links: (0..100)
             .map(|i| TextLink {
                 source_range: (i, i + 1),
@@ -181,6 +182,7 @@ fn deep_analysis_bounded_preserves_short_fields_unchanged() {
         model: "test".to_owned(),
         latency_ms: 0,
         cached: false,
+        provider: None,
         links: vec![TextLink {
             source_range: (0, 3),
             target_range: (0, 9),

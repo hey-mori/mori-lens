@@ -243,6 +243,7 @@ impl Translator for LmStudioTranslator {
             text,
             engine: lens_core::translate::engine_for(self.runtime.endpoint()),
             model: self.model.clone(),
+            provider: Some("lmstudio".to_string()),
             latency_ms,
             cached: false,
             part_was_removed: false,

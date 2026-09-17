@@ -71,6 +71,8 @@ pub struct DetailView {
     pub target_language: Option<String>,
     /// The model that produced the answer.
     pub model: Option<String>,
+    /// Which inference provider produced the answer: `"ollama"`, `"lmstudio"`, or `None` for legacy unknown provenance.
+    pub provider: Option<String>,
 }
 
 /// Shared detail state, written by the polling loop and read by Tauri commands.
@@ -133,6 +135,7 @@ pub fn view_from_card(card: &lens_core::card::Card) -> Option<DetailView> {
         source_language: None,
         target_language: None,
         model: None,
+        provider: None,
     })
 }
 
@@ -215,6 +218,7 @@ pub(crate) fn detail_save(
             source_language: view.source_language.clone(),
             target_language: view.target_language.clone(),
             model: view.model.clone(),
+            provider: view.provider.clone(),
         };
         (view.revision, entry)
     };
