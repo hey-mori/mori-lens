@@ -9,10 +9,10 @@ it is also the reason the rules below are not adjustable defaults.
 ## 1. The promises
 
 **Nothing leaves the machine by default.** Translation runs against a
-local provider (Ollama or LM Studio) on `127.0.0.1`. A cloud provider
-requires an explicit per-provider grant, an unknown endpoint counts as
-external, and a remote provider address is a cloud provider because the
-text leaves the machine
+local provider (Ollama or LM Studio) on a loopback address. A cloud
+provider requires an explicit per-provider grant, an unknown endpoint
+counts as external, and a remote provider address is a cloud provider
+because the text leaves the machine
 ([ADR-0007](decisions/ADR-0007-local-first-inference.md)).
 
 **Nothing is recorded by default.** There is no screen recording, no keylogging, no

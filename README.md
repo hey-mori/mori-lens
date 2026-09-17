@@ -219,7 +219,7 @@ Local-first is a constraint, not a marketing line. The short version:
 - Nothing captured is written to disk.
 - No screen image is taken at all in the default configuration.
 - No network call leaves the machine; translation runs against a local
-  provider (Ollama or LM Studio) over `127.0.0.1` only.
+  provider (Ollama or LM Studio) over a loopback address only.
 
 The full model, with what each promise depends on and how to verify it:
 [docs/privacy-model.md](docs/privacy-model.md).
