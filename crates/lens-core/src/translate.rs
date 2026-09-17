@@ -872,7 +872,7 @@ pub trait Translator {
 }
 
 /// Provider identity, so the product can tell which engine is configured.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Provider {
     /// Ollama on this machine.
     Ollama,

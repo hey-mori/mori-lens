@@ -976,6 +976,8 @@ pub fn main() -> std::process::ExitCode {
             quick_ollama.as_ref(),
             deep_ollama.as_ref(),
             &deep_model,
+            options.ai_config.quick.provider,
+            options.ai_config.deep.provider,
             &options.language,
             options.profile,
             theme,
@@ -1040,6 +1042,8 @@ pub fn main() -> std::process::ExitCode {
     let worker_profile = options.profile;
     let worker_deep_model = deep_model.clone();
     let worker_quick_model = quick_model.clone();
+    let worker_quick_provider = options.ai_config.quick.provider;
+    let worker_deep_provider = options.ai_config.deep.provider;
     std::thread::spawn(move || {
         // ADR-0005: Two translators, one for each path. Quick and Deep are
         // separate engines with separate models and endpoints.
@@ -1094,6 +1098,7 @@ pub fn main() -> std::process::ExitCode {
 
                     let key = CacheKey::for_analysis(
                         &request,
+                        worker_deep_provider,
                         worker_deep_model.as_deref().unwrap_or("auto"),
                         DEEP_PROMPT_VERSION,
                     );
@@ -1180,7 +1185,7 @@ pub fn main() -> std::process::ExitCode {
             // Only create cache key and perform translation when we have a real model and translator
             match (&worker_quick_model, &quick_translator) {
                 (Some(model), Some(translator)) => {
-                    let key = CacheKey::of(&request, model.as_str(), PROMPT_VERSION);
+                    let key = CacheKey::of(&request, worker_quick_provider, model.as_str(), PROMPT_VERSION);
                     if let Some(hit) = cache.get(&key) {
                         let mut card = Card::translated(&job.display_text, &hit);
                         if job.doubtful {
@@ -3362,6 +3367,8 @@ fn selftest(
     quick_ollama: Option<&lens_translate::OllamaTranslator>,
     deep_ollama: Option<&lens_translate::OllamaTranslator>,
     deep_model: &Option<String>,
+    quick_provider: lens_core::translate::Provider,
+    deep_provider: lens_core::translate::Provider,
     language: &str,
     profile: Profile,
     theme: Theme,
@@ -3563,7 +3570,7 @@ language you do not read and run it again."
     // Only create cache key and perform translation when we have a real model and translator
     let (card, translation_failed, translated) = match (&quick_model, &quick_translator) {
         (Some(model), Some(translator)) => {
-            let key = CacheKey::of(&request, model.as_str(), PROMPT_VERSION);
+            let key = CacheKey::of(&request, quick_provider, model.as_str(), PROMPT_VERSION);
             // Kept, because step 4 explains what step 2 translated rather than
             // translating it again. That grounding is the deep path's whole shape.
             let mut translated: Option<String> = None;
@@ -3682,6 +3689,7 @@ total {}ms from acquisition to card",
                         let mut explanations = AnalysisCache::new(ANALYSIS_ENTRIES);
                         let key = CacheKey::for_analysis(
                             &deep,
+                            deep_provider,
                             deep_model.as_deref().unwrap_or("auto"),
                             DEEP_PROMPT_VERSION,
                         );
