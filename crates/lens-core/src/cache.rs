@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 
 use crate::analyse::{DeepAnalysis, DeepRequest};
-use crate::translate::{QuickRequest, QuickTranslation};
+use crate::translate::{Provider, QuickRequest, QuickTranslation};
 
 /// An answer a cache can hand back and mark as not having cost anything.
 ///
@@ -100,6 +100,7 @@ pub struct CacheKey {
     asked: Asked,
     source: String,
     target_language: String,
+    provider: Provider,
     model: String,
     prompt_version: u32,
     /// The word the reader pointed at. Always `None` on the quick path; see
@@ -115,7 +116,12 @@ pub struct CacheKey {
 }
 
 impl CacheKey {
-    pub fn of(request: &QuickRequest, model: &str, prompt_version: u32) -> Self {
+    pub fn of(
+        request: &QuickRequest,
+        provider: Provider,
+        model: &str,
+        prompt_version: u32,
+    ) -> Self {
         Self {
             asked: Asked::ToTranslate,
             focus: None,
@@ -126,6 +132,7 @@ impl CacheKey {
             // answers a question nobody asked.
             source: normalise(&request.source_text),
             target_language: request.target_language.clone(),
+            provider,
             model: model.to_owned(),
             prompt_version,
         }
@@ -141,11 +148,17 @@ impl CacheKey {
     /// key. It is derived from the source, the target and the model, all three
     /// of which are already here, so including it would add nothing and would
     /// let a streamed answer's last-token wobble evict an explanation.
-    pub fn for_analysis(request: &DeepRequest, model: &str, prompt_version: u32) -> Self {
+    pub fn for_analysis(
+        request: &DeepRequest,
+        provider: Provider,
+        model: &str,
+        prompt_version: u32,
+    ) -> Self {
         Self {
             asked: Asked::ToExplain,
             source: normalise(&request.sentence),
             target_language: request.target_language.clone(),
+            provider,
             model: model.to_owned(),
             prompt_version,
             focus: request.word.as_deref().map(normalise),
@@ -293,7 +306,12 @@ mod tests {
     }
 
     fn key(source: &str) -> CacheKey {
-        CacheKey::of(&QuickRequest::new(source, "Korean"), "qwen2.5:3b", 1)
+        CacheKey::of(
+            &QuickRequest::new(source, "Korean"),
+            Provider::Ollama,
+            "qwen2.5:3b",
+            1,
+        )
     }
 
     #[test]
@@ -366,11 +384,13 @@ mod tests {
         let sentence = "The suite did not produce anything.";
         let on_produce = CacheKey::of(
             &QuickRequest::new(sentence, "Korean").with_focus("produce"),
+            Provider::Ollama,
             "qwen2.5:3b",
             1,
         );
         let on_suite = CacheKey::of(
             &QuickRequest::new(sentence, "Korean").with_focus("suite"),
+            Provider::Ollama,
             "qwen2.5:3b",
             1,
         );
@@ -388,11 +408,13 @@ mod tests {
         let mut cache = TranslationCache::new(8);
         let first = CacheKey::of(
             &QuickRequest::new("The suite did not produce anything.", "Korean"),
+            Provider::Ollama,
             "qwen2.5:3b",
             1,
         );
         let second = CacheKey::of(
             &QuickRequest::new("The suite produced nothing at all.", "Korean"),
+            Provider::Ollama,
             "qwen2.5:3b",
             1,
         );
@@ -404,13 +426,16 @@ mod tests {
     fn a_different_model_or_prompt_does_not_reuse_the_old_answer() {
         let mut cache = TranslationCache::new(8);
         let request = QuickRequest::new("something", "Korean");
-        cache.insert(CacheKey::of(&request, "qwen2.5:3b", 1), answer("가", 1));
+        cache.insert(
+            CacheKey::of(&request, Provider::Ollama, "qwen2.5:3b", 1),
+            answer("가", 1),
+        );
 
         assert!(cache
-            .get(&CacheKey::of(&request, "gemma4:e4b", 1))
+            .get(&CacheKey::of(&request, Provider::Ollama, "gemma4:e4b", 1))
             .is_none());
         assert!(cache
-            .get(&CacheKey::of(&request, "qwen2.5:3b", 2))
+            .get(&CacheKey::of(&request, Provider::Ollama, "qwen2.5:3b", 2))
             .is_none());
     }
 
@@ -428,11 +453,21 @@ mod tests {
         let sentence = "The pointer must rest before anything is read.";
 
         // Model A translates the sentence.
-        let model_a_key = CacheKey::of(&QuickRequest::new(sentence, "Korean"), "qwen2.5:3b", 1);
+        let model_a_key = CacheKey::of(
+            &QuickRequest::new(sentence, "Korean"),
+            Provider::Ollama,
+            "qwen2.5:3b",
+            1,
+        );
         cache.insert(model_a_key, answer("포인터가 멈춰야 합니다.", 2400));
 
         // The reader switches to model B. Same sentence, same prompt version.
-        let model_b_key = CacheKey::of(&QuickRequest::new(sentence, "Korean"), "gemma4:e4b", 1);
+        let model_b_key = CacheKey::of(
+            &QuickRequest::new(sentence, "Korean"),
+            Provider::Ollama,
+            "gemma4:e4b",
+            1,
+        );
 
         // Cache miss: model B's answer must come from a fresh model call.
         assert!(
@@ -446,7 +481,12 @@ mod tests {
         assert_eq!(hit.text, "포인터가 쉬어야 합니다.");
 
         // Model A's answer is still in the cache (not overwritten).
-        let model_a_again = CacheKey::of(&QuickRequest::new(sentence, "Korean"), "qwen2.5:3b", 1);
+        let model_a_again = CacheKey::of(
+            &QuickRequest::new(sentence, "Korean"),
+            Provider::Ollama,
+            "qwen2.5:3b",
+            1,
+        );
         let hit_a = cache
             .get(&model_a_again)
             .expect("model A answer still cached");
@@ -457,12 +497,18 @@ mod tests {
     fn a_different_target_language_is_a_different_question() {
         let mut cache = TranslationCache::new(8);
         cache.insert(
-            CacheKey::of(&QuickRequest::new("hello", "Korean"), "m", 1),
+            CacheKey::of(
+                &QuickRequest::new("hello", "Korean"),
+                Provider::Ollama,
+                "m",
+                1,
+            ),
             answer("안녕", 1),
         );
         assert!(cache
             .get(&CacheKey::of(
                 &QuickRequest::new("hello", "Japanese"),
+                Provider::Ollama,
                 "m",
                 1
             ))
@@ -530,8 +576,8 @@ mod two_path_tests {
     /// for the next word is not a shade of wording, it is wrong.
     #[test]
     fn a_different_word_in_one_sentence_is_a_different_explanation() {
-        let rest = CacheKey::for_analysis(&a_deep_request(Some("rest")), "m", 1);
-        let read = CacheKey::for_analysis(&a_deep_request(Some("read")), "m", 1);
+        let rest = CacheKey::for_analysis(&a_deep_request(Some("rest")), Provider::Ollama, "m", 1);
+        let read = CacheKey::for_analysis(&a_deep_request(Some("read")), Provider::Ollama, "m", 1);
         assert_ne!(rest, read);
     }
 
@@ -542,11 +588,13 @@ mod two_path_tests {
         let sentence = "The pointer must rest before anything is read.";
         let rest = CacheKey::of(
             &QuickRequest::new(sentence, "Korean").with_focus("rest"),
+            Provider::Ollama,
             "m",
             1,
         );
         let read = CacheKey::of(
             &QuickRequest::new(sentence, "Korean").with_focus("read"),
+            Provider::Ollama,
             "m",
             1,
         );
@@ -561,8 +609,13 @@ mod two_path_tests {
     #[test]
     fn a_translation_key_and_an_explanation_key_are_never_equal() {
         let sentence = "The pointer must rest before anything is read.";
-        let quick = CacheKey::of(&QuickRequest::new(sentence, "Korean"), "m", 1);
-        let deep = CacheKey::for_analysis(&a_deep_request(None), "m", 1);
+        let quick = CacheKey::of(
+            &QuickRequest::new(sentence, "Korean"),
+            Provider::Ollama,
+            "m",
+            1,
+        );
+        let deep = CacheKey::for_analysis(&a_deep_request(None), Provider::Ollama, "m", 1);
         assert_ne!(quick, deep);
     }
 
@@ -570,7 +623,7 @@ mod two_path_tests {
     #[test]
     fn an_explanation_from_memory_is_marked_as_such() {
         let mut cache = AnalysisCache::new(4);
-        let key = CacheKey::for_analysis(&a_deep_request(Some("rest")), "m", 1);
+        let key = CacheKey::for_analysis(&a_deep_request(Some("rest")), Provider::Ollama, "m", 1);
         cache.insert(
             key.clone(),
             DeepAnalysis {
@@ -593,8 +646,8 @@ mod two_path_tests {
     fn the_two_prompt_versions_move_independently() {
         let request = a_deep_request(Some("rest"));
         assert_ne!(
-            CacheKey::for_analysis(&request, "m", 1),
-            CacheKey::for_analysis(&request, "m", 2),
+            CacheKey::for_analysis(&request, Provider::Ollama, "m", 1),
+            CacheKey::for_analysis(&request, Provider::Ollama, "m", 2),
         );
     }
 
@@ -606,7 +659,7 @@ mod two_path_tests {
         let mut cache = AnalysisCache::new(8);
         let request = a_deep_request(Some("rest"));
 
-        let key_a = CacheKey::for_analysis(&request, "qwen2.5:7b", 1);
+        let key_a = CacheKey::for_analysis(&request, Provider::Ollama, "qwen2.5:7b", 1);
         cache.insert(
             key_a,
             DeepAnalysis {
@@ -616,7 +669,7 @@ mod two_path_tests {
             },
         );
 
-        let key_b = CacheKey::for_analysis(&request, "gemma3:12b", 1);
+        let key_b = CacheKey::for_analysis(&request, Provider::Ollama, "gemma3:12b", 1);
         assert!(
             cache.get(&key_b).is_none(),
             "switching deep models must not serve the previous model's cached analysis",
@@ -640,6 +693,7 @@ mod profile_key_tests {
             CacheKey::for_analysis(
                 &DeepRequest::new("The lease is renewed.", "임대는 갱신됩니다.", "Korean")
                     .for_reader(profile),
+                Provider::Ollama,
                 "qwen2.5:7b",
                 1,
             )
@@ -654,9 +708,74 @@ mod profile_key_tests {
     fn a_translation_key_carries_no_profile() {
         let key = CacheKey::of(
             &crate::translate::QuickRequest::new("The lease is renewed.", "Korean"),
+            Provider::Ollama,
             "qwen2.5:7b",
             1,
         );
         assert_eq!(key.profile, None);
+    }
+}
+
+#[cfg(test)]
+mod provider_identity_tests {
+    use super::*;
+    use crate::translate::QuickRequest;
+
+    /// P6: Provider identity is part of cache key.
+    ///
+    /// Same model ID from different providers must not share cache entries.
+    /// A user running Ollama and LM Studio with the same model name (e.g.,
+    /// "qwen2.5:7b") would see LM Studio's answer served for Ollama hovers
+    /// if provider were not in the key. The two providers have different
+    /// endpoints, different inference characteristics, and potentially
+    /// different model weights even when the name matches.
+    #[test]
+    fn different_producers_with_same_model_are_different_keys() {
+        let request = QuickRequest::new("The suite produces nothing.", "Korean");
+        let ollama_key = CacheKey::of(&request, Provider::Ollama, "qwen2.5:7b", 1);
+        let lmstudio_key = CacheKey::of(&request, Provider::LmStudio, "qwen2.5:7b", 1);
+        assert_ne!(
+            ollama_key, lmstudio_key,
+            "same model ID from different providers must not share cache entries",
+        );
+    }
+
+    /// The deep path carries provider identity too.
+    #[test]
+    fn deep_keys_differ_by_provider() {
+        let request = DeepRequest::new("The lease is renewed.", "임대는 갱신됩니다.", "Korean");
+        let ollama_key = CacheKey::for_analysis(&request, Provider::Ollama, "qwen2.5:7b", 1);
+        let lmstudio_key = CacheKey::for_analysis(&request, Provider::LmStudio, "qwen2.5:7b", 1);
+        assert_ne!(
+            ollama_key, lmstudio_key,
+            "deep analysis keys must differ by provider",
+        );
+    }
+
+    /// A cache filled by one provider does not serve the other.
+    #[test]
+    fn cache_filled_by_one_provider_does_not_serve_the_other() {
+        let mut cache = TranslationCache::new(8);
+        let request = QuickRequest::new("The suite produces nothing.", "Korean");
+
+        let ollama_key = CacheKey::of(&request, Provider::Ollama, "qwen2.5:7b", 1);
+        cache.insert(
+            ollama_key,
+            QuickTranslation {
+                text: "아무것도 생성하지 않습니다.".to_owned(),
+                engine: crate::translate::EngineId::Local,
+                model: "qwen2.5:7b".to_owned(),
+                latency_ms: 2400,
+                cached: false,
+                part_was_removed: false,
+                name_changed: false,
+            },
+        );
+
+        let lmstudio_key = CacheKey::of(&request, Provider::LmStudio, "qwen2.5:7b", 1);
+        assert!(
+            cache.get(&lmstudio_key).is_none(),
+            "LM Studio hover must not receive Ollama's cached translation",
+        );
     }
 }

@@ -1010,7 +1010,12 @@ fn measure_deep_latency_breakdown() {
     let mut cache = AnalysisCache::new(32);
     for entry in entries {
         let request = build_request(entry, None);
-        let key = CacheKey::for_analysis(&request, translator.model(), DEEP_PROMPT_VERSION);
+        let key = CacheKey::for_analysis(
+            &request,
+            lens_core::translate::Provider::Ollama,
+            translator.model(),
+            DEEP_PROMPT_VERSION,
+        );
         if let Ok(analysis) = translator.deep(&request) {
             cache.insert(key.clone(), analysis);
             let start = Instant::now();

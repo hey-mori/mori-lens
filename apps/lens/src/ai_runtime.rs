@@ -260,7 +260,7 @@ mod tests {
     fn cache_keys_differ_by_model() {
         use lens_core::analyse::DeepRequest;
         use lens_core::cache::CacheKey;
-        use lens_core::translate::QuickRequest;
+        use lens_core::translate::{Provider, QuickRequest};
 
         // Prove that the same request with different models produces different cache keys.
         // This is critical for ADR-0005: Quick and Deep must have separate cache namespaces.
@@ -269,18 +269,18 @@ mod tests {
         let deep_request = DeepRequest::new("Hello world", "Hello 세계", "Korean");
 
         // Quick path: same request, different models -> different keys
-        let key_q1 = CacheKey::of(&quick_request, "qwen2.5:3b", 1);
-        let key_q2 = CacheKey::of(&quick_request, "llama3.1:8b", 1);
+        let key_q1 = CacheKey::of(&quick_request, Provider::Ollama, "qwen2.5:3b", 1);
+        let key_q2 = CacheKey::of(&quick_request, Provider::Ollama, "llama3.1:8b", 1);
         assert_ne!(key_q1, key_q2, "Quick cache keys must differ by model");
 
         // Deep path: same request, different models -> different keys
-        let key_d1 = CacheKey::for_analysis(&deep_request, "qwen2.5:3b", 1);
-        let key_d2 = CacheKey::for_analysis(&deep_request, "llama3.1:8b", 1);
+        let key_d1 = CacheKey::for_analysis(&deep_request, Provider::Ollama, "qwen2.5:3b", 1);
+        let key_d2 = CacheKey::for_analysis(&deep_request, Provider::Ollama, "llama3.1:8b", 1);
         assert_ne!(key_d1, key_d2, "Deep cache keys must differ by model");
 
         // Quick and Deep with same model still produce different keys (different request types)
-        let key_quick = CacheKey::of(&quick_request, "qwen2.5:3b", 1);
-        let key_deep = CacheKey::for_analysis(&deep_request, "qwen2.5:3b", 1);
+        let key_quick = CacheKey::of(&quick_request, Provider::Ollama, "qwen2.5:3b", 1);
+        let key_deep = CacheKey::for_analysis(&deep_request, Provider::Ollama, "qwen2.5:3b", 1);
         assert_ne!(
             key_quick, key_deep,
             "Quick and Deep cache keys must differ even with same model"
