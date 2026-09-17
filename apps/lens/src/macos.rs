@@ -579,7 +579,7 @@ fn product_loop(
             // Only create cache key and perform translation when we have a real model and translator
             let result = match (&current_model, &translator) {
                 (Some(model), Some(trans)) => {
-                    let key = CacheKey::of(request, model.as_str(), QUICK_PROMPT_VERSION);
+                    let key = CacheKey::of(request, current_provider, model.as_str(), QUICK_PROMPT_VERSION);
                     // Check cache before paying for translation.
                     {
                         if let Ok(mut c) = quick_cache.lock() {
@@ -690,6 +690,7 @@ fn product_loop(
             // Cache key uses the pre-resolved model string for ADR-0005 identity.
             let key = CacheKey::for_analysis(
                 &deep_req,
+                current_provider,
                 current_model.as_deref().unwrap_or("auto"),
                 DEEP_PROMPT_VERSION,
             );
