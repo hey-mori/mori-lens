@@ -3174,6 +3174,7 @@ fn record_presented_reading(
                     None => "unknown",
                 };
                 let model = meta.and_then(|m| m.model.clone());
+                let provider = meta.and_then(|m| m.provider.clone());
                 let stored_app = if current.history_store_app {
                     app_name
                 } else {
@@ -3187,6 +3188,7 @@ fn record_presented_reading(
                     source_language: None,
                     target_language: Some(target_language.to_owned()),
                     model,
+                    provider,
                     app: stored_app,
                     provenance: provenance.to_owned(),
                     provider_scope: provider_scope.to_owned(),
@@ -4142,6 +4144,7 @@ mod history_privacy_tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
             app: Some("chrome.exe".to_owned()),
             provenance: "accessibility".to_owned(),
             provider_scope: "local".to_owned(),
