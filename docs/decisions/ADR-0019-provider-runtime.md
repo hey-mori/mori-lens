@@ -17,9 +17,10 @@ revealed a tension:
   (`/api/v1/models`) for management and an OpenAI-compatible API
   (`/v1/chat/completions`) for inference.
 - Lifecycle operations (load, unload, prewarm, release) are
-  provider-specific. Ollama keeps models in memory by default. LM Studio
-  requires explicit load/unload. Forcing a common lifecycle abstraction
-  would be a lie.
+  provider-specific. Ollama keeps models in memory by default and uses
+  implicit loading. LM Studio supports both JIT loading (implicit on
+  first request) and explicit load/unload APIs. Forcing a common
+  lifecycle abstraction would be a lie.
 
 The question: how do we support multiple providers without pretending
 they are the same?
@@ -113,9 +114,8 @@ coupling.
 | Model lifecycle (load/unload) | Implicit (Ollama manages) | Explicit API (LM Studio supports load/unload; JIT on first request) |
 
 Deep analysis is Ollama-only because the `Analyser` trait is implemented
-only by `OllamaTranslator`. LM Studio honestly returns `None` when asked
-for a Deep analyser. This is not a bug. It is a capability gap that the
-UI respects.
+only by `OllamaTranslator`. No `LmStudioAnalyser` exists. This is not a
+bug. It is a capability gap that the UI respects.
 
 ### Local-first network boundary
 
@@ -170,8 +170,9 @@ by starting the provider or loading the model. That is the user's job.
   its own API surface, its own model state semantics, and its own
   reachability contract.
 - Lifecycle operations remain provider-specific. Ollama's implicit
-  memory management and LM Studio's explicit load/unload are not forced
-  into a common abstraction. The abstraction would be a lie.
+  memory management and LM Studio's dual model (JIT loading plus
+  explicit load/unload APIs) are not forced into a common abstraction.
+  The abstraction would be a lie.
 - Deep analysis is honestly limited. LM Studio does not support it. The
   UI respects that limit. There is no attempt to fake it or work around
   it.
@@ -201,12 +202,11 @@ contracts are separate.
 `ProviderRuntime` so all providers share a common lifecycle contract.
 
 **Rejection:** Lifecycle semantics are provider-specific. Ollama keeps
-models in memory by default and does not expose explicit load/unload.
-LM Studio requires explicit load/unload. Forcing a common abstraction
-would mean Ollama's implementation is a no-op and LM Studio's
-implementation is a wrapper around its native API. The abstraction would
-not simplify anything. It would hide the provider's actual behavior
-behind a fake uniformity.
+models in memory by default and uses implicit loading. LM Studio supports
+both JIT loading (implicit on first request) and explicit load/unload
+APIs. Forcing a common abstraction would mean hiding these differences
+behind a uniform interface. The abstraction would not simplify anything.
+It would hide the provider's actual behavior behind a fake uniformity.
 
 If a third provider arrives with yet another lifecycle model, the
 question of whether to abstract will be revisited. Until then, the
