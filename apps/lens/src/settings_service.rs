@@ -143,6 +143,12 @@ pub fn load_or_migrate(
                         eprintln!("settings  migration note: {}", problem.message);
                     }
                 }
+                lens_settings::LoadDisposition::SchemaVersionMigrated {
+                    from_version,
+                    to_version,
+                } => {
+                    println!("settings  migrated schema v{from_version} to v{to_version}");
+                }
                 lens_settings::LoadDisposition::InvalidPreserved { reason } => {
                     eprintln!("settings  {reason}");
                 }
