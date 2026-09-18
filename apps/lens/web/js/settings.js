@@ -3,6 +3,7 @@
 import { invoke } from './tauri.js';
 import { setStatus } from './ui.js';
 import { state } from './state.js';
+import { refreshLocalAiStatus } from './local_ai.js';
 
 const PROVIDER_DEFAULT_ENDPOINTS = {
   ollama: '127.0.0.1:11434',
@@ -70,6 +71,13 @@ export async function saveSettings() {
     state.currentSettings = outcome.settings;
     applySettingsToForm(outcome.settings);
     import('./apps.js').then(m => m.renderApps());
+
+    // Refresh Local AI status after successful save to reflect new configuration.
+    // The status represents saved configuration (not active runtime), so refreshing
+    // immediately is correct even when restart is required. The restart indicator
+    // separately shows that active runtime differs from saved configuration.
+    await refreshLocalAiStatus();
+
     if (outcome.restart_required) {
       setStatus('저장됨 · 변경사항을 적용하려면 Mori Lens를 다시 시작하세요', true);
     } else {
