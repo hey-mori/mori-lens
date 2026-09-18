@@ -90,8 +90,8 @@ code = deny
         assert_eq!(
             schema.applications,
             vec![
-                ("chrome".to_owned(), AppTier::Allow),
-                ("code".to_owned(), AppTier::Deny),
+                crate::schema::ApplicationConfig::new("chrome".to_owned(), AppTier::Allow),
+                crate::schema::ApplicationConfig::new("code".to_owned(), AppTier::Deny),
             ]
         );
     }
