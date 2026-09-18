@@ -272,6 +272,8 @@ struct Options {
     ai_config: AiRuntimeConfig,
     /// When the OCR fallback may run.
     ocr_mode: OcrMode,
+    /// Per-application OCR overrides.
+    ocr_rules: Vec<lens_core::policy::AppOcrRule>,
     /// Who is reading, which decides what Ctrl+Alt+D spends its lines on.
     profile: Profile,
     dwell: Duration,
@@ -548,6 +550,19 @@ fn parse() -> Result<Options, String> {
         dwell_ms: flags.dwell_ms,
     };
 
+    // Extract per-application OCR overrides from the schema.
+    // Each ApplicationConfig with an `ocr` field becomes an AppOcrRule.
+    let ocr_rules: Vec<lens_core::policy::AppOcrRule> = schema
+        .applications
+        .iter()
+        .filter_map(|app| {
+            app.ocr
+                .as_ref()
+                .and_then(|ocr_str| OcrMode::named(ocr_str))
+                .and_then(|mode| lens_core::policy::AppOcrRule::new(&app.name, mode))
+        })
+        .collect();
+
     Ok(Options {
         selftest: flags.selftest,
         preset: preset_named(flags.theme.as_ref().unwrap_or(&settings.theme))?,
@@ -566,6 +581,7 @@ fn parse() -> Result<Options, String> {
             .and_then(OcrMode::named)
             .or_else(|| OcrMode::named(&settings.ocr))
             .unwrap_or(OcrMode::Manual),
+        ocr_rules,
         // The settings string is already validated by the parser, which reports
         // an unknown value rather than storing it. `unwrap_or_default` is the
         // second line of that and not the first.
@@ -1401,6 +1417,15 @@ pub fn main() -> std::process::ExitCode {
     // pause key keeps working, none of which was true: a wedged provider took
     // all three with it for as long as it took to give up (issue #42).
     let worker_ocr = options.ocr_mode;
+    let worker_ocr_rules = options.ocr_rules.clone();
+    // Determine if OCR capability is needed: install if global is Automatic,
+    // or if ANY per-app rule requires Automatic, or if CLI override is Automatic.
+    // A CLI override of Off or Manual does not prevent installation if per-app
+    // rules require it; the override is resolved per-hover in ocr_fallback().
+    let needs_ocr = worker_ocr == OcrMode::Automatic
+        || worker_ocr_rules
+            .iter()
+            .any(|rule| rule.ocr() == OcrMode::Automatic);
     // Hiding the card is the overlay's business, and the overlay lives on
     // another thread again, so what crosses is a request rather than a handle.
     let hide_for_ocr = overlay.hider();
@@ -1420,27 +1445,25 @@ pub fn main() -> std::process::ExitCode {
             Some(placement) => Box::new(lesson::TaughtFirst::new(placement, Box::new(acquirer))),
             None => Box::new(acquirer),
         };
-        let session = HoverSession::new(worker_config, worker_policy, acquirer);
-        // **Only for `Automatic`.** Installing it for `Manual` would look
-        // tidier and do nothing: the session's manual branch fires on
-        // `InputState::ocr_requested`, which this product never sets, because
-        // `Ctrl+Alt+O` is served by `manual_ocr` instead. That path is not
-        // redundant, it carries things a `TextTarget` has no room for: the
-        // count of misread words for the card's footer, and its own refusals
-        // in the reader's language. Two paths, and the honest arrangement is
-        // to say so rather than to install something that has no effect.
-        Some(match worker_ocr {
-            OcrMode::Automatic => session.with_ocr(
+        let session = HoverSession::new(worker_config, worker_policy, acquirer)
+            .with_ocr_rules(worker_ocr_rules)
+            .with_cli_ocr_override(None); // CLI override is resolved in win.rs, not passed here
+        // Install OCR if needed: global Automatic, or any per-app rule requires it.
+        // The per-hover decision in ocr_fallback() uses effective_ocr() to resolve
+        // the actual mode based on the application under the pointer.
+        Some(if needs_ocr {
+            session.with_ocr(
                 Box::new(lens_platform_windows::OcrTextAcquirer::new(
                     Box::new(hide_for_ocr),
                     worker_cost,
                 )),
-                OcrMode::Automatic,
-            ),
+                worker_ocr,
+            )
+        } else {
             // `Off` and `Manual` both leave the session without a capture
             // path. They differ in what `Ctrl+Alt+O` does, which is the app's
             // business rather than the session's.
-            _ => session,
+            session
         })
     }) else {
         eprintln!("the acquisition thread could not be started");
@@ -2212,6 +2235,28 @@ pub fn main() -> std::process::ExitCode {
                     }
                     if OcrMode::named(&settings.ocr) != Some(options.ocr_mode) {
                         stale.push("ocr");
+                    }
+                    // Check if per-app OCR rules changed.
+                    if let Ok(file) = lens_settings::SettingsFile::load(&options.source.path) {
+                        let current_rules: Vec<lens_core::policy::AppOcrRule> = file
+                            .schema()
+                            .applications
+                            .iter()
+                            .filter_map(|app| {
+                                app.ocr
+                                    .as_ref()
+                                    .and_then(|ocr_str| OcrMode::named(ocr_str))
+                                    .and_then(|mode| lens_core::policy::AppOcrRule::new(&app.name, mode))
+                            })
+                            .collect();
+                        if current_rules.len() != options.ocr_rules.len()
+                            || current_rules
+                                .iter()
+                                .zip(options.ocr_rules.iter())
+                                .any(|(a, b)| a != b)
+                        {
+                            stale.push("per-app ocr");
+                        }
                     }
                     if !stale.is_empty() {
                         let keys = stale.join(", ");
