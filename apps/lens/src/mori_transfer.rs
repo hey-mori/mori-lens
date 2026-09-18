@@ -334,6 +334,7 @@ mod tests {
             source_language: Some("en".to_string()),
             target_language: Some("ko".to_string()),
             model: None,
+            provider: None,
             note: Some("a note".to_string()),
             tags: Some(vec!["cargo".to_string(), "build".to_string()]),
             review_state: None,

@@ -168,6 +168,7 @@ fn import_saved_md(library: &Library, data_dir: &Path) {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
             note: None,
             tags: None,
             review_state: None,

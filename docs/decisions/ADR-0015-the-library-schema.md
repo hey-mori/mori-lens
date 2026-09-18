@@ -20,8 +20,9 @@ asked for yet.
 
 ## Decision
 
-**One table, versioned migrations, LIKE search.** The schema is small
-enough to state here in full.
+**One table, versioned migrations, LIKE search.** Migration 1 established
+the base schema shown below; later migrations extend it as documented in
+Consequences.
 
 ### The library table
 
@@ -131,6 +132,16 @@ Migration 7 remaps `"new"` and `"learning"` to `"later"`, `"mastered"`
 to `"known"`, drops the partial index on `next_review_at`, and adds an
 `archived_at` column. The reader opens the Library and picks what to
 review; no timers, no notifications, no automatic scheduling.
+
+**Migration 8 adds provider provenance to history and library.** Both
+tables gain a `provider` TEXT column (NULL for legacy rows). This
+records which inference engine produced the answer (`"ollama"`,
+`"lmstudio"`), distinct from `model` (which model ID), `provider_scope`
+(where inference ran relative to trust boundary), and acquisition
+provenance (how text was captured). Duplicate detection becomes
+provider-aware: the same original + kind + model + target_language with
+a different provider is a new row. Legacy rows have `provider = NULL`
+(unknown provenance); the migration never guesses.
 
 **`saved.md` is still written on every save.** The database is a second
 store alongside the file, not a replacement. If the database write

@@ -175,7 +175,7 @@ mod tests {
     use super::Detail;
     use crate::analyse::DeepAnalysis;
     use crate::card::{Card, CardBody};
-    use crate::translate::{EngineId, QuickTranslation};
+    use crate::translate::{EngineId, Provider, QuickTranslation};
 
     fn a_translation() -> Card {
         Card::translated(
@@ -184,6 +184,7 @@ mod tests {
                 text: "제공자는 각 렌더링된 줄당 하나의 직사각형을 반환합니다.".to_owned(),
                 engine: EngineId::Local,
                 model: "qwen2.5:7b".to_owned(),
+                provider: Provider::default(),
                 latency_ms: 1500,
                 cached: false,
                 part_was_removed: false,

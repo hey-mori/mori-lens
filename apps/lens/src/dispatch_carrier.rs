@@ -272,6 +272,7 @@ mod tests {
             text: "테스트".to_owned(),
             engine: lens_core::translate::EngineId::Local,
             model: "test".to_owned(),
+            provider: lens_core::translate::Provider::Ollama,
             latency_ms: 0,
             cached: false,
             part_was_removed: false,
