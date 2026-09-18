@@ -1185,7 +1185,12 @@ pub fn main() -> std::process::ExitCode {
             // Only create cache key and perform translation when we have a real model and translator
             match (&worker_quick_model, &quick_translator) {
                 (Some(model), Some(translator)) => {
-                    let key = CacheKey::of(&request, worker_quick_provider, model.as_str(), PROMPT_VERSION);
+                    let key = CacheKey::of(
+                        &request,
+                        worker_quick_provider,
+                        model.as_str(),
+                        PROMPT_VERSION,
+                    );
                     if let Some(hit) = cache.get(&key) {
                         let mut card = Card::translated(&job.display_text, &hit);
                         if job.doubtful {
@@ -1896,6 +1901,10 @@ pub fn main() -> std::process::ExitCode {
                             .as_ref()
                             .and_then(|r| r.card.metadata())
                             .and_then(|m| m.model.clone());
+                        view.provider = on_screen
+                            .as_ref()
+                            .and_then(|r| r.card.metadata())
+                            .and_then(|m| m.provider.map(|p| p.as_str().to_owned()));
                         let explained = view.rows.iter().any(|(_, v)| !v.trim().is_empty());
                         *loop_detail.lock().unwrap() = Some(view);
                         loop_tauri.show_detail_window();
@@ -3174,6 +3183,7 @@ fn record_presented_reading(
                     None => "unknown",
                 };
                 let model = meta.and_then(|m| m.model.clone());
+                let provider = meta.and_then(|m| m.provider.map(|p| p.as_str().to_owned()));
                 let stored_app = if current.history_store_app {
                     app_name
                 } else {
@@ -3187,6 +3197,7 @@ fn record_presented_reading(
                     source_language: None,
                     target_language: Some(target_language.to_owned()),
                     model,
+                    provider,
                     app: stored_app,
                     provenance: provenance.to_owned(),
                     provider_scope: provider_scope.to_owned(),
@@ -4142,6 +4153,7 @@ mod history_privacy_tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
             app: Some("chrome.exe".to_owned()),
             provenance: "accessibility".to_owned(),
             provider_scope: "local".to_owned(),
@@ -4636,6 +4648,7 @@ mod copy_provenance_tests {
             text: "안녕".to_owned(),
             engine: lens_core::translate::EngineId::Local,
             model: "model-A".to_owned(),
+            provider: lens_core::translate::Provider::Ollama,
             latency_ms: 42,
             cached: false,
             part_was_removed: false,
@@ -4681,6 +4694,7 @@ mod copy_provenance_tests {
             text: "세상".to_owned(),
             engine: lens_core::translate::EngineId::Local,
             model: "qwen2.5:7b".to_owned(),
+            provider: lens_core::translate::Provider::Ollama,
             latency_ms: 99,
             cached: false,
             part_was_removed: false,

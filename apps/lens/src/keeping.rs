@@ -273,13 +273,14 @@ fn write_to_library(lib: &Library, entry: &Entry, at: SystemTime) -> StructuredS
         "translation"
     };
 
-    // Skip duplicates: a sentence kept twice with the same model and target
+    // Skip duplicates: a sentence kept twice with the same provider, model, and target
     // language produces one database row. ADR-0013 requires that a different
-    // model or a different target language for the same sentence is a new row.
+    // provider, model, or target language for the same sentence is a new row.
     // Use find_duplicate_id so we can return the existing row id to callers.
     let duplicate_check = lib.find_duplicate_id(
         &entry.original,
         kind,
+        entry.provider.map(|p| p.as_str()),
         entry.model.as_deref(),
         entry.target_language.as_deref(),
     );
@@ -304,6 +305,7 @@ fn write_to_library(lib: &Library, entry: &Entry, at: SystemTime) -> StructuredS
         source_language: entry.source_language.clone(),
         target_language: entry.target_language.clone(),
         model: entry.model.clone(),
+        provider: entry.provider.map(|p| p.as_str().to_owned()),
         note: None,
         tags: None,
         review_state: None,
@@ -341,6 +343,7 @@ mod tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
         }
     }
 
@@ -475,6 +478,7 @@ mod tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
         };
         append(&file, &entry, at, &lib).expect("kept");
 
@@ -618,6 +622,7 @@ mod tests {
             source_language: Some("English".to_owned()),
             target_language: Some("Korean".to_owned()),
             model: Some("qwen2.5:7b".to_owned()),
+            provider: None,
         };
         append(&file, &entry, at, &lib).expect("kept");
 
@@ -640,6 +645,7 @@ mod tests {
                 text: "안녕 세계".to_owned(),
                 engine: EngineId::Local,
                 model: "qwen2.5:7b".to_owned(),
+                provider: lens_core::translate::Provider::Ollama,
                 latency_ms: 42,
                 cached: false,
                 part_was_removed: false,

@@ -579,7 +579,12 @@ fn product_loop(
             // Only create cache key and perform translation when we have a real model and translator
             let result = match (&current_model, &translator) {
                 (Some(model), Some(trans)) => {
-                    let key = CacheKey::of(request, current_provider, model.as_str(), QUICK_PROMPT_VERSION);
+                    let key = CacheKey::of(
+                        request,
+                        current_provider,
+                        model.as_str(),
+                        QUICK_PROMPT_VERSION,
+                    );
                     // Check cache before paying for translation.
                     {
                         if let Ok(mut c) = quick_cache.lock() {
@@ -1630,6 +1635,7 @@ fn record_presented_reading(
                     None => "unknown",
                 };
                 let model = meta.and_then(|m| m.model.clone());
+                let provider = meta.and_then(|m| m.provider.map(|p| p.as_str().to_owned()));
                 let stored_app = if current.history_store_app {
                     app_name
                 } else {
@@ -1643,6 +1649,7 @@ fn record_presented_reading(
                     source_language: None,
                     target_language: Some(target_language.to_owned()),
                     model,
+                    provider,
                     app: stored_app,
                     provenance: provenance.to_owned(),
                     provider_scope: provider_scope.to_owned(),
