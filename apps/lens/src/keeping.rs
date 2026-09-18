@@ -645,6 +645,7 @@ mod tests {
                 text: "안녕 세계".to_owned(),
                 engine: EngineId::Local,
                 model: "qwen2.5:7b".to_owned(),
+                provider: lens_core::translate::Provider::Ollama,
                 latency_ms: 42,
                 cached: false,
                 part_was_removed: false,

@@ -1896,6 +1896,10 @@ pub fn main() -> std::process::ExitCode {
                             .as_ref()
                             .and_then(|r| r.card.metadata())
                             .and_then(|m| m.model.clone());
+                        view.provider = on_screen
+                            .as_ref()
+                            .and_then(|r| r.card.metadata())
+                            .and_then(|m| m.provider.map(|p| p.as_str().to_owned()));
                         let explained = view.rows.iter().any(|(_, v)| !v.trim().is_empty());
                         *loop_detail.lock().unwrap() = Some(view);
                         loop_tauri.show_detail_window();
@@ -4639,6 +4643,7 @@ mod copy_provenance_tests {
             text: "안녕".to_owned(),
             engine: lens_core::translate::EngineId::Local,
             model: "model-A".to_owned(),
+            provider: lens_core::translate::Provider::Ollama,
             latency_ms: 42,
             cached: false,
             part_was_removed: false,
@@ -4684,6 +4689,7 @@ mod copy_provenance_tests {
             text: "세상".to_owned(),
             engine: lens_core::translate::EngineId::Local,
             model: "qwen2.5:7b".to_owned(),
+            provider: lens_core::translate::Provider::Ollama,
             latency_ms: 99,
             cached: false,
             part_was_removed: false,
