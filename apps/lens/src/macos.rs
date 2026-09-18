@@ -579,7 +579,12 @@ fn product_loop(
             // Only create cache key and perform translation when we have a real model and translator
             let result = match (&current_model, &translator) {
                 (Some(model), Some(trans)) => {
-                    let key = CacheKey::of(request, current_provider, model.as_str(), QUICK_PROMPT_VERSION);
+                    let key = CacheKey::of(
+                        request,
+                        current_provider,
+                        model.as_str(),
+                        QUICK_PROMPT_VERSION,
+                    );
                     // Check cache before paying for translation.
                     {
                         if let Ok(mut c) = quick_cache.lock() {

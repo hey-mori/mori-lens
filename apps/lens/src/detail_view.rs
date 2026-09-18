@@ -218,7 +218,10 @@ pub(crate) fn detail_save(
             source_language: view.source_language.clone(),
             target_language: view.target_language.clone(),
             model: view.model.clone(),
-            provider: view.provider.as_deref().and_then(lens_core::translate::Provider::from_token),
+            provider: view
+                .provider
+                .as_deref()
+                .and_then(lens_core::translate::Provider::from_token),
         };
         (view.revision, entry)
     };
@@ -522,7 +525,9 @@ mod tests {
             name_changed: false,
         };
         let ollama_card = Card::translated("Hello", &ollama_translation);
-        let ollama_entry = ollama_card.kept_as(Some("Code.exe")).expect("should produce entry");
+        let ollama_entry = ollama_card
+            .kept_as(Some("Code.exe"))
+            .expect("should produce entry");
         assert_eq!(
             ollama_entry.provider,
             Some(Provider::Ollama),
@@ -541,7 +546,9 @@ mod tests {
             name_changed: false,
         };
         let lm_card = Card::translated("Hello", &lm_translation);
-        let lm_entry = lm_card.kept_as(Some("Code.exe")).expect("should produce entry");
+        let lm_entry = lm_card
+            .kept_as(Some("Code.exe"))
+            .expect("should produce entry");
         assert_eq!(
             lm_entry.provider,
             Some(Provider::LmStudio),
@@ -568,7 +575,9 @@ mod tests {
             links: vec![],
         };
         let card = Card::analysed("running", &analysis);
-        let entry = card.kept_as(Some("Code.exe")).expect("should produce entry");
+        let entry = card
+            .kept_as(Some("Code.exe"))
+            .expect("should produce entry");
         assert_eq!(
             entry.provider,
             Some(Provider::Ollama),
