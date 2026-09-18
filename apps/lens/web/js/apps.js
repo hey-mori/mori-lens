@@ -12,7 +12,10 @@ export function renderApps() {
   }
   let html = '<table>';
   for (let i = 0; i < state.currentSettings.applications.length; i++) {
-    const [name, tier] = state.currentSettings.applications[i];
+    const app = state.currentSettings.applications[i];
+    // Structured object: { name, tier, ocr }
+    const name = app.name;
+    const tier = app.tier;
     html += '<tr><td>' + escapeHtml(name) + '</td><td>' +
       '<select data-app-index="' + i + '" class="app-tier-select">' +
       '<option value="allow"' + (tier === 'allow' ? ' selected' : '') + '>Allow</option>' +
@@ -41,7 +44,8 @@ function attachAppHandlers() {
 }
 
 export function updateAppTier(index, tier) {
-  state.currentSettings.applications[index][1] = tier;
+  // Structured object: update tier property
+  state.currentSettings.applications[index].tier = tier;
   state.appsDirty = true;
 }
 
@@ -58,7 +62,8 @@ export function addApp() {
   const name = nameInput.value.trim();
   const tier = tierSelect.value;
   if (!name) return;
-  state.currentSettings.applications.push([name, tier]);
+  // Structured object: { name, tier, ocr: null }
+  state.currentSettings.applications.push({ name, tier, ocr: null });
   nameInput.value = '';
   state.appsDirty = true;
   renderApps();
