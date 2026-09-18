@@ -141,7 +141,13 @@ impl HoverWorker {
                             if let Some(HoverEvent::Settled { generation, point }) =
                                 session.observe(sample)
                             {
-                                let resolution = session.resolve(generation, point, now, input);
+                                let resolution = session.resolve(
+                                    generation,
+                                    point,
+                                    now,
+                                    input,
+                                    process_name.as_deref(),
+                                );
                                 if answers
                                     .send(FromHover::Settled {
                                         generation,

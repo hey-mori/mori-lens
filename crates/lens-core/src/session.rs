@@ -19,7 +19,7 @@ use crate::geometry::ScreenPoint;
 use crate::hover::{
     Generation, HoverConfig, HoverEvent, HoverMachine, PointerSample, Presentation, Timestamp,
 };
-use crate::policy::AppPolicy;
+use crate::policy::{effective_ocr, AppOcrRule, AppPolicy};
 
 /// When the OCR fallback may run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +109,10 @@ pub struct HoverSession {
     accessibility: Box<dyn TextAcquirer>,
     ocr: Option<Box<dyn TextAcquirer>>,
     ocr_mode: OcrMode,
+    /// Per-application OCR overrides, resolved at each hover.
+    ocr_rules: Vec<AppOcrRule>,
+    /// CLI override that wins over per-app and global settings.
+    cli_ocr_override: Option<OcrMode>,
     /// Whether a scroll, a keystroke or a click has been seen since the last
     /// hover was resolved.
     ///
@@ -130,6 +134,8 @@ impl std::fmt::Debug for HoverSession {
             .field("policy", &self.policy)
             .field("has_ocr", &self.ocr.is_some())
             .field("ocr_mode", &self.ocr_mode)
+            .field("ocr_rules", &self.ocr_rules.len())
+            .field("cli_ocr_override", &self.cli_ocr_override)
             .finish()
     }
 }
@@ -176,6 +182,8 @@ impl HoverSession {
             accessibility,
             ocr: None,
             ocr_mode: OcrMode::Off,
+            ocr_rules: Vec::new(),
+            cli_ocr_override: None,
             view_may_have_changed: true,
         }
     }
@@ -183,6 +191,26 @@ impl HoverSession {
     pub fn with_ocr(mut self, ocr: Box<dyn TextAcquirer>, mode: OcrMode) -> Self {
         self.ocr = Some(ocr);
         self.ocr_mode = mode;
+        self
+    }
+
+    /// Attach per-application OCR overrides.
+    ///
+    /// These are resolved at each hover based on the application under the
+    /// pointer, taking precedence over the global OCR mode but yielding to a
+    /// CLI override if one was supplied.
+    pub fn with_ocr_rules(mut self, rules: Vec<AppOcrRule>) -> Self {
+        self.ocr_rules = rules;
+        self
+    }
+
+    /// Attach a CLI override that wins over per-app and global OCR settings.
+    ///
+    /// A user who typed `--ocr automatic` on the command line expects it to
+    /// apply everywhere, regardless of what the settings file says. This
+    /// survives settings reload because it is not part of the file.
+    pub fn with_cli_ocr_override(mut self, mode: Option<OcrMode>) -> Self {
+        self.cli_ocr_override = mode;
         self
     }
 
@@ -238,6 +266,7 @@ impl HoverSession {
         point: ScreenPoint,
         now: Timestamp,
         input: InputState,
+        process_name: Option<&str>,
     ) -> Resolution {
         // Checked before any work, so a pointer that has already moved on costs
         // one comparison instead of a call into a foreign process.
@@ -253,7 +282,7 @@ impl HoverSession {
 
         let target = match self.accessibility.acquire(point, &context) {
             Ok(target) => target,
-            Err(error) => match self.ocr_fallback(error, point, &context, input) {
+            Err(error) => match self.ocr_fallback(error, point, &context, input, process_name) {
                 Some(Ok(target)) => target,
                 Some(Err(ocr_error)) => return Resolution::Failed(ocr_error),
                 // The original accessibility failure is reported, not a
@@ -297,6 +326,7 @@ impl HoverSession {
         point: ScreenPoint,
         context: &AcquireContext,
         input: InputState,
+        process_name: Option<&str>,
     ) -> Option<Result<TextTarget, AcquireError>> {
         // Protected is filtered here as well as by `ocr_can_help`, because this
         // is the line that would leak a password field's rendered characters and
@@ -304,7 +334,15 @@ impl HoverSession {
         if matches!(error, AcquireError::Protected(_)) || !error.ocr_can_help() {
             return None;
         }
-        let allowed = match self.ocr_mode {
+        // Resolve the effective OCR mode for this application.
+        // effective_ocr() enforces the precedence: CLI > per-app > global.
+        let effective_mode = effective_ocr(
+            self.ocr_mode,
+            process_name,
+            self.cli_ocr_override,
+            &self.ocr_rules,
+        );
+        let allowed = match effective_mode {
             OcrMode::Off => false,
             OcrMode::Manual => input.ocr_requested,
             OcrMode::Automatic => true,
