@@ -16,7 +16,7 @@
 use serde::Deserialize;
 use std::time::{Duration, Instant};
 
-use lens_core::translate::{QuickRequest, QuickTranslation, TranslateError, Translator};
+use lens_core::translate::{Provider, QuickRequest, QuickTranslation, TranslateError, Translator};
 
 use crate::lmstudio_runtime::LmStudioRuntime;
 
@@ -243,7 +243,7 @@ impl Translator for LmStudioTranslator {
             text,
             engine: lens_core::translate::engine_for(self.runtime.endpoint()),
             model: self.model.clone(),
-            provider: Some("lmstudio".to_string()),
+            provider: Provider::LmStudio,
             latency_ms,
             cached: false,
             part_was_removed: false,
