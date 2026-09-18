@@ -19,11 +19,20 @@ pub struct RuntimeEngine {
 impl RuntimeEngine {
     /// Build from a schema engine config.
     ///
-    /// Unknown provider strings fall back to `Provider::Ollama` for safety.
-    /// Callers should validate provider tokens before this point if they
-    /// want stricter behavior.
+    /// Unknown provider strings are logged and fall back to `Provider::Ollama`
+    /// for safety. The settings boundary should validate provider tokens before
+    /// this point for stricter behavior.
     pub fn from_schema(config: &EngineConfig) -> Self {
-        let provider = Provider::from_token(&config.engine).unwrap_or(Provider::Ollama);
+        let provider = match Provider::from_token(&config.engine) {
+            Some(p) => p,
+            None => {
+                eprintln!(
+                    "ai_runtime  unknown provider {:?}, falling back to Ollama",
+                    config.engine
+                );
+                Provider::Ollama
+            }
+        };
         Self {
             provider,
             endpoint: config.endpoint.clone(),
@@ -33,11 +42,11 @@ impl RuntimeEngine {
 
     /// Build from a schema engine config for Deep lane.
     ///
-    /// Phase 3: Deep is Ollama-only. Any non-Ollama provider is forced to Ollama,
+    /// Deep is Ollama-only. Any non-Ollama provider is forced to Ollama,
     /// and the endpoint and model are reset to Ollama defaults.
-    /// This enforces the Phase 3 capability boundary at load time as a WHOLE-lane invariant.
+    /// This enforces the Deep capability boundary at load time as a WHOLE-lane invariant.
     pub fn from_schema_deep(config: &EngineConfig) -> Self {
-        // Deep is Ollama-only in Phase 3
+        // Deep is Ollama-only
         if config.engine == "ollama" {
             // Already Ollama, preserve all fields
             Self {
@@ -75,7 +84,7 @@ impl AiRuntimeConfig {
     /// Build from the settings schema.
     ///
     /// Quick lane accepts both Ollama and LM Studio.
-    /// Deep lane is Ollama-only in Phase 3.
+    /// Deep lane is Ollama-only.
     pub fn from_schema(schema: &lens_settings::schema::Schema) -> Self {
         Self {
             quick: RuntimeEngine::from_schema(&schema.quick),
@@ -144,7 +153,7 @@ mod tests {
 
     #[test]
     fn deep_lmstudio_forced_to_ollama_at_load() {
-        // Phase 3: Deep is Ollama-only. If schema has Deep=LM Studio,
+        // Deep is Ollama-only. If schema has Deep=LM Studio,
         // AiRuntimeConfig::from_schema must force it to Ollama AND reset
         // endpoint and model to Ollama defaults (WHOLE-lane invariant).
         let mut schema = test_schema();
@@ -159,7 +168,7 @@ mod tests {
         assert_eq!(
             config.deep.provider,
             Provider::Ollama,
-            "Phase 3: Deep must be forced to Ollama"
+            "Deep must be forced to Ollama"
         );
         assert_eq!(
             config.deep.endpoint, "127.0.0.1:11434",
@@ -172,8 +181,8 @@ mod tests {
     }
 
     #[test]
-    fn phase3_provider_combinations() {
-        // Phase 3 reality: Quick can be Ollama or LM Studio, but Deep is always Ollama.
+    fn provider_combinations() {
+        // Quick can be Ollama or LM Studio, but Deep is always Ollama.
         // Only 2 valid combinations exist:
         //   1. Quick=Ollama, Deep=Ollama
         //   2. Quick=LM Studio, Deep=Ollama
@@ -242,6 +251,34 @@ mod tests {
         // Unknown providers should fall back to Ollama for safety
         assert_eq!(config.quick.provider, Provider::Ollama);
         assert_eq!(config.deep.provider, Provider::Ollama);
+    }
+
+    #[test]
+    fn lmstudio_quick_round_trip() {
+        // Critical Phase 3 contract: Quick LM Studio must survive load/save/reload
+        // without being silently converted to Ollama.
+        let mut schema = test_schema();
+        schema.quick.engine = "lmstudio".to_owned();
+        schema.quick.model = Some("lm-model-7b".to_owned());
+        schema.quick.endpoint = "127.0.0.1:1234".to_owned();
+        schema.deep.engine = "ollama".to_owned();
+        schema.deep.model = Some("llama3.1:8b".to_owned());
+        schema.deep.endpoint = "127.0.0.1:11434".to_owned();
+
+        let config = AiRuntimeConfig::from_schema(&schema);
+
+        // Quick must preserve LM Studio identity
+        assert_eq!(config.quick.provider, Provider::LmStudio);
+        assert_eq!(config.quick.model, Some("lm-model-7b".to_owned()));
+        assert_eq!(config.quick.endpoint, "127.0.0.1:1234");
+
+        // Deep must preserve Ollama identity
+        assert_eq!(config.deep.provider, Provider::Ollama);
+        assert_eq!(config.deep.model, Some("llama3.1:8b".to_owned()));
+        assert_eq!(config.deep.endpoint, "127.0.0.1:11434");
+
+        // Quick and Deep must remain independent
+        assert_ne!(config.quick.provider, config.deep.provider);
     }
 
     #[test]

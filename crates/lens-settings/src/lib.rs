@@ -1320,4 +1320,123 @@ endpoint = \"127.0.0.1:11434\"
 
         let _ = fs::remove_dir_all(&dir);
     }
+
+    /// Critical Phase 3 contract: Quick LM Studio must survive load/save/reload
+    /// without being silently converted to Ollama.
+    #[test]
+    fn lmstudio_quick_round_trip_through_settings_file() {
+        let dir = temp_dir("lmstudio_roundtrip");
+        let path = dir.join("settings.toml");
+        let content = "schema_version = 1
+
+[general]
+language = \"Korean\"
+
+[quick]
+engine = \"lmstudio\"
+model = \"lm-model-7b\"
+endpoint = \"127.0.0.1:1234\"
+
+[deep]
+engine = \"ollama\"
+model = \"llama3.1:8b\"
+endpoint = \"127.0.0.1:11434\"
+";
+        fs::write(&path, content).unwrap();
+
+        // Load
+        let mut file = SettingsFile::load(&path).unwrap();
+        assert_eq!(file.schema().quick.engine, "lmstudio");
+        assert_eq!(file.schema().quick.model, Some("lm-model-7b".to_owned()));
+        assert_eq!(file.schema().quick.endpoint, "127.0.0.1:1234");
+        assert_eq!(file.schema().deep.engine, "ollama");
+
+        // Save
+        file.save().unwrap();
+
+        // Reload
+        let file2 = SettingsFile::load(&path).unwrap();
+        assert_eq!(
+            file2.schema().quick.engine,
+            "lmstudio",
+            "Quick engine must remain lmstudio after save/reload"
+        );
+        assert_eq!(
+            file2.schema().quick.model,
+            Some("lm-model-7b".to_owned()),
+            "Quick model must remain after save/reload"
+        );
+        assert_eq!(
+            file2.schema().quick.endpoint,
+            "127.0.0.1:1234",
+            "Quick endpoint must remain after save/reload"
+        );
+        assert_eq!(
+            file2.schema().deep.engine,
+            "ollama",
+            "Deep engine must remain ollama"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Invalid Quick provider token behavior: unknown tokens are preserved in schema
+    /// but normalized to Ollama at runtime boundary (ai_runtime.rs).
+    #[test]
+    fn invalid_quick_provider_token_preserved_in_schema() {
+        let dir = temp_dir("invalid_provider");
+        let path = dir.join("settings.toml");
+        let content = "schema_version = 1
+
+[general]
+language = \"Korean\"
+
+[quick]
+engine = \"not-a-provider\"
+model = \"auto\"
+endpoint = \"127.0.0.1:11434\"
+
+[deep]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"127.0.0.1:11434\"
+";
+        fs::write(&path, content).unwrap();
+
+        let file = SettingsFile::load(&path).unwrap();
+        // Schema preserves the invalid token (runtime boundary will normalize it)
+        assert_eq!(file.schema().quick.engine, "not-a-provider");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Deep unsupported provider (LM Studio) is preserved in schema but normalized
+    /// to Ollama at runtime boundary (ai_runtime.rs from_schema_deep).
+    #[test]
+    fn deep_unsupported_provider_preserved_in_schema() {
+        let dir = temp_dir("deep_unsupported");
+        let path = dir.join("settings.toml");
+        let content = "schema_version = 1
+
+[general]
+language = \"Korean\"
+
+[quick]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"127.0.0.1:11434\"
+
+[deep]
+engine = \"lmstudio\"
+model = \"lm-model\"
+endpoint = \"127.0.0.1:1234\"
+";
+        fs::write(&path, content).unwrap();
+
+        let file = SettingsFile::load(&path).unwrap();
+        // Schema preserves the token (runtime boundary will normalize Deep to Ollama)
+        assert_eq!(file.schema().deep.engine, "lmstudio");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

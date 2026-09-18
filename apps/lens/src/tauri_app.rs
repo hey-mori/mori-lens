@@ -465,7 +465,7 @@ async fn get_local_ai_status(
         let dp_raw = lens_core::translate::Provider::from_token(&view.deep_engine)
             .unwrap_or(lens_core::translate::Provider::Ollama);
 
-        // Phase 3: Deep is Ollama-only. Apply the same constraint as ai_runtime::from_schema_deep.
+        // Deep is Ollama-only. Apply the same constraint as ai_runtime::from_schema_deep.
         // This ensures Tauri readiness uses the SAME Deep capability truth as the runtime.
         let (dp, deep_ep, deep_m) = if dp_raw == lens_core::translate::Provider::Ollama {
             (
