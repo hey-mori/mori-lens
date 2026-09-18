@@ -20,8 +20,9 @@ asked for yet.
 
 ## Decision
 
-**One table, versioned migrations, LIKE search.** The schema is small
-enough to state here in full.
+**One table, versioned migrations, LIKE search.** Migration 1 established
+the base schema shown below; later migrations extend it as documented in
+Consequences.
 
 ### The library table
 

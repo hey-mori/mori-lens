@@ -849,7 +849,7 @@ impl Library {
 
     /// Export the library as a versioned JSONL string.
     ///
-    /// The first line is a version header (`{"version": 1}`). Each
+    /// The first line is a version header (`{"version": 3}`). Each
     /// subsequent line is one JSON object representing an item, including
     /// all fields and tags. This is the lossless round-trip format
     /// described by [ADR-0013](../../docs/decisions/ADR-0013-the-local-library.md):
