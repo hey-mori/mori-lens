@@ -5,6 +5,8 @@
 //! cannot earn it before the compatibility matrix says how well it reads
 //! anything (`docs/privacy-model.md` §2).
 
+use crate::session::OcrMode;
+
 /// What Lens may do in a given application.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppTier {
@@ -281,5 +283,218 @@ mod empty_needle_tests {
         policy.set("chrome", AppTier::Allow);
         assert_eq!(policy.tier_for(Some("chrome.exe")), AppTier::Allow);
         assert_eq!(policy.tier_for(Some("notepad")), AppTier::Modifier);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-app OCR resolution
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One application's OCR override rule.
+///
+/// Mirrors the structure of [`Rule`] for tier matching, but carries an OCR mode
+/// instead of a tier. The name is matched case-insensitively as a substring,
+/// just like tier rules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppOcrRule {
+    needle: String,
+    ocr: OcrMode,
+}
+
+impl AppOcrRule {
+    /// Build a rule for an application name and OCR mode.
+    ///
+    /// Empty or whitespace-only names are rejected (return `None`) to prevent
+    /// accidentally matching every application.
+    pub fn new(name: &str, ocr: OcrMode) -> Option<Self> {
+        if name.trim().is_empty() {
+            None
+        } else {
+            Some(Self {
+                needle: name.to_lowercase(),
+                ocr,
+            })
+        }
+    }
+
+    /// The OCR mode this rule prescribes.
+    pub fn ocr(&self) -> OcrMode {
+        self.ocr
+    }
+
+    /// Whether this rule matches the given application name.
+    ///
+    /// Matching is case-insensitive substring, consistent with tier rules.
+    pub fn matches(&self, app_name: &str) -> bool {
+        app_name.to_lowercase().contains(&self.needle)
+    }
+}
+
+/// Resolve the effective OCR mode for a hover, given the global setting,
+/// an optional application name, optional CLI override, and per-app rules.
+///
+/// Precedence (highest to lowest):
+/// 1. CLI explicit override (if present)
+/// 2. Matching per-app OCR override (if any rule matches)
+/// 3. Global OCR setting
+///
+/// This function enforces the invariant that OCR behavior is resolved
+/// **after** tier permission has been checked. A caller should never call
+/// this function for an application where acquisition is denied; if they
+/// do, the OCR mode is still resolved but the caller must not use it.
+///
+/// # Examples
+///
+/// ```
+/// # use lens_core::policy::{effective_ocr, AppOcrRule};
+/// # use lens_core::session::OcrMode;
+/// let rules = vec![
+///     AppOcrRule::new("chrome", OcrMode::Automatic).unwrap(),
+/// ];
+///
+/// // No app, no CLI override: use global
+/// assert_eq!(
+///     effective_ocr(OcrMode::Manual, None, None, &rules),
+///     OcrMode::Manual
+/// );
+///
+/// // App matches a rule: use the rule's OCR mode
+/// assert_eq!(
+///     effective_ocr(OcrMode::Manual, Some("chrome.exe"), None, &rules),
+///     OcrMode::Automatic
+/// );
+///
+/// // CLI override wins over per-app rule
+/// assert_eq!(
+///     effective_ocr(OcrMode::Manual, Some("chrome.exe"), Some(OcrMode::Off), &rules),
+///     OcrMode::Off
+/// );
+/// ```
+pub fn effective_ocr(
+    global: OcrMode,
+    app_name: Option<&str>,
+    cli_override: Option<OcrMode>,
+    rules: &[AppOcrRule],
+) -> OcrMode {
+    // CLI override has highest precedence
+    if let Some(cli_mode) = cli_override {
+        return cli_mode;
+    }
+
+    // Per-app override has second precedence
+    if let Some(name) = app_name {
+        for rule in rules {
+            if rule.matches(name) {
+                return rule.ocr();
+            }
+        }
+    }
+
+    // Global is the fallback
+    global
+}
+
+#[cfg(test)]
+mod ocr_resolution_tests {
+    use super::*;
+
+    fn rules(chrome: OcrMode) -> Vec<AppOcrRule> {
+        vec![AppOcrRule::new("chrome", chrome).unwrap()]
+    }
+
+    #[test]
+    fn no_app_no_override_returns_global() {
+        assert_eq!(
+            effective_ocr(OcrMode::Manual, None, None, &rules(OcrMode::Automatic)),
+            OcrMode::Manual
+        );
+    }
+
+    #[test]
+    fn app_matches_rule_returns_rule_ocr() {
+        assert_eq!(
+            effective_ocr(
+                OcrMode::Manual,
+                Some("chrome.exe"),
+                None,
+                &rules(OcrMode::Automatic)
+            ),
+            OcrMode::Automatic
+        );
+    }
+
+    #[test]
+    fn app_no_match_returns_global() {
+        assert_eq!(
+            effective_ocr(
+                OcrMode::Manual,
+                Some("notepad.exe"),
+                None,
+                &rules(OcrMode::Automatic)
+            ),
+            OcrMode::Manual
+        );
+    }
+
+    #[test]
+    fn cli_override_wins_over_rule() {
+        assert_eq!(
+            effective_ocr(
+                OcrMode::Manual,
+                Some("chrome.exe"),
+                Some(OcrMode::Off),
+                &rules(OcrMode::Automatic)
+            ),
+            OcrMode::Off
+        );
+    }
+
+    #[test]
+    fn cli_override_wins_over_global() {
+        assert_eq!(
+            effective_ocr(OcrMode::Manual, None, Some(OcrMode::Automatic), &[]),
+            OcrMode::Automatic
+        );
+    }
+
+    #[test]
+    fn case_insensitive_matching() {
+        assert_eq!(
+            effective_ocr(
+                OcrMode::Manual,
+                Some("CHROME.EXE"),
+                None,
+                &rules(OcrMode::Automatic)
+            ),
+            OcrMode::Automatic
+        );
+    }
+
+    #[test]
+    fn empty_app_name_uses_global() {
+        assert_eq!(
+            effective_ocr(OcrMode::Manual, Some(""), None, &rules(OcrMode::Automatic)),
+            OcrMode::Manual
+        );
+    }
+
+    #[test]
+    fn first_matching_rule_wins() {
+        let rules = vec![
+            AppOcrRule::new("chrome", OcrMode::Off).unwrap(),
+            AppOcrRule::new("chrome", OcrMode::Automatic).unwrap(),
+        ];
+        assert_eq!(
+            effective_ocr(OcrMode::Manual, Some("chrome.exe"), None, &rules),
+            OcrMode::Off
+        );
+    }
+
+    #[test]
+    fn empty_rules_use_global() {
+        assert_eq!(
+            effective_ocr(OcrMode::Automatic, Some("chrome.exe"), None, &[]),
+            OcrMode::Automatic
+        );
     }
 }
