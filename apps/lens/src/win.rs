@@ -1185,7 +1185,12 @@ pub fn main() -> std::process::ExitCode {
             // Only create cache key and perform translation when we have a real model and translator
             match (&worker_quick_model, &quick_translator) {
                 (Some(model), Some(translator)) => {
-                    let key = CacheKey::of(&request, worker_quick_provider, model.as_str(), PROMPT_VERSION);
+                    let key = CacheKey::of(
+                        &request,
+                        worker_quick_provider,
+                        model.as_str(),
+                        PROMPT_VERSION,
+                    );
                     if let Some(hit) = cache.get(&key) {
                         let mut card = Card::translated(&job.display_text, &hit);
                         if job.doubtful {
