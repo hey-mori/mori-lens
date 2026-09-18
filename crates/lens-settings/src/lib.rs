@@ -134,6 +134,13 @@ pub enum LoadDisposition {
         /// Problems found during migration.
         problems: Vec<lens_core::settings::Problem>,
     },
+    /// Migrated from an older schema version to the current version.
+    SchemaVersionMigrated {
+        /// The source file version.
+        from_version: u64,
+        /// The current schema version after migration.
+        to_version: u64,
+    },
     /// File exists but is invalid; preserved without modification.
     InvalidPreserved {
         /// Why the file could not be loaded.
@@ -154,6 +161,9 @@ pub enum LoadDisposition {
 /// variant is used to avoid collision.
 ///
 /// Returns the loaded file and the disposition indicating what happened.
+///
+/// If the file has an older schema version (e.g., v1 when current is v2),
+/// it is migrated in memory and on disk to the current version.
 pub fn load_or_initialize(path: &Path) -> Result<(SettingsFile, LoadDisposition), SettingsError> {
     // Try reading the file first
     let content = match fs::read_to_string(path) {
@@ -178,7 +188,35 @@ pub fn load_or_initialize(path: &Path) -> Result<(SettingsFile, LoadDisposition)
 
     // Try loading as new format
     match SettingsFile::load(path) {
-        Ok(file) => Ok((file, LoadDisposition::Loaded)),
+        Ok(mut file) => {
+            // Check if schema version needs migration
+            if file.schema.version < schema::CURRENT_VERSION {
+                let from_version = file.schema.version;
+                // Migrate schema version in memory
+                migrate_schema_version(&mut file);
+                // Create backup and save migrated file
+                let backup = create_backup(path)?;
+                if let Err(e) = file.save() {
+                    eprintln!("settings  schema migration save failed: {e}");
+                    eprintln!("settings  original preserved at {backup:?}");
+                    return Err(e);
+                }
+                eprintln!(
+                    "settings  migrated schema v{} to v{} at {path:?} (backup at {backup:?})",
+                    from_version,
+                    schema::CURRENT_VERSION
+                );
+                Ok((
+                    file,
+                    LoadDisposition::SchemaVersionMigrated {
+                        from_version,
+                        to_version: schema::CURRENT_VERSION,
+                    },
+                ))
+            } else {
+                Ok((file, LoadDisposition::Loaded))
+            }
+        }
         Err(SettingsError::MissingVersion { .. }) => {
             // No schema_version: check if it's legacy format
             if is_legacy_format(&content) {
@@ -310,6 +348,21 @@ fn migrate_legacy_file(
             problems: report.problems,
         },
     ))
+}
+
+/// Migrate a settings file from an older schema version to the current version.
+///
+/// This function updates the schema version in memory. The caller is
+/// responsible for creating a backup and saving the migrated file.
+///
+/// Currently handles:
+/// - v1 → v2: ApplicationConfig structure already supports OCR overrides;
+///   only the version number needs updating.
+fn migrate_schema_version(file: &mut SettingsFile) {
+    // Bump to current version. The ApplicationConfig structure already
+    // supports the v2 format (OCR overrides as Option<String>), so we
+    // only need to update the version number.
+    file.schema.version = schema::CURRENT_VERSION;
 }
 
 /// Create a backup of the file, handling collisions.
@@ -1697,6 +1750,311 @@ chrome = \"allow\"
         );
         // code should be inline table with OCR
         assert!(content.contains("code = { tier = \"modifier\", ocr = \"automatic\" }"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Schema version migration tests (v1 → v2)
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// v1 schema file is migrated to v2 through load_or_initialize().
+    #[test]
+    fn v1_schema_is_migrated_to_v2() {
+        let dir = temp_dir("v1_migration");
+        let path = dir.join("settings.toml");
+        let content = "schema_version = 1
+
+[general]
+language = \"Korean\"
+dwell_ms = 250
+
+[quick]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"127.0.0.1:11434\"
+
+[deep]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"127.0.0.1:11434\"
+
+[applications]
+chrome = \"allow\"
+code = \"modifier\"
+";
+        fs::write(&path, content).unwrap();
+
+        let (file, disposition) = load_or_initialize(&path).unwrap();
+
+        // Schema version should be migrated to 2
+        assert_eq!(file.schema().version, 2);
+        assert!(matches!(
+            disposition,
+            LoadDisposition::SchemaVersionMigrated {
+                from_version: 1,
+                to_version: 2
+            }
+        ));
+
+        // Applications should be preserved
+        assert_eq!(file.schema().applications.len(), 2);
+        assert_eq!(file.schema().applications[0].name, "chrome");
+        assert_eq!(
+            file.schema().applications[0].tier,
+            lens_core::policy::AppTier::Allow
+        );
+        assert_eq!(file.schema().applications[0].ocr, None);
+        assert_eq!(file.schema().applications[1].name, "code");
+        assert_eq!(
+            file.schema().applications[1].tier,
+            lens_core::policy::AppTier::Modifier
+        );
+        assert_eq!(file.schema().applications[1].ocr, None);
+
+        // Disk should now have schema_version = 2
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("schema_version = 2"));
+
+        // Backup should exist
+        let backup = path.with_extension("toml.legacy-backup");
+        assert!(backup.exists(), "backup file should exist");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Migration is idempotent: second load does not migrate again.
+    #[test]
+    fn migration_is_idempotent() {
+        let dir = temp_dir("idempotent");
+        let path = dir.join("settings.toml");
+        let content = "schema_version = 1
+
+[general]
+language = \"Korean\"
+
+[quick]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"127.0.0.1:11434\"
+
+[deep]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"127.0.0.1:11434\"
+
+[applications]
+chrome = \"allow\"
+";
+        fs::write(&path, content).unwrap();
+
+        // First load: should migrate
+        let (file1, disp1) = load_or_initialize(&path).unwrap();
+        assert_eq!(file1.schema().version, 2);
+        assert!(matches!(
+            disp1,
+            LoadDisposition::SchemaVersionMigrated { .. }
+        ));
+
+        let backup = path.with_extension("toml.legacy-backup");
+        assert!(backup.exists());
+        let backup_modified = fs::metadata(&backup).unwrap().modified().unwrap();
+
+        // Wait a bit to ensure file timestamps would differ
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Second load: should NOT migrate again
+        let (file2, disp2) = load_or_initialize(&path).unwrap();
+        assert_eq!(file2.schema().version, 2);
+        assert!(matches!(disp2, LoadDisposition::Loaded));
+
+        // Backup should not be modified
+        let backup_modified2 = fs::metadata(&backup).unwrap().modified().unwrap();
+        assert_eq!(backup_modified, backup_modified2);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Legacy flat format is migrated to v2 (not v1).
+    #[test]
+    fn legacy_flat_is_migrated_to_v2() {
+        let dir = temp_dir("legacy_v2");
+        let path = dir.join("settings.toml");
+        let content = "language = \"Japanese\"
+model = \"gemma3:4b\"
+dwell_ms = 250
+theme = \"night-lake\"
+endpoint = \"127.0.0.1:11434\"
+ocr = \"automatic\"
+profile = \"developer\"
+default = \"allow\"
+
+[applications]
+chrome = \"allow\"
+code = \"deny\"
+";
+        fs::write(&path, content).unwrap();
+
+        let (file, disposition) = load_or_initialize(&path).unwrap();
+
+        // Should be migrated to current version (2)
+        assert_eq!(file.schema().version, 2);
+        assert!(matches!(disposition, LoadDisposition::Migrated { .. }));
+
+        // Applications should be preserved with correct structure
+        assert_eq!(file.schema().applications.len(), 2);
+        assert_eq!(file.schema().applications[0].name, "chrome");
+        assert_eq!(
+            file.schema().applications[0].tier,
+            lens_core::policy::AppTier::Allow
+        );
+        assert_eq!(file.schema().applications[0].ocr, None);
+        assert_eq!(file.schema().applications[1].name, "code");
+        assert_eq!(
+            file.schema().applications[1].tier,
+            lens_core::policy::AppTier::Deny
+        );
+        assert_eq!(file.schema().applications[1].ocr, None);
+
+        // Disk should have schema_version = 2
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("schema_version = 2"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Future schema version (> current) is rejected and preserved.
+    #[test]
+    fn future_version_is_rejected_and_preserved() {
+        let dir = temp_dir("future_reject");
+        let path = dir.join("settings.toml");
+        let content = "schema_version = 99
+
+[general]
+language = \"Korean\"
+
+[applications]
+chrome = \"allow\"
+";
+        fs::write(&path, content).unwrap();
+
+        let (_file, disposition) = load_or_initialize(&path).unwrap();
+
+        // Should not be modified
+        assert!(matches!(
+            disposition,
+            LoadDisposition::InvalidPreserved { .. }
+        ));
+
+        // File should still have the original content
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("schema_version = 99"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Comments and unknown sections are preserved during v1→v2 migration.
+    #[test]
+    fn migration_preserves_comments_and_unknown_sections() {
+        let dir = temp_dir("preserve");
+        let path = dir.join("settings.toml");
+        let content = "# My custom settings
+schema_version = 1
+
+[general]
+# The reader's language
+language = \"Japanese\"
+dwell_ms = 250
+
+[quick]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"127.0.0.1:11434\"
+
+[deep]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"127.0.0.1:11434\"
+
+[custom_section]
+my_key = \"preserved\"
+
+[applications]
+chrome = \"allow\"
+";
+        fs::write(&path, content).unwrap();
+
+        let (file, _) = load_or_initialize(&path).unwrap();
+        assert_eq!(file.schema().version, 2);
+
+        let saved = fs::read_to_string(&path).unwrap();
+
+        // Comments should be preserved
+        assert!(
+            saved.contains("# My custom settings"),
+            "top-level comment lost"
+        );
+        assert!(
+            saved.contains("# The reader's language"),
+            "inline comment lost"
+        );
+
+        // Unknown section should be preserved
+        assert!(saved.contains("[custom_section]"), "unknown section lost");
+        assert!(saved.contains("my_key"), "unknown key lost");
+
+        // Schema version should be updated
+        assert!(saved.contains("schema_version = 2"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// v1 file with inline table format (v2 syntax) is still migrated.
+    /// The inline table is accepted for compatibility, and version is bumped.
+    #[test]
+    fn v1_with_inline_table_is_migrated() {
+        let dir = temp_dir("v1_inline");
+        let path = dir.join("settings.toml");
+        let content = "schema_version = 1
+
+[general]
+language = \"Korean\"
+
+[quick]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"127.0.0.1:11434\"
+
+[deep]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"127.0.0.1:11434\"
+
+[applications]
+chrome = { tier = \"allow\", ocr = \"automatic\" }
+";
+        fs::write(&path, content).unwrap();
+
+        let (file, disposition) = load_or_initialize(&path).unwrap();
+
+        // Should be migrated to v2
+        assert_eq!(file.schema().version, 2);
+        assert!(matches!(
+            disposition,
+            LoadDisposition::SchemaVersionMigrated { .. }
+        ));
+
+        // Application should be loaded correctly
+        assert_eq!(file.schema().applications.len(), 1);
+        assert_eq!(file.schema().applications[0].name, "chrome");
+        assert_eq!(
+            file.schema().applications[0].tier,
+            lens_core::policy::AppTier::Allow
+        );
+        assert_eq!(
+            file.schema().applications[0].ocr,
+            Some("automatic".to_owned())
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }

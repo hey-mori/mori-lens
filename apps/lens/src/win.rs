@@ -456,6 +456,9 @@ fn load_settings(
                 LoadDisposition::Migrated { problems } => {
                     ("migrated from legacy format", problems, false)
                 }
+                LoadDisposition::SchemaVersionMigrated { .. } => {
+                    ("migrated schema version", Vec::new(), false)
+                }
                 LoadDisposition::InvalidPreserved { reason } => (
                     "invalid file preserved",
                     vec![Problem {
