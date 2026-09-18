@@ -1,4 +1,4 @@
-//! The version 1 settings schema.
+//! The version 2 settings schema.
 //!
 //! This is the structured representation of `settings.toml`. Each field
 //! corresponds to a key in the file, grouped into sections. The schema
@@ -9,7 +9,7 @@ use lens_core::policy::AppTier;
 
 /// The current schema version, written at the top of every file this crate
 /// produces.
-pub const CURRENT_VERSION: u64 = 1;
+pub const CURRENT_VERSION: u64 = 2;
 
 /// The complete settings file, structured.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,7 +18,7 @@ pub struct Schema {
     pub general: General,
     pub quick: EngineConfig,
     pub deep: EngineConfig,
-    pub applications: Vec<(String, AppTier)>,
+    pub applications: Vec<ApplicationConfig>,
 }
 
 impl Default for Schema {
@@ -75,6 +75,46 @@ impl EngineConfig {
     }
 }
 
+/// One application's configuration: what tier it has, and optionally an OCR override.
+///
+/// `ocr` is `None` when the application inherits the global OCR setting.
+/// `Some(mode)` overrides the global setting for this application only.
+///
+/// The tier governs whether acquisition is allowed at all. OCR mode governs
+/// what OCR behavior applies if acquisition reaches the OCR decision. These
+/// are independent: an application with `tier = Allow` and `ocr = Off` allows
+/// accessibility reading but never runs OCR, even if the global OCR is
+/// `automatic`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApplicationConfig {
+    /// The application name (process-name substring, case-insensitive).
+    pub name: String,
+    /// Whether acquisition is allowed: Allow, Modifier, or Deny.
+    pub tier: AppTier,
+    /// Optional per-app OCR override. `None` means inherit global OCR.
+    pub ocr: Option<String>,
+}
+
+impl ApplicationConfig {
+    /// Build an application config with no OCR override (inherits global).
+    pub fn new(name: String, tier: AppTier) -> Self {
+        Self {
+            name,
+            tier,
+            ocr: None,
+        }
+    }
+
+    /// Build an application config with an explicit OCR override.
+    pub fn with_ocr(name: String, tier: AppTier, ocr: String) -> Self {
+        Self {
+            name,
+            tier,
+            ocr: Some(ocr),
+        }
+    }
+}
+
 impl Schema {
     /// Build a schema from the existing in-memory settings type.
     ///
@@ -106,7 +146,11 @@ impl Schema {
             },
             quick: engine.clone(),
             deep: engine,
-            applications: settings.applications.clone(),
+            applications: settings
+                .applications
+                .iter()
+                .map(|(name, tier)| ApplicationConfig::new(name.clone(), *tier))
+                .collect(),
         }
     }
 
@@ -116,6 +160,10 @@ impl Schema {
     /// endpoint and model. Callers that need per-lane configuration
     /// should use [`AiRuntimeConfig::from_schema`] instead
     /// (ADR-0005).
+    ///
+    /// Note: Per-app OCR overrides are NOT projected into the flat
+    /// [`Settings`] view. Callers that need per-app OCR resolution
+    /// should use the structured [`ApplicationConfig`] directly.
     pub fn to_settings(&self) -> lens_core::settings::Settings {
         lens_core::settings::Settings {
             language: self.general.language.clone(),
@@ -133,7 +181,11 @@ impl Schema {
             history_store_app: self.general.history_store_app,
             history_excluded: self.general.history_excluded.clone(),
             default_tier: self.general.default_tier,
-            applications: self.applications.clone(),
+            applications: self
+                .applications
+                .iter()
+                .map(|app| (app.name.clone(), app.tier))
+                .collect(),
         }
     }
 }

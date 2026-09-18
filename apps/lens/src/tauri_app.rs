@@ -476,7 +476,7 @@ async fn get_local_ai_status(
         } else {
             // Deep is forced to Ollama with defaults
             eprintln!(
-                "get_local_ai_status  Deep engine {:?} is not supported in Phase 3, forcing Ollama",
+                "get_local_ai_status  Deep engine {:?} is unsupported; forcing Ollama",
                 view.deep_engine
             );
             (
