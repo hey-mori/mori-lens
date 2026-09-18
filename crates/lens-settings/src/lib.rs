@@ -604,16 +604,45 @@ fn extract_engine(doc: &toml_edit::DocumentMut, section: &str) -> schema::Engine
     }
 }
 
-fn extract_applications(doc: &toml_edit::DocumentMut) -> Vec<(String, lens_core::policy::AppTier)> {
+fn extract_applications(doc: &toml_edit::DocumentMut) -> Vec<schema::ApplicationConfig> {
     let Some(table) = doc.get("applications").and_then(|v| v.as_table_like()) else {
         return Vec::new();
     };
 
     let mut apps = Vec::new();
     for (key, value) in table.iter() {
-        if let Some(tier_str) = value.as_str().and_then(parse_tier) {
-            apps.push((key.to_owned(), tier_str));
+        // Skip empty application names (substring match would match everything)
+        if key.trim().is_empty() {
+            continue;
         }
+
+        // v2 format: inline table { tier = "...", ocr = "..." }
+        if let Some(inline_table) = value.as_inline_table() {
+            let tier_str = inline_table
+                .get("tier")
+                .and_then(|v| v.as_str())
+                .and_then(parse_tier);
+
+            if let Some(tier) = tier_str {
+                let ocr = inline_table
+                    .get("ocr")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| lens_core::session::OcrMode::named(s).is_some())
+                    .map(|s| s.to_owned());
+
+                apps.push(schema::ApplicationConfig {
+                    name: key.to_owned(),
+                    tier,
+                    ocr,
+                });
+            }
+            // Invalid tier: skip this entry (fail-closed, never become Allow)
+        }
+        // v1 format: scalar tier string
+        else if let Some(tier_str) = value.as_str().and_then(parse_tier) {
+            apps.push(schema::ApplicationConfig::new(key.to_owned(), tier_str));
+        }
+        // Invalid format: skip
     }
     apps
 }
@@ -686,10 +715,24 @@ fn apply_schema_to_document(schema: &Schema, doc: &mut toml_edit::DocumentMut) {
     apply_engine_to_table(schema, "deep", doc);
 
     // [applications] - rebuild entirely, because order and membership
-    // may have changed.
+    // may have changed. Use v2 inline table format.
     let mut apps_table = toml_edit::Table::new();
-    for (name, tier) in &schema.applications {
-        apps_table.insert(name, toml_edit::value(tier_str(tier)));
+    for app in &schema.applications {
+        // Skip empty application names
+        if app.name.trim().is_empty() {
+            continue;
+        }
+
+        if let Some(ocr) = &app.ocr {
+            // v2 format with OCR override: { tier = "...", ocr = "..." }
+            let mut inline = toml_edit::InlineTable::new();
+            inline.insert("tier", toml_edit::Value::from(tier_str(&app.tier)));
+            inline.insert("ocr", toml_edit::Value::from(ocr.as_str()));
+            apps_table.insert(&app.name, toml_edit::Value::InlineTable(inline).into());
+        } else {
+            // v1-compatible format (tier only): scalar string
+            apps_table.insert(&app.name, toml_edit::value(tier_str(&app.tier)));
+        }
     }
     doc["applications"] = toml_edit::Item::Table(apps_table);
 }
@@ -804,9 +847,24 @@ fn build_document_from_schema(schema: &Schema) -> toml_edit::DocumentMut {
     let deep = engine_to_table(&schema.deep);
     doc["deep"] = toml_edit::Item::Table(deep);
 
+    // Build [applications] with v2 inline table format
     let mut apps = toml_edit::Table::new();
-    for (name, tier) in &schema.applications {
-        apps.insert(name, toml_edit::value(tier_str(tier)));
+    for app in &schema.applications {
+        // Skip empty application names
+        if app.name.trim().is_empty() {
+            continue;
+        }
+
+        if let Some(ocr) = &app.ocr {
+            // v2 format with OCR override: { tier = "...", ocr = "..." }
+            let mut inline = toml_edit::InlineTable::new();
+            inline.insert("tier", toml_edit::Value::from(tier_str(&app.tier)));
+            inline.insert("ocr", toml_edit::Value::from(ocr.as_str()));
+            apps.insert(&app.name, toml_edit::Value::InlineTable(inline).into());
+        } else {
+            // v1-compatible format (tier only): scalar string
+            apps.insert(&app.name, toml_edit::value(tier_str(&app.tier)));
+        }
     }
     doc["applications"] = toml_edit::Item::Table(apps);
 
@@ -966,7 +1024,7 @@ endpoint = \"127.0.0.1:11434\"
         file.save().unwrap();
 
         let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("schema_version = 1"));
+        assert!(content.contains("schema_version = 2"));
         assert!(content.contains("Japanese"));
 
         // The saved file can be loaded back.
@@ -984,8 +1042,8 @@ endpoint = \"127.0.0.1:11434\"
 
         let mut file = SettingsFile::new_defaults(path.clone());
         file.schema_mut().applications = vec![
-            ("chrome".to_owned(), AppTier::Allow),
-            ("code".to_owned(), AppTier::Deny),
+            schema::ApplicationConfig::new("chrome".to_owned(), AppTier::Allow),
+            schema::ApplicationConfig::new("code".to_owned(), AppTier::Deny),
         ];
         file.save().unwrap();
 
@@ -993,11 +1051,11 @@ endpoint = \"127.0.0.1:11434\"
         assert_eq!(loaded.schema().applications.len(), 2);
         assert_eq!(
             loaded.schema().applications[0],
-            ("chrome".to_owned(), AppTier::Allow)
+            schema::ApplicationConfig::new("chrome".to_owned(), AppTier::Allow)
         );
         assert_eq!(
             loaded.schema().applications[1],
-            ("code".to_owned(), AppTier::Deny)
+            schema::ApplicationConfig::new("code".to_owned(), AppTier::Deny)
         );
 
         let _ = fs::remove_dir_all(&dir);
@@ -1436,6 +1494,209 @@ endpoint = \"127.0.0.1:1234\"
         let file = SettingsFile::load(&path).unwrap();
         // Schema preserves the token (runtime boundary will normalize Deep to Ollama)
         assert_eq!(file.schema().deep.engine, "lmstudio");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ========================================================================
+    // P7 Phase 1: Settings v2 structured per-app configuration
+    // ========================================================================
+
+    /// v2 inline table format with OCR override survives round-trip.
+    #[test]
+    fn v2_app_with_ocr_override_round_trips() {
+        let dir = temp_dir("v2_ocr_override");
+        let path = dir.join("settings.toml");
+        let content = "schema_version = 2
+
+[general]
+language = \"Korean\"
+ocr = \"manual\"
+
+[applications]
+chrome = { tier = \"allow\", ocr = \"automatic\" }
+code = { tier = \"modifier\" }
+";
+        fs::write(&path, content).unwrap();
+
+        let file = SettingsFile::load(&path).unwrap();
+        assert_eq!(file.schema().applications.len(), 2);
+
+        // chrome has explicit OCR override
+        assert_eq!(file.schema().applications[0].name, "chrome");
+        assert_eq!(
+            file.schema().applications[0].tier,
+            lens_core::policy::AppTier::Allow
+        );
+        assert_eq!(
+            file.schema().applications[0].ocr,
+            Some("automatic".to_owned())
+        );
+
+        // code has no OCR override (inherits global)
+        assert_eq!(file.schema().applications[1].name, "code");
+        assert_eq!(
+            file.schema().applications[1].tier,
+            lens_core::policy::AppTier::Modifier
+        );
+        assert_eq!(file.schema().applications[1].ocr, None);
+
+        // Save and reload
+        let mut file = file;
+        file.save().unwrap();
+
+        let reloaded = SettingsFile::load(&path).unwrap();
+        assert_eq!(reloaded.schema().applications.len(), 2);
+        assert_eq!(
+            reloaded.schema().applications[0].ocr,
+            Some("automatic".to_owned())
+        );
+        assert_eq!(reloaded.schema().applications[1].ocr, None);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// v1 scalar format is accepted and migrated to tier-only (no OCR override).
+    #[test]
+    fn v1_scalar_app_format_accepted_with_no_ocr_override() {
+        let dir = temp_dir("v1_scalar_compat");
+        let path = dir.join("settings.toml");
+        let content = "schema_version = 1
+
+[applications]
+chrome = \"allow\"
+code = \"modifier\"
+";
+        fs::write(&path, content).unwrap();
+
+        let file = SettingsFile::load(&path).unwrap();
+        assert_eq!(file.schema().applications.len(), 2);
+
+        // Both apps have no OCR override
+        assert_eq!(file.schema().applications[0].name, "chrome");
+        assert_eq!(
+            file.schema().applications[0].tier,
+            lens_core::policy::AppTier::Allow
+        );
+        assert_eq!(file.schema().applications[0].ocr, None);
+
+        assert_eq!(file.schema().applications[1].name, "code");
+        assert_eq!(
+            file.schema().applications[1].tier,
+            lens_core::policy::AppTier::Modifier
+        );
+        assert_eq!(file.schema().applications[1].ocr, None);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Empty application name is rejected (substring match would match everything).
+    #[test]
+    fn empty_app_name_is_rejected() {
+        let dir = temp_dir("empty_app_name");
+        let path = dir.join("settings.toml");
+        let content = "schema_version = 2
+
+[applications]
+\"\" = \"allow\"
+chrome = \"allow\"
+";
+        fs::write(&path, content).unwrap();
+
+        let file = SettingsFile::load(&path).unwrap();
+        // Empty name should be skipped
+        assert_eq!(file.schema().applications.len(), 1);
+        assert_eq!(file.schema().applications[0].name, "chrome");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Invalid tier does not fail open (become Allow).
+    #[test]
+    fn invalid_tier_does_not_fail_open() {
+        let dir = temp_dir("invalid_tier");
+        let path = dir.join("settings.toml");
+        let content = "schema_version = 2
+
+[applications]
+chrome = { tier = \"banana\", ocr = \"automatic\" }
+code = \"allow\"
+";
+        fs::write(&path, content).unwrap();
+
+        let file = SettingsFile::load(&path).unwrap();
+        // Invalid tier entry should be skipped
+        assert_eq!(file.schema().applications.len(), 1);
+        assert_eq!(file.schema().applications[0].name, "code");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Invalid OCR override is ignored (OCR remains None/inherit).
+    #[test]
+    fn invalid_ocr_override_is_ignored() {
+        let dir = temp_dir("invalid_ocr");
+        let path = dir.join("settings.toml");
+        let content = "schema_version = 2
+
+[applications]
+chrome = { tier = \"allow\", ocr = \"always\" }
+";
+        fs::write(&path, content).unwrap();
+
+        let file = SettingsFile::load(&path).unwrap();
+        assert_eq!(file.schema().applications.len(), 1);
+        assert_eq!(file.schema().applications[0].name, "chrome");
+        // Invalid OCR is filtered out, so OCR is None (inherit global)
+        assert_eq!(file.schema().applications[0].ocr, None);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Future schema version (> 2) is rejected.
+    #[test]
+    fn future_schema_version_is_rejected() {
+        let dir = temp_dir("future_schema");
+        let path = dir.join("settings.toml");
+        let content = "schema_version = 99
+
+[applications]
+chrome = \"allow\"
+";
+        fs::write(&path, content).unwrap();
+
+        let result = SettingsFile::load(&path);
+        assert!(matches!(result, Err(SettingsError::FutureVersion { .. })));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Apps without OCR override are saved as scalar (v1-compatible).
+    /// Apps with OCR override are saved as inline table.
+    #[test]
+    fn save_uses_scalar_for_no_override_and_inline_table_for_override() {
+        let dir = temp_dir("save_format");
+        let path = dir.join("settings.toml");
+
+        let mut file = SettingsFile::new_defaults(path.clone());
+        file.schema_mut().applications = vec![
+            schema::ApplicationConfig::new("chrome".to_owned(), lens_core::policy::AppTier::Allow),
+            schema::ApplicationConfig::with_ocr(
+                "code".to_owned(),
+                lens_core::policy::AppTier::Modifier,
+                "automatic".to_owned(),
+            ),
+        ];
+        file.save().unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+
+        // chrome should be scalar (no OCR override)
+        assert!(
+            content.contains("chrome = \"modifier\"") || content.contains("chrome = \"allow\"")
+        );
+        // code should be inline table with OCR
+        assert!(content.contains("code = { tier = \"modifier\", ocr = \"automatic\" }"));
 
         let _ = fs::remove_dir_all(&dir);
     }
