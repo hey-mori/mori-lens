@@ -4225,7 +4225,7 @@ mod settings_migration_tests {
         // File should exist and be valid new TOML format
         assert!(path.exists());
         let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("schema_version = 1"));
+        assert!(content.contains("schema_version = 2"));
         assert!(content.contains("[general]"));
         assert!(content.contains("[quick]"));
         assert!(content.contains("[deep]"));
@@ -4270,7 +4270,7 @@ model = "gemma3:4b"
 
         // File should now be valid new TOML format
         let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("schema_version = 1"));
+        assert!(content.contains("schema_version = 2"));
         assert!(content.contains("[general]"));
 
         // Should be loadable by new parser
@@ -4286,7 +4286,7 @@ model = "gemma3:4b"
         let dir = temp_dir("new_format");
         let path = dir.join("settings.toml");
 
-        let new_content = r#"schema_version = 1
+        let new_content = r#"schema_version = 2
 
 [general]
 language = "English"
@@ -4349,7 +4349,7 @@ theme = "night-lake"
 
         // File should now be valid new format
         let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("schema_version = 1"));
+        assert!(content.contains("schema_version = 2"));
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -4361,7 +4361,7 @@ theme = "night-lake"
         let path = dir.join("settings.toml");
 
         // Has schema_version but malformed
-        let malformed = r#"schema_version = 1
+        let malformed = r#"schema_version = 2
 [general
 language = "Korean"
 "#;
@@ -4519,7 +4519,7 @@ language = "Korean"
 
         // File should still be valid new TOML format
         let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("schema_version = 1"));
+        assert!(content.contains("schema_version = 2"));
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -4537,8 +4537,10 @@ language = "Korean"
         file.schema_mut().general.theme = "forest".to_owned();
         file.schema_mut().general.hover_scope = "word".to_owned();
         file.schema_mut().general.default_tier = lens_core::policy::AppTier::Allow;
-        file.schema_mut().applications =
-            vec![("Code".to_owned(), lens_core::policy::AppTier::Deny)];
+        file.schema_mut().applications = vec![lens_settings::schema::ApplicationConfig::new(
+            "Code".to_owned(),
+            lens_core::policy::AppTier::Deny,
+        )];
         file.schema_mut().quick.model = Some("Q".to_owned());
         file.schema_mut().quick.endpoint = "127.0.0.1:11434".to_owned();
         file.save().unwrap();

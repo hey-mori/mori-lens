@@ -41,6 +41,20 @@ pub struct SettingsSaveOutcome {
     pub settings: SettingsView,
 }
 
+/// Per-application configuration for IPC/SettingsView.
+///
+/// Structured DTO replacing the tuple `[name, tier]` representation.
+/// Supports optional per-app OCR override (Phase 1: backend only, no UI).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ApplicationConfigDto {
+    /// Application name (process-name substring, case-insensitive).
+    pub name: String,
+    /// Tier: "allow", "modifier", or "deny".
+    pub tier: String,
+    /// Optional OCR override: null (inherit global), "off", "manual", or "automatic".
+    pub ocr: Option<String>,
+}
+
 /// Shared settings state, accessed by Tauri commands and the polling loop.
 pub type SharedSettings = Arc<Mutex<SettingsState>>;
 
@@ -89,7 +103,8 @@ pub struct SettingsView {
     pub deep_engine: String,
     pub deep_model: Option<String>,
     pub deep_endpoint: String,
-    pub applications: Vec<(String, String)>,
+    /// Per-application configuration (structured, replacing tuple representation).
+    pub applications: Vec<ApplicationConfigDto>,
 }
 
 /// Load or migrate the settings file.
@@ -184,7 +199,11 @@ impl SettingsState {
             applications: schema
                 .applications
                 .iter()
-                .map(|(name, tier)| (name.clone(), tier_to_string(tier)))
+                .map(|app| ApplicationConfigDto {
+                    name: app.name.clone(),
+                    tier: tier_to_string(&app.tier),
+                    ocr: app.ocr.clone(),
+                })
                 .collect(),
         }
     }
@@ -310,7 +329,23 @@ impl SettingsState {
         schema.applications = view
             .applications
             .into_iter()
-            .filter_map(|(name, tier_str)| parse_tier(&tier_str).map(|tier| (name, tier)))
+            .filter_map(|app_dto| {
+                // Skip empty application names
+                if app_dto.name.trim().is_empty() {
+                    return None;
+                }
+                // Parse tier, skip if invalid (fail-closed)
+                let tier = parse_tier(&app_dto.tier)?;
+                // Validate OCR override if present
+                let ocr = app_dto
+                    .ocr
+                    .filter(|s| lens_core::session::OcrMode::named(s).is_some());
+                Some(lens_settings::schema::ApplicationConfig {
+                    name: app_dto.name,
+                    tier,
+                    ocr,
+                })
+            })
             .collect();
 
         if let Err(e) = self.file.save() {
@@ -636,7 +671,11 @@ mod tests {
         view.hover_scope = "word".into();
         view.history = true;
         view.history_days = 90;
-        view.applications = vec![("Safari".into(), "deny".into())];
+        view.applications = vec![ApplicationConfigDto {
+            name: "Safari".into(),
+            tier: "deny".into(),
+            ocr: None,
+        }];
         state.apply(view.clone()).unwrap();
 
         let read_back = state.view();
@@ -646,7 +685,11 @@ mod tests {
         assert_eq!(read_back.history_days, 90);
         assert_eq!(
             read_back.applications,
-            vec![("Safari".into(), "deny".into())]
+            vec![ApplicationConfigDto {
+                name: "Safari".into(),
+                tier: "deny".into(),
+                ocr: None,
+            }]
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
