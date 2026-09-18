@@ -28,6 +28,8 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::translate::Provider;
+
 /// One thing a reader decided to keep.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
@@ -63,6 +65,14 @@ pub struct Entry {
     /// is comparing answers across models, and it is what the footer already
     /// shows on the card.
     pub model: Option<String>,
+    /// Which inference provider produced the answer.
+    ///
+    /// The inference engine identity: `Provider::Ollama`, `Provider::LmStudio`,
+    /// or `None` for legacy/unknown provenance. Distinct from `model` (which
+    /// model ID) and from provider_scope (where inference ran relative to trust
+    /// boundary). Bound at inference time from the resolved runtime lane, not
+    /// read from live settings at save time.
+    pub provider: Option<Provider>,
 }
 
 /// The heading a file starts with, written once when it is created.
@@ -186,6 +196,7 @@ mod tests {
             source_language: Some("English".to_owned()),
             target_language: Some("Korean".to_owned()),
             model: Some("qwen2.5:7b".to_owned()),
+            provider: None,
         }
     }
 
@@ -216,6 +227,7 @@ mod tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
         };
         let block = block(&entry, at(0));
         assert!(
@@ -240,6 +252,7 @@ mod tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
         };
         let block = block(&entry, at(0));
         for line in ["> a", "> b", "> c"] {
@@ -258,6 +271,7 @@ mod tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
         };
         let block = block(&entry, at(0));
         assert!(block.contains("> # not a heading"), "{block}");

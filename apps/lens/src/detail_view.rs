@@ -71,6 +71,8 @@ pub struct DetailView {
     pub target_language: Option<String>,
     /// The model that produced the answer.
     pub model: Option<String>,
+    /// Which inference provider produced the answer: `"ollama"`, `"lmstudio"`, or `None` for legacy unknown provenance.
+    pub provider: Option<String>,
 }
 
 /// Shared detail state, written by the polling loop and read by Tauri commands.
@@ -133,6 +135,7 @@ pub fn view_from_card(card: &lens_core::card::Card) -> Option<DetailView> {
         source_language: None,
         target_language: None,
         model: None,
+        provider: None,
     })
 }
 
@@ -215,6 +218,10 @@ pub(crate) fn detail_save(
             source_language: view.source_language.clone(),
             target_language: view.target_language.clone(),
             model: view.model.clone(),
+            provider: view
+                .provider
+                .as_deref()
+                .and_then(lens_core::translate::Provider::from_token),
         };
         (view.revision, entry)
     };
@@ -324,13 +331,14 @@ mod tests {
     use super::*;
     use lens_core::analyse::DeepAnalysis;
     use lens_core::card::Card;
-    use lens_core::translate::{EngineId, QuickTranslation, TranslateError};
+    use lens_core::translate::{EngineId, Provider, QuickTranslation, TranslateError};
 
     fn quick_translation(text: &str) -> QuickTranslation {
         QuickTranslation {
             text: text.to_owned(),
             engine: EngineId::Local,
             model: "qwen2.5:3b".to_owned(),
+            provider: Provider::Ollama,
             latency_ms: 1600,
             cached: false,
             part_was_removed: false,
@@ -361,6 +369,7 @@ mod tests {
             translation: translation.map(|s| s.to_owned()),
             counterpart: None,
             model: "qwen2.5:3b".to_owned(),
+            provider: Provider::Ollama,
             latency_ms: 4400,
             cached: false,
             links: vec![],
@@ -496,5 +505,83 @@ mod tests {
         let view = state.lock().unwrap();
         assert_eq!(view.as_ref().unwrap().original, "detail B");
         assert_eq!(view.as_ref().unwrap().item_id, None);
+    }
+
+    /// Provider provenance flows from QuickTranslation through Card to Entry.
+    ///
+    /// Regression test: the detail/save path must preserve the provider that
+    /// produced the reading, not read it from current settings at save time.
+    #[test]
+    fn quick_translation_provider_flows_to_entry_via_card() {
+        // Ollama quick translation
+        let ollama_translation = QuickTranslation {
+            text: "안녕".to_owned(),
+            engine: EngineId::Local,
+            model: "qwen2.5:3b".to_owned(),
+            provider: Provider::Ollama,
+            latency_ms: 1600,
+            cached: false,
+            part_was_removed: false,
+            name_changed: false,
+        };
+        let ollama_card = Card::translated("Hello", &ollama_translation);
+        let ollama_entry = ollama_card
+            .kept_as(Some("Code.exe"))
+            .expect("should produce entry");
+        assert_eq!(
+            ollama_entry.provider,
+            Some(Provider::Ollama),
+            "Ollama provider must flow through to Entry"
+        );
+
+        // LM Studio quick translation
+        let lm_translation = QuickTranslation {
+            text: "こんにちは".to_owned(),
+            engine: EngineId::Local,
+            model: "some-lm-model".to_owned(),
+            provider: Provider::LmStudio,
+            latency_ms: 1800,
+            cached: false,
+            part_was_removed: false,
+            name_changed: false,
+        };
+        let lm_card = Card::translated("Hello", &lm_translation);
+        let lm_entry = lm_card
+            .kept_as(Some("Code.exe"))
+            .expect("should produce entry");
+        assert_eq!(
+            lm_entry.provider,
+            Some(Provider::LmStudio),
+            "LM Studio provider must flow through to Entry"
+        );
+    }
+
+    /// Provider provenance flows from DeepAnalysis through Card to Entry.
+    #[test]
+    fn deep_analysis_provider_flows_to_entry_via_card() {
+        let analysis = DeepAnalysis {
+            lemma: "run".to_owned(),
+            part_of_speech: "verb".to_owned(),
+            sense: String::new(),
+            structure: String::new(),
+            note: String::new(),
+            word: None,
+            translation: None,
+            counterpart: None,
+            model: "qwen2.5:14b".to_owned(),
+            provider: Provider::Ollama,
+            latency_ms: 4400,
+            cached: false,
+            links: vec![],
+        };
+        let card = Card::analysed("running", &analysis);
+        let entry = card
+            .kept_as(Some("Code.exe"))
+            .expect("should produce entry");
+        assert_eq!(
+            entry.provider,
+            Some(Provider::Ollama),
+            "Deep analysis provider must flow through to Entry"
+        );
     }
 }
