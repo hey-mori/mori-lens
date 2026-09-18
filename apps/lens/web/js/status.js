@@ -3,6 +3,7 @@
 import { invoke } from './tauri.js';
 import { escapeHtml, formatAiStatus, setStatus } from './ui.js';
 import { state } from './state.js';
+import { refreshLocalAiStatus } from './local_ai.js';
 
 export async function loadStatus() {
   try {
@@ -169,17 +170,6 @@ function attachStatusHandlers() {
 
   // Pull command copy buttons
   import('./diagnostics.js').then(m => m.attachPullCommandHandlers());
-}
-
-export async function refreshLocalAiStatus() {
-  try {
-    state.cachedLocalAiStatus = await invoke('get_local_ai_status');
-    state.localAiLoadState = 'LOADED';
-  } catch (e) {
-    console.error('refreshLocalAiStatus failed:', e);
-    state.cachedLocalAiStatus = null;
-    state.localAiLoadState = 'ERROR';
-  }
 }
 
 export async function refreshLocalAi() {

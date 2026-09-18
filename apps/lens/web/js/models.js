@@ -1,8 +1,9 @@
-// Models page: refreshModels, testModel, refreshLocalAiStatus
+// Models page: refreshModels, testModel
 
 import { invoke } from './tauri.js';
 import { formatSize } from './ui.js';
 import { state } from './state.js';
+import { refreshLocalAiStatus } from './local_ai.js';
 
 const PROVIDER_DEFAULT_ENDPOINTS = {
   ollama: '127.0.0.1:11434',
@@ -163,13 +164,5 @@ export async function testModel() {
   btn.textContent = 'Test';
 }
 
-export async function refreshLocalAiStatus() {
-  try {
-    state.cachedLocalAiStatus = await invoke('get_local_ai_status');
-    state.localAiLoadState = 'LOADED';
-  } catch (e) {
-    console.error('refreshLocalAiStatus failed:', e);
-    state.cachedLocalAiStatus = null;
-    state.localAiLoadState = 'ERROR';
-  }
-}
+// Re-export for backward compatibility
+export { refreshLocalAiStatus };

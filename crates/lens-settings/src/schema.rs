@@ -52,8 +52,10 @@ pub struct General {
 
 /// One engine's configuration: where it is, and which model to use.
 ///
-/// `model` is `None` when the user chose `auto`, meaning the product picks
-/// the best installed model at startup.
+/// `model` is `None` when the user chose `auto`. For Ollama, this means
+/// the product picks the best installed model at startup. For LM Studio,
+/// explicit model selection is required (the UI shows "Select a model"
+/// instead of "Auto").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EngineConfig {
     pub engine: String,
