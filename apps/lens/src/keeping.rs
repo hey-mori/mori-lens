@@ -280,7 +280,7 @@ fn write_to_library(lib: &Library, entry: &Entry, at: SystemTime) -> StructuredS
     let duplicate_check = lib.find_duplicate_id(
         &entry.original,
         kind,
-        entry.provider.as_deref(),
+        entry.provider.map(|p| p.as_str()),
         entry.model.as_deref(),
         entry.target_language.as_deref(),
     );
@@ -305,7 +305,7 @@ fn write_to_library(lib: &Library, entry: &Entry, at: SystemTime) -> StructuredS
         source_language: entry.source_language.clone(),
         target_language: entry.target_language.clone(),
         model: entry.model.clone(),
-        provider: entry.provider.clone(),
+        provider: entry.provider.map(|p| p.as_str().to_owned()),
         note: None,
         tags: None,
         review_state: None,
@@ -343,6 +343,7 @@ mod tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
         }
     }
 
@@ -477,6 +478,7 @@ mod tests {
             source_language: None,
             target_language: None,
             model: None,
+            provider: None,
         };
         append(&file, &entry, at, &lib).expect("kept");
 
@@ -620,6 +622,7 @@ mod tests {
             source_language: Some("English".to_owned()),
             target_language: Some("Korean".to_owned()),
             model: Some("qwen2.5:7b".to_owned()),
+            provider: None,
         };
         append(&file, &entry, at, &lib).expect("kept");
 

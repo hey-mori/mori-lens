@@ -3108,6 +3108,205 @@ mod tests {
         cleanup(&path);
     }
 
+    /// Migration v7 → v8: REAL migration with actual legacy data.
+    /// Creates a v7 database (no provider columns), inserts data, then opens
+    /// with current code to trigger migration 8. Verifies:
+    /// - provider column is added to both history and library tables
+    /// - legacy data survives with provider = NULL
+    /// - schema version becomes 8
+    /// - reopen is idempotent (migration 8 not re-applied)
+    #[test]
+    fn migration_v7_to_v8_real_with_legacy_data() {
+        use rusqlite::params;
+
+        let path = temp_db("migration-v7-to-v8-real");
+
+        // Manually create a v7 schema database (migrations 1-7 only)
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE schema_migrations (version INTEGER NOT NULL UNIQUE);
+                 CREATE TABLE library (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    original TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    caveat TEXT,
+                    app TEXT,
+                    created_at INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    source_language TEXT,
+                    target_language TEXT,
+                    model TEXT,
+                    note TEXT,
+                    tags TEXT,
+                    review_state TEXT,
+                    imported_at INTEGER DEFAULT 0,
+                    UNIQUE(original, kind, model, target_language)
+                 );
+                 CREATE TABLE history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    original TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    source_language TEXT,
+                    target_language TEXT,
+                    model TEXT,
+                    app TEXT,
+                    provenance TEXT NOT NULL,
+                    provider_scope TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                 );
+                 CREATE TABLE IF NOT EXISTS import_tracking (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    imported BOOLEAN NOT NULL DEFAULT 0
+                 );
+                 INSERT INTO schema_migrations VALUES (1), (2), (3), (4), (5), (6), (7);",
+            )
+            .unwrap();
+
+            // Insert realistic legacy data into library
+            conn.execute(
+                "INSERT INTO library (original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, tags, review_state)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![
+                    "포인터가 멈춘 뒤에야 읽습니다.",
+                    "Read only after the pointer rests.",
+                    None::<String>,
+                    Some("Code.exe"),
+                    1700000000i64,
+                    "translation",
+                    Some("ko"),
+                    Some("en"),
+                    Some("qwen2.5:7b"),
+                    None::<String>,
+                    None::<String>,
+                    None::<String>,
+                ],
+            )
+            .unwrap();
+
+            conn.execute(
+                "INSERT INTO library (original, answer, caveat, app, created_at, kind, source_language, target_language, model, note, tags, review_state)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![
+                    "멱등성",
+                    "원형 · 멱등성",
+                    Some("AI 설명 · 사실 확인 필요"),
+                    None::<String>,
+                    1700001000i64,
+                    "analysis",
+                    Some("ko"),
+                    Some("en"),
+                    Some("qwen2.5:14b"),
+                    Some("사용자 노트"),
+                    None::<String>,
+                    None::<String>,
+                ],
+            )
+            .unwrap();
+
+            // Insert realistic legacy data into history
+            conn.execute(
+                "INSERT INTO history (original, answer, kind, source_language, target_language, model, app, provenance, provider_scope, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    "번역 테스트",
+                    "translation test",
+                    "translation",
+                    Some("ko"),
+                    Some("en"),
+                    Some("qwen2.5:7b"),
+                    Some("chrome.exe"),
+                    "accessibility",
+                    "local",
+                    1700002000i64,
+                ],
+            )
+            .unwrap();
+        }
+
+        // Open with current code to trigger migration 8
+        let lib = Library::open(&path).unwrap();
+
+        // Verify schema version is now 8
+        let version: i64 = lib
+            .conn()
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, 8, "schema must be upgraded to version 8");
+
+        // Verify library table has provider column
+        let has_provider_col: bool = lib
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('library') WHERE name = 'provider'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(has_provider_col, "library table must have provider column");
+
+        // Verify history table has provider column
+        let has_provider_col: bool = lib
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('history') WHERE name = 'provider'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(has_provider_col, "history table must have provider column");
+
+        // Verify legacy library data survived with provider = NULL
+        let item1 = lib.get(1).unwrap().unwrap();
+        assert_eq!(item1.original, "포인터가 멈춘 뒤에야 읽습니다.");
+        assert_eq!(
+            item1.provider, None,
+            "legacy library row must have NULL provider"
+        );
+        assert_eq!(item1.model, Some("qwen2.5:7b".to_owned()));
+
+        let item2 = lib.get(2).unwrap().unwrap();
+        assert_eq!(item2.original, "멱등성");
+        assert_eq!(
+            item2.provider, None,
+            "legacy library row must have NULL provider"
+        );
+        assert_eq!(item2.caveat, Some("AI 설명 · 사실 확인 필요".to_owned()));
+
+        // Verify legacy history data survived with provider = NULL
+        let history_page = lib.history_list(0).unwrap();
+        assert_eq!(history_page.entries.len(), 1);
+        assert_eq!(history_page.entries[0].original, "번역 테스트");
+        assert_eq!(
+            history_page.entries[0].provider, None,
+            "legacy history row must have NULL provider"
+        );
+        assert_eq!(history_page.entries[0].model, Some("qwen2.5:7b".to_owned()));
+
+        // Verify migration is idempotent: close and reopen
+        drop(lib);
+        let lib2 = Library::open(&path).unwrap();
+        let version2: i64 = lib2
+            .conn()
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(version2, 8, "schema version must remain 8 after reopen");
+
+        // Verify data is still there
+        let item1_again = lib2.get(1).unwrap().unwrap();
+        assert_eq!(item1_again.original, "포인터가 멈춘 뒤에야 읽습니다.");
+        assert_eq!(item1_again.provider, None);
+
+        cleanup(&path);
+    }
+
     /// Migration v7 → v8: provider column is added, legacy rows have provider = NULL.
     #[test]
     fn migration_v8_adds_provider_column() {

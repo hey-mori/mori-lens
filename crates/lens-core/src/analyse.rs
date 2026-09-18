@@ -39,7 +39,7 @@
 
 use std::time::Duration;
 
-use crate::translate::TranslateError;
+use crate::translate::{Provider, TranslateError};
 
 /// How long an analysis may take before it is worthless.
 ///
@@ -308,9 +308,9 @@ pub struct DeepAnalysis {
     pub counterpart: Option<String>,
     /// Which model said it, for the same reason a translation carries one.
     pub model: String,
-    /// Which inference provider produced the answer: `"ollama"`, `"lmstudio"`, or `None` for legacy unknown provenance.
-    /// Bound at inference time from the resolved runtime lane.
-    pub provider: Option<String>,
+    /// Which inference provider produced the answer.
+    /// A successful DeepAnalysis always knows its provider (currently always Ollama).
+    pub provider: Provider,
     pub latency_ms: u64,
     /// Whether this came back from memory rather than from the model.
     ///
@@ -1519,6 +1519,7 @@ mod counterpart_tests {
 #[cfg(test)]
 mod profile_tests {
     use crate::analyse::{Answerable, DeepAnalysis, DeepRequest, Profile};
+    use crate::translate::Provider;
 
     /// The settings value round-trips, and an unknown one is refused here
     /// rather than silently becoming the default somewhere downstream.
@@ -1579,7 +1580,7 @@ mod profile_tests {
             counterpart: Some("counterpart".to_owned()),
             translation: None,
             model: "test".to_owned(),
-            provider: None,
+            provider: Provider::default(),
             latency_ms: 100,
             cached: false,
             links: vec![],
@@ -1610,7 +1611,7 @@ mod profile_tests {
             counterpart: None,
             translation: None,
             model: "test".to_owned(),
-            provider: None,
+            provider: Provider::default(),
             latency_ms: 100,
             cached: false,
             links: vec![],
@@ -1639,7 +1640,7 @@ mod profile_tests {
             counterpart: Some("counterpart".to_owned()),
             translation: None,
             model: "test".to_owned(),
-            provider: None,
+            provider: Provider::default(),
             latency_ms: 100,
             cached: false,
             links: vec![],

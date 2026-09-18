@@ -218,7 +218,7 @@ pub(crate) fn detail_save(
             source_language: view.source_language.clone(),
             target_language: view.target_language.clone(),
             model: view.model.clone(),
-            provider: view.provider.clone(),
+            provider: view.provider.as_deref().and_then(lens_core::translate::Provider::from_token),
         };
         (view.revision, entry)
     };

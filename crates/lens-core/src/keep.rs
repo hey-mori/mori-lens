@@ -28,6 +28,8 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::translate::Provider;
+
 /// One thing a reader decided to keep.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
@@ -65,12 +67,12 @@ pub struct Entry {
     pub model: Option<String>,
     /// Which inference provider produced the answer.
     ///
-    /// The inference engine identity: `"ollama"`, `"lmstudio"`, or `None` for
-    /// legacy/unknown provenance. Distinct from `model` (which model ID) and
-    /// from provider_scope (where inference ran relative to trust boundary).
-    /// Bound at inference time from the resolved runtime lane, not read from
-    /// live settings at save time.
-    pub provider: Option<String>,
+    /// The inference engine identity: `Provider::Ollama`, `Provider::LmStudio`,
+    /// or `None` for legacy/unknown provenance. Distinct from `model` (which
+    /// model ID) and from provider_scope (where inference ran relative to trust
+    /// boundary). Bound at inference time from the resolved runtime lane, not
+    /// read from live settings at save time.
+    pub provider: Option<Provider>,
 }
 
 /// The heading a file starts with, written once when it is created.

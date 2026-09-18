@@ -3174,7 +3174,7 @@ fn record_presented_reading(
                     None => "unknown",
                 };
                 let model = meta.and_then(|m| m.model.clone());
-                let provider = meta.and_then(|m| m.provider.clone());
+                let provider = meta.and_then(|m| m.provider.map(|p| p.as_str().to_owned()));
                 let stored_app = if current.history_store_app {
                     app_name
                 } else {
