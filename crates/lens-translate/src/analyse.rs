@@ -28,7 +28,7 @@ use std::time::Instant;
 #[cfg(test)]
 use lens_core::analyse::{verify_links_with_stats, LinkResolutionStats};
 use lens_core::analyse::{Analyser, DeepAnalysis, DeepRequest, Profile, RawLink, DEEP_TIMEOUT};
-use lens_core::translate::TranslateError;
+use lens_core::translate::{Provider, TranslateError};
 
 use crate::{http, json, OllamaTranslator};
 
@@ -483,7 +483,7 @@ fn parse(
         structure: field(FIELDS[3]),
         note: field(FIELDS[4]),
         model,
-        provider: Some("ollama".to_string()),
+        provider: Provider::Ollama,
         latency_ms,
         cached: false,
         links: vec![],
