@@ -55,7 +55,7 @@ pub use hover::{
     Generation, HoverConfig, HoverEvent, HoverMachine, PointerSample, Presentation,
     TargetFingerprint, Timestamp,
 };
-pub use policy::{AppPolicy, AppTier};
+pub use policy::{effective_ocr, AppOcrRule, AppPolicy, AppTier};
 pub use session::{HoverSession, InputState, OcrMode, Resolution};
 pub use text::{segment, SegmentedText, TextSpan};
 
