@@ -53,7 +53,7 @@ impl Default for HealthLane {
 ///
 /// Privacy-safe: contains only enums, numbers, and relative timestamps.
 /// No user content, no model output, no raw errors, no URLs.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct HealthSnapshot {
     /// Quick translation engine health.
     pub quick: HealthLane,
@@ -63,17 +63,6 @@ pub struct HealthSnapshot {
     pub stale: bool,
     /// Milliseconds since process start when snapshot was created.
     pub created_ms: u64,
-}
-
-impl Default for HealthSnapshot {
-    fn default() -> Self {
-        Self {
-            quick: HealthLane::default(),
-            deep: HealthLane::default(),
-            stale: false,
-            created_ms: 0,
-        }
-    }
 }
 
 /// Shared health snapshot, protected by mutex.
@@ -218,5 +207,48 @@ mod tests {
                 "health snapshot contains canary: {canary}"
             );
         }
+    }
+
+    #[test]
+    fn health_state_serializes_to_snake_case() {
+        let snapshot = HealthSnapshot::new(1000);
+        let json = serde_json::to_string(&snapshot).unwrap();
+        assert!(json.contains("\"unknown\""));
+        assert!(!json.contains("\"Unknown\""));
+    }
+
+    #[test]
+    fn failure_class_preserved_in_snapshot() {
+        let mut snapshot = HealthSnapshot::new(1000);
+        snapshot.update_quick(
+            HealthState::Unavailable,
+            Some(DiagnosticFailureClass::ConnectionFailed),
+            None,
+            2000,
+        );
+        snapshot.update_deep(
+            HealthState::Degraded,
+            Some(DiagnosticFailureClass::Timeout),
+            Some(500),
+            2000,
+        );
+
+        assert_eq!(
+            snapshot.quick.failure,
+            Some(DiagnosticFailureClass::ConnectionFailed)
+        );
+        assert_eq!(snapshot.deep.failure, Some(DiagnosticFailureClass::Timeout));
+        assert_eq!(snapshot.quick.latency_ms, None);
+        assert_eq!(snapshot.deep.latency_ms, Some(500));
+    }
+
+    #[test]
+    fn latency_tracking_is_independent_per_lane() {
+        let mut snapshot = HealthSnapshot::new(1000);
+        snapshot.update_quick(HealthState::Ready, None, Some(100), 2000);
+        snapshot.update_deep(HealthState::Ready, None, Some(300), 2000);
+
+        assert_eq!(snapshot.quick.latency_ms, Some(100));
+        assert_eq!(snapshot.deep.latency_ms, Some(300));
     }
 }

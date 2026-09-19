@@ -7,9 +7,10 @@ import { refreshLocalAiStatus } from './local_ai.js';
 
 export async function loadStatus() {
   try {
-    const [diag, runtime] = await Promise.all([
+    const [diag, runtime, health] = await Promise.all([
       invoke('get_diagnostics'),
       invoke('get_runtime_status'),
+      invoke('get_health_status'),
     ]);
     const localAi = state.cachedLocalAiStatus;
     const el = document.getElementById('status-content');
@@ -69,6 +70,36 @@ export async function loadStatus() {
     html += '<button class="btn" id="run-health-check-btn" style="padding:6px 12px;font-size:12px">헬스체크 실행</button>';
     html += '</div>';
     html += '<div id="health-check-result" style="margin-top:12px;display:none"></div>';
+
+    // Cached health status from last health check
+    if (health && (health.quick.state !== 'unknown' || health.deep.state !== 'unknown')) {
+      html += '<div style="margin-top:12px;padding:12px;background:rgba(0,0,0,0.02);border-radius:4px;font-size:12px">';
+      html += '<div style="color:#888;font-size:11px;margin-bottom:8px">마지막 헬스체크</div>';
+      const quickLabel = health.quick.state === 'ready' ? '✓ 준비됨' :
+                         health.quick.state === 'degraded' ? '⚠ 성능 저하' :
+                         health.quick.state === 'running' ? '⟳ 실행 중' : '✗ 사용 불가';
+      const quickColor = health.quick.state === 'ready' ? '#2e7d32' :
+                         health.quick.state === 'degraded' ? '#f57c00' :
+                         health.quick.state === 'running' ? '#1976d2' : '#c00';
+      html += '<div style="margin-bottom:4px"><strong>Quick:</strong> <span style="color:' + quickColor + '">' + quickLabel + '</span>';
+      if (health.quick.failure) html += ' <span style="color:#888">(' + health.quick.failure + ')</span>';
+      if (health.quick.latency_ms) html += ' <span style="color:#888">(' + health.quick.latency_ms + 'ms)</span>';
+      html += '</div>';
+      const deepLabel = health.deep.state === 'ready' ? '✓ 준비됨' :
+                        health.deep.state === 'degraded' ? '⚠ 성능 저하' :
+                        health.deep.state === 'running' ? '⟳ 실행 중' : '✗ 사용 불가';
+      const deepColor = health.deep.state === 'ready' ? '#2e7d32' :
+                        health.deep.state === 'degraded' ? '#f57c00' :
+                        health.deep.state === 'running' ? '#1976d2' : '#c00';
+      html += '<div><strong>Deep:</strong> <span style="color:' + deepColor + '">' + deepLabel + '</span>';
+      if (health.deep.failure) html += ' <span style="color:#888">(' + health.deep.failure + ')</span>';
+      if (health.deep.latency_ms) html += ' <span style="color:#888">(' + health.deep.latency_ms + 'ms)</span>';
+      html += '</div>';
+      if (health.stale) {
+        html += '<div style="color:#f57c00;font-size:11px;margin-top:8px">⚠ 설정 변경으로 인해 헬스체크가 필요함</div>';
+      }
+      html += '</div>';
+    }
 
     // Runtime configuration table
     if (runtime) {
