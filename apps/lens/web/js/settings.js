@@ -140,24 +140,45 @@ function renderShortcuts(shortcuts) {
   const container = document.getElementById('shortcuts-list');
   if (!container) return;
 
-  const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-  const availableActions = isMac
-    ? ['pause', 'manual_ocr', 'deep', 'copy', 'save']
-    : ['pause', 'manual_ocr', 'deep', 'copy', 'save', 'pin'];
+  // Clear existing content
+  container.innerHTML = '';
 
-  let html = '';
-  for (const action of availableActions) {
-    const binding = shortcuts.bindings.find(b => b.action === action);
-    const value = binding?.shortcut || '';
+  for (const binding of shortcuts.bindings) {
+    const { action, shortcut, default_shortcut, can_unbind } = binding;
     const label = ACTION_LABELS[action] || action;
-    html += `
-      <div class="field">
-        <label>${label}</label>
-        <input type="text" data-shortcut-action="${action}" value="${value}" placeholder="e.g. Ctrl+Alt+P" style="font-family:monospace">
-      </div>
-    `;
+
+    // Create field container
+    const fieldDiv = document.createElement('div');
+    fieldDiv.className = 'field';
+
+    // Create label with proper association
+    const labelEl = document.createElement('label');
+    const inputId = `shortcut-${action}`;
+    labelEl.htmlFor = inputId;
+    labelEl.textContent = label;
+
+    // Create input
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.id = inputId;
+    input.dataset.shortcutAction = action;
+    input.value = shortcut || '';
+    input.placeholder = default_shortcut ? `Default: ${default_shortcut}` : 'e.g. Ctrl+Alt+P';
+    input.style.fontFamily = 'monospace';
+
+    // Add hint for unbindable actions
+    if (can_unbind) {
+      const hint = document.createElement('small');
+      hint.style.color = '#888';
+      hint.style.marginLeft = '8px';
+      hint.textContent = '(optional)';
+      fieldDiv.appendChild(hint);
+    }
+
+    fieldDiv.appendChild(labelEl);
+    fieldDiv.appendChild(input);
+    container.appendChild(fieldDiv);
   }
-  container.innerHTML = html;
 }
 
 function collectShortcuts() {
@@ -172,4 +193,23 @@ function collectShortcuts() {
     });
   });
   return { bindings };
+}
+
+export function restoreShortcutDefaults() {
+  // Get current settings to access default_shortcut values
+  if (!state.currentSettings || !state.currentSettings.shortcuts) {
+    return;
+  }
+
+  const inputs = document.querySelectorAll('[data-shortcut-action]');
+  inputs.forEach(input => {
+    const action = input.dataset.shortcutAction;
+    const binding = state.currentSettings.shortcuts.bindings.find(b => b.action === action);
+    if (binding && binding.default_shortcut) {
+      input.value = binding.default_shortcut;
+    }
+  });
+
+  // Show status message
+  setStatus('Defaults restored · Click Save to apply');
 }

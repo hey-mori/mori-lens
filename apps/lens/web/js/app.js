@@ -123,9 +123,13 @@ function wireStaticButtons() {
   if (shortcutsSaveBtn) shortcutsSaveBtn.addEventListener('click', () => {
     import('./settings.js').then(m => m.saveSettings());
   });
-  const shortcutsResetBtn = document.getElementById('shortcuts-reset-btn');
-  if (shortcutsResetBtn) shortcutsResetBtn.addEventListener('click', () => {
+  const shortcutsRevertBtn = document.getElementById('shortcuts-revert-btn');
+  if (shortcutsRevertBtn) shortcutsRevertBtn.addEventListener('click', () => {
     import('./settings.js').then(m => m.loadSettings());
+  });
+  const shortcutsDefaultsBtn = document.getElementById('shortcuts-defaults-btn');
+  if (shortcutsDefaultsBtn) shortcutsDefaultsBtn.addEventListener('click', () => {
+    import('./settings.js').then(m => m.restoreShortcutDefaults());
   });
 
   // About section
