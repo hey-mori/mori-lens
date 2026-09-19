@@ -18,10 +18,26 @@
 //! - **Validation before persistence**: Invalid shortcuts (unknown keys,
 //!   duplicate chords) are rejected before saving.
 //!
+//! # Reload lifecycle
+//!
+//! Shortcut changes are **restart-required** on both platforms. This is safer
+//! than hot-re-registration:
+//!
+//! - On Windows, `RegisterHotKey` can fail if another app holds the chord. If
+//!   we unregister the old binding and the new registration fails, we've lost
+//!   the user's Pause shortcut. Rollback adds complexity and race conditions.
+//! - On macOS, the binding table can be swapped atomically, but for consistency
+//!   with Windows and to avoid surprising the user, we use restart-required.
+//!
+//! The Control Center UI (when implemented) should indicate "restart required"
+//! after saving shortcut changes. The new shortcuts take effect on next launch.
+//!
 //! # Platform defaults
 //!
 //! Windows and macOS have different default modifiers (Ctrl+Alt vs Cmd+Opt).
-//! The [`default_shortcuts`] function returns platform-appropriate defaults.
+//! The [`default_windows_shortcuts`] and [`default_macos_shortcuts`] functions
+//! return platform-appropriate defaults. macOS does not support the Pin action
+//! (no panel window implementation), so its defaults exclude it.
 
 use std::fmt;
 use std::str::FromStr;
@@ -599,6 +615,10 @@ pub fn default_windows_shortcuts() -> ShortcutConfig {
 }
 
 /// Get the default shortcuts for macOS.
+///
+/// Note: macOS does not currently support the Pin action (no panel window
+/// implementation). Only the five actions that have macOS product support
+/// are included.
 pub fn default_macos_shortcuts() -> ShortcutConfig {
     ShortcutConfig::new(vec![
         (
@@ -634,13 +654,6 @@ pub fn default_macos_shortcuts() -> ShortcutConfig {
             Some(Shortcut::new(
                 Modifiers::META.union(Modifiers::ALT),
                 Key::Letter('S'),
-            )),
-        ),
-        (
-            ShortcutAction::Pin,
-            Some(Shortcut::new(
-                Modifiers::META.union(Modifiers::ALT),
-                Key::Letter('P'),
             )),
         ),
     ])
@@ -795,5 +808,44 @@ mod tests {
         assert!(ShortcutAction::Copy.can_be_unbound());
         assert!(ShortcutAction::Save.can_be_unbound());
         assert!(ShortcutAction::Pin.can_be_unbound());
+    }
+
+    #[test]
+    fn default_windows_shortcuts_have_no_internal_duplicates() {
+        let config = default_windows_shortcuts();
+        let mut seen = std::collections::HashSet::new();
+        for (_, shortcut) in &config.bindings {
+            if let Some(sc) = shortcut {
+                assert!(
+                    seen.insert(*sc),
+                    "duplicate shortcut in Windows defaults: {sc}"
+                );
+            }
+        }
+        assert_eq!(
+            seen.len(),
+            6,
+            "Windows should have 6 unique default shortcuts"
+        );
+    }
+
+    #[test]
+    fn default_macos_shortcuts_have_no_internal_duplicates() {
+        let config = default_macos_shortcuts();
+        let mut seen = std::collections::HashSet::new();
+        for (_, shortcut) in &config.bindings {
+            if let Some(sc) = shortcut {
+                assert!(
+                    seen.insert(*sc),
+                    "duplicate shortcut in macOS defaults: {sc}"
+                );
+            }
+        }
+        // macOS has 5 actions (no Pin support)
+        assert_eq!(
+            seen.len(),
+            5,
+            "macOS should have 5 unique default shortcuts"
+        );
     }
 }

@@ -707,7 +707,11 @@ fn extract_shortcuts(doc: &toml_edit::DocumentMut) -> lens_core::shortcut::Short
 
     let Some(table) = doc.get("shortcuts").and_then(|v| v.as_table_like()) else {
         // No shortcuts section: use platform defaults
-        return lens_core::shortcut::default_windows_shortcuts();
+        if cfg!(target_os = "macos") {
+            return lens_core::shortcut::default_macos_shortcuts();
+        } else {
+            return lens_core::shortcut::default_windows_shortcuts();
+        }
     };
 
     let mut bindings = Vec::new();
