@@ -503,3 +503,101 @@ None of this changes what happens to a capture, which is that it is
 recognised and dropped. It changes how much of somebody's screen passes
 through memory in an afternoon, and that is a different question they are
 entitled to ask.
+
+## 8. Diagnostic event ring and health checks (P12)
+
+The product records a bounded ring of recent diagnostic events and runs
+explicit health checks on request. Both are privacy-safe by construction.
+
+### Diagnostic event ring
+
+A process-local, in-memory ring of up to 128 events records recent
+operational incidents: provider connection failures, timeouts, model
+missing errors, malformed responses, library degradation, and shortcut
+registration failures.
+
+**What is recorded:**
+- Component (Quick, Deep, Library, Shortcut, HealthCheck, etc.)
+- Event kind (Failure, Degraded, Recovered, HealthCheck)
+- Typed failure class (ConnectionFailed, Timeout, HttpServer, HttpClient,
+  ModelMissing, Malformed, InferenceFailed, LibraryDegraded, ShortcutUnavailable)
+- Sequence number, timestamp (milliseconds since process start), coalesced
+  count, first/last seen timestamps
+
+**What is NOT recorded:**
+- Captured screen text or translations
+- Model output or analysis
+- File paths, URLs, or endpoint addresses
+- Raw error messages or response bodies
+- Application names or window titles
+- User activity (hover, card shown, copy, save, review)
+
+The ring is FIFO with coalescing: consecutive equivalent events
+(same component, kind, and failure class) increment a count and update
+`last_seen_ms` rather than adding a new entry. This keeps the ring bounded
+and prevents repetitive failures from flooding the log.
+
+**Persistence:** None. The ring dies with the process. It is not written
+to disk, not included in session state, not synced. It exists only to
+answer "what recent operational incidents explain why something is not
+working?" for the current session.
+
+**Routine user activity is not evented.** Successful translations,
+analysis, OCR captures, card displays, copies, saves, and reviews do not
+produce diagnostic events. The ring is for rare operational incidents,
+not behavior logging. Aggregate routine-flow statistics are tracked
+separately in `Tally` (session-local, memory-only).
+
+### Health checks
+
+An explicit health check tests whether the Quick and Deep engines can
+perform real inference. It is a one-shot user action triggered from the
+Control Center Status page, not a periodic poll.
+
+**What health checks do:**
+- Send fixed, repository-owned test inputs to the configured endpoints
+  ("The output files came back empty." for Quick, a multi-word sentence
+  for Deep)
+- Use the same model resolution as production (`resolve_model()`)
+- Exercise the same code paths as production (`Translator::quick` for
+  Quick, `Analyser::deep` for Deep)
+- Discard the probe output after verifying the engine responded
+- Record the result (Ready, Degraded, Unavailable) in the health snapshot
+  and diagnostic event ring
+
+**What health checks do NOT do:**
+- Send screen content, user text, or captured pixels
+- Run automatically on a timer or at startup
+- Run after settings changes (they mark cached health as stale instead)
+- Store probe output in Recent, History, Library, or any product data
+- Auto-remediate (pull models, switch providers, rewrite settings)
+
+**Loopback HTTP only.** Health probes use HTTP to `127.0.0.1` or `::1`
+(the configured Ollama/LM Studio endpoint). They do not send data over
+the network. The product promise "nothing leaves the machine" applies to
+health checks the same way it applies to translation.
+
+**Cached health state.** The result of the last health check is cached
+in a `HealthSnapshot` containing typed state (Unknown, Running, Ready,
+Degraded, Unavailable) per lane, typed failure class, latency, and
+relative timestamp. The Status page reads this cache without triggering
+inference. If AI settings change (provider, endpoint, or model for Quick
+or Deep), the cached health is marked stale and the Status page shows
+"Unknown" until the user runs a new check.
+
+**Backend concurrency guard.** Only one health check can run at a time.
+A second invocation while one is in progress returns an error. This
+prevents multiple simultaneous inference probes from loading two large
+local models at once.
+
+### Diagnostics export
+
+The diagnostics export (`export_diagnostics` command) includes the
+diagnostic event ring and health snapshot. Both contain only enums,
+numbers, booleans, and relative timestamps. No captured text, model
+output, raw errors, URLs, or paths are included.
+
+The export is an explicit user action (Control Center → Export
+Diagnostics). It writes a JSON file to a user-chosen location. The
+content is privacy-safe by construction: the type system prevents
+free-form strings from entering the event or health snapshot structures.
