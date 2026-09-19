@@ -28,7 +28,7 @@ use lens_core::card::{Card, CardBody};
 use lens_core::geometry::{ScreenPoint, ScreenRect};
 use lens_core::hover::{HoverConfig, HoverEvent, HoverMachine, PointerSample};
 use lens_core::language::decide;
-use lens_core::policy::AppPolicy;
+use lens_core::policy::{effective_ocr, AppPolicy};
 use lens_core::session::OcrMode;
 use lens_core::tally::Tally;
 use lens_core::translate::{Provider, QuickRequest, Translator};
@@ -364,9 +364,8 @@ pub fn main() -> std::process::ExitCode {
             .iter()
             .filter_map(|app| {
                 app.ocr.as_ref().and_then(|ocr_str| {
-                    OcrMode::named(ocr_str).and_then(|mode| {
-                        lens_core::policy::AppOcrRule::new(&app.name, mode)
-                    })
+                    OcrMode::named(ocr_str)
+                        .and_then(|mode| lens_core::policy::AppOcrRule::new(&app.name, mode))
                 })
             })
             .collect();
@@ -1041,6 +1040,68 @@ fn product_loop(
                             o.hide();
                         }
                         let point = mouse_position();
+                        // Privacy gate: manual OCR must respect application permission
+                        // and effective OCR mode before any screen capture or
+                        // Screen Recording permission request.
+                        let manual_process = ax_acquirer.process_name_at(point);
+                        if !policy.allows(manual_process.as_deref(), overlay::option_held()) {
+                            // Denied by policy: no OCR, no screen capture, no permission prompt.
+                            println!(
+                                "ocr   denied by policy for {}",
+                                manual_process.as_deref().unwrap_or("<unknown>")
+                            );
+                            let card = Card {
+                                original: String::new(),
+                                body: CardBody::Problem(
+                                    "이 앱은 OCR이 허용되지 않습니다".to_owned(),
+                                ),
+                                footer: String::new(),
+                                metadata: None,
+                            };
+                            show_card_at(
+                                &overlay,
+                                &card,
+                                &ScreenRect::new(point.x, point.y, 1, 1),
+                                PresentationKind::Feedback,
+                                None,
+                                &language,
+                                &shared_recent,
+                                &shared_library,
+                                &shared_settings,
+                            );
+                            continue;
+                        }
+                        let manual_effective_ocr = effective_ocr(
+                            ocr_mode,
+                            manual_process.as_deref(),
+                            cli_ocr_override,
+                            &ocr_rules,
+                        );
+                        if manual_effective_ocr == OcrMode::Off {
+                            // OCR is off for this app: no screen capture, no permission prompt.
+                            println!(
+                                "ocr   OCR is off for {}",
+                                manual_process.as_deref().unwrap_or("<unknown>")
+                            );
+                            let card = Card {
+                                original: String::new(),
+                                body: CardBody::Problem("OCR이 비활성화되어 있습니다".to_owned()),
+                                footer: String::new(),
+                                metadata: None,
+                            };
+                            show_card_at(
+                                &overlay,
+                                &card,
+                                &ScreenRect::new(point.x, point.y, 1, 1),
+                                PresentationKind::Feedback,
+                                None,
+                                &language,
+                                &shared_recent,
+                                &shared_library,
+                                &shared_settings,
+                            );
+                            continue;
+                        }
                         // Check Screen Recording permission before OCR.
                         // Manual OCR is an explicit user action, so this is
                         // the right moment to request permission if needed.
