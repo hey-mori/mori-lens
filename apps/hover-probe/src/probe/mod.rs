@@ -615,7 +615,7 @@ fn follow(acquirer: UiaTextAcquirer, options: Options, dpi_declared: bool) -> Ex
 
         if let Some(HoverEvent::Settled { generation, point }) = session.observe(sample) {
             let began = Instant::now();
-            let resolution = session.resolve(generation, point, started.elapsed(), input);
+            let resolution = session.resolve(generation, point, started.elapsed(), input, None);
             let elapsed = began.elapsed();
 
             let outcome = Outcome::from_resolution(&resolution, point, elapsed);

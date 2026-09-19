@@ -270,8 +270,12 @@ struct Options {
     language: String,
     /// AI runtime configuration with separate Quick and Deep engines.
     ai_config: AiRuntimeConfig,
-    /// When the OCR fallback may run.
+    /// Global OCR mode from settings file.
     ocr_mode: OcrMode,
+    /// CLI OCR override, if explicitly provided. Takes precedence over per-app and global.
+    cli_ocr_override: Option<OcrMode>,
+    /// Per-application OCR overrides.
+    ocr_rules: Vec<lens_core::policy::AppOcrRule>,
     /// Who is reading, which decides what Ctrl+Alt+D spends its lines on.
     profile: Profile,
     dwell: Duration,
@@ -329,6 +333,10 @@ struct CliOverrides {
     language: Option<String>,
     /// `--dwell` overrides the file's dwell_ms setting.
     dwell_ms: Option<u64>,
+    /// `--ocr` overrides both global and per-app OCR settings.
+    /// Reserved for future settings reload support.
+    #[allow(dead_code)]
+    ocr: Option<OcrMode>,
 }
 
 impl CliOverrides {
@@ -546,7 +554,21 @@ fn parse() -> Result<Options, String> {
         auto: flags.auto,
         language: flags.language.clone(),
         dwell_ms: flags.dwell_ms,
+        ocr: flags.ocr.as_deref().and_then(OcrMode::named),
     };
+
+    // Extract per-application OCR overrides from the schema.
+    // Each ApplicationConfig with an `ocr` field becomes an AppOcrRule.
+    let ocr_rules: Vec<lens_core::policy::AppOcrRule> = schema
+        .applications
+        .iter()
+        .filter_map(|app| {
+            app.ocr
+                .as_ref()
+                .and_then(|ocr_str| OcrMode::named(ocr_str))
+                .and_then(|mode| lens_core::policy::AppOcrRule::new(&app.name, mode))
+        })
+        .collect();
 
     Ok(Options {
         selftest: flags.selftest,
@@ -560,12 +582,11 @@ fn parse() -> Result<Options, String> {
         text: text_named(flags.text.as_ref().unwrap_or(&settings.text))?,
         language: flags.language.unwrap_or(settings.language),
         ai_config,
-        ocr_mode: flags
-            .ocr
-            .as_deref()
-            .and_then(OcrMode::named)
-            .or_else(|| OcrMode::named(&settings.ocr))
-            .unwrap_or(OcrMode::Manual),
+        // Global OCR from settings file only, not CLI.
+        ocr_mode: OcrMode::named(&settings.ocr).unwrap_or(OcrMode::Manual),
+        // CLI OCR override is separate and takes precedence over per-app and global.
+        cli_ocr_override: flags.ocr.as_deref().and_then(OcrMode::named),
+        ocr_rules,
         // The settings string is already validated by the parser, which reports
         // an unknown value rather than storing it. `unwrap_or_default` is the
         // second line of that and not the first.
@@ -1401,6 +1422,24 @@ pub fn main() -> std::process::ExitCode {
     // pause key keeps working, none of which was true: a wedged provider took
     // all three with it for as long as it took to give up (issue #42).
     let worker_ocr = options.ocr_mode;
+    let worker_ocr_rules = options.ocr_rules.clone();
+    let worker_cli_override = options.cli_ocr_override;
+    // Determine if OCR capability is needed.
+    // CLI override takes absolute precedence:
+    // - CLI Automatic: capability required
+    // - CLI Off/Manual: capability NOT required (overrides per-app rules)
+    // - No CLI override: check global and per-app rules
+    let needs_ocr = match worker_cli_override {
+        Some(OcrMode::Automatic) => true,
+        Some(OcrMode::Off) | Some(OcrMode::Manual) => false,
+        None => {
+            // No CLI override: check global and per-app rules.
+            worker_ocr == OcrMode::Automatic
+                || worker_ocr_rules
+                    .iter()
+                    .any(|rule| rule.ocr() == OcrMode::Automatic)
+        }
+    };
     // Hiding the card is the overlay's business, and the overlay lives on
     // another thread again, so what crosses is a request rather than a handle.
     let hide_for_ocr = overlay.hider();
@@ -1420,27 +1459,25 @@ pub fn main() -> std::process::ExitCode {
             Some(placement) => Box::new(lesson::TaughtFirst::new(placement, Box::new(acquirer))),
             None => Box::new(acquirer),
         };
-        let session = HoverSession::new(worker_config, worker_policy, acquirer);
-        // **Only for `Automatic`.** Installing it for `Manual` would look
-        // tidier and do nothing: the session's manual branch fires on
-        // `InputState::ocr_requested`, which this product never sets, because
-        // `Ctrl+Alt+O` is served by `manual_ocr` instead. That path is not
-        // redundant, it carries things a `TextTarget` has no room for: the
-        // count of misread words for the card's footer, and its own refusals
-        // in the reader's language. Two paths, and the honest arrangement is
-        // to say so rather than to install something that has no effect.
-        Some(match worker_ocr {
-            OcrMode::Automatic => session.with_ocr(
+        let session = HoverSession::new(worker_config, worker_policy, acquirer)
+            .with_ocr_rules(worker_ocr_rules)
+            .with_cli_ocr_override(worker_cli_override);
+        // Install OCR if needed: global Automatic, or any per-app rule requires it.
+        // The per-hover decision in ocr_fallback() uses effective_ocr() to resolve
+        // the actual mode based on the application under the pointer.
+        Some(if needs_ocr {
+            session.with_ocr(
                 Box::new(lens_platform_windows::OcrTextAcquirer::new(
                     Box::new(hide_for_ocr),
                     worker_cost,
                 )),
-                OcrMode::Automatic,
-            ),
+                worker_ocr,
+            )
+        } else {
             // `Off` and `Manual` both leave the session without a capture
             // path. They differ in what `Ctrl+Alt+O` does, which is the app's
             // business rather than the session's.
-            _ => session,
+            session
         })
     }) else {
         eprintln!("the acquisition thread could not be started");
@@ -2212,6 +2249,30 @@ pub fn main() -> std::process::ExitCode {
                     }
                     if OcrMode::named(&settings.ocr) != Some(options.ocr_mode) {
                         stale.push("ocr");
+                    }
+                    // Check if per-app OCR rules changed.
+                    if let Ok(file) = lens_settings::SettingsFile::load(&options.source.path) {
+                        let current_rules: Vec<lens_core::policy::AppOcrRule> = file
+                            .schema()
+                            .applications
+                            .iter()
+                            .filter_map(|app| {
+                                app.ocr
+                                    .as_ref()
+                                    .and_then(|ocr_str| OcrMode::named(ocr_str))
+                                    .and_then(|mode| {
+                                        lens_core::policy::AppOcrRule::new(&app.name, mode)
+                                    })
+                            })
+                            .collect();
+                        if current_rules.len() != options.ocr_rules.len()
+                            || current_rules
+                                .iter()
+                                .zip(options.ocr_rules.iter())
+                                .any(|(a, b)| a != b)
+                        {
+                            stale.push("per-app ocr");
+                        }
                     }
                     if !stale.is_empty() {
                         let keys = stale.join(", ");
@@ -4586,6 +4647,7 @@ mod cli_override_tests {
             auto: true,
             language: None,
             dwell_ms: None,
+            ocr: None,
         };
 
         let mut policy = AppPolicy::new(AppTier::Modifier);
@@ -4600,6 +4662,7 @@ mod cli_override_tests {
             auto: false,
             language: None,
             dwell_ms: None,
+            ocr: None,
         };
 
         let mut policy = AppPolicy::new(AppTier::Modifier);
@@ -4618,6 +4681,7 @@ mod cli_override_tests {
             auto: true,
             language: Some("Japanese".to_owned()),
             dwell_ms: Some(500),
+            ocr: None,
         };
 
         // Simulate file reload: policy from file
