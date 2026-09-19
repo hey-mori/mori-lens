@@ -216,9 +216,8 @@ def check_command_wiring(root: Path) -> list[str]:
     # Allowlist: commands intentionally not invoked from main webviews
     # Each entry must have a reason
     allowlist = {
-        # P12 Phase 2: diagnostic commands; UI wiring is Phase 3
-        "run_health_check": "P12 Phase 2; UI in Phase 3",
-        "get_diagnostic_events": "P12 Phase 2; UI in Phase 3",
+        # Add commands here if they're invoked from external tools,
+        # test harnesses, or other non-webview contexts
     }
 
     # Check: REGISTERED but not DECLARED
