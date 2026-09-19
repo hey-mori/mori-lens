@@ -453,13 +453,18 @@ impl SettingsState {
             let messages: Vec<String> = errors
                 .iter()
                 .map(|e| match e {
-                    lens_core::shortcut::ShortcutValidationError::RequiredActionUnbound { action } => {
+                    lens_core::shortcut::ShortcutValidationError::RequiredActionUnbound {
+                        action,
+                    } => {
                         format!("{} must have a shortcut", action)
                     }
                     lens_core::shortcut::ShortcutValidationError::CannotBeUnbound { action } => {
                         format!("{} cannot be unbound", action)
                     }
-                    lens_core::shortcut::ShortcutValidationError::DuplicateBinding { action1, action2 } => {
+                    lens_core::shortcut::ShortcutValidationError::DuplicateBinding {
+                        action1,
+                        action2,
+                    } => {
                         format!("{} and {} use the same shortcut", action1, action2)
                     }
                     lens_core::shortcut::ShortcutValidationError::InsufficientModifiers => {
@@ -1357,7 +1362,10 @@ mod tests {
         // Try to set a shortcut with insufficient modifiers (no Ctrl/Alt/Meta)
         view.shortcuts.bindings[0].shortcut = Some("L".into());
         let result = state.apply(view);
-        assert!(result.is_err(), "shortcut without modifiers should be rejected");
+        assert!(
+            result.is_err(),
+            "shortcut without modifiers should be rejected"
+        );
         let err = result.unwrap_err();
         assert!(
             err.contains("Ctrl/Alt/Meta"),
@@ -1418,11 +1426,15 @@ mod tests {
 
         // Apply should fail
         let result = state.apply(view);
-        assert!(result.is_err(), "malformed shortcut should cause apply to fail");
+        assert!(
+            result.is_err(),
+            "malformed shortcut should cause apply to fail"
+        );
 
         // Verify transactionality: nothing should have changed
         assert_eq!(
-            state.view().language, initial_language,
+            state.view().language,
+            initial_language,
             "language should not be mutated when shortcut validation fails"
         );
         assert_eq!(
@@ -1434,7 +1446,8 @@ mod tests {
             "pending should not change when apply fails"
         );
         assert_eq!(
-            state.view().shortcuts, initial_shortcuts,
+            state.view().shortcuts,
+            initial_shortcuts,
             "shortcuts should not change when validation fails"
         );
 
@@ -1468,15 +1481,20 @@ mod tests {
 
         // Apply should fail
         let result = state.apply(view);
-        assert!(result.is_err(), "duplicate shortcuts should cause apply to fail");
+        assert!(
+            result.is_err(),
+            "duplicate shortcuts should cause apply to fail"
+        );
 
         // Verify transactionality: engine should not have changed
         assert_eq!(
-            state.view().quick_engine, initial_quick_engine,
+            state.view().quick_engine,
+            initial_quick_engine,
             "quick_engine should not be mutated when shortcut validation fails"
         );
         assert_eq!(
-            state.view().quick_model, initial_quick_model,
+            state.view().quick_model,
+            initial_quick_model,
             "quick_model should not be mutated when shortcut validation fails"
         );
 
@@ -1511,7 +1529,8 @@ mod tests {
 
         // Verify transactionality: nothing should have changed
         assert_eq!(
-            state.view().language, initial_language,
+            state.view().language,
+            initial_language,
             "language should not be mutated when save fails"
         );
         assert_eq!(
