@@ -768,6 +768,24 @@ async fn run_health_check(
 
     let latency_ms = start.elapsed().as_millis() as u64;
 
+    // Map failure strings to DiagnosticFailureClass (needed for both snapshot and events).
+    let quick_failure_class = quick_failure.as_deref().and_then(|f| match f {
+        "provider_unreachable" => Some(DiagnosticFailureClass::ConnectionFailed),
+        "timeout" => Some(DiagnosticFailureClass::Timeout),
+        "model_missing" => Some(DiagnosticFailureClass::ModelMissing),
+        "malformed" => Some(DiagnosticFailureClass::Malformed),
+        _ => Some(DiagnosticFailureClass::InferenceFailed),
+    });
+
+    let deep_failure_class = deep_failure.as_deref().and_then(|f| match f {
+        "provider_unreachable" => Some(DiagnosticFailureClass::ConnectionFailed),
+        "timeout" => Some(DiagnosticFailureClass::Timeout),
+        "model_missing" => Some(DiagnosticFailureClass::ModelMissing),
+        "malformed" => Some(DiagnosticFailureClass::Malformed),
+        "empty_analysis" => Some(DiagnosticFailureClass::InferenceFailed),
+        _ => Some(DiagnosticFailureClass::InferenceFailed),
+    });
+
     // Update health snapshot and record event in the ring.
     {
         let mut snapshot = health.lock().unwrap();
@@ -787,24 +805,6 @@ async fn run_health_check(
             _ => HealthState::Unavailable,
         };
 
-        // Map failure strings to DiagnosticFailureClass.
-        let quick_failure_class = quick_failure.as_deref().and_then(|f| match f {
-            "provider_unreachable" => Some(DiagnosticFailureClass::ConnectionFailed),
-            "timeout" => Some(DiagnosticFailureClass::Timeout),
-            "model_missing" => Some(DiagnosticFailureClass::ModelMissing),
-            "malformed" => Some(DiagnosticFailureClass::Malformed),
-            _ => Some(DiagnosticFailureClass::InferenceFailed),
-        });
-
-        let deep_failure_class = deep_failure.as_deref().and_then(|f| match f {
-            "provider_unreachable" => Some(DiagnosticFailureClass::ConnectionFailed),
-            "timeout" => Some(DiagnosticFailureClass::Timeout),
-            "model_missing" => Some(DiagnosticFailureClass::ModelMissing),
-            "malformed" => Some(DiagnosticFailureClass::Malformed),
-            "empty_analysis" => Some(DiagnosticFailureClass::InferenceFailed),
-            _ => Some(DiagnosticFailureClass::InferenceFailed),
-        });
-
         // Update snapshot.
         snapshot.update_quick(
             quick_health_state,
@@ -820,16 +820,20 @@ async fn run_health_check(
         );
     }
 
-    // Record health check event in the ring.
+    // Record health check events in the ring (separate for each lane).
     {
         let mut ring = events.lock().unwrap();
         let kind = DiagnosticEventKind::HealthCheck;
-        let failure = match (&quick_state, &deep_state) {
-            (s, _) if s == "unavailable" => Some(DiagnosticFailureClass::InferenceFailed),
-            (_, s) if s == "unavailable" => Some(DiagnosticFailureClass::InferenceFailed),
-            _ => None,
-        };
-        ring.record(DiagnosticComponent::HealthCheck, kind, failure);
+
+        // Record Quick lane event if it failed.
+        if quick_state == "unavailable" || quick_state == "degraded" {
+            ring.record(DiagnosticComponent::Quick, kind, quick_failure_class);
+        }
+
+        // Record Deep lane event if it failed.
+        if deep_state == "unavailable" || deep_state == "degraded" {
+            ring.record(DiagnosticComponent::Deep, kind, deep_failure_class);
+        }
     }
 
     Ok(HealthCheckView {
@@ -1331,6 +1335,7 @@ pub fn serialize_diagnostics_report(
     ocr_mode: &str,
     language: &str,
     recent_events: &[lens_core::event_ring::DiagnosticEvent],
+    health_snapshot: &lens_core::health::HealthSnapshot,
 ) -> String {
     let report = serde_json::json!({
         "version": version,
@@ -1347,6 +1352,7 @@ pub fn serialize_diagnostics_report(
         "ocr_mode": ocr_mode,
         "language": language,
         "recent_events": recent_events,
+        "health": health_snapshot,
     });
 
     serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_owned())
@@ -1364,11 +1370,13 @@ fn export_diagnostics(
     settings: tauri::State<'_, SharedSettings>,
     library: tauri::State<'_, SharedLibrary>,
     events: tauri::State<'_, SharedDiagnosticEvents>,
+    health: tauri::State<'_, SharedHealthSnapshot>,
 ) -> String {
     let diag = diagnostics.lock().unwrap();
     let conf = settings.lock().unwrap();
     let lib = library.lock().unwrap();
     let ring = events.lock().unwrap();
+    let health_snap = health.lock().unwrap();
 
     let schema_version = lib.library().schema_version().unwrap_or(-1);
     let library_count = lib.library().count().unwrap_or(0);
@@ -1390,6 +1398,7 @@ fn export_diagnostics(
         &diag.ocr_mode,
         &conf.current().language,
         &recent_events,
+        &*health_snap,
     )
 }
 
@@ -1588,6 +1597,21 @@ mod tests {
 
         let refusals = vec![("no_text".to_owned(), 5), ("password_field".to_owned(), 2)];
 
+        // Create a health snapshot for the privacy test.
+        let mut health_snapshot = lens_core::health::HealthSnapshot::new(0);
+        health_snapshot.update_quick(
+            lens_core::health::HealthState::Ready,
+            None,
+            Some(42),
+            1000,
+        );
+        health_snapshot.update_deep(
+            lens_core::health::HealthState::Ready,
+            None,
+            Some(100),
+            1000,
+        );
+
         let json = serialize_diagnostics_report(
             "0.1.0",
             "2026-09-13-test",
@@ -1603,6 +1627,7 @@ mod tests {
             "windows-gdi",
             "ko",
             &[], // recent_events: empty for privacy test
+            &health_snapshot,
         );
 
         // Verify no canary strings appear in the output.
@@ -1630,6 +1655,11 @@ mod tests {
         assert!(json.contains("\"target\""));
         assert!(json.contains("\"dwell\""));
         assert!(json.contains("\"mode\""));
+        // Health snapshot IS present (privacy-safe enums only).
+        assert!(json.contains("\"health\""));
+        assert!(json.contains("\"quick\""));
+        assert!(json.contains("\"deep\""));
+        assert!(json.contains("\"state\": \"ready\""));
     }
 
     /// Schema allowlist test for diagnostics export.
@@ -1662,6 +1692,21 @@ mod tests {
 
         let refusals = vec![("no_text".to_owned(), 5)];
 
+        // Create a health snapshot for the schema test.
+        let mut health_snapshot = lens_core::health::HealthSnapshot::new(0);
+        health_snapshot.update_quick(
+            lens_core::health::HealthState::Ready,
+            None,
+            Some(42),
+            1000,
+        );
+        health_snapshot.update_deep(
+            lens_core::health::HealthState::Ready,
+            None,
+            Some(100),
+            1000,
+        );
+
         let json = serialize_diagnostics_report(
             "0.1.0",
             "2026-09-13-test",
@@ -1677,6 +1722,7 @@ mod tests {
             "windows-gdi",
             "ko",
             &[], // recent_events: empty for schema test
+            &health_snapshot,
         );
 
         // Parse the JSON and assert the exact allowed top-level key set.
@@ -1699,6 +1745,7 @@ mod tests {
             "ocr_mode",
             "language",
             "recent_events",
+            "health",
         ]
         .iter()
         .copied()

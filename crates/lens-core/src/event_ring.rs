@@ -364,7 +364,10 @@ mod tests {
         assert_eq!(ring.len(), 1, "coalesced into one event");
         let event = ring.events().next().unwrap();
         assert_eq!(event.count, 3);
-        assert_eq!(event.first_seen_ms, event.last_seen_ms, "all occurrences happened at same instant in test");
+        assert_eq!(
+            event.first_seen_ms, event.last_seen_ms,
+            "all occurrences happened at same instant in test"
+        );
     }
 
     #[test]
@@ -638,7 +641,9 @@ mod tests {
             Some(DiagnosticFailureClass::Timeout)
         );
         assert_eq!(
-            DiagnosticFailureClass::from_translate_error(&TranslateError::ModelMissing("test".to_string())),
+            DiagnosticFailureClass::from_translate_error(&TranslateError::ModelMissing(
+                "test".to_string()
+            )),
             Some(DiagnosticFailureClass::ModelMissing)
         );
         assert_eq!(
