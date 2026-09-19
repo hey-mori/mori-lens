@@ -128,6 +128,11 @@ mod tests {
                 endpoint: "127.0.0.1:11435".to_owned(),
             },
             applications: Vec::new(),
+            shortcuts: if cfg!(target_os = "macos") {
+                lens_core::shortcut::default_macos_shortcuts()
+            } else {
+                lens_core::shortcut::default_windows_shortcuts()
+            },
         }
     }
 
