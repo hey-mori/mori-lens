@@ -11,6 +11,7 @@
     <div class="sidebar-item" data-section="recent" role="button" tabindex="0">Recent</div>
     <div class="sidebar-item" data-section="history" role="button" tabindex="0">History</div>
     <div class="sidebar-item" data-section="general" role="button" tabindex="0">General</div>
+    <div class="sidebar-item" data-section="shortcuts" role="button" tabindex="0">Shortcuts</div>
     <div class="sidebar-item" data-section="models" role="button" tabindex="0">Models</div>
     <div class="sidebar-item" data-section="apps" role="button" tabindex="0">Apps</div>
     <div class="sidebar-item" data-section="about" role="button" tabindex="0">About</div>
@@ -202,6 +203,17 @@
         <button class="btn" id="general-reset-btn">Reset</button>
       </div>
       <div id="general-status" class="status-line"></div>
+    </div>
+    <!-- Shortcuts -->
+    <div class="section" id="section-shortcuts">
+      <h1>Shortcuts</h1>
+      <p style="color:#666;margin-bottom:12px">Global keyboard shortcuts. Changes require restart.</p>
+      <div id="shortcuts-list"></div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="shortcuts-save-btn">Save</button>
+        <button class="btn" id="shortcuts-reset-btn">Reset</button>
+      </div>
+      <div id="shortcuts-status" class="status-line"></div>
     </div>
     <!-- Models -->
     <div class="section" id="section-models">
