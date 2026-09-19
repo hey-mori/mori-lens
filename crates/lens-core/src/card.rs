@@ -490,6 +490,17 @@ impl Card {
         }
     }
 
+    /// The card shown when text is already in the target language and no
+    /// shortcut hint is available (Deep action is unbound or unavailable).
+    pub fn already_readable_no_hint() -> Self {
+        Self {
+            original: String::new(),
+            body: CardBody::Problem("읽을 수 있는 언어라 번역하지 않았습니다".to_owned()),
+            footer: String::new(),
+            metadata: None,
+        }
+    }
+
     /// The card a first-time reader needs, and the one nothing could tell them.
     ///
     /// The default tier puts reading behind a modifier, so a new user rests the
