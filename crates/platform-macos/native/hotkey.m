@@ -1,6 +1,6 @@
 // Mori Lens · macOS global hotkeys via CGEventTap.
 //
-// Intercepts Cmd+Opt+key combinations globally and maps them to product
+// Intercepts configured key combinations globally and maps them to product
 // commands. Uses CGEventTapCreate with Default (non-ListenOnly) option
 // so matched hotkeys are consumed and not forwarded to the foreground app.
 //
@@ -18,6 +18,8 @@
 //     Pause uses a saturating unsigned counter (max 1024) to preserve
 //     toggle multiplicity without signed overflow risk.
 //   - If macOS disables the tap (timeout), the callback re-enables it.
+//   - Shortcut bindings are configurable: the Rust layer calls
+//     lens_hotkey_configure() to install the mapping table.
 
 #import "hotkey.h"
 #import <CoreGraphics/CoreGraphics.h>
@@ -42,6 +44,18 @@ static atomic_int g_cmdTail = 0;  // read position (consumer only)
 #define PAUSE_PENDING_MAX 1024u
 static atomic_bool g_quitFlag = false;
 static atomic_uint g_pauseCount = 0;
+
+// Configurable hotkey bindings.
+// The Rust layer calls lens_hotkey_configure() to install the binding table.
+// The callback reads g_bindings atomically. We use a simple double-buffer
+// approach: g_bindings points to one of two static arrays, and configure()
+// swaps the pointer after writing the new table to the other array.
+// This ensures the callback always sees a consistent table.
+#define MAX_BINDINGS 16
+static LensHotkeyBinding g_bindingsA[MAX_BINDINGS];
+static LensHotkeyBinding g_bindingsB[MAX_BINDINGS];
+static atomic_int g_bindingCount = 0;
+static atomic_int g_useB = 0;  // 0 = A is active, 1 = B is active
 
 static void enqueue_command(LensCommand cmd) {
     // Critical commands use dedicated atomics — never dropped.
@@ -78,23 +92,37 @@ static void enqueue_command(LensCommand cmd) {
     atomic_store(&g_cmdHead, next_head);
 }
 
-static LensCommand map_key_to_command(uint16_t keycode) {
-    // macOS virtual keycodes (from HIToolbox/Events.h):
-    //   0x25 = L (pause)
-    //   0x02 = D (deep)
-    //   0x08 = C (copy)
-    //   0x01 = S (save)
-    //   0x1F = O (ocr)
-    //   0x0C = Q (quit)
-    switch (keycode) {
-        case 0x25: return LENS_CMD_PAUSE_TOGGLE;   // L
-        case 0x02: return LENS_CMD_DEEP;            // D
-        case 0x08: return LENS_CMD_COPY;            // C
-        case 0x01: return LENS_CMD_SAVE;            // S
-        case 0x1F: return LENS_CMD_MANUAL_OCR;      // O
-        case 0x0C: return LENS_CMD_QUIT;            // Q
-        default:   return LENS_CMD_NONE;
+/// Look up a key event in the configured binding table.
+/// Returns the matching command, or LENS_CMD_NONE if no match.
+static LensCommand lookup_binding(uint32_t eventFlags, uint16_t keycode) {
+    // Determine which buffer is active.
+    int useB = atomic_load(&g_useB);
+    LensHotkeyBinding* bindings = useB ? g_bindingsB : g_bindingsA;
+    int count = atomic_load(&g_bindingCount);
+
+    // Extract modifier state from the event.
+    bool cmd = (eventFlags & kCGEventFlagMaskCommand) != 0;
+    bool opt = (eventFlags & kCGEventFlagMaskAlternate) != 0;
+    bool ctrl = (eventFlags & kCGEventFlagMaskControl) != 0;
+    bool shift = (eventFlags & kCGEventFlagMaskShift) != 0;
+
+    for (int i = 0; i < count; i++) {
+        LensHotkeyBinding* b = &bindings[i];
+        // Check keycode first (fast rejection).
+        if (b->keycode != keycode) continue;
+
+        // Check modifiers: the binding specifies which modifiers must be set.
+        // We also require that NO extra modifiers are held (exact match).
+        bool b_cmd = (b->modifiers & kCGEventFlagMaskCommand) != 0;
+        bool b_opt = (b->modifiers & kCGEventFlagMaskAlternate) != 0;
+        bool b_ctrl = (b->modifiers & kCGEventFlagMaskControl) != 0;
+        bool b_shift = (b->modifiers & kCGEventFlagMaskShift) != 0;
+
+        if (cmd == b_cmd && opt == b_opt && ctrl == b_ctrl && shift == b_shift) {
+            return (LensCommand)b->command;
+        }
     }
+    return LENS_CMD_NONE;
 }
 
 // Forward declarations for the event tap (used in callback for re-enable).
@@ -117,17 +145,10 @@ static CGEventRef hotkey_callback(CGEventTapProxy proxy, CGEventType type,
 
     if (type != kCGEventKeyDown) return event;
 
-    // Check modifiers: Cmd+Opt (no Ctrl, no Shift).
+    // Check modifiers against the configured binding table.
     CGEventFlags flags = CGEventGetFlags(event);
-    bool cmd = (flags & kCGEventFlagMaskCommand) != 0;
-    bool opt = (flags & kCGEventFlagMaskAlternate) != 0;
-    bool ctrl = (flags & kCGEventFlagMaskControl) != 0;
-    bool shift = (flags & kCGEventFlagMaskShift) != 0;
-
-    if (!cmd || !opt || ctrl || shift) return event;
-
     uint16_t keycode = (uint16_t)CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
-    LensCommand cmd_val = map_key_to_command(keycode);
+    LensCommand cmd_val = lookup_binding(flags, keycode);
     if (cmd_val != LENS_CMD_NONE) {
         enqueue_command(cmd_val);
         // Consume the event so it doesn't reach the foreground app.
@@ -178,6 +199,29 @@ void lens_hotkey_remove(void) {
         CFRelease(g_eventTap);
         g_eventTap = NULL;
     }
+    // Clear bindings.
+    atomic_store(&g_bindingCount, 0);
+    atomic_store(&g_useB, 0);
+}
+
+void lens_hotkey_configure(const LensHotkeyBinding* bindings, int count) {
+    if (count < 0) count = 0;
+    if (count > MAX_BINDINGS) count = MAX_BINDINGS;
+
+    // Determine which buffer is currently inactive.
+    int useB = atomic_load(&g_useB);
+    LensHotkeyBinding* target = useB ? g_bindingsA : g_bindingsB;
+
+    // Copy the new bindings into the inactive buffer.
+    for (int i = 0; i < count; i++) {
+        target[i] = bindings[i];
+    }
+
+    // Update the count (for the new buffer).
+    atomic_store(&g_bindingCount, count);
+
+    // Swap to the new buffer. The callback will see the new table on the next event.
+    atomic_store(&g_useB, useB ? 0 : 1);
 }
 
 LensCommand lens_hotkey_poll(void) {

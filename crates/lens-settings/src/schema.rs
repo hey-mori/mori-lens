@@ -155,7 +155,11 @@ impl Schema {
                 .iter()
                 .map(|(name, tier)| ApplicationConfig::new(name.clone(), *tier))
                 .collect(),
-            shortcuts: lens_core::shortcut::default_windows_shortcuts(),
+            shortcuts: if cfg!(target_os = "macos") {
+                lens_core::shortcut::default_macos_shortcuts()
+            } else {
+                lens_core::shortcut::default_windows_shortcuts()
+            },
         }
     }
 
