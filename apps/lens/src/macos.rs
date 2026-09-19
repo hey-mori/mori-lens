@@ -330,9 +330,10 @@ pub fn main() -> std::process::ExitCode {
     // Read current settings for the product loop.
     // ADR-0005: Quick and Deep have separate engines. Build from Schema,
     // not from the flat Settings view that only carries the quick lane.
-    let (language, ai_config, dwell_ms, ocr_mode, policy, hover_scope) = {
+    let (language, ai_config, dwell_ms, ocr_mode, cli_ocr_override, ocr_rules, policy, hover_scope) = {
         let guard = shared_settings.lock().unwrap();
         let s = guard.current().clone();
+        let schema = guard.schema().clone();
         let mut ai_config = AiRuntimeConfig::from_schema(guard.schema());
         drop(guard);
         let mut p = s.policy();
@@ -353,13 +354,23 @@ pub fn main() -> std::process::ExitCode {
             ai_config.quick.model = Some(model);
         }
         let d = flags.dwell_ms.unwrap_or(s.dwell_ms);
-        let o = flags
-            .ocr
-            .as_deref()
-            .and_then(OcrMode::named)
-            .or_else(|| OcrMode::named(&s.ocr))
-            .unwrap_or(OcrMode::Manual);
-        (lang, ai_config, d, o, p, s.hover_scope)
+        // Global OCR from settings file only, not CLI.
+        let o = OcrMode::named(&s.ocr).unwrap_or(OcrMode::Manual);
+        // CLI OCR override is separate and takes precedence over per-app and global.
+        let cli_override = flags.ocr.as_deref().and_then(OcrMode::named);
+        // Per-application OCR overrides from settings.
+        let rules: Vec<lens_core::policy::AppOcrRule> = schema
+            .applications
+            .iter()
+            .filter_map(|app| {
+                app.ocr.as_ref().and_then(|ocr_str| {
+                    OcrMode::named(ocr_str).and_then(|mode| {
+                        lens_core::policy::AppOcrRule::new(&app.name, mode)
+                    })
+                })
+            })
+            .collect();
+        (lang, ai_config, d, o, cli_override, rules, p, s.hover_scope)
     };
     let mut policy = policy;
     policy.deny_self("lens");
@@ -396,6 +407,8 @@ pub fn main() -> std::process::ExitCode {
             ai_config,
             dwell_ms,
             ocr_mode,
+            cli_ocr_override,
+            ocr_rules,
             policy,
             hover_scope,
             flags.auto,
@@ -432,6 +445,8 @@ fn product_loop(
     mut ai_config: AiRuntimeConfig,
     mut dwell_ms: u64,
     mut ocr_mode: OcrMode,
+    mut cli_ocr_override: Option<OcrMode>,
+    mut ocr_rules: Vec<lens_core::policy::AppOcrRule>,
     mut policy: AppPolicy,
     mut hover_scope: String,
     auto: bool,
@@ -1210,6 +1225,22 @@ fn product_loop(
                     p.deny_self("lens");
                     p
                 };
+                // Per-application OCR rules (hot-reload).
+                let new_ocr_rules: Vec<lens_core::policy::AppOcrRule> = {
+                    let guard = shared_settings.lock().unwrap();
+                    guard
+                        .schema()
+                        .applications
+                        .iter()
+                        .filter_map(|app| {
+                            app.ocr.as_ref().and_then(|ocr_str| {
+                                OcrMode::named(ocr_str).and_then(|mode| {
+                                    lens_core::policy::AppOcrRule::new(&app.name, mode)
+                                })
+                            })
+                        })
+                        .collect()
+                };
 
                 // ADR-0005: compare quick and deep independently.
                 // Each lane gets its own config update only when its
@@ -1244,6 +1275,10 @@ fn product_loop(
                 // OCR mode change → affects whether OCR fallback runs.
                 if new_ocr != ocr_mode {
                     ocr_mode = new_ocr;
+                }
+                // Per-app OCR rules change → affects effective_ocr() resolution.
+                if new_ocr_rules != ocr_rules {
+                    ocr_rules = new_ocr_rules;
                 }
                 // Policy change → Allow→Deny must take effect before next acquisition.
                 if new_policy != policy {
@@ -1289,13 +1324,19 @@ fn product_loop(
                     Err(AcquireError::Unavailable)
                 };
 
-                // OCR fallback — only in Automatic mode.
+                // OCR fallback — only if effective_ocr() is Automatic.
+                // This respects CLI > per-app > global precedence.
                 // Manual mode requires explicit user OCR request (ProductCommand::ManualOcr).
-                // Off mode never runs OCR. This matches the core OcrMode contract
-                // and Windows behavior (win.rs:2028).
+                // Off mode never runs OCR.
+                let effective_ocr_mode = lens_core::policy::effective_ocr(
+                    ocr_mode,
+                    &ocr_rules,
+                    cli_ocr_override,
+                    process_name.as_deref(),
+                );
                 let target = match acquire_result {
                     Ok(target) => target,
-                    Err(e) if e.ocr_can_help() && ocr_mode == OcrMode::Automatic => {
+                    Err(e) if e.ocr_can_help() && effective_ocr_mode == OcrMode::Automatic => {
                         if let Some(ref ocr) = ocr_acquirer {
                             // Check Screen Recording permission before OCR.
                             // If not granted, request once and show a card
