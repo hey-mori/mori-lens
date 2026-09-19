@@ -6,6 +6,7 @@
 //! in-memory type the rest of the product uses.
 
 use lens_core::policy::AppTier;
+use lens_core::shortcut::ShortcutConfig;
 
 /// The current schema version, written at the top of every file this crate
 /// produces.
@@ -19,6 +20,9 @@ pub struct Schema {
     pub quick: EngineConfig,
     pub deep: EngineConfig,
     pub applications: Vec<ApplicationConfig>,
+    /// Configurable global shortcuts. Optional in the file; defaults apply
+    /// when the section is absent.
+    pub shortcuts: ShortcutConfig,
 }
 
 impl Default for Schema {
@@ -151,6 +155,7 @@ impl Schema {
                 .iter()
                 .map(|(name, tier)| ApplicationConfig::new(name.clone(), *tier))
                 .collect(),
+            shortcuts: lens_core::shortcut::default_windows_shortcuts(),
         }
     }
 
