@@ -158,6 +158,8 @@ pub struct DiagnosticEvent {
     pub count: u32,
     /// When the first occurrence of a coalesced run was seen (elapsed_ms).
     pub first_seen_ms: u64,
+    /// When the most recent occurrence of a coalesced run was seen (elapsed_ms).
+    pub last_seen_ms: u64,
 }
 
 /// Default ring capacity. Chosen to hold enough context for diagnosis
@@ -216,6 +218,7 @@ impl DiagnosticEventRing {
                 && last.failure_class == failure_class
             {
                 last.count += 1;
+                last.last_seen_ms = elapsed;
                 return last.seq;
             }
         }
@@ -231,6 +234,7 @@ impl DiagnosticEventRing {
             failure_class,
             count: 1,
             first_seen_ms: elapsed,
+            last_seen_ms: elapsed,
         };
 
         if self.events.len() >= self.capacity {
@@ -360,6 +364,42 @@ mod tests {
         assert_eq!(ring.len(), 1, "coalesced into one event");
         let event = ring.events().next().unwrap();
         assert_eq!(event.count, 3);
+        assert_eq!(event.first_seen_ms, event.last_seen_ms, "all occurrences happened at same instant in test");
+    }
+
+    #[test]
+    fn coalescing_updates_last_seen_ms() {
+        use std::thread;
+        use std::time::Duration;
+
+        let mut ring = DiagnosticEventRing::new();
+        ring.record(
+            DiagnosticComponent::Quick,
+            DiagnosticEventKind::Failure,
+            Some(DiagnosticFailureClass::Timeout),
+        );
+        let first_event = ring.events().next().unwrap().clone();
+        let first_seen = first_event.first_seen_ms;
+
+        // Wait a bit to ensure time has passed.
+        thread::sleep(Duration::from_millis(10));
+
+        ring.record(
+            DiagnosticComponent::Quick,
+            DiagnosticEventKind::Failure,
+            Some(DiagnosticFailureClass::Timeout),
+        );
+
+        assert_eq!(ring.len(), 1, "coalesced into one event");
+        let event = ring.events().next().unwrap();
+        assert_eq!(event.count, 2);
+        assert_eq!(event.first_seen_ms, first_seen, "first_seen_ms unchanged");
+        assert!(
+            event.last_seen_ms >= first_seen,
+            "last_seen_ms advanced: {} >= {}",
+            event.last_seen_ms,
+            first_seen
+        );
     }
 
     #[test]
