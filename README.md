@@ -42,10 +42,13 @@ What ships:
   start-with-Windows.
 - Secure fields refused before they are read, checked against a real
   password control.
-- OCR where accessibility gives nothing. `Ctrl+Alt+O` reads the band
+- OCR where accessibility gives nothing. The Manual OCR shortcut
+  (default `Ctrl+Alt+O` on Windows, `Cmd+Opt+O` on macOS) reads the band
   around the pointer.
-- `Ctrl+Alt+D` for grammar, structure, and vocabulary explanation.
-- `Ctrl+Alt+C` and `Ctrl+Alt+S` to copy or save the card.
+- `Ctrl+Alt+D` (default) for grammar, structure, and vocabulary explanation.
+- `Ctrl+Alt+C` and `Ctrl+Alt+S` (defaults) to copy or save the card.
+
+Global shortcuts are configurable in Control Center.
 
 What does not exist yet: real-world validation on macOS with outside
 readers (requires Accessibility and Screen Recording permissions).
@@ -173,8 +176,10 @@ settings file.
 - **Hold Alt and rest the pointer** on a sentence. A card appears beside
   it with the translation, and the original above it.
 - **Click the tray icon** to pause. Paused means no accessibility call
-  is made at all, not that the card is hidden. `Ctrl+Alt+L` does the same.
-- **Press Ctrl+Alt+O** where the accessibility path gives nothing, and
+  is made at all, not that the card is hidden. The Pause shortcut
+  (default `Ctrl+Alt+L` on Windows, `Cmd+Opt+L` on macOS) does the same.
+- **Press the Manual OCR shortcut** (default `Ctrl+Alt+O` on Windows,
+  `Cmd+Opt+O` on macOS) where the accessibility path gives nothing, and
   Lens reads the band around the pointer with OCR instead.
 - **Right-click the tray icon** for the settings file, start-with-Windows,
   and quit.
@@ -188,6 +193,36 @@ Password managers are denied before that file is read, and writing
 
 `lens.exe --selftest` runs the whole chain once against text already on
 screen, without touching the pointer, and reports each stage.
+
+## Global shortcuts
+
+The global shortcuts are configurable in Control Center (Settings → Shortcuts).
+Changes require a restart to take effect.
+
+Windows defaults:
+
+| Action       | Shortcut   |
+|--------------|------------|
+| Pause        | Ctrl+Alt+L |
+| Manual OCR   | Ctrl+Alt+O |
+| Deep         | Ctrl+Alt+D |
+| Copy Card    | Ctrl+Alt+C |
+| Save         | Ctrl+Alt+S |
+| Pin Card     | Ctrl+Alt+P |
+
+macOS defaults:
+
+| Action       | Shortcut   |
+|--------------|------------|
+| Pause        | Cmd+Opt+L  |
+| Manual OCR   | Cmd+Opt+O  |
+| Deep         | Cmd+Opt+D  |
+| Copy Card    | Cmd+Opt+C  |
+| Save         | Cmd+Opt+S  |
+
+Pause cannot be unbound. It is the privacy control that stops all
+screen acquisition. Other actions can be disabled by clearing their
+shortcut field.
 
 ## Develop
 
