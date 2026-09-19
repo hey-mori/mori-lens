@@ -118,6 +118,16 @@ function wireStaticButtons() {
     import('./settings.js').then(m => m.loadSettings());
   });
 
+  // Shortcuts section
+  const shortcutsSaveBtn = document.getElementById('shortcuts-save-btn');
+  if (shortcutsSaveBtn) shortcutsSaveBtn.addEventListener('click', () => {
+    import('./settings.js').then(m => m.saveSettings());
+  });
+  const shortcutsResetBtn = document.getElementById('shortcuts-reset-btn');
+  if (shortcutsResetBtn) shortcutsResetBtn.addEventListener('click', () => {
+    import('./settings.js').then(m => m.loadSettings());
+  });
+
   // About section
   const secureWipeBtn = document.getElementById('secure-wipe-btn');
   if (secureWipeBtn) secureWipeBtn.addEventListener('click', () => {
