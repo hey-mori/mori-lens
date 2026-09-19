@@ -541,6 +541,7 @@ fn extract_schema(doc: &toml_edit::DocumentMut, path: &Path) -> Result<Schema, S
     let quick = extract_engine(doc, "quick");
     let deep = extract_engine(doc, "deep");
     let applications = extract_applications(doc);
+    let shortcuts = extract_shortcuts(doc);
 
     Ok(Schema {
         version,
@@ -548,6 +549,7 @@ fn extract_schema(doc: &toml_edit::DocumentMut, path: &Path) -> Result<Schema, S
         quick,
         deep,
         applications,
+        shortcuts,
     })
 }
 
@@ -700,6 +702,34 @@ fn extract_applications(doc: &toml_edit::DocumentMut) -> Vec<schema::Application
     apps
 }
 
+fn extract_shortcuts(doc: &toml_edit::DocumentMut) -> lens_core::shortcut::ShortcutConfig {
+    use lens_core::shortcut::{Shortcut, ShortcutAction};
+
+    let Some(table) = doc.get("shortcuts").and_then(|v| v.as_table_like()) else {
+        // No shortcuts section: use platform defaults
+        if cfg!(target_os = "macos") {
+            return lens_core::shortcut::default_macos_shortcuts();
+        } else {
+            return lens_core::shortcut::default_windows_shortcuts();
+        }
+    };
+
+    let mut bindings = Vec::new();
+    for action in ShortcutAction::ALL {
+        let key = action.as_str();
+        let shortcut = table.get(key).and_then(|v| v.as_str()).and_then(|s| {
+            if s == "none" || s.is_empty() {
+                None
+            } else {
+                Shortcut::parse(s).ok()
+            }
+        });
+        bindings.push((action, shortcut));
+    }
+
+    lens_core::shortcut::ShortcutConfig::new(bindings)
+}
+
 fn parse_tier(value: &str) -> Option<lens_core::policy::AppTier> {
     match value {
         "allow" => Some(lens_core::policy::AppTier::Allow),
@@ -788,6 +818,17 @@ fn apply_schema_to_document(schema: &Schema, doc: &mut toml_edit::DocumentMut) {
         }
     }
     doc["applications"] = toml_edit::Item::Table(apps_table);
+
+    // [shortcuts] - rebuild entirely to reflect current configuration
+    let mut shortcuts_table = toml_edit::Table::new();
+    for (action, shortcut) in &schema.shortcuts.bindings {
+        let value = match shortcut {
+            Some(sc) => sc.format(),
+            None => "none".to_owned(),
+        };
+        shortcuts_table.insert(action.as_str(), toml_edit::value(&value));
+    }
+    doc["shortcuts"] = toml_edit::Item::Table(shortcuts_table);
 }
 
 fn apply_engine_to_table(schema: &Schema, section: &str, doc: &mut toml_edit::DocumentMut) {
@@ -920,6 +961,17 @@ fn build_document_from_schema(schema: &Schema) -> toml_edit::DocumentMut {
         }
     }
     doc["applications"] = toml_edit::Item::Table(apps);
+
+    // Build [shortcuts]
+    let mut shortcuts = toml_edit::Table::new();
+    for (action, shortcut) in &schema.shortcuts.bindings {
+        let value = match shortcut {
+            Some(sc) => sc.format(),
+            None => "none".to_owned(),
+        };
+        shortcuts.insert(action.as_str(), toml_edit::value(&value));
+    }
+    doc["shortcuts"] = toml_edit::Item::Table(shortcuts);
 
     doc
 }
@@ -2054,6 +2106,98 @@ chrome = { tier = \"allow\", ocr = \"automatic\" }
         assert_eq!(
             file.schema().applications[0].ocr,
             Some("automatic".to_owned())
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn shortcuts_absent_falls_back_to_defaults() {
+        let dir = temp_dir("no_shortcuts");
+        let path = dir.join("settings.toml");
+        let content = "schema_version = 2
+
+[general]
+language = \"Korean\"
+
+[quick]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"127.0.0.1:11434\"
+
+[deep]
+engine = \"ollama\"
+model = \"auto\"
+endpoint = \"127.0.0.1:11434\"
+";
+        fs::write(&path, content).unwrap();
+
+        let file = SettingsFile::load(&path).unwrap();
+        // Should have defaults (Ctrl+Alt+L for pause, etc.)
+        let pause = file
+            .schema()
+            .shortcuts
+            .get(lens_core::shortcut::ShortcutAction::Pause);
+        assert!(pause.is_some());
+        assert!(pause.unwrap().is_some());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn shortcuts_round_trip_through_save_and_load() {
+        use lens_core::shortcut::{Shortcut, ShortcutAction};
+
+        let dir = temp_dir("shortcuts_rt");
+        let path = dir.join("settings.toml");
+
+        let mut file = SettingsFile::new_defaults(path.clone());
+        // Customize the Pause shortcut to Ctrl+Alt+P
+        file.schema_mut().shortcuts.set(
+            ShortcutAction::Pause,
+            Some(Shortcut::parse("Ctrl+Alt+P").unwrap()),
+        );
+        // Unbind the Copy shortcut
+        file.schema_mut().shortcuts.set(ShortcutAction::Copy, None);
+        file.save().unwrap();
+
+        let loaded = SettingsFile::load(&path).unwrap();
+        let pause = loaded
+            .schema()
+            .shortcuts
+            .get(ShortcutAction::Pause)
+            .unwrap();
+        assert_eq!(pause.as_ref().unwrap().format(), "Ctrl+Alt+P");
+        let copy = loaded.schema().shortcuts.get(ShortcutAction::Copy).unwrap();
+        assert!(copy.is_none());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn shortcuts_section_written_to_fresh_file() {
+        let dir = temp_dir("shortcuts_fresh");
+        let path = dir.join("settings.toml");
+
+        let mut file = SettingsFile::new_defaults(path.clone());
+        file.save().unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("[shortcuts]"),
+            "missing [shortcuts] section"
+        );
+        assert!(
+            content.contains("pause = \"Ctrl+Alt+L\""),
+            "missing pause binding"
+        );
+        assert!(
+            content.contains("ocr = \"Ctrl+Alt+O\""),
+            "missing ocr binding"
+        );
+        assert!(
+            content.contains("deep = \"Ctrl+Alt+D\""),
+            "missing deep binding"
         );
 
         let _ = fs::remove_dir_all(&dir);

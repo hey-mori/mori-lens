@@ -31,7 +31,9 @@ pub mod utf;
 pub mod vision_ocr;
 
 pub use acquirer::MacTextAcquirer;
-pub use hotkey::{install as hotkey_install, poll as hotkey_poll, ProductCommand};
+pub use hotkey::{
+    configure as hotkey_configure, install as hotkey_install, poll as hotkey_poll, ProductCommand,
+};
 pub use lifecycle::Lifecycle;
 pub use menubar::MenuBar;
 pub use ocr_acquire::OcrTextAcquirer;

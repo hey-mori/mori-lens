@@ -20,23 +20,38 @@ typedef enum {
     LENS_CMD_QUIT = 6,
 } LensCommand;
 
-/// Install a global event tap that intercepts Cmd+Opt+key combinations
-/// and maps them to product commands.
+/// A configurable hotkey binding: (modifiers, keycode) → command.
+/// The Rust layer translates semantic shortcuts (e.g., "Cmd+Opt+L") into
+/// native modifier flags and keycodes, then calls lens_hotkey_configure()
+/// to install the mapping.
+typedef struct {
+    /// CGEventFlags mask (e.g., kCGEventFlagMaskCommand | kCGEventFlagMaskAlternate).
+    uint32_t modifiers;
+    /// macOS virtual keycode (e.g., 0x25 for L).
+    uint16_t keycode;
+    /// The LensCommand to enqueue when this binding matches.
+    int command;
+} LensHotkeyBinding;
+
+/// Install a global event tap for hotkeys.
 ///
 /// Requires Accessibility permission (which Lens already requests for AX).
-/// Returns true on success.
-///
-/// Mapped shortcuts:
-///   Cmd+Opt+L → Pause/Resume
-///   Cmd+Opt+D → Deep Analysis
-///   Cmd+Opt+C → Copy
-///   Cmd+Opt+S → Save
-///   Cmd+Opt+O → Manual OCR
-///   Cmd+Opt+Q → Quit
+/// Returns true on success. After installing, call lens_hotkey_configure()
+/// to set the actual shortcut bindings.
 bool lens_hotkey_install(void);
 
 /// Remove the global event tap.
 void lens_hotkey_remove(void);
+
+/// Configure the hotkey bindings.
+///
+/// Replaces the current binding table with the provided array. The event tap
+/// callback uses this table to match incoming key events. Pass NULL and 0
+/// to clear all bindings (no hotkeys will fire).
+///
+/// This function is safe to call while the event tap is active. The binding
+/// table is swapped atomically from the callback's perspective.
+void lens_hotkey_configure(const LensHotkeyBinding* bindings, int count);
 
 /// Poll for the next pending command. Returns LENS_CMD_NONE if no command
 /// is queued. Edge-triggered: each command is returned once.

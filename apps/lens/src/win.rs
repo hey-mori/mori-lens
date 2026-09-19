@@ -285,6 +285,8 @@ struct Options {
     source: SettingsSource,
     /// CLI overrides that must survive settings reload.
     cli_overrides: CliOverrides,
+    /// Configurable global shortcuts.
+    shortcuts: lens_core::shortcut::ShortcutConfig,
 }
 
 /// Where the settings were read from, for the startup banner.
@@ -595,6 +597,7 @@ fn parse() -> Result<Options, String> {
         policy,
         source,
         cli_overrides,
+        shortcuts: schema.shortcuts.clone(),
     })
 }
 
@@ -846,7 +849,7 @@ pub fn main() -> std::process::ExitCode {
             "NOT declared: rectangles above 100% scaling are unreliable"
         }
     );
-    let mut pause = pause::PauseKey::register();
+    let mut pause = pause::PauseKey::register_with(&options.shortcuts);
     println!(
         "  pause     {}",
         if pause.is_registered() {
