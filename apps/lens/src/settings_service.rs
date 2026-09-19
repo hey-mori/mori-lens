@@ -31,6 +31,7 @@ pub struct ActiveEngineSettings {
     pub deep_model: Option<String>,
     pub deep_endpoint: String,
     pub ocr_mode: String,
+    pub shortcuts: lens_core::shortcut::ShortcutConfig,
 }
 
 /// The outcome of saving settings, indicating whether a restart is required.
@@ -380,9 +381,9 @@ impl SettingsState {
             })
             .collect();
 
-        // Apply shortcuts
+        // Apply shortcuts - validate before mutating
         let mut new_bindings = Vec::new();
-        for binding_dto in view.shortcuts.bindings {
+        for binding_dto in &view.shortcuts.bindings {
             let action = match binding_dto.action.as_str() {
                 "pause" => lens_core::shortcut::ShortcutAction::Pause,
                 "manual_ocr" => lens_core::shortcut::ShortcutAction::ManualOcr,
@@ -390,15 +391,51 @@ impl SettingsState {
                 "copy" => lens_core::shortcut::ShortcutAction::Copy,
                 "save" => lens_core::shortcut::ShortcutAction::Save,
                 "pin" => lens_core::shortcut::ShortcutAction::Pin,
-                _ => continue, // Skip unknown actions
+                unknown => {
+                    return Err(format!("unknown shortcut action: {unknown}"));
+                }
             };
-            let shortcut = match binding_dto.shortcut {
-                Some(s) if !s.trim().is_empty() => s.parse::<lens_core::shortcut::Shortcut>().ok(),
+            let shortcut = match &binding_dto.shortcut {
+                Some(s) if !s.trim().is_empty() => {
+                    match s.parse::<lens_core::shortcut::Shortcut>() {
+                        Ok(parsed) => Some(parsed),
+                        Err(_) => {
+                            return Err(format!(
+                                "invalid shortcut for {}: {}",
+                                binding_dto.action, s
+                            ));
+                        }
+                    }
+                }
                 _ => None,
             };
             new_bindings.push((action, shortcut));
         }
-        schema.shortcuts.bindings = new_bindings;
+
+        // Build candidate config and validate before mutating schema
+        let candidate = lens_core::shortcut::ShortcutConfig::new(new_bindings);
+        if let Err(errors) = candidate.validate() {
+            let messages: Vec<String> = errors
+                .iter()
+                .map(|e| match e {
+                    lens_core::shortcut::ShortcutValidationError::RequiredActionUnbound { action } => {
+                        format!("{} must have a shortcut", action)
+                    }
+                    lens_core::shortcut::ShortcutValidationError::CannotBeUnbound { action } => {
+                        format!("{} cannot be unbound", action)
+                    }
+                    lens_core::shortcut::ShortcutValidationError::DuplicateBinding { action1, action2 } => {
+                        format!("{} and {} use the same shortcut", action1, action2)
+                    }
+                    lens_core::shortcut::ShortcutValidationError::InsufficientModifiers => {
+                        "global shortcuts require Ctrl/Alt/Meta".to_string()
+                    }
+                })
+                .collect();
+            return Err(messages.join("; "));
+        }
+
+        schema.shortcuts = candidate;
 
         if let Err(e) = self.file.save() {
             return Err(format!("save failed: {e}"));
@@ -457,6 +494,10 @@ impl SettingsState {
         if saved_schema.general.ocr != self.active_baseline.ocr_mode {
             restart_required = true;
             reasons.push("ocr_mode".to_owned());
+        }
+        if saved_schema.shortcuts != self.active_baseline.shortcuts {
+            restart_required = true;
+            reasons.push("shortcuts".to_owned());
         }
 
         (restart_required, reasons)
@@ -617,7 +658,34 @@ mod tests {
             deep_model: None,
             deep_endpoint: "127.0.0.1:11434".into(),
             applications: vec![],
-            shortcuts: ShortcutsView { bindings: vec![] },
+            shortcuts: ShortcutsView {
+                bindings: vec![
+                    ShortcutBindingDto {
+                        action: "pause".into(),
+                        shortcut: Some("Ctrl+Alt+L".into()),
+                    },
+                    ShortcutBindingDto {
+                        action: "manual_ocr".into(),
+                        shortcut: Some("Ctrl+Alt+O".into()),
+                    },
+                    ShortcutBindingDto {
+                        action: "deep".into(),
+                        shortcut: Some("Ctrl+Alt+D".into()),
+                    },
+                    ShortcutBindingDto {
+                        action: "copy".into(),
+                        shortcut: Some("Ctrl+Alt+C".into()),
+                    },
+                    ShortcutBindingDto {
+                        action: "save".into(),
+                        shortcut: Some("Ctrl+Alt+S".into()),
+                    },
+                    ShortcutBindingDto {
+                        action: "pin".into(),
+                        shortcut: Some("Ctrl+Alt+P".into()),
+                    },
+                ],
+            },
         }
     }
 
@@ -630,6 +698,7 @@ mod tests {
             deep_model: None,
             deep_endpoint: "127.0.0.1:11434".into(),
             ocr_mode: "manual".into(),
+            shortcuts: lens_core::shortcut::default_windows_shortcuts(),
         }
     }
 
@@ -1165,6 +1234,101 @@ mod tests {
 
         // Model should be kept because engine did not change
         assert_eq!(outcome.settings.quick_model, Some("llama2".to_owned()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_rejects_malformed_shortcut() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        // Try to set an invalid shortcut syntax
+        view.shortcuts.bindings[0].shortcut = Some("InvalidShortcut".into());
+        let result = state.apply(view);
+        assert!(result.is_err(), "malformed shortcut should be rejected");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("invalid shortcut"),
+            "error should mention invalid shortcut: {err}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_rejects_unbinding_pause() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        // Try to unbind Pause (set to None)
+        view.shortcuts.bindings[0].action = "pause".into();
+        view.shortcuts.bindings[0].shortcut = None;
+        let result = state.apply(view);
+        assert!(result.is_err(), "unbinding Pause should be rejected");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("pause") && err.contains("must have a shortcut"),
+            "error should mention Pause must have a shortcut: {err}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_rejects_duplicate_shortcuts() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        // Set two actions to the same shortcut
+        view.shortcuts.bindings[0].shortcut = Some("Ctrl+Alt+X".into());
+        view.shortcuts.bindings[1].shortcut = Some("Ctrl+Alt+X".into());
+        let result = state.apply(view);
+        assert!(result.is_err(), "duplicate shortcuts should be rejected");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("same shortcut"),
+            "error should mention duplicate binding: {err}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_rejects_insufficient_modifiers() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        // Try to set a shortcut with insufficient modifiers (no Ctrl/Alt/Meta)
+        view.shortcuts.bindings[0].shortcut = Some("L".into());
+        let result = state.apply(view);
+        assert!(result.is_err(), "shortcut without modifiers should be rejected");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("Ctrl/Alt/Meta"),
+            "error should mention required modifiers: {err}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_restart_required_when_shortcuts_changed() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let mut view = default_view();
+        // Change Pause shortcut to a different key
+        view.shortcuts.bindings[0].shortcut = Some("Ctrl+Alt+X".into());
+        let outcome = state.apply(view).unwrap();
+        assert!(outcome.restart_required);
+        assert!(outcome.reasons.contains(&"shortcuts".to_owned()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_no_restart_when_shortcuts_unchanged() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        let view = default_view();
+        // Apply with unchanged shortcuts
+        let outcome = state.apply(view).unwrap();
+        assert!(!outcome.restart_required);
+        assert!(!outcome.reasons.contains(&"shortcuts".to_owned()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

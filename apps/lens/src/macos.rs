@@ -190,6 +190,7 @@ pub fn main() -> std::process::ExitCode {
             deep_model: None,
             deep_endpoint: String::new(),
             ocr_mode: String::new(),
+            shortcuts: lens_core::shortcut::default_macos_shortcuts(),
         },
     );
     // Construct the active baseline from the loaded settings and CLI flags.
@@ -207,6 +208,7 @@ pub fn main() -> std::process::ExitCode {
         let deep_endpoint = flags.endpoint.clone().unwrap_or(deep_endpoint);
         let quick_model = flags.model.clone().or(quick_model);
         let ocr_mode = flags.ocr.as_deref().map(String::from).unwrap_or(ocr_mode);
+        let shortcuts = guard.shortcuts.clone();
         settings_service::ActiveEngineSettings {
             quick_engine,
             quick_model,
@@ -215,6 +217,7 @@ pub fn main() -> std::process::ExitCode {
             deep_model,
             deep_endpoint,
             ocr_mode,
+            shortcuts,
         }
     };
     // Reload with the proper baseline.
