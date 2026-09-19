@@ -394,10 +394,7 @@ impl SettingsState {
             };
             let shortcut = match binding_dto.shortcut {
                 Some(s) if !s.trim().is_empty() => {
-                    match s.parse::<lens_core::shortcut::Shortcut>() {
-                        Ok(parsed) => Some(parsed),
-                        Err(_) => None, // Skip malformed shortcuts
-                    }
+                    s.parse::<lens_core::shortcut::Shortcut>().ok()
                 }
                 _ => None,
             };
@@ -622,6 +619,7 @@ mod tests {
             deep_model: None,
             deep_endpoint: "127.0.0.1:11434".into(),
             applications: vec![],
+            shortcuts: ShortcutsView { bindings: vec![] },
         }
     }
 
