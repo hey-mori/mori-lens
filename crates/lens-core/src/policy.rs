@@ -679,6 +679,50 @@ mod ocr_resolution_tests {
     }
 
     #[test]
+    fn manual_ocr_modifier_tier_with_modifier_but_off_refused() {
+        // Modifier held, but effective OCR is Off: still refused.
+        let policy = AppPolicy::new(AppTier::Modifier);
+        assert!(!manual_ocr_allowed(
+            &policy,
+            OcrMode::Off,
+            &[],
+            None,
+            Some("chrome.exe"),
+            true,
+        ));
+    }
+
+    #[test]
+    fn manual_ocr_modifier_tier_cli_off_overrides_app_automatic() {
+        // Modifier held, CLI Off overrides per-app Automatic: refused.
+        let policy = AppPolicy::new(AppTier::Modifier);
+        let rules = rules_for("chrome", OcrMode::Automatic);
+        assert!(!manual_ocr_allowed(
+            &policy,
+            OcrMode::Manual,
+            &rules,
+            Some(OcrMode::Off),
+            Some("chrome.exe"),
+            true,
+        ));
+    }
+
+    #[test]
+    fn manual_ocr_modifier_tier_cli_manual_overrides_app_off() {
+        // Modifier held, CLI Manual overrides per-app Off: allowed.
+        let policy = AppPolicy::new(AppTier::Modifier);
+        let rules = rules_for("chrome", OcrMode::Off);
+        assert!(manual_ocr_allowed(
+            &policy,
+            OcrMode::Off,
+            &rules,
+            Some(OcrMode::Manual),
+            Some("chrome.exe"),
+            true,
+        ));
+    }
+
+    #[test]
     fn automatic_ocr_deny_refused() {
         // Verify the automatic path also refuses Deny.
         let mut policy = AppPolicy::new(AppTier::Allow);
