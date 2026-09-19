@@ -334,6 +334,8 @@ struct CliOverrides {
     /// `--dwell` overrides the file's dwell_ms setting.
     dwell_ms: Option<u64>,
     /// `--ocr` overrides both global and per-app OCR settings.
+    /// Reserved for future settings reload support.
+    #[allow(dead_code)]
     ocr: Option<OcrMode>,
 }
 
@@ -2258,7 +2260,9 @@ pub fn main() -> std::process::ExitCode {
                                 app.ocr
                                     .as_ref()
                                     .and_then(|ocr_str| OcrMode::named(ocr_str))
-                                    .and_then(|mode| lens_core::policy::AppOcrRule::new(&app.name, mode))
+                                    .and_then(|mode| {
+                                        lens_core::policy::AppOcrRule::new(&app.name, mode)
+                                    })
                             })
                             .collect();
                         if current_rules.len() != options.ocr_rules.len()
@@ -4643,6 +4647,7 @@ mod cli_override_tests {
             auto: true,
             language: None,
             dwell_ms: None,
+            ocr: None,
         };
 
         let mut policy = AppPolicy::new(AppTier::Modifier);
@@ -4657,6 +4662,7 @@ mod cli_override_tests {
             auto: false,
             language: None,
             dwell_ms: None,
+            ocr: None,
         };
 
         let mut policy = AppPolicy::new(AppTier::Modifier);
@@ -4675,6 +4681,7 @@ mod cli_override_tests {
             auto: true,
             language: Some("Japanese".to_owned()),
             dwell_ms: Some(500),
+            ocr: None,
         };
 
         // Simulate file reload: policy from file
