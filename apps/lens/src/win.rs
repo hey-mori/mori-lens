@@ -850,7 +850,10 @@ pub fn main() -> std::process::ExitCode {
         }
     );
     let mut pause = pause::PauseKey::register_with(&options.shortcuts);
-    let pause_shortcut = format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::Pause);
+    let pause_shortcut = format_shortcut_display(
+        &options.shortcuts,
+        lens_core::shortcut::ShortcutAction::Pause,
+    );
     println!(
         "  pause     {}",
         match shortcut_runtime_state(
@@ -881,7 +884,10 @@ pub fn main() -> std::process::ExitCode {
         // a user once and a banner once.
         println!("  cost      36% of one core while reading, measured 2026-08-06");
     }
-    let ocr_shortcut = format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::ManualOcr);
+    let ocr_shortcut = format_shortcut_display(
+        &options.shortcuts,
+        lens_core::shortcut::ShortcutAction::ManualOcr,
+    );
     println!(
         "  ocr       {} · {}",
         options.ocr_mode.as_str(),
@@ -921,7 +927,8 @@ pub fn main() -> std::process::ExitCode {
             Profile::Exam => "the clause pattern and what governs what",
         },
     );
-    let pin_shortcut = format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::Pin);
+    let pin_shortcut =
+        format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::Pin);
     println!(
         "  pin       {}",
         match shortcut_runtime_state(
@@ -930,7 +937,10 @@ pub fn main() -> std::process::ExitCode {
             pause.pin_is_registered(),
         ) {
             ShortcutRuntimeState::Active(_) => {
-                format!("{} keeps the card in a window that stays until Esc", pin_shortcut)
+                format!(
+                    "{} keeps the card in a window that stays until Esc",
+                    pin_shortcut
+                )
             }
             ShortcutRuntimeState::Disabled => "disabled".to_owned(),
             ShortcutRuntimeState::Unavailable(_) => {
@@ -938,7 +948,10 @@ pub fn main() -> std::process::ExitCode {
             }
         },
     );
-    let deep_shortcut = format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::Deep);
+    let deep_shortcut = format_shortcut_display(
+        &options.shortcuts,
+        lens_core::shortcut::ShortcutAction::Deep,
+    );
     println!(
         "  explain   {}",
         match shortcut_runtime_state(
@@ -958,7 +971,10 @@ pub fn main() -> std::process::ExitCode {
             }
         }
     );
-    let copy_shortcut = format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::Copy);
+    let copy_shortcut = format_shortcut_display(
+        &options.shortcuts,
+        lens_core::shortcut::ShortcutAction::Copy,
+    );
     println!(
         "  copy      {}",
         match shortcut_runtime_state(
@@ -978,7 +994,10 @@ pub fn main() -> std::process::ExitCode {
             }
         }
     );
-    let save_shortcut = format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::Save);
+    let save_shortcut = format_shortcut_display(
+        &options.shortcuts,
+        lens_core::shortcut::ShortcutAction::Save,
+    );
     println!(
         "  keep      {}",
         match shortcut_runtime_state(
@@ -2044,9 +2063,7 @@ pub fn main() -> std::process::ExitCode {
                             lens_core::shortcut::ShortcutAction::Deep,
                             pause.explain_is_registered(),
                         ) {
-                            ShortcutRuntimeState::Active(shortcut) => {
-                                Some(shortcut.to_string())
-                            }
+                            ShortcutRuntimeState::Active(shortcut) => Some(shortcut.to_string()),
                             _ => None,
                         };
                         println!(
@@ -2822,7 +2839,9 @@ pub fn main() -> std::process::ExitCode {
                             };
                             if let Some(line) = narrator.line_for_skip(
                                 &match deep_hint {
-                                    Some(ref key) => format!("already in {language}, {key} explains it"),
+                                    Some(ref key) => {
+                                        format!("already in {language}, {key} explains it")
+                                    }
                                     None => format!("already in {language}"),
                                 },
                                 process_name.as_deref(),
@@ -3040,9 +3059,7 @@ pub fn main() -> std::process::ExitCode {
                                 Some(ref key) => {
                                     lens_core::detail::Detail::nothing_explained_yet(key)
                                 }
-                                None => {
-                                    lens_core::detail::Detail::nothing_explained_yet_no_hint()
-                                }
+                                None => lens_core::detail::Detail::nothing_explained_yet_no_hint(),
                             };
                             panel.update(fresh.as_panel(&placeholder));
                         }
