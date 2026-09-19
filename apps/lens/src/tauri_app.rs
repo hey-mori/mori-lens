@@ -42,6 +42,22 @@ pub struct DiagnosticsSnapshot {
 /// Shared diagnostics state, updated by the polling loop and read by Tauri commands.
 pub type SharedDiagnostics = Arc<Mutex<DiagnosticsSnapshot>>;
 
+/// Shared diagnostic event ring, recording recent abnormal operational events.
+///
+/// Bounded in-memory ring (capacity 128). Dies with the process. No persistence.
+/// Privacy-safe: events contain only enums and numbers, no captured text.
+pub type SharedDiagnosticEvents = Arc<Mutex<lens_core::event_ring::DiagnosticEventRing>>;
+
+/// Result of a health check run, for the webview.
+#[derive(Clone, Debug, Serialize)]
+pub struct HealthCheckView {
+    pub quick_state: String,
+    pub quick_failure: Option<String>,
+    pub deep_state: String,
+    pub deep_failure: Option<String>,
+    pub latency_ms: u64,
+}
+
 /// Shared pause toggle request.
 ///
 /// The polling loop checks this on each iteration and applies any pending toggle.
@@ -638,6 +654,147 @@ async fn test_model(
         .map_err(|e| format!("{e}"))
 }
 
+/// Tauri command: run an explicit health check testing actual inference capability.
+///
+/// Tests both Quick and Deep engines. For each engine:
+/// 1. Check provider reachability
+/// 2. Send a fixed test translation (not just a ping)
+/// 3. Verify the response is a valid translation
+/// 4. Classify the result as Ready, Degraded, or Unavailable
+///
+/// This is a one-shot explicit user action. No periodic polling.
+/// Records the result in the diagnostic event ring.
+#[tauri::command]
+async fn run_health_check(
+    settings: tauri::State<'_, SharedSettings>,
+    events: tauri::State<'_, SharedDiagnosticEvents>,
+) -> Result<HealthCheckView, String> {
+    use lens_core::event_ring::{DiagnosticComponent, DiagnosticEventKind, DiagnosticFailureClass};
+    use lens_core::translate::Provider;
+    use std::time::Instant;
+
+    let start = Instant::now();
+
+    // Read settings once.
+    let (quick_provider, quick_endpoint, quick_model, deep_provider, deep_endpoint, deep_model) = {
+        let s = settings.lock().unwrap();
+        let view = s.view();
+        let qp = Provider::from_token(&view.quick_engine).unwrap_or(Provider::Ollama);
+        let dp_raw = Provider::from_token(&view.deep_engine).unwrap_or(Provider::Ollama);
+        // Deep is Ollama-only.
+        let (dp, deep_ep, deep_m) = if dp_raw == Provider::Ollama {
+            (Provider::Ollama, view.deep_endpoint.clone(), view.deep_model.clone())
+        } else {
+            (Provider::Ollama, Provider::Ollama.default_endpoint().to_owned(), None)
+        };
+        (qp, view.quick_endpoint.clone(), view.quick_model.clone(), dp, deep_ep, deep_m)
+    };
+
+    // Run health check in a background thread to avoid blocking the Tauri command.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let test_input = "The output files came back empty.";
+        let target_lang = "ko";
+
+        // Check Quick engine.
+        let (quick_state, quick_failure) = check_engine_health(
+            quick_provider,
+            &quick_endpoint,
+            quick_model.as_deref(),
+            test_input,
+            target_lang,
+        );
+
+        // Check Deep engine (Ollama-only).
+        let (deep_state, deep_failure) = check_engine_health(
+            deep_provider,
+            &deep_endpoint,
+            deep_model.as_deref(),
+            test_input,
+            target_lang,
+        );
+
+        let _ = tx.send((quick_state, quick_failure, deep_state, deep_failure));
+    });
+
+    let (quick_state, quick_failure, deep_state, deep_failure) =
+        rx.recv().map_err(|_| "thread error".to_string())?;
+
+    let latency_ms = start.elapsed().as_millis() as u64;
+
+    // Record health check event in the ring.
+    {
+        let mut ring = events.lock().unwrap();
+        let kind = DiagnosticEventKind::HealthCheck;
+        let failure = match (&quick_state, &deep_state) {
+            (s, _) if s == "unavailable" => Some(DiagnosticFailureClass::InferenceFailed),
+            (_, s) if s == "unavailable" => Some(DiagnosticFailureClass::InferenceFailed),
+            _ => None,
+        };
+        ring.record(DiagnosticComponent::HealthCheck, kind, failure);
+    }
+
+    Ok(HealthCheckView {
+        quick_state,
+        quick_failure,
+        deep_state,
+        deep_failure,
+        latency_ms,
+    })
+}
+
+/// Check health of a single engine (Quick or Deep).
+///
+/// Returns (state, failure_reason).
+fn check_engine_health(
+    provider: lens_core::translate::Provider,
+    endpoint: &str,
+    model: Option<&str>,
+    test_input: &str,
+    target_lang: &str,
+) -> (String, Option<String>) {
+    use lens_core::translate::QuickRequest;
+
+    // Step 1: Check reachability.
+    if !lens_translate::check_provider_reachable(provider, endpoint) {
+        return ("unavailable".to_string(), Some("provider_unreachable".to_string()));
+    }
+
+    // Step 2: Resolve model. If auto mode, use default.
+    let model_name = model.unwrap_or(lens_translate::DEFAULT_MODEL);
+
+    // Step 3: Build translator and test inference.
+    let translator = lens_translate::build_translator(provider, endpoint, model_name);
+    let request = QuickRequest::new(test_input, target_lang);
+
+    match translator.quick(&request) {
+        Ok(result) => {
+            // Inference succeeded. Check if the output is meaningful.
+            if result.text.trim().is_empty() {
+                ("degraded".to_string(), Some("empty_response".to_string()))
+            } else {
+                ("ready".to_string(), None)
+            }
+        }
+        Err(err) => {
+            let reason = err.reason().to_string();
+            ("unavailable".to_string(), Some(reason))
+        }
+    }
+}
+
+/// Tauri command: get recent diagnostic events from the ring.
+///
+/// Returns a snapshot of the most recent abnormal operational events.
+/// Events are returned oldest-first. Privacy-safe: no captured text.
+#[tauri::command]
+fn get_diagnostic_events(
+    events: tauri::State<'_, SharedDiagnosticEvents>,
+) -> Vec<lens_core::event_ring::DiagnosticEvent> {
+    let ring = events.lock().unwrap();
+    ring.snapshot()
+}
+
 /// Tauri command: search and filter combined.
 /// Applies both text search (original/answer) and structured filters with AND semantics.
 #[allow(clippy::too_many_arguments)]
@@ -1001,6 +1158,7 @@ pub fn serialize_diagnostics_report(
     refusals: &[(String, u32)],
     ocr_mode: &str,
     language: &str,
+    recent_events: &[lens_core::event_ring::DiagnosticEvent],
 ) -> String {
     let report = serde_json::json!({
         "version": version,
@@ -1016,6 +1174,7 @@ pub fn serialize_diagnostics_report(
         "refusals": refusals,
         "ocr_mode": ocr_mode,
         "language": language,
+        "recent_events": recent_events,
     });
 
     serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_owned())
@@ -1032,14 +1191,17 @@ fn export_diagnostics(
     diagnostics: tauri::State<'_, SharedDiagnostics>,
     settings: tauri::State<'_, SharedSettings>,
     library: tauri::State<'_, SharedLibrary>,
+    events: tauri::State<'_, SharedDiagnosticEvents>,
 ) -> String {
     let diag = diagnostics.lock().unwrap();
     let conf = settings.lock().unwrap();
     let lib = library.lock().unwrap();
+    let ring = events.lock().unwrap();
 
     let schema_version = lib.library().schema_version().unwrap_or(-1);
     let library_count = lib.library().count().unwrap_or(0);
     let history_count = lib.library().history_count().unwrap_or(0);
+    let recent_events = ring.snapshot();
 
     serialize_diagnostics_report(
         env!("CARGO_PKG_VERSION"),
@@ -1055,6 +1217,7 @@ fn export_diagnostics(
         &diag.refusals,
         &diag.ocr_mode,
         &conf.current().language,
+        &recent_events,
     )
 }
 
@@ -1086,6 +1249,8 @@ pub fn build(
     }));
     let pause_request: SharedPauseRequest = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let quit_request: SharedQuitRequest = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let diagnostic_events: SharedDiagnosticEvents =
+        Arc::new(Mutex::new(lens_core::event_ring::DiagnosticEventRing::new()));
 
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -1100,6 +1265,8 @@ pub fn build(
             check_provider,
             get_local_ai_status,
             test_model,
+            run_health_check,
+            get_diagnostic_events,
             library_query,
             library_get,
             library_delete,
@@ -1135,6 +1302,7 @@ pub fn build(
             crate::detail_view::detail_open_in_library,
         ])
         .manage(diagnostics.clone())
+        .manage(diagnostic_events.clone())
         .manage(pause_request.clone())
         .manage(quit_request.clone())
         .manage(shared_settings)
@@ -1255,6 +1423,7 @@ mod tests {
             &refusals,
             "windows-gdi",
             "ko",
+            &[], // recent_events: empty for privacy test
         );
 
         // Verify no canary strings appear in the output.
@@ -1328,6 +1497,7 @@ mod tests {
             &refusals,
             "windows-gdi",
             "ko",
+            &[], // recent_events: empty for schema test
         );
 
         // Parse the JSON and assert the exact allowed top-level key set.
@@ -1349,6 +1519,7 @@ mod tests {
             "refusals",
             "ocr_mode",
             "language",
+            "recent_events",
         ]
         .iter()
         .copied()
