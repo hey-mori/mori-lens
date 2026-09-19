@@ -29,6 +29,7 @@ pub mod cache;
 pub mod card;
 pub mod detail;
 pub mod diagnostics;
+pub mod event_ring;
 pub mod geometry;
 pub mod hover;
 pub mod icon;
