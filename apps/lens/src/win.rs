@@ -850,13 +850,29 @@ pub fn main() -> std::process::ExitCode {
         }
     );
     let mut pause = pause::PauseKey::register_with(&options.shortcuts);
-    let pause_shortcut = format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::Pause);
+    let pause_shortcut = format_shortcut_display(
+        &options.shortcuts,
+        lens_core::shortcut::ShortcutAction::Pause,
+    );
     println!(
         "  pause     {}",
-        if pause.is_registered() {
-            format!("{} stops the pointer being sampled", pause_shortcut)
-        } else {
-            format!("UNAVAILABLE: {} is taken by another application", pause_shortcut)
+        match shortcut_runtime_state(
+            &options.shortcuts,
+            lens_core::shortcut::ShortcutAction::Pause,
+            pause.is_registered(),
+        ) {
+            ShortcutRuntimeState::Active(_) => {
+                format!("{} stops the pointer being sampled", pause_shortcut)
+            }
+            ShortcutRuntimeState::Unavailable(_) => {
+                // Pause cannot be unbound (validated), so Disabled is impossible here.
+                // If registration failed, it is a conflict with another application.
+                format!("UNAVAILABLE: {} cannot be registered", pause_shortcut)
+            }
+            ShortcutRuntimeState::Disabled => {
+                // This should be unreachable due to validation, but handle it defensively.
+                "disabled (configuration error: Pause cannot be unbound)".to_owned()
+            }
         }
     );
     if options.ocr_mode == OcrMode::Automatic {
@@ -868,20 +884,36 @@ pub fn main() -> std::process::ExitCode {
         // a user once and a banner once.
         println!("  cost      36% of one core while reading, measured 2026-08-06");
     }
-    let ocr_shortcut = format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::ManualOcr);
+    let ocr_shortcut = format_shortcut_display(
+        &options.shortcuts,
+        lens_core::shortcut::ShortcutAction::ManualOcr,
+    );
     println!(
         "  ocr       {} · {}",
         options.ocr_mode.as_str(),
-        if !pause.ocr_is_registered() {
-            format!("UNAVAILABLE: {} is taken by another application", ocr_shortcut)
-        } else if ocr::available_languages().is_empty() {
-            format!("{}, but this system has no recognisers installed", ocr_shortcut)
-        } else {
-            format!(
-                "{} reads under the pointer with OCR · {}",
-                ocr_shortcut,
-                ocr::available_languages().join(", "),
-            )
+        match shortcut_runtime_state(
+            &options.shortcuts,
+            lens_core::shortcut::ShortcutAction::ManualOcr,
+            pause.ocr_is_registered(),
+        ) {
+            ShortcutRuntimeState::Disabled => "disabled".to_owned(),
+            ShortcutRuntimeState::Active(_) => {
+                if ocr::available_languages().is_empty() {
+                    format!(
+                        "{}, but this system has no recognisers installed",
+                        ocr_shortcut
+                    )
+                } else {
+                    format!(
+                        "{} reads under the pointer with OCR · {}",
+                        ocr_shortcut,
+                        ocr::available_languages().join(", "),
+                    )
+                }
+            }
+            ShortcutRuntimeState::Unavailable(_) => {
+                format!("UNAVAILABLE: {} cannot be registered", ocr_shortcut)
+            }
         },
     );
     // Printed even when it is the default, because a setting the product read
@@ -895,46 +927,97 @@ pub fn main() -> std::process::ExitCode {
             Profile::Exam => "the clause pattern and what governs what",
         },
     );
-    let pin_shortcut = format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::Pin);
+    let pin_shortcut =
+        format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::Pin);
     println!(
         "  pin       {}",
-        if pause.pin_is_registered() {
-            format!("{} keeps the card in a window that stays until Esc", pin_shortcut)
-        } else {
-            format!("UNAVAILABLE: {} is taken by another application", pin_shortcut)
+        match shortcut_runtime_state(
+            &options.shortcuts,
+            lens_core::shortcut::ShortcutAction::Pin,
+            pause.pin_is_registered(),
+        ) {
+            ShortcutRuntimeState::Active(_) => {
+                format!(
+                    "{} keeps the card in a window that stays until Esc",
+                    pin_shortcut
+                )
+            }
+            ShortcutRuntimeState::Disabled => "disabled".to_owned(),
+            ShortcutRuntimeState::Unavailable(_) => {
+                format!("UNAVAILABLE: {} cannot be registered", pin_shortcut)
+            }
         },
     );
-    let deep_shortcut = format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::Deep);
+    let deep_shortcut = format_shortcut_display(
+        &options.shortcuts,
+        lens_core::shortcut::ShortcutAction::Deep,
+    );
     println!(
         "  explain   {}",
-        if pause.explain_is_registered() {
-            format!("{} explains the sentence on the card: form, part of speech, structure", deep_shortcut)
-        } else {
-            format!("UNAVAILABLE: {} is taken by another application", deep_shortcut)
+        match shortcut_runtime_state(
+            &options.shortcuts,
+            lens_core::shortcut::ShortcutAction::Deep,
+            pause.explain_is_registered(),
+        ) {
+            ShortcutRuntimeState::Active(_) => {
+                format!(
+                    "{} explains the sentence on the card: form, part of speech, structure",
+                    deep_shortcut
+                )
+            }
+            ShortcutRuntimeState::Disabled => "disabled".to_owned(),
+            ShortcutRuntimeState::Unavailable(_) => {
+                format!("UNAVAILABLE: {} cannot be registered", deep_shortcut)
+            }
         }
     );
-    let copy_shortcut = format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::Copy);
+    let copy_shortcut = format_shortcut_display(
+        &options.shortcuts,
+        lens_core::shortcut::ShortcutAction::Copy,
+    );
     println!(
         "  copy      {}",
-        if pause.copy_is_registered() {
-            format!("{} puts the card on the clipboard, with the sentence it explains", copy_shortcut)
-        } else {
-            format!("UNAVAILABLE: {} is taken by another application", copy_shortcut)
+        match shortcut_runtime_state(
+            &options.shortcuts,
+            lens_core::shortcut::ShortcutAction::Copy,
+            pause.copy_is_registered(),
+        ) {
+            ShortcutRuntimeState::Active(_) => {
+                format!(
+                    "{} puts the card on the clipboard, with the sentence it explains",
+                    copy_shortcut
+                )
+            }
+            ShortcutRuntimeState::Disabled => "disabled".to_owned(),
+            ShortcutRuntimeState::Unavailable(_) => {
+                format!("UNAVAILABLE: {} cannot be registered", copy_shortcut)
+            }
         }
     );
-    let save_shortcut = format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::Save);
+    let save_shortcut = format_shortcut_display(
+        &options.shortcuts,
+        lens_core::shortcut::ShortcutAction::Save,
+    );
     println!(
         "  keep      {}",
-        if pause.keep_is_registered() {
-            // The path, because a reader who saves something and cannot find
-            // it has not saved it.
-            format!(
-                "{} appends it to {}",
-                save_shortcut,
-                keeping::path_beside(&options.source.path).display(),
-            )
-        } else {
-            format!("UNAVAILABLE: {} is taken by another application", save_shortcut)
+        match shortcut_runtime_state(
+            &options.shortcuts,
+            lens_core::shortcut::ShortcutAction::Save,
+            pause.keep_is_registered(),
+        ) {
+            ShortcutRuntimeState::Active(_) => {
+                // The path, because a reader who saves something and cannot find
+                // it has not saved it.
+                format!(
+                    "{} appends it to {}",
+                    save_shortcut,
+                    keeping::path_beside(&options.source.path).display(),
+                )
+            }
+            ShortcutRuntimeState::Disabled => "disabled".to_owned(),
+            ShortcutRuntimeState::Unavailable(_) => {
+                format!("UNAVAILABLE: {} cannot be registered", save_shortcut)
+            }
         }
     );
     // The one line that tells a first-time user what to do, so it has to
@@ -1554,8 +1637,17 @@ pub fn main() -> std::process::ExitCode {
     // offer must name a key that will actually do something: taken by another
     // application, or with no recogniser installed, and the card says what is
     // wrong without naming a key that does nothing.
-    let ocr_hotkey = (pause.ocr_is_registered() && !ocr::available_languages().is_empty())
-        .then(|| "Ctrl+Alt+O".to_owned());
+    // Only offer the OCR shortcut if it is configured, registered, and OCR is available.
+    let ocr_hotkey = match shortcut_runtime_state(
+        &options.shortcuts,
+        lens_core::shortcut::ShortcutAction::ManualOcr,
+        pause.ocr_is_registered(),
+    ) {
+        ShortcutRuntimeState::Active(shortcut) if !ocr::available_languages().is_empty() => {
+            Some(shortcut.to_string())
+        }
+        _ => None,
+    };
 
     // Build the Tauri application. This must happen before the polling loop
     // starts, because the polling loop will run on a worker thread and the
@@ -1965,12 +2057,26 @@ pub fn main() -> std::process::ExitCode {
                         let explained = view.rows.iter().any(|(_, v)| !v.trim().is_empty());
                         *loop_detail.lock().unwrap() = Some(view);
                         loop_tauri.show_detail_window();
+                        // Use the configured Deep shortcut, or omit the hint if unbound.
+                        let deep_hint = match shortcut_runtime_state(
+                            &options.shortcuts,
+                            lens_core::shortcut::ShortcutAction::Deep,
+                            pause.explain_is_registered(),
+                        ) {
+                            ShortcutRuntimeState::Active(shortcut) => Some(shortcut.to_string()),
+                            _ => None,
+                        };
                         println!(
                             "pin   opened · {}",
                             if explained {
-                                "with the explanation"
+                                "with the explanation".to_owned()
                             } else {
-                                "translation only, Ctrl+Alt+D adds the rest"
+                                match deep_hint {
+                                    Some(ref key) => {
+                                        format!("translation only, {key} adds the rest")
+                                    }
+                                    None => "translation only".to_owned(),
+                                }
                             },
                         );
                     }
@@ -2458,10 +2564,24 @@ pub fn main() -> std::process::ExitCode {
                                 translation: None,
                                 app: ocr_app.clone(),
                             });
+                            // Use the configured Deep shortcut, or omit the hint if unbound.
+                            let deep_hint = match shortcut_runtime_state(
+                                &options.shortcuts,
+                                lens_core::shortcut::ShortcutAction::Deep,
+                                pause.explain_is_registered(),
+                            ) {
+                                ShortcutRuntimeState::Active(shortcut) => {
+                                    Some(shortcut.to_string())
+                                }
+                                _ => None,
+                            };
                             show_card(
                                 &overlay,
                                 &mut on_screen,
-                                Card::already_readable("Ctrl+Alt+D"),
+                                match deep_hint {
+                                    Some(ref key) => Card::already_readable(key),
+                                    None => Card::already_readable_no_hint(),
+                                },
                                 reading.anchor,
                                 PresentationKind::Feedback,
                                 ocr_app.as_deref(),
@@ -2706,8 +2826,24 @@ pub fn main() -> std::process::ExitCode {
                                 translation: None,
                                 app: target.app.process_name.clone(),
                             });
+                            // Use the configured Deep shortcut, or omit the hint if unbound.
+                            let deep_hint = match shortcut_runtime_state(
+                                &options.shortcuts,
+                                lens_core::shortcut::ShortcutAction::Deep,
+                                pause.explain_is_registered(),
+                            ) {
+                                ShortcutRuntimeState::Active(shortcut) => {
+                                    Some(shortcut.to_string())
+                                }
+                                _ => None,
+                            };
                             if let Some(line) = narrator.line_for_skip(
-                                &format!("already in {language}, Ctrl+Alt+D explains it"),
+                                &match deep_hint {
+                                    Some(ref key) => {
+                                        format!("already in {language}, {key} explains it")
+                                    }
+                                    None => format!("already in {language}"),
+                                },
                                 process_name.as_deref(),
                             ) {
                                 println!("{line}");
@@ -2728,7 +2864,10 @@ pub fn main() -> std::process::ExitCode {
                                 show_card(
                                     &overlay,
                                     &mut on_screen,
-                                    Card::already_readable("Ctrl+Alt+D"),
+                                    match deep_hint {
+                                        Some(ref key) => Card::already_readable(key),
+                                        None => Card::already_readable_no_hint(),
+                                    },
                                     anchor,
                                     PresentationKind::Feedback,
                                     process_name.as_deref(),
@@ -2905,9 +3044,24 @@ pub fn main() -> std::process::ExitCode {
                     // moved on while the panel stayed open must not rewrite it.
                     if let Some(panel) = pinned.as_ref() {
                         if let Some(fresh) = lens_core::detail::Detail::from_card(&answer.card) {
-                            panel.update(fresh.as_panel(
-                                &lens_core::detail::Detail::nothing_explained_yet("Ctrl+Alt+D"),
-                            ));
+                            // Use the configured Deep shortcut, or omit the hint if unbound.
+                            let deep_hint = match shortcut_runtime_state(
+                                &options.shortcuts,
+                                lens_core::shortcut::ShortcutAction::Deep,
+                                pause.explain_is_registered(),
+                            ) {
+                                ShortcutRuntimeState::Active(shortcut) => {
+                                    Some(shortcut.to_string())
+                                }
+                                _ => None,
+                            };
+                            let placeholder = match deep_hint {
+                                Some(ref key) => {
+                                    lens_core::detail::Detail::nothing_explained_yet(key)
+                                }
+                                None => lens_core::detail::Detail::nothing_explained_yet_no_hint(),
+                            };
+                            panel.update(fresh.as_panel(&placeholder));
                         }
                     }
                     // A finished translation is a sentence the reader can now ask
@@ -3115,7 +3269,12 @@ fn hotkey_trouble(
     ]
     .into_iter()
     .filter_map(|(held, action)| {
-        (!held).then(|| format_shortcut_display(shortcuts, action))
+        // Only include configured actions that failed to register.
+        // Intentionally unbound actions (Disabled) are not trouble.
+        match shortcut_runtime_state(shortcuts, action, held) {
+            ShortcutRuntimeState::Unavailable(shortcut) => Some(shortcut.to_string()),
+            _ => None,
+        }
     })
     .collect();
 
@@ -3123,8 +3282,8 @@ fn hotkey_trouble(
         return String::new();
     }
     let what = match taken.as_slice() {
-        [only] => format!("{only}을 다른 앱이 쓰고 있습니다"),
-        _ => "단축키를 다른 앱이 쓰고 있습니다".to_owned(),
+        [only] => format!("{}을(를) 사용할 수 없습니다", only),
+        _ => "일부 단축키를 사용할 수 없습니다".to_owned(),
     };
     // Pause is the privacy control. When it is one of the ones that is gone,
     // the line names the way that still works rather than only the way that
@@ -3469,6 +3628,43 @@ fn format_shortcut_display(
         Some(Some(shortcut)) => shortcut.to_string(),
         Some(None) => "disabled".to_owned(),
         None => "not configured".to_owned(),
+    }
+}
+
+/// The three distinct runtime states for a configurable shortcut.
+///
+/// An intentionally unbound action is not a failure. A configured action that
+/// failed to register is not the same as disabled. These are separate facts
+/// and the product must not conflate them.
+enum ShortcutRuntimeState {
+    /// Action is intentionally unbound (Some(None)).
+    Disabled,
+    /// Action is configured and successfully registered.
+    Active(lens_core::shortcut::Shortcut),
+    /// Action is configured but registration failed.
+    Unavailable(lens_core::shortcut::Shortcut),
+}
+
+/// Determine the runtime state of a shortcut action.
+///
+/// Pause is special: it cannot be unbound, so it never reaches Disabled.
+/// For all other actions, the three states are distinct and must be handled
+/// separately by the caller.
+fn shortcut_runtime_state(
+    shortcuts: &lens_core::shortcut::ShortcutConfig,
+    action: lens_core::shortcut::ShortcutAction,
+    registered: bool,
+) -> ShortcutRuntimeState {
+    match shortcuts.get(action) {
+        Some(None) => ShortcutRuntimeState::Disabled,
+        Some(Some(shortcut)) => {
+            if registered {
+                ShortcutRuntimeState::Active(*shortcut)
+            } else {
+                ShortcutRuntimeState::Unavailable(*shortcut)
+            }
+        }
+        None => ShortcutRuntimeState::Disabled,
     }
 }
 
@@ -3938,8 +4134,10 @@ total {}ms from acquisition to card",
                         match lens_core::detail::Detail::from_card(&card) {
                             Some(detail) => {
                                 let explained = detail.is_explained();
+                                // Self-test path: omit shortcut hint since we don't have
+                                // easy access to configured shortcuts here.
                                 let hint =
-                                    lens_core::detail::Detail::nothing_explained_yet("Ctrl+Alt+D");
+                                    lens_core::detail::Detail::nothing_explained_yet_no_hint();
                                 match lens_platform_windows::PanelWindow::open(
                                     detail.as_panel(&hint),
                                     theme,

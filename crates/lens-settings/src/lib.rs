@@ -43,7 +43,7 @@ use schema::Schema;
 /// Loaded from `settings.toml`, or built from defaults. The document
 /// is kept so that saving preserves comments, formatting, and keys
 /// this version does not understand.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SettingsFile {
     /// The structured settings, extracted from the document.
     schema: Schema,
@@ -507,6 +507,26 @@ impl SettingsFile {
     /// The path this file lives at.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The document, if one was loaded.
+    pub fn document(&self) -> Option<&toml_edit::DocumentMut> {
+        self.document.as_ref()
+    }
+
+    /// Build a SettingsFile from a schema and optional document.
+    /// Used for transactional saves where we need to construct a candidate file.
+    pub fn from_schema_and_document(
+        schema: Schema,
+        document: Option<toml_edit::DocumentMut>,
+        path: PathBuf,
+    ) -> Self {
+        Self {
+            schema,
+            document,
+            loaded_hash: None,
+            path,
+        }
     }
 }
 

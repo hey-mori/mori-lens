@@ -453,13 +453,18 @@ impl SettingsState {
             let messages: Vec<String> = errors
                 .iter()
                 .map(|e| match e {
-                    lens_core::shortcut::ShortcutValidationError::RequiredActionUnbound { action } => {
+                    lens_core::shortcut::ShortcutValidationError::RequiredActionUnbound {
+                        action,
+                    } => {
                         format!("{} must have a shortcut", action)
                     }
                     lens_core::shortcut::ShortcutValidationError::CannotBeUnbound { action } => {
                         format!("{} cannot be unbound", action)
                     }
-                    lens_core::shortcut::ShortcutValidationError::DuplicateBinding { action1, action2 } => {
+                    lens_core::shortcut::ShortcutValidationError::DuplicateBinding {
+                        action1,
+                        action2,
+                    } => {
                         format!("{} and {} use the same shortcut", action1, action2)
                     }
                     lens_core::shortcut::ShortcutValidationError::InsufficientModifiers => {
@@ -472,13 +477,22 @@ impl SettingsState {
 
         candidate.shortcuts = candidate_shortcuts;
 
-        // All validation passed. Now commit the candidate schema.
-        *self.file.schema_mut() = candidate;
+        // Save the candidate to disk before mutating in-memory state.
+        // This ensures true transactionality: if save fails, nothing changes.
+        let old_file = self.file.clone();
+        self.file = lens_settings::SettingsFile::from_schema_and_document(
+            candidate.clone(),
+            old_file.document().cloned(),
+            old_file.path().to_path_buf(),
+        );
 
         if let Err(e) = self.file.save() {
+            // Save failed: restore the old file state.
+            self.file = old_file;
             return Err(format!("save failed: {e}"));
         }
 
+        // Save succeeded: update the rest of the state.
         self.current = self.file.to_settings();
         self.pending = Some(self.current.clone());
         self.generation += 1;
@@ -1348,7 +1362,10 @@ mod tests {
         // Try to set a shortcut with insufficient modifiers (no Ctrl/Alt/Meta)
         view.shortcuts.bindings[0].shortcut = Some("L".into());
         let result = state.apply(view);
-        assert!(result.is_err(), "shortcut without modifiers should be rejected");
+        assert!(
+            result.is_err(),
+            "shortcut without modifiers should be rejected"
+        );
         let err = result.unwrap_err();
         assert!(
             err.contains("Ctrl/Alt/Meta"),
@@ -1409,11 +1426,15 @@ mod tests {
 
         // Apply should fail
         let result = state.apply(view);
-        assert!(result.is_err(), "malformed shortcut should cause apply to fail");
+        assert!(
+            result.is_err(),
+            "malformed shortcut should cause apply to fail"
+        );
 
         // Verify transactionality: nothing should have changed
         assert_eq!(
-            state.view().language, initial_language,
+            state.view().language,
+            initial_language,
             "language should not be mutated when shortcut validation fails"
         );
         assert_eq!(
@@ -1425,7 +1446,8 @@ mod tests {
             "pending should not change when apply fails"
         );
         assert_eq!(
-            state.view().shortcuts, initial_shortcuts,
+            state.view().shortcuts,
+            initial_shortcuts,
             "shortcuts should not change when validation fails"
         );
 
@@ -1459,18 +1481,69 @@ mod tests {
 
         // Apply should fail
         let result = state.apply(view);
-        assert!(result.is_err(), "duplicate shortcuts should cause apply to fail");
+        assert!(
+            result.is_err(),
+            "duplicate shortcuts should cause apply to fail"
+        );
 
         // Verify transactionality: engine should not have changed
         assert_eq!(
-            state.view().quick_engine, initial_quick_engine,
+            state.view().quick_engine,
+            initial_quick_engine,
             "quick_engine should not be mutated when shortcut validation fails"
         );
         assert_eq!(
-            state.view().quick_model, initial_quick_model,
+            state.view().quick_model,
+            initial_quick_model,
             "quick_model should not be mutated when shortcut validation fails"
         );
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Regression test: apply() must be transactional even when save fails.
+    /// If persistence fails after validation succeeds, in-memory state must not be mutated.
+    #[test]
+    fn apply_is_transactional_save_failure_does_not_mutate_state() {
+        let dir = temp_dir();
+        let settings_path = dir.join("settings.toml");
+        let mut state = load_or_migrate(&settings_path, default_baseline());
+
+        // Capture initial state
+        let initial_language = state.view().language.clone();
+        let initial_generation = state.generation;
+        let initial_pending = state.pending.clone();
+
+        // Make the save path invalid by replacing the file with a directory.
+        // This will cause the atomic write to fail.
+        std::fs::remove_file(&settings_path).unwrap();
+        std::fs::create_dir(&settings_path).unwrap();
+
+        // Try to apply a valid change
+        let mut view = default_view();
+        view.language = "Japanese".into();
+
+        // Apply should fail because save will fail
+        let result = state.apply(view);
+        assert!(result.is_err(), "save failure should cause apply to fail");
+
+        // Verify transactionality: nothing should have changed
+        assert_eq!(
+            state.view().language,
+            initial_language,
+            "language should not be mutated when save fails"
+        );
+        assert_eq!(
+            state.generation, initial_generation,
+            "generation should not increment when save fails"
+        );
+        assert_eq!(
+            state.pending, initial_pending,
+            "pending should not change when save fails"
+        );
+
+        // Clean up the directory we created
+        std::fs::remove_dir(&settings_path).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
