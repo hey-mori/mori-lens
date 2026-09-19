@@ -30,8 +30,8 @@
 use lens_core::shortcut::{Key, Modifiers, Shortcut, ShortcutAction, ShortcutConfig};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT,
-    MOD_SHIFT, MOD_WIN, VK_SPACE, VK_TAB, VK_RETURN, VK_ESCAPE, VK_UP, VK_DOWN, VK_LEFT,
-    VK_RIGHT, VK_F1,
+    MOD_SHIFT, MOD_WIN, VK_DOWN, VK_ESCAPE, VK_F1, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SPACE, VK_TAB,
+    VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, MSG, PM_REMOVE, WM_HOTKEY};
 
@@ -212,7 +212,10 @@ impl PauseKey {
                 registered,
             });
         }
-        Self { slots, paused: false }
+        Self {
+            slots,
+            paused: false,
+        }
     }
 
     fn slot_for(&self, action: ShortcutAction) -> Option<&Slot> {
@@ -418,7 +421,10 @@ mod tests {
     #[test]
     fn register_with_unbound_action_is_not_registered() {
         let config = ShortcutConfig::new(vec![
-            (ShortcutAction::Pause, Some(Shortcut::parse("Ctrl+Alt+L").unwrap())),
+            (
+                ShortcutAction::Pause,
+                Some(Shortcut::parse("Ctrl+Alt+L").unwrap()),
+            ),
             (ShortcutAction::ManualOcr, None),
         ]);
         let key = PauseKey::register_with(&config);

@@ -324,9 +324,9 @@ pub fn main() -> std::process::ExitCode {
             .bindings
             .iter()
             .filter_map(|(action, shortcut)| {
-                shortcut.as_ref().map(|s| {
-                    format!("{}={}", action, s.format_macos())
-                })
+                shortcut
+                    .as_ref()
+                    .map(|s| format!("{}={}", action, s.format_macos()))
             })
             .collect();
         println!("  hotkeys   {}", binding_strs.join(", "));
