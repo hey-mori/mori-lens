@@ -525,7 +525,7 @@ mod gate {
             if let Some(HoverEvent::Settled { generation, point }) = session.observe(sample) {
                 life.hover_settled(generation);
                 if let Resolution::Presented(target) =
-                    session.resolve(generation, point, now, awake())
+                    session.resolve(generation, point, now, awake(), None)
                 {
                     pending.push((
                         generation,
@@ -590,7 +590,7 @@ mod gate {
             if let Some(HoverEvent::Settled { generation, point }) = session.observe(sample) {
                 life.hover_settled(generation);
                 if let Resolution::Presented(target) =
-                    session.resolve(generation, point, now, awake())
+                    session.resolve(generation, point, now, awake(), None)
                 {
                     pending.push((
                         generation,
