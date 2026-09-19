@@ -221,9 +221,11 @@ USAGE
     lens [OPTIONS]
 
     Rest the pointer on a sentence. Hold Alt unless --auto is given.
-    Ctrl+Alt+D explains the sentence the card is showing.
-    Ctrl+Alt+C copies it, Ctrl+Alt+S saves it beside your settings file.
+    Deep (default Ctrl+Alt+D) explains the sentence the card is showing.
+    Copy (default Ctrl+Alt+C) copies it, Save (default Ctrl+Alt+S) saves it beside your settings file.
     Ctrl+C to quit.
+
+    Shortcuts are configurable in Control Center (Settings → Shortcuts).
 
 OPTIONS
     --auto              Translate in every application, not only while Alt is
@@ -233,7 +235,7 @@ OPTIONS
                         Written with every option in it on first run.
     --language <name>   Target language. Default Korean.
     --ocr <mode>        off, manual, or automatic. Default manual: OCR runs on
-                        Ctrl+Alt+O and never on its own. Automatic reads the
+                        the configured Manual OCR shortcut (default Ctrl+Alt+O) and never on its own. Automatic reads the
                         pixels around the pointer whenever an application
                         exposes no text, with no keypress, which is what an
                         editor or a messenger needs to be readable by hovering.
