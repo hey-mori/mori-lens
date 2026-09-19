@@ -55,6 +55,19 @@ pub struct ApplicationConfigDto {
     pub ocr: Option<String>,
 }
 
+/// A single shortcut binding for the webview.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ShortcutBindingDto {
+    pub action: String,
+    pub shortcut: Option<String>,
+}
+
+/// Shortcut configuration for the webview.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ShortcutsView {
+    pub bindings: Vec<ShortcutBindingDto>,
+}
+
 /// Shared settings state, accessed by Tauri commands and the polling loop.
 pub type SharedSettings = Arc<Mutex<SettingsState>>;
 
@@ -105,6 +118,8 @@ pub struct SettingsView {
     pub deep_endpoint: String,
     /// Per-application configuration (structured, replacing tuple representation).
     pub applications: Vec<ApplicationConfigDto>,
+    /// Global keyboard shortcuts.
+    pub shortcuts: ShortcutsView,
 }
 
 /// Load or migrate the settings file.
@@ -211,6 +226,17 @@ impl SettingsState {
                     ocr: app.ocr.clone(),
                 })
                 .collect(),
+            shortcuts: ShortcutsView {
+                bindings: schema
+                    .shortcuts
+                    .bindings
+                    .iter()
+                    .map(|(action, shortcut)| ShortcutBindingDto {
+                        action: action.as_str().to_string(),
+                        shortcut: shortcut.map(|s| s.to_string()),
+                    })
+                    .collect(),
+            },
         }
     }
 
@@ -353,6 +379,31 @@ impl SettingsState {
                 })
             })
             .collect();
+
+        // Apply shortcuts
+        let mut new_bindings = Vec::new();
+        for binding_dto in view.shortcuts.bindings {
+            let action = match binding_dto.action.as_str() {
+                "pause" => lens_core::shortcut::ShortcutAction::Pause,
+                "manual_ocr" => lens_core::shortcut::ShortcutAction::ManualOcr,
+                "deep" => lens_core::shortcut::ShortcutAction::Deep,
+                "copy" => lens_core::shortcut::ShortcutAction::Copy,
+                "save" => lens_core::shortcut::ShortcutAction::Save,
+                "pin" => lens_core::shortcut::ShortcutAction::Pin,
+                _ => continue, // Skip unknown actions
+            };
+            let shortcut = match binding_dto.shortcut {
+                Some(s) if !s.trim().is_empty() => {
+                    match s.parse::<lens_core::shortcut::Shortcut>() {
+                        Ok(parsed) => Some(parsed),
+                        Err(_) => None, // Skip malformed shortcuts
+                    }
+                }
+                _ => None,
+            };
+            new_bindings.push((action, shortcut));
+        }
+        schema.shortcuts.bindings = new_bindings;
 
         if let Err(e) = self.file.save() {
             return Err(format!("save failed: {e}"));
