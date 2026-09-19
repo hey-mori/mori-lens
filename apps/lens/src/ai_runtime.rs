@@ -128,6 +128,7 @@ mod tests {
                 endpoint: "127.0.0.1:11435".to_owned(),
             },
             applications: Vec::new(),
+            shortcuts: lens_core::shortcut::default_windows_shortcuts(),
         }
     }
 
