@@ -393,9 +393,7 @@ impl SettingsState {
                 _ => continue, // Skip unknown actions
             };
             let shortcut = match binding_dto.shortcut {
-                Some(s) if !s.trim().is_empty() => {
-                    s.parse::<lens_core::shortcut::Shortcut>().ok()
-                }
+                Some(s) if !s.trim().is_empty() => s.parse::<lens_core::shortcut::Shortcut>().ok(),
                 _ => None,
             };
             new_bindings.push((action, shortcut));
