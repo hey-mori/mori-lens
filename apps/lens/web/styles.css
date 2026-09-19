@@ -108,3 +108,16 @@ td:first-child { color: #666; width: 40%; }
   #review-card { background: rgba(255,255,255,0.03); }
   #review-answer { background: rgba(255,255,255,0.05); color: #bbb; }
 }
+
+/* Screen-reader-only: visually hidden but accessible to assistive technology. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
