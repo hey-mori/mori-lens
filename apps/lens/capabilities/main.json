@@ -8,6 +8,7 @@
     "allow-check-provider",
     "allow-export-diagnostics",
     "allow-get-diagnostics",
+    "allow-get-health-status",
     "allow-get-local-ai-status",
     "allow-get-runtime-status",
     "allow-get-settings",

@@ -99,6 +99,45 @@ pub enum DiagnosticFailureClass {
     WorkerStopped,
 }
 
+impl DiagnosticFailureClass {
+    /// Classify a [`crate::translate::TranslateError`] into a diagnostic failure class.
+    ///
+    /// Maps transport-level errors to typed diagnostic tokens. Non-operational
+    /// errors (NotTranslated, AlreadyReadable, Stale, NotWorthTranslating) return
+    /// `None` because they are product control flow, not provider failures.
+    pub fn from_translate_error(error: &crate::translate::TranslateError) -> Option<Self> {
+        use crate::translate::TranslateError;
+        match error {
+            TranslateError::Unavailable => Some(Self::ConnectionFailed),
+            TranslateError::Timeout => Some(Self::Timeout),
+            TranslateError::ModelMissing(_) => Some(Self::ModelMissing),
+            TranslateError::Malformed => Some(Self::Malformed),
+            // Non-operational: product control flow, not provider failures.
+            TranslateError::NotTranslated
+            | TranslateError::AlreadyReadable
+            | TranslateError::Stale
+            | TranslateError::NotWorthTranslating => None,
+        }
+    }
+
+    /// Classify an HTTP status code into a diagnostic failure class.
+    ///
+    /// Returns `None` for 2xx (success) and 3xx (redirect, should not happen
+    /// on loopback but tolerated). Returns typed class for 4xx and 5xx.
+    pub fn from_http_status(status: u16) -> Option<Self> {
+        match status {
+            // 2xx success, 3xx redirect (tolerated on loopback).
+            200..=399 => None,
+            // 4xx client error.
+            400..=499 => Some(Self::HttpClient),
+            // 5xx server error.
+            500..=599 => Some(Self::HttpServer),
+            // Other status codes treated as server error.
+            _ => Some(Self::HttpServer),
+        }
+    }
+}
+
 /// A single diagnostic event in the ring.
 ///
 /// Privacy-safe by construction: all fields are enums, numbers, or
@@ -544,5 +583,104 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn classify_translate_error_maps_operational_failures() {
+        use crate::translate::TranslateError;
+
+        assert_eq!(
+            DiagnosticFailureClass::from_translate_error(&TranslateError::Unavailable),
+            Some(DiagnosticFailureClass::ConnectionFailed)
+        );
+        assert_eq!(
+            DiagnosticFailureClass::from_translate_error(&TranslateError::Timeout),
+            Some(DiagnosticFailureClass::Timeout)
+        );
+        assert_eq!(
+            DiagnosticFailureClass::from_translate_error(&TranslateError::ModelMissing("test".to_string())),
+            Some(DiagnosticFailureClass::ModelMissing)
+        );
+        assert_eq!(
+            DiagnosticFailureClass::from_translate_error(&TranslateError::Malformed),
+            Some(DiagnosticFailureClass::Malformed)
+        );
+    }
+
+    #[test]
+    fn classify_translate_error_excludes_non_operational_errors() {
+        use crate::translate::TranslateError;
+
+        assert_eq!(
+            DiagnosticFailureClass::from_translate_error(&TranslateError::NotTranslated),
+            None,
+            "NotTranslated is product control flow, not a provider failure"
+        );
+        assert_eq!(
+            DiagnosticFailureClass::from_translate_error(&TranslateError::AlreadyReadable),
+            None,
+            "AlreadyReadable is product control flow, not a provider failure"
+        );
+        assert_eq!(
+            DiagnosticFailureClass::from_translate_error(&TranslateError::Stale),
+            None,
+            "Stale is product control flow, not a provider failure"
+        );
+        assert_eq!(
+            DiagnosticFailureClass::from_translate_error(&TranslateError::NotWorthTranslating),
+            None,
+            "NotWorthTranslating is product control flow, not a provider failure"
+        );
+    }
+
+    #[test]
+    fn classify_http_status_maps_server_errors() {
+        assert_eq!(
+            DiagnosticFailureClass::from_http_status(500),
+            Some(DiagnosticFailureClass::HttpServer)
+        );
+        assert_eq!(
+            DiagnosticFailureClass::from_http_status(502),
+            Some(DiagnosticFailureClass::HttpServer)
+        );
+        assert_eq!(
+            DiagnosticFailureClass::from_http_status(503),
+            Some(DiagnosticFailureClass::HttpServer)
+        );
+    }
+
+    #[test]
+    fn classify_http_status_maps_client_errors() {
+        assert_eq!(
+            DiagnosticFailureClass::from_http_status(400),
+            Some(DiagnosticFailureClass::HttpClient)
+        );
+        assert_eq!(
+            DiagnosticFailureClass::from_http_status(401),
+            Some(DiagnosticFailureClass::HttpClient)
+        );
+        assert_eq!(
+            DiagnosticFailureClass::from_http_status(404),
+            Some(DiagnosticFailureClass::HttpClient)
+        );
+    }
+
+    #[test]
+    fn classify_http_status_excludes_success_and_redirect() {
+        assert_eq!(
+            DiagnosticFailureClass::from_http_status(200),
+            None,
+            "200 OK is success"
+        );
+        assert_eq!(
+            DiagnosticFailureClass::from_http_status(201),
+            None,
+            "201 Created is success"
+        );
+        assert_eq!(
+            DiagnosticFailureClass::from_http_status(301),
+            None,
+            "301 redirect is tolerated on loopback"
+        );
     }
 }

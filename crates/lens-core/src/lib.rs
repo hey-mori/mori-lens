@@ -31,6 +31,7 @@ pub mod detail;
 pub mod diagnostics;
 pub mod event_ring;
 pub mod geometry;
+pub mod health;
 pub mod hover;
 pub mod icon;
 pub mod keep;
