@@ -658,9 +658,10 @@ async fn test_model(
 ///
 /// Tests both Quick and Deep engines. For each engine:
 /// 1. Check provider reachability
-/// 2. Send a fixed test translation (not just a ping)
-/// 3. Verify the response is a valid translation
-/// 4. Classify the result as Ready, Degraded, or Unavailable
+/// 2. Resolve the production model (not DEFAULT_MODEL)
+/// 3. Send a fixed test translation/analysis (exercises the actual path)
+/// 4. Verify the response is valid
+/// 5. Classify the result as Ready, Degraded, or Unavailable
 ///
 /// This is a one-shot explicit user action. No periodic polling.
 /// Records the result in the diagnostic event ring.
@@ -693,25 +694,17 @@ async fn run_health_check(
     // Run health check in a background thread to avoid blocking the Tauri command.
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let test_input = "The output files came back empty.";
-        let target_lang = "ko";
-
-        // Check Quick engine.
-        let (quick_state, quick_failure) = check_engine_health(
+        // Check Quick engine using QuickRequest and Translator::quick.
+        let (quick_state, quick_failure) = check_quick_engine_health(
             quick_provider,
             &quick_endpoint,
             quick_model.as_deref(),
-            test_input,
-            target_lang,
         );
 
-        // Check Deep engine (Ollama-only).
-        let (deep_state, deep_failure) = check_engine_health(
-            deep_provider,
+        // Check Deep engine using DeepRequest and Analyser::deep (Ollama-only).
+        let (deep_state, deep_failure) = check_deep_engine_health(
             &deep_endpoint,
             deep_model.as_deref(),
-            test_input,
-            target_lang,
         );
 
         let _ = tx.send((quick_state, quick_failure, deep_state, deep_failure));
@@ -743,15 +736,16 @@ async fn run_health_check(
     })
 }
 
-/// Check health of a single engine (Quick or Deep).
+/// Check health of the Quick engine using the production path.
+///
+/// Uses production model resolution (resolve_model), not DEFAULT_MODEL.
+/// Exercises the same QuickRequest + Translator::quick path as the product loop.
 ///
 /// Returns (state, failure_reason).
-fn check_engine_health(
+fn check_quick_engine_health(
     provider: lens_core::translate::Provider,
     endpoint: &str,
-    model: Option<&str>,
-    test_input: &str,
-    target_lang: &str,
+    configured_model: Option<&str>,
 ) -> (String, Option<String>) {
     use lens_core::translate::QuickRequest;
 
@@ -760,11 +754,18 @@ fn check_engine_health(
         return ("unavailable".to_string(), Some("provider_unreachable".to_string()));
     }
 
-    // Step 2: Resolve model. If auto mode, use default.
-    let model_name = model.unwrap_or(lens_translate::DEFAULT_MODEL);
+    // Step 2: Build translator and resolve model using production pattern.
+    // This matches win.rs:688-691 where production creates OllamaTranslator and calls resolve_model().
+    let mut translator = lens_translate::OllamaTranslator::new(endpoint, configured_model.unwrap_or(""));
+    let model_name = match translator.resolve_model() {
+        Ok(m) => m.to_owned(),
+        Err(_) => configured_model.unwrap_or(lens_translate::DEFAULT_MODEL).to_owned(),
+    };
 
-    // Step 3: Build translator and test inference.
-    let translator = lens_translate::build_translator(provider, endpoint, model_name);
+    // Step 3: Rebuild translator with resolved model and test inference.
+    let translator = lens_translate::build_translator(provider, endpoint, &model_name);
+    let test_input = "The output files came back empty.";
+    let target_lang = "ko";
     let request = QuickRequest::new(test_input, target_lang);
 
     match translator.quick(&request) {
@@ -774,6 +775,60 @@ fn check_engine_health(
                 ("degraded".to_string(), Some("empty_response".to_string()))
             } else {
                 ("ready".to_string(), None)
+            }
+        }
+        Err(err) => {
+            let reason = err.reason().to_string();
+            ("unavailable".to_string(), Some(reason))
+        }
+    }
+}
+
+/// Check health of the Deep engine using the production path.
+///
+/// Uses production model resolution (resolve_model), not DEFAULT_MODEL.
+/// Exercises the same DeepRequest + Analyser::deep path as the product loop.
+/// This is the CRITICAL FIX: Deep health check now tests Deep, not Quick.
+///
+/// Returns (state, failure_reason).
+fn check_deep_engine_health(
+    endpoint: &str,
+    configured_model: Option<&str>,
+) -> (String, Option<String>) {
+    use lens_core::analyse::{Analyser, DeepRequest};
+
+    // Step 1: Check reachability.
+    if !lens_translate::check_provider_reachable(lens_core::translate::Provider::Ollama, endpoint) {
+        return ("unavailable".to_string(), Some("provider_unreachable".to_string()));
+    }
+
+    // Step 2: Build translator and resolve model using production pattern.
+    // This matches win.rs:719-722 where production creates OllamaTranslator and calls resolve_model().
+    let mut analyser = lens_translate::OllamaTranslator::new(endpoint, configured_model.unwrap_or(""));
+    let model_name = match analyser.resolve_model() {
+        Ok(m) => m.to_owned(),
+        Err(_) => configured_model.unwrap_or(lens_translate::DEFAULT_MODEL).to_owned(),
+    };
+
+    // Step 3: Rebuild analyser with resolved model and test Deep inference.
+    let analyser = lens_translate::OllamaTranslator::new(endpoint, &model_name);
+
+    // Use a test sentence that exercises both word and structure analysis.
+    // This is a multi-word sentence with a focused word to test the full Deep pipeline.
+    let test_request = DeepRequest::new(
+        "The output files came back empty.",
+        "출력 파일이 비어 있었습니다.",
+        "Korean",
+    );
+
+    match Analyser::deep(&analyser, &test_request) {
+        Ok(analysis) => {
+            // Deep inference succeeded. Check if the analysis says anything meaningful.
+            // This matches the production check: DeepAnalysis::says_anything() in analyse.rs:473-475.
+            if analysis.says_anything() {
+                ("ready".to_string(), None)
+            } else {
+                ("degraded".to_string(), Some("empty_analysis".to_string()))
             }
         }
         Err(err) => {
