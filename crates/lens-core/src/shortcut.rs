@@ -697,10 +697,7 @@ mod tests {
     #[test]
     fn parse_errors() {
         assert_eq!(Shortcut::parse(""), Err(ShortcutParseError::Empty));
-        assert_eq!(
-            Shortcut::parse("Ctrl+Alt"),
-            Err(ShortcutParseError::NoKey)
-        );
+        assert_eq!(Shortcut::parse("Ctrl+Alt"), Err(ShortcutParseError::NoKey));
         assert_eq!(
             Shortcut::parse("Ctrl+Alt+L+O"),
             Err(ShortcutParseError::MultipleKeys)
