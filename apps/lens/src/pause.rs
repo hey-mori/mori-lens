@@ -19,9 +19,19 @@
 //!
 //! `RegisterHotKey` posts one message per press, to this thread's queue, and
 //! the loop drains it. No edge detection, nothing missed.
+//!
+//! # Configurable shortcuts (P8)
+//!
+//! Each action's shortcut is read from [`ShortcutConfig`]. An unbound action
+//! (shortcut set to `None`) is not registered. The Pause action is
+//! safety-critical: if its configured shortcut fails to register, the tray
+//! tooltip tells the user.
 
+use lens_core::shortcut::{Key, Modifiers, Shortcut, ShortcutAction, ShortcutConfig};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT,
+    MOD_SHIFT, MOD_WIN, VK_DOWN, VK_ESCAPE, VK_F1, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SPACE, VK_TAB,
+    VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, MSG, PM_REMOVE, WM_HOTKEY};
 
@@ -33,20 +43,72 @@ const COPY_ID: i32 = 0x4C34;
 const KEEP_ID: i32 = 0x4C35;
 const PIN_ID: i32 = 0x4C36;
 
-/// `L`, for Lens.
-const VK_L: u32 = 0x4C;
-/// `O`, for OCR.
-const VK_O: u32 = 0x4F;
-/// `D`, for 설명. `E` is taken by Explorer on many machines and `A` by
-/// select-all in whatever has focus, which matters because a global chord that
-/// fails to register is a key that silently does nothing.
-const VK_D: u32 = 0x44;
-/// `C`, for copy, and the letter every other program uses for it.
-const VK_C: u32 = 0x43;
-/// `S`, for save, and the letter every other program uses for it.
-const VK_S: u32 = 0x53;
-/// `P`, for pin.
-const VK_P: u32 = 0x50;
+/// Map a [`ShortcutAction`] to its hotkey id.
+fn action_id(action: ShortcutAction) -> i32 {
+    match action {
+        ShortcutAction::Pause => PAUSE_ID,
+        ShortcutAction::ManualOcr => OCR_ID,
+        ShortcutAction::Deep => EXPLAIN_ID,
+        ShortcutAction::Copy => COPY_ID,
+        ShortcutAction::Save => KEEP_ID,
+        ShortcutAction::Pin => PIN_ID,
+    }
+}
+
+/// Convert a semantic [`Modifiers`] set to Win32 hotkey modifiers.
+fn win_modifiers(mods: Modifiers) -> HOT_KEY_MODIFIERS {
+    let mut result = MOD_NOREPEAT.0;
+    if mods.contains(Modifiers::CONTROL) {
+        result |= MOD_CONTROL.0;
+    }
+    if mods.contains(Modifiers::ALT) {
+        result |= MOD_ALT.0;
+    }
+    if mods.contains(Modifiers::SHIFT) {
+        result |= MOD_SHIFT.0;
+    }
+    if mods.contains(Modifiers::META) {
+        result |= MOD_WIN.0;
+    }
+    HOT_KEY_MODIFIERS(result)
+}
+
+/// Convert a semantic [`Key`] to a Win32 virtual key code.
+///
+/// Returns `None` for keys that cannot be registered as a hotkey (e.g.
+/// unsupported platform keys).
+fn win_vk(key: Key) -> Option<u32> {
+    match key {
+        Key::Letter(c) => Some(c.to_ascii_uppercase() as u32),
+        Key::Digit(c) => Some(c as u32),
+        Key::Function(n) => {
+            let base = VK_F1.0 as u32;
+            // F1..F12 are contiguous in the VK table
+            Some(base + (n as u32 - 1))
+        }
+        Key::Space => Some(VK_SPACE.0 as u32),
+        Key::Enter => Some(VK_RETURN.0 as u32),
+        Key::Escape => Some(VK_ESCAPE.0 as u32),
+        Key::Tab => Some(VK_TAB.0 as u32),
+        Key::Arrow(lens_core::shortcut::ArrowKey::Up) => Some(VK_UP.0 as u32),
+        Key::Arrow(lens_core::shortcut::ArrowKey::Down) => Some(VK_DOWN.0 as u32),
+        Key::Arrow(lens_core::shortcut::ArrowKey::Left) => Some(VK_LEFT.0 as u32),
+        Key::Arrow(lens_core::shortcut::ArrowKey::Right) => Some(VK_RIGHT.0 as u32),
+    }
+}
+
+/// Try to register one shortcut for one action. Returns whether registration
+/// succeeded.
+unsafe fn register_one(action: ShortcutAction, shortcut: &Shortcut) -> bool {
+    let Some(vk) = win_vk(shortcut.key) else {
+        return false;
+    };
+    let id = action_id(action);
+    let modifiers = win_modifiers(shortcut.modifiers);
+    // SAFETY: registers a documented thread-local hotkey; `None` binds it
+    // to this thread's message queue rather than to a window.
+    unsafe { RegisterHotKey(None, id, modifiers, vk).is_ok() }
+}
 
 /// What a press asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,7 +148,27 @@ pub enum Pressed {
     Pin,
 }
 
-/// Registers both global keys and reports presses.
+/// Map a hotkey id to its [`Pressed`] variant.
+fn id_to_pressed(id: i32) -> Option<Pressed> {
+    match id {
+        PAUSE_ID => Some(Pressed::PauseChanged),
+        OCR_ID => Some(Pressed::ReadWithOcr),
+        EXPLAIN_ID => Some(Pressed::Explain),
+        COPY_ID => Some(Pressed::Copy),
+        KEEP_ID => Some(Pressed::Keep),
+        PIN_ID => Some(Pressed::Pin),
+        _ => None,
+    }
+}
+
+/// Registration state for one hotkey slot.
+#[derive(Debug)]
+struct Slot {
+    action: ShortcutAction,
+    registered: bool,
+}
+
+/// Registers global keys and reports presses.
 ///
 /// **One struct because there is one message queue.** `poll` drains this
 /// thread's messages, and a second handler doing the same would take the
@@ -95,82 +177,85 @@ pub enum Pressed {
 /// except a key that does nothing.
 #[derive(Debug)]
 pub struct PauseKey {
-    registered: bool,
-    ocr_registered: bool,
-    explain_registered: bool,
-    copy_registered: bool,
-    keep_registered: bool,
-    pin_registered: bool,
+    slots: Vec<Slot>,
     paused: bool,
 }
 
 impl PauseKey {
-    /// Register the hotkey. Failure is not fatal: another application may
-    /// already own this chord, and a Lens without a pause key is worse than a
-    /// Lens that refuses to start, so the caller is told and carries on.
+    /// Register with the platform defaults (Ctrl+Alt+letter for each action).
+    ///
+    /// Failure is not fatal: another application may already own a chord, and
+    /// a Lens without a pause key is worse than a Lens that refuses to start,
+    /// so the caller is told and carries on.
+    #[allow(dead_code)]
     pub fn register() -> Self {
-        // SAFETY: registers a documented thread-local hotkey; `None` binds it
-        // to this thread's message queue rather than to a window.
-        // SAFETY: registers documented thread-local hotkeys; `None` binds them
-        // to this thread's message queue rather than to a window.
-        let (
-            registered,
-            ocr_registered,
-            explain_registered,
-            copy_registered,
-            keep_registered,
-            pin_registered,
-        ) = unsafe {
-            // NOREPEAT so holding a chord does not fire repeatedly.
-            let modifiers = HOT_KEY_MODIFIERS(MOD_CONTROL.0 | MOD_ALT.0 | MOD_NOREPEAT.0);
-            (
-                RegisterHotKey(None, PAUSE_ID, modifiers, VK_L).is_ok(),
-                RegisterHotKey(None, OCR_ID, modifiers, VK_O).is_ok(),
-                RegisterHotKey(None, EXPLAIN_ID, modifiers, VK_D).is_ok(),
-                RegisterHotKey(None, COPY_ID, modifiers, VK_C).is_ok(),
-                RegisterHotKey(None, KEEP_ID, modifiers, VK_S).is_ok(),
-                RegisterHotKey(None, PIN_ID, modifiers, VK_P).is_ok(),
-            )
-        };
+        Self::register_with(&lens_core::shortcut::default_windows_shortcuts())
+    }
 
+    /// Register using a configurable shortcut configuration.
+    ///
+    /// Actions whose binding is `None` are not registered. Actions whose
+    /// binding is `Some(sc)` are registered with the configured modifiers and
+    /// key. If registration fails (another application holds the chord), the
+    /// slot is marked unregistered so the tray tooltip can report it.
+    pub fn register_with(config: &ShortcutConfig) -> Self {
+        let mut slots = Vec::new();
+        for (action, shortcut) in &config.bindings {
+            let registered = if let Some(sc) = shortcut {
+                // SAFETY: registers a documented thread-local hotkey.
+                unsafe { register_one(*action, sc) }
+            } else {
+                false
+            };
+            slots.push(Slot {
+                action: *action,
+                registered,
+            });
+        }
         Self {
-            registered,
-            ocr_registered,
-            explain_registered,
-            copy_registered,
-            keep_registered,
-            pin_registered,
+            slots,
             paused: false,
         }
     }
 
-    /// Whether Ctrl+Alt+O was taken by something else.
+    fn slot_for(&self, action: ShortcutAction) -> Option<&Slot> {
+        self.slots.iter().find(|s| s.action == action)
+    }
+
+    /// Whether the ManualOcr shortcut was taken by something else.
     pub fn ocr_is_registered(&self) -> bool {
-        self.ocr_registered
+        self.slot_for(ShortcutAction::ManualOcr)
+            .is_some_and(|s| s.registered)
     }
 
-    /// Whether Ctrl+Alt+D was taken by something else.
+    /// Whether the Deep/Explain shortcut was taken by something else.
     pub fn explain_is_registered(&self) -> bool {
-        self.explain_registered
+        self.slot_for(ShortcutAction::Deep)
+            .is_some_and(|s| s.registered)
     }
 
-    /// Whether Ctrl+Alt+C was taken by something else.
+    /// Whether the Copy shortcut was taken by something else.
     pub fn copy_is_registered(&self) -> bool {
-        self.copy_registered
+        self.slot_for(ShortcutAction::Copy)
+            .is_some_and(|s| s.registered)
     }
 
-    /// Whether Ctrl+Alt+S was taken by something else.
+    /// Whether the Save/Keep shortcut was taken by something else.
     pub fn keep_is_registered(&self) -> bool {
-        self.keep_registered
+        self.slot_for(ShortcutAction::Save)
+            .is_some_and(|s| s.registered)
     }
 
-    /// Whether Ctrl+Alt+P was taken by something else.
+    /// Whether the Pin shortcut was taken by something else.
     pub fn pin_is_registered(&self) -> bool {
-        self.pin_registered
+        self.slot_for(ShortcutAction::Pin)
+            .is_some_and(|s| s.registered)
     }
 
+    /// Whether the Pause shortcut was registered.
     pub fn is_registered(&self) -> bool {
-        self.registered
+        self.slot_for(ShortcutAction::Pause)
+            .is_some_and(|s| s.registered)
     }
 
     pub fn is_paused(&self) -> bool {
@@ -192,12 +277,7 @@ impl PauseKey {
     /// and retire the card without printing a line on every loop iteration.
     pub fn poll(&mut self) -> Vec<Pressed> {
         let mut pressed = Vec::new();
-        if !self.registered
-            && !self.ocr_registered
-            && !self.explain_registered
-            && !self.copy_registered
-            && !self.keep_registered
-        {
+        if !self.slots.iter().any(|s| s.registered) {
             return pressed;
         }
         let mut message = MSG::default();
@@ -206,17 +286,12 @@ impl PauseKey {
             if message.message != WM_HOTKEY {
                 continue;
             }
-            match message.wParam.0 as i32 {
-                PAUSE_ID => {
+            let id = message.wParam.0 as i32;
+            if let Some(p) = id_to_pressed(id) {
+                if let Pressed::PauseChanged = p {
                     self.paused = !self.paused;
-                    pressed.push(Pressed::PauseChanged);
                 }
-                OCR_ID => pressed.push(Pressed::ReadWithOcr),
-                EXPLAIN_ID => pressed.push(Pressed::Explain),
-                COPY_ID => pressed.push(Pressed::Copy),
-                KEEP_ID => pressed.push(Pressed::Keep),
-                PIN_ID => pressed.push(Pressed::Pin),
-                _ => {}
+                pressed.push(p);
             }
         }
         pressed
@@ -225,18 +300,12 @@ impl PauseKey {
 
 impl Drop for PauseKey {
     fn drop(&mut self) {
-        // Each one guarded by its own flag. They were all behind `registered`,
-        // so a machine where another application held Ctrl+Alt+L left the
-        // other two registered on the way out: the flag for one key was
-        // deciding the fate of three.
-        for (held, id) in [
-            (self.registered, PAUSE_ID),
-            (self.ocr_registered, OCR_ID),
-            (self.explain_registered, EXPLAIN_ID),
-            (self.copy_registered, COPY_ID),
-            (self.keep_registered, KEEP_ID),
-        ] {
-            if held {
+        // Each slot unregistered by its own flag. A machine where another
+        // application held a chord leaves the other slots registered on the
+        // way out.
+        for slot in &self.slots {
+            if slot.registered {
+                let id = action_id(slot.action);
                 // SAFETY: unregisters a hotkey this instance registered.
                 unsafe {
                     let _ = UnregisterHotKey(None, id);
@@ -347,5 +416,33 @@ mod tests {
             key.poll(),
             vec![Pressed::ReadWithOcr, Pressed::PauseChanged],
         );
+    }
+
+    #[test]
+    fn register_with_unbound_action_is_not_registered() {
+        let config = ShortcutConfig::new(vec![
+            (
+                ShortcutAction::Pause,
+                Some(Shortcut::parse("Ctrl+Alt+L").unwrap()),
+            ),
+            (ShortcutAction::ManualOcr, None),
+        ]);
+        let key = PauseKey::register_with(&config);
+        assert!(key.is_registered());
+        assert!(!key.ocr_is_registered());
+    }
+
+    #[test]
+    fn win_modifiers_converts_correctly() {
+        let mods = Modifiers::CONTROL.union(Modifiers::ALT);
+        let win = win_modifiers(mods);
+        assert_eq!(win.0, MOD_CONTROL.0 | MOD_ALT.0 | MOD_NOREPEAT.0);
+    }
+
+    #[test]
+    fn win_vk_maps_letters() {
+        assert_eq!(win_vk(Key::Letter('A')), Some(0x41));
+        assert_eq!(win_vk(Key::Letter('L')), Some(0x4C));
+        assert_eq!(win_vk(Key::Letter('z')), Some(0x5A));
     }
 }

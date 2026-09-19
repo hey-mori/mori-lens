@@ -40,6 +40,7 @@ pub mod reach;
 pub mod recent;
 pub mod session;
 pub mod settings;
+pub mod shortcut;
 pub mod tally;
 pub mod text;
 pub mod theme;
