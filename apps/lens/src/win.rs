@@ -270,8 +270,10 @@ struct Options {
     language: String,
     /// AI runtime configuration with separate Quick and Deep engines.
     ai_config: AiRuntimeConfig,
-    /// When the OCR fallback may run.
+    /// Global OCR mode from settings file.
     ocr_mode: OcrMode,
+    /// CLI OCR override, if explicitly provided. Takes precedence over per-app and global.
+    cli_ocr_override: Option<OcrMode>,
     /// Per-application OCR overrides.
     ocr_rules: Vec<lens_core::policy::AppOcrRule>,
     /// Who is reading, which decides what Ctrl+Alt+D spends its lines on.
@@ -331,6 +333,8 @@ struct CliOverrides {
     language: Option<String>,
     /// `--dwell` overrides the file's dwell_ms setting.
     dwell_ms: Option<u64>,
+    /// `--ocr` overrides both global and per-app OCR settings.
+    ocr: Option<OcrMode>,
 }
 
 impl CliOverrides {
@@ -548,6 +552,7 @@ fn parse() -> Result<Options, String> {
         auto: flags.auto,
         language: flags.language.clone(),
         dwell_ms: flags.dwell_ms,
+        ocr: flags.ocr.as_deref().and_then(OcrMode::named),
     };
 
     // Extract per-application OCR overrides from the schema.
@@ -575,12 +580,10 @@ fn parse() -> Result<Options, String> {
         text: text_named(flags.text.as_ref().unwrap_or(&settings.text))?,
         language: flags.language.unwrap_or(settings.language),
         ai_config,
-        ocr_mode: flags
-            .ocr
-            .as_deref()
-            .and_then(OcrMode::named)
-            .or_else(|| OcrMode::named(&settings.ocr))
-            .unwrap_or(OcrMode::Manual),
+        // Global OCR from settings file only, not CLI.
+        ocr_mode: OcrMode::named(&settings.ocr).unwrap_or(OcrMode::Manual),
+        // CLI OCR override is separate and takes precedence over per-app and global.
+        cli_ocr_override: flags.ocr.as_deref().and_then(OcrMode::named),
         ocr_rules,
         // The settings string is already validated by the parser, which reports
         // an unknown value rather than storing it. `unwrap_or_default` is the
@@ -1418,14 +1421,23 @@ pub fn main() -> std::process::ExitCode {
     // all three with it for as long as it took to give up (issue #42).
     let worker_ocr = options.ocr_mode;
     let worker_ocr_rules = options.ocr_rules.clone();
-    // Determine if OCR capability is needed: install if global is Automatic,
-    // or if ANY per-app rule requires Automatic, or if CLI override is Automatic.
-    // A CLI override of Off or Manual does not prevent installation if per-app
-    // rules require it; the override is resolved per-hover in ocr_fallback().
-    let needs_ocr = worker_ocr == OcrMode::Automatic
-        || worker_ocr_rules
-            .iter()
-            .any(|rule| rule.ocr() == OcrMode::Automatic);
+    let worker_cli_override = options.cli_ocr_override;
+    // Determine if OCR capability is needed.
+    // CLI override takes absolute precedence:
+    // - CLI Automatic: capability required
+    // - CLI Off/Manual: capability NOT required (overrides per-app rules)
+    // - No CLI override: check global and per-app rules
+    let needs_ocr = match worker_cli_override {
+        Some(OcrMode::Automatic) => true,
+        Some(OcrMode::Off) | Some(OcrMode::Manual) => false,
+        None => {
+            // No CLI override: check global and per-app rules.
+            worker_ocr == OcrMode::Automatic
+                || worker_ocr_rules
+                    .iter()
+                    .any(|rule| rule.ocr() == OcrMode::Automatic)
+        }
+    };
     // Hiding the card is the overlay's business, and the overlay lives on
     // another thread again, so what crosses is a request rather than a handle.
     let hide_for_ocr = overlay.hider();
@@ -1447,7 +1459,7 @@ pub fn main() -> std::process::ExitCode {
         };
         let session = HoverSession::new(worker_config, worker_policy, acquirer)
             .with_ocr_rules(worker_ocr_rules)
-            .with_cli_ocr_override(None); // CLI override is resolved in win.rs, not passed here
+            .with_cli_ocr_override(worker_cli_override);
         // Install OCR if needed: global Automatic, or any per-app rule requires it.
         // The per-hover decision in ocr_fallback() uses effective_ocr() to resolve
         // the actual mode based on the application under the pointer.
