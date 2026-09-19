@@ -15,21 +15,26 @@ export function renderApps() {
     const app = state.currentSettings.applications[i];
     // Structured object: { name, tier, ocr }
     const name = app.name;
+    const safeName = escapeHtml(name);
     const tier = app.tier;
     const ocr = app.ocr || 'inherit';
-    html += '<tr><td>' + escapeHtml(name) + '</td><td>' +
-      '<select data-app-index="' + i + '" class="app-tier-select">' +
+    const tierLabel = 'Tier for ' + safeName;
+    const ocrLabel = 'OCR behavior for ' + safeName;
+    html += '<tr><td>' + safeName + '</td><td>' +
+      '<label for="app-tier-' + i + '" class="sr-only">' + tierLabel + '</label>' +
+      '<select id="app-tier-' + i + '" data-app-index="' + i + '" class="app-tier-select" aria-label="' + tierLabel + '">' +
       '<option value="allow"' + (tier === 'allow' ? ' selected' : '') + '>Allow</option>' +
       '<option value="modifier"' + (tier === 'modifier' ? ' selected' : '') + '>Modifier</option>' +
       '<option value="deny"' + (tier === 'deny' ? ' selected' : '') + '>Deny</option>' +
       '</select></td><td>' +
-      '<select data-app-index="' + i + '" class="app-ocr-select">' +
+      '<label for="app-ocr-' + i + '" class="sr-only">' + ocrLabel + '</label>' +
+      '<select id="app-ocr-' + i + '" data-app-index="' + i + '" class="app-ocr-select" aria-label="' + ocrLabel + '">' +
       '<option value="inherit"' + (ocr === 'inherit' ? ' selected' : '') + '>Inherit global</option>' +
       '<option value="off"' + (ocr === 'off' ? ' selected' : '') + '>Off</option>' +
       '<option value="manual"' + (ocr === 'manual' ? ' selected' : '') + '>Manual</option>' +
       '<option value="automatic"' + (ocr === 'automatic' ? ' selected' : '') + '>Automatic</option>' +
       '</select></td><td style="width:60px;text-align:right">' +
-      '<button class="btn app-remove-btn" data-app-index="' + i + '" style="padding:2px 8px;font-size:12px">Remove</button></td></tr>';
+      '<button class="btn app-remove-btn" data-app-index="' + i + '" aria-label="Remove ' + safeName + '" style="padding:2px 8px;font-size:12px">Remove</button></td></tr>';
   }
   html += '</tbody></table>';
   el.innerHTML = html;

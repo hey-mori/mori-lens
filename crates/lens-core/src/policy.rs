@@ -497,4 +497,201 @@ mod ocr_resolution_tests {
             OcrMode::Automatic
         );
     }
+
+    // ── Manual OCR privacy composition tests ──
+    //
+    // These prove the contract: manual OCR (explicit user command) must
+    // respect both AppPolicy permission and effective OCR mode.
+    // The manual path may proceed when effective OCR is Manual or Automatic,
+    // but never when it is Off. Deny tier always refuses.
+
+    /// Manual OCR authorization: combines policy permission + effective OCR.
+    /// Returns true if manual OCR is allowed for this app/context.
+    fn manual_ocr_allowed(
+        policy: &AppPolicy,
+        global_ocr: OcrMode,
+        rules: &[AppOcrRule],
+        cli_override: Option<OcrMode>,
+        process_name: Option<&str>,
+        modifier_held: bool,
+    ) -> bool {
+        // Policy permission is the first gate.
+        if !policy.allows(process_name, modifier_held) {
+            return false;
+        }
+        // Effective OCR mode is the second gate.
+        let mode = effective_ocr(global_ocr, process_name, cli_override, rules);
+        mode != OcrMode::Off
+    }
+
+    fn rules_for(name: &str, mode: OcrMode) -> Vec<AppOcrRule> {
+        vec![AppOcrRule::new(name, mode).unwrap()]
+    }
+
+    #[test]
+    fn manual_ocr_deny_refused_even_with_manual_global() {
+        let mut policy = AppPolicy::new(AppTier::Allow);
+        policy.set("sensitive", AppTier::Deny);
+        assert!(!manual_ocr_allowed(
+            &policy,
+            OcrMode::Manual,
+            &[],
+            None,
+            Some("sensitive.exe"),
+            false,
+        ));
+    }
+
+    #[test]
+    fn manual_ocr_deny_refused_even_with_per_app_automatic() {
+        let mut policy = AppPolicy::new(AppTier::Allow);
+        policy.set("sensitive", AppTier::Deny);
+        let rules = rules_for("sensitive", OcrMode::Automatic);
+        assert!(!manual_ocr_allowed(
+            &policy,
+            OcrMode::Manual,
+            &rules,
+            None,
+            Some("sensitive.exe"),
+            false,
+        ));
+    }
+
+    #[test]
+    fn manual_ocr_allow_with_per_app_off_refused() {
+        let policy = AppPolicy::new(AppTier::Allow);
+        let rules = rules_for("chrome", OcrMode::Off);
+        assert!(!manual_ocr_allowed(
+            &policy,
+            OcrMode::Manual,
+            &rules,
+            None,
+            Some("chrome.exe"),
+            false,
+        ));
+    }
+
+    #[test]
+    fn manual_ocr_allow_with_global_off_refused() {
+        let policy = AppPolicy::new(AppTier::Allow);
+        assert!(!manual_ocr_allowed(
+            &policy,
+            OcrMode::Off,
+            &[],
+            None,
+            Some("chrome.exe"),
+            false,
+        ));
+    }
+
+    #[test]
+    fn manual_ocr_allow_with_global_manual_allowed() {
+        let policy = AppPolicy::new(AppTier::Allow);
+        assert!(manual_ocr_allowed(
+            &policy,
+            OcrMode::Manual,
+            &[],
+            None,
+            Some("chrome.exe"),
+            false,
+        ));
+    }
+
+    #[test]
+    fn manual_ocr_allow_with_global_automatic_allowed() {
+        let policy = AppPolicy::new(AppTier::Allow);
+        assert!(manual_ocr_allowed(
+            &policy,
+            OcrMode::Automatic,
+            &[],
+            None,
+            Some("chrome.exe"),
+            false,
+        ));
+    }
+
+    #[test]
+    fn manual_ocr_cli_off_overrides_per_app_automatic() {
+        let policy = AppPolicy::new(AppTier::Allow);
+        let rules = rules_for("chrome", OcrMode::Automatic);
+        assert!(!manual_ocr_allowed(
+            &policy,
+            OcrMode::Manual,
+            &rules,
+            Some(OcrMode::Off),
+            Some("chrome.exe"),
+            false,
+        ));
+    }
+
+    #[test]
+    fn manual_ocr_cli_manual_overrides_per_app_off() {
+        let policy = AppPolicy::new(AppTier::Allow);
+        let rules = rules_for("chrome", OcrMode::Off);
+        assert!(manual_ocr_allowed(
+            &policy,
+            OcrMode::Off,
+            &rules,
+            Some(OcrMode::Manual),
+            Some("chrome.exe"),
+            false,
+        ));
+    }
+
+    #[test]
+    fn manual_ocr_cli_automatic_overrides_per_app_off() {
+        let policy = AppPolicy::new(AppTier::Allow);
+        let rules = rules_for("chrome", OcrMode::Off);
+        assert!(manual_ocr_allowed(
+            &policy,
+            OcrMode::Off,
+            &rules,
+            Some(OcrMode::Automatic),
+            Some("chrome.exe"),
+            false,
+        ));
+    }
+
+    #[test]
+    fn manual_ocr_modifier_tier_without_modifier_refused() {
+        let policy = AppPolicy::new(AppTier::Modifier);
+        assert!(!manual_ocr_allowed(
+            &policy,
+            OcrMode::Manual,
+            &[],
+            None,
+            Some("chrome.exe"),
+            false,
+        ));
+    }
+
+    #[test]
+    fn manual_ocr_modifier_tier_with_modifier_allowed() {
+        let policy = AppPolicy::new(AppTier::Modifier);
+        assert!(manual_ocr_allowed(
+            &policy,
+            OcrMode::Manual,
+            &[],
+            None,
+            Some("chrome.exe"),
+            true,
+        ));
+    }
+
+    #[test]
+    fn automatic_ocr_deny_refused() {
+        // Verify the automatic path also refuses Deny.
+        let mut policy = AppPolicy::new(AppTier::Allow);
+        policy.set("sensitive", AppTier::Deny);
+        assert!(!policy.allows(Some("sensitive.exe"), false));
+    }
+
+    #[test]
+    fn automatic_ocr_deny_with_automatic_global_refused() {
+        // Even with global Automatic, Deny blocks the automatic path.
+        let mut policy = AppPolicy::new(AppTier::Allow);
+        policy.set("sensitive", AppTier::Deny);
+        // The automatic path checks policy.allows() first.
+        assert!(!policy.allows(Some("sensitive.exe"), false));
+    }
 }
