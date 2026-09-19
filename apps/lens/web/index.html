@@ -267,13 +267,16 @@
       <p style="color:#666;margin-bottom:12px">Per-application rules override the default tier.</p>
       <div id="apps-list"></div>
       <div style="margin-top:12px">
-        <input type="text" id="new-app-name" placeholder="Process name" style="width:150px;padding:4px 8px;border:1px solid #ccc;border-radius:4px">
-        <select id="new-app-tier" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px">
+        <label for="new-app-name" class="sr-only">Application process name</label>
+        <input type="text" id="new-app-name" placeholder="Process name" aria-label="Application process name" style="width:150px;padding:4px 8px;border:1px solid #ccc;border-radius:4px">
+        <label for="new-app-tier" class="sr-only">Application tier</label>
+        <select id="new-app-tier" aria-label="Application tier" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px">
           <option value="allow">Allow</option>
           <option value="modifier">Modifier</option>
           <option value="deny">Deny</option>
         </select>
-        <select id="new-app-ocr" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px">
+        <label for="new-app-ocr" class="sr-only">Application OCR behavior</label>
+        <select id="new-app-ocr" aria-label="Application OCR behavior" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px">
           <option value="inherit">OCR: Inherit global</option>
           <option value="off">OCR: Off</option>
           <option value="manual">OCR: Manual</option>

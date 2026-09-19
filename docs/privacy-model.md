@@ -262,13 +262,23 @@ Written with every option in it on
 first run so the answer to "how do I stop it reading that" is a file
 that already exists:
 
-```
-default = modifier
+```toml
+schema_version = 2
+
+[general]
+default_tier = "modifier"
+ocr = "manual"
 
 [applications]
-chrome = allow
-code = deny
+chrome = { tier = "allow", ocr = "automatic" }
+code = "deny"
+sensitive = { tier = "deny", ocr = "off" }
 ```
+
+A tier-only rule (`code = "deny"`) inherits the global OCR setting.
+An `ocr` value of `"off"`, `"manual"`, or `"automatic"` overrides the
+global OCR for that application. The effective OCR resolution order is
+CLI `--ocr` flag, then per-application `ocr`, then global `ocr`.
 
 Until this file existed the tiers could be built in code and by nothing
 else, which meant the control described above was not reachable by the
@@ -345,9 +355,12 @@ changing any of this.
 | Screen recording (macOS) | first OCR use, not before | the OCR fallback only |
 
 Windows needs no explicit grant for UI Automation, which makes it easy
-to forget that the same staging discipline applies: OCR is manual-only
-in v1 on both platforms, so a user who never reaches for it never has a
-capture path enabled at all.
+to forget that the same staging discipline applies: OCR capture is
+gated by both application permission and effective OCR mode on both
+platforms. A user whose effective OCR is `off` for an application, or
+whose application tier is `Deny`, is never captured regardless of
+whether the OCR action is automatic (hover fallback) or manual
+(`Ctrl+Alt+O` / menu).
 
 Known limitation, stated rather than worked around: a Lens running
 without elevation cannot read an application running elevated, because
@@ -456,8 +469,30 @@ text could show a translation of a sentence no longer on the screen, while
 reusing remembered emptiness can only fail by showing no card where one was
 possible.
 
-**`ocr = off`.** Never. No capture path exists in the process: the acquirer
-is not constructed.
+**`ocr = off`.** Never. Both the automatic fallback and the manual OCR
+command are refused before any screen capture occurs. The capture
+acquirer may exist in memory, but no pixel is read.
+
+### Effective OCR: per-application and CLI overrides
+
+The global `ocr` setting can be overridden per application in
+`settings.toml`, and further overridden by the `--ocr` CLI flag. The
+resolution order is:
+
+1. **CLI `--ocr` flag** (highest precedence, applies to all applications)
+2. **Per-application `ocr`** in `settings.toml`
+3. **Global `ocr`** in `settings.toml` (lowest precedence)
+
+A per-application rule only affects OCR behavior, not application
+permission. An application with `tier = "deny"` is never read,
+regardless of its OCR override or the global OCR setting. An
+application with `ocr = "off"` has no OCR capture, whether automatic or
+manual, even if the global OCR is `automatic`.
+
+Both the automatic hover fallback and the manual OCR command
+(`Ctrl+Alt+O` / menu bar) resolve the effective OCR mode before any
+screen capture. If the effective mode is `off`, or if the application
+tier is `deny`, the capture is refused.
 
 None of this changes what happens to a capture, which is that it is
 recognised and dropped. It changes how much of somebody's screen passes
