@@ -1,12 +1,22 @@
 //! macOS global hotkeys via CGEventTap.
 //!
-//! Intercepts Cmd+Opt+key combinations globally and maps them to product
+//! Intercepts configured key combinations globally and maps them to product
 //! commands. Requires Accessibility permission (already requested for AX).
 //!
 //! Commands are queued in a lock-free ring buffer on the native side and
 //! polled by the Rust product loop.
+//!
+//! # Configuration
+//!
+//! Shortcut bindings are configurable: call [`configure`] with a
+//! [`ShortcutConfig`] from `lens_core::shortcut` to install the mapping.
+//! The native layer translates semantic shortcuts into macOS modifier flags
+//! and keycodes, then stores them in an atomic binding table that the
+//! event tap callback reads.
 
 use std::os::raw::c_int;
+
+use lens_core::shortcut::{Key, Modifiers, Shortcut, ShortcutAction, ShortcutConfig};
 
 /// Product command from a global hotkey or menu action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,9 +59,166 @@ impl ProductCommand {
     }
 }
 
+/// Native hotkey binding: (modifiers, keycode) → command.
+/// Matches the C struct `LensHotkeyBinding` in hotkey.h.
+#[repr(C)]
+struct NativeBinding {
+    modifiers: u32,
+    keycode: u16,
+    command: c_int,
+}
+
+// macOS CGEventFlags for modifiers.
+const K_CG_EVENT_FLAG_MASK_SHIFT: u32 = 0x00020000;
+const K_CG_EVENT_FLAG_MASK_CONTROL: u32 = 0x00040000;
+const K_CG_EVENT_FLAG_MASK_ALTERNATE: u32 = 0x00080000;
+const K_CG_EVENT_FLAG_MASK_COMMAND: u32 = 0x00100000;
+
+// macOS virtual keycodes (from Carbon/HIToolbox).
+const VK_A: u16 = 0x00;
+const VK_S: u16 = 0x01;
+const VK_D: u16 = 0x02;
+const VK_F: u16 = 0x03;
+const VK_H: u16 = 0x04;
+const VK_G: u16 = 0x05;
+const VK_Z: u16 = 0x06;
+const VK_X: u16 = 0x07;
+const VK_C: u16 = 0x08;
+const VK_V: u16 = 0x09;
+const VK_B: u16 = 0x0B;
+const VK_Q: u16 = 0x0C;
+const VK_W: u16 = 0x0D;
+const VK_E: u16 = 0x0E;
+const VK_R: u16 = 0x0F;
+const VK_Y: u16 = 0x10;
+const VK_T: u16 = 0x11;
+const VK_1: u16 = 0x12;
+const VK_2: u16 = 0x13;
+const VK_3: u16 = 0x14;
+const VK_4: u16 = 0x15;
+const VK_6: u16 = 0x16;
+const VK_5: u16 = 0x17;
+const VK_9: u16 = 0x19;
+const VK_7: u16 = 0x1A;
+const VK_8: u16 = 0x1C;
+const VK_0: u16 = 0x1D;
+const VK_O: u16 = 0x1F;
+const VK_U: u16 = 0x20;
+const VK_I: u16 = 0x22;
+const VK_P: u16 = 0x23;
+const VK_L: u16 = 0x25;
+const VK_J: u16 = 0x26;
+const VK_K: u16 = 0x28;
+const VK_SPACE: u16 = 0x31;
+const VK_RETURN: u16 = 0x24;
+const VK_ESCAPE: u16 = 0x35;
+const VK_TAB: u16 = 0x30;
+const VK_F1: u16 = 0x7A;
+const VK_UP: u16 = 0x7E;
+const VK_DOWN: u16 = 0x7D;
+const VK_LEFT: u16 = 0x7B;
+const VK_RIGHT: u16 = 0x7C;
+
+/// Map a semantic Key to a macOS virtual keycode.
+/// Returns None if the key is not supported on macOS.
+fn macos_keycode(key: Key) -> Option<u16> {
+    match key {
+        Key::Letter(c) => match c.to_ascii_uppercase() {
+            'A' => Some(VK_A),
+            'B' => Some(VK_B),
+            'C' => Some(VK_C),
+            'D' => Some(VK_D),
+            'E' => Some(VK_E),
+            'F' => Some(VK_F),
+            'G' => Some(VK_G),
+            'H' => Some(VK_H),
+            'I' => Some(VK_I),
+            'J' => Some(VK_J),
+            'K' => Some(VK_K),
+            'L' => Some(VK_L),
+            'O' => Some(VK_O),
+            'P' => Some(VK_P),
+            'Q' => Some(VK_Q),
+            'R' => Some(VK_R),
+            'S' => Some(VK_S),
+            'T' => Some(VK_T),
+            'U' => Some(VK_U),
+            'V' => Some(VK_V),
+            'W' => Some(VK_W),
+            'X' => Some(VK_X),
+            'Y' => Some(VK_Y),
+            'Z' => Some(VK_Z),
+            _ => None,
+        },
+        Key::Digit(c) => match c {
+            '0' => Some(VK_0),
+            '1' => Some(VK_1),
+            '2' => Some(VK_2),
+            '3' => Some(VK_3),
+            '4' => Some(VK_4),
+            '5' => Some(VK_5),
+            '6' => Some(VK_6),
+            '7' => Some(VK_7),
+            '8' => Some(VK_8),
+            '9' => Some(VK_9),
+            _ => None,
+        },
+        Key::Function(n) => {
+            // F1-F12 have non-contiguous keycodes on macOS.
+            match n {
+                1 => Some(VK_F1),
+                // F2-F12 not commonly used for shortcuts; extend if needed.
+                _ => None,
+            }
+        }
+        Key::Space => Some(VK_SPACE),
+        Key::Enter => Some(VK_RETURN),
+        Key::Escape => Some(VK_ESCAPE),
+        Key::Tab => Some(VK_TAB),
+        Key::Arrow(arrow) => match arrow {
+            lens_core::shortcut::ArrowKey::Up => Some(VK_UP),
+            lens_core::shortcut::ArrowKey::Down => Some(VK_DOWN),
+            lens_core::shortcut::ArrowKey::Left => Some(VK_LEFT),
+            lens_core::shortcut::ArrowKey::Right => Some(VK_RIGHT),
+        },
+    }
+}
+
+/// Map semantic Modifiers to macOS CGEventFlags.
+fn macos_modifiers(mods: Modifiers) -> u32 {
+    let mut flags = 0u32;
+    if mods.contains(Modifiers::CONTROL) {
+        flags |= K_CG_EVENT_FLAG_MASK_CONTROL;
+    }
+    if mods.contains(Modifiers::ALT) {
+        flags |= K_CG_EVENT_FLAG_MASK_ALTERNATE;
+    }
+    if mods.contains(Modifiers::SHIFT) {
+        flags |= K_CG_EVENT_FLAG_MASK_SHIFT;
+    }
+    if mods.contains(Modifiers::META) {
+        flags |= K_CG_EVENT_FLAG_MASK_COMMAND;
+    }
+    flags
+}
+
+/// Map a ShortcutAction to the native LensCommand value.
+/// Returns None if the action is not supported on macOS (e.g., Pin).
+fn native_command(action: ShortcutAction) -> Option<c_int> {
+    match action {
+        ShortcutAction::Pause => Some(1),     // LENS_CMD_PAUSE_TOGGLE
+        ShortcutAction::Deep => Some(2),      // LENS_CMD_DEEP
+        ShortcutAction::Copy => Some(3),      // LENS_CMD_COPY
+        ShortcutAction::Save => Some(4),      // LENS_CMD_SAVE
+        ShortcutAction::ManualOcr => Some(5), // LENS_CMD_MANUAL_OCR
+        ShortcutAction::Pin => None,          // Not supported on macOS
+    }
+}
+
 extern "C" {
     fn lens_hotkey_install() -> bool;
     fn lens_hotkey_remove();
+    fn lens_hotkey_configure(bindings: *const NativeBinding, count: c_int);
     fn lens_hotkey_poll() -> c_int;
     fn lens_hotkey_is_enabled() -> bool;
 }
@@ -66,6 +233,47 @@ pub fn install() -> bool {
 pub fn remove() {
     // SAFETY: lens_hotkey_remove tears down the CGEventTap.
     unsafe { lens_hotkey_remove() };
+}
+
+/// Configure the hotkey bindings from a ShortcutConfig.
+///
+/// Translates semantic shortcuts into native modifier flags and keycodes,
+/// then installs the mapping table in the native layer. Actions that are
+/// unbound or not supported on macOS (e.g., Pin) are skipped.
+///
+/// This function is safe to call while the event tap is active. The native
+/// layer swaps the binding table atomically.
+pub fn configure(config: &ShortcutConfig) {
+    let mut native_bindings = Vec::new();
+
+    for (action, shortcut) in &config.bindings {
+        let cmd = match native_command(*action) {
+            Some(c) => c,
+            None => continue, // Action not supported on macOS
+        };
+
+        let shortcut = match shortcut {
+            Some(s) => s,
+            None => continue, // Action is unbound
+        };
+
+        let keycode = match macos_keycode(shortcut.key) {
+            Some(k) => k,
+            None => continue, // Key not supported on macOS
+        };
+
+        native_bindings.push(NativeBinding {
+            modifiers: macos_modifiers(shortcut.modifiers),
+            keycode,
+            command: cmd,
+        });
+    }
+
+    // SAFETY: lens_hotkey_configure reads from the bindings array and copies
+    // it into native storage. The array is valid for the duration of the call.
+    unsafe {
+        lens_hotkey_configure(native_bindings.as_ptr(), native_bindings.len() as c_int);
+    }
 }
 
 /// Poll for the next pending command. Returns `ProductCommand::None` if empty.
@@ -412,5 +620,46 @@ mod tests {
         assert!(!ProductCommand::OpenSettings.works_when_paused());
         assert!(!ProductCommand::OpenLibrary.works_when_paused());
         assert!(!ProductCommand::None.works_when_paused());
+    }
+
+    #[test]
+    fn macos_keycode_maps_letters() {
+        use super::{macos_keycode, Key};
+        assert_eq!(macos_keycode(Key::Letter('L')), Some(0x25));
+        assert_eq!(macos_keycode(Key::Letter('O')), Some(0x1F));
+        assert_eq!(macos_keycode(Key::Letter('D')), Some(0x02));
+        assert_eq!(macos_keycode(Key::Letter('C')), Some(0x08));
+        assert_eq!(macos_keycode(Key::Letter('S')), Some(0x01));
+        assert_eq!(macos_keycode(Key::Letter('A')), Some(0x00));
+    }
+
+    #[test]
+    fn macos_keycode_maps_special_keys() {
+        use super::{macos_keycode, Key};
+        assert_eq!(macos_keycode(Key::Space), Some(0x31));
+        assert_eq!(macos_keycode(Key::Enter), Some(0x24));
+        assert_eq!(macos_keycode(Key::Escape), Some(0x35));
+        assert_eq!(macos_keycode(Key::Tab), Some(0x30));
+    }
+
+    #[test]
+    fn macos_modifiers_maps_correctly() {
+        use super::{macos_modifiers, Modifiers};
+        // Cmd+Opt (default macOS modifier)
+        let mods = Modifiers::META.union(Modifiers::ALT);
+        let flags = macos_modifiers(mods);
+        assert_eq!(flags, 0x00100000 | 0x00080000); // Command | Alternate
+    }
+
+    #[test]
+    fn native_command_excludes_pin() {
+        use super::{native_command, ShortcutAction};
+        assert!(native_command(ShortcutAction::Pause).is_some());
+        assert!(native_command(ShortcutAction::ManualOcr).is_some());
+        assert!(native_command(ShortcutAction::Deep).is_some());
+        assert!(native_command(ShortcutAction::Copy).is_some());
+        assert!(native_command(ShortcutAction::Save).is_some());
+        // Pin is not supported on macOS
+        assert!(native_command(ShortcutAction::Pin).is_none());
     }
 }

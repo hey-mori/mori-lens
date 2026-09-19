@@ -310,9 +310,26 @@ pub fn main() -> std::process::ExitCode {
     if menubar.is_some() {
         println!("  menubar   ready");
     }
+    // Extract shortcuts from settings for hotkey configuration.
+    let shortcuts = {
+        let guard = shared_settings.lock().unwrap();
+        guard.schema().shortcuts.clone()
+    };
     let hotkeys_available = if ax_trusted { hotkey::install() } else { false };
     if hotkeys_available {
-        println!("  hotkeys   Cmd+Opt+L/D/C/S/O/Q registered");
+        // Configure the hotkey bindings from the shortcut config.
+        hotkey::configure(&shortcuts);
+        // Print configured shortcuts for the banner.
+        let binding_strs: Vec<String> = shortcuts
+            .bindings
+            .iter()
+            .filter_map(|(action, shortcut)| {
+                shortcut.as_ref().map(|s| {
+                    format!("{}={}", action, s.format_macos())
+                })
+            })
+            .collect();
+        println!("  hotkeys   {}", binding_strs.join(", "));
     }
     let lifecycle = Lifecycle::start();
     if lifecycle.is_some() {
