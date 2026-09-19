@@ -23,7 +23,8 @@ text the user looked at, never an image, and never reaches a file.
 **Three tiers of history, decided separately** ([ADR-0014](decisions/ADR-0014-three-tiers-of-history.md)):
 - **Session recent** (on by default): memory only, gone when the process exits.
   The latest 50 cards or two hours, whichever prunes first. Never written to disk.
-- **Saved library** (explicit save): what a reader chose to keep with `Ctrl+Alt+S`.
+- **Saved library** (explicit save): what a reader chose to keep with the
+  Save shortcut (default `Ctrl+Alt+S`).
   Stored in `library.db` with `saved.md` as its human-readable export.
 - **Persistent history** (off by default): an opt-in automatic transcript.
   When the reader explicitly enables it, future translations are stored
@@ -32,8 +33,9 @@ text the user looked at, never an image, and never reaches a file.
   hidden.
 
 **The clipboard is written on a keypress and never read.** Since
-2026-08-06, `Ctrl+Alt+C` puts the card's sentence and its answer on the
-clipboard. That is the only path in this product that carries what was
+2026-08-06, the Copy shortcut (default `Ctrl+Alt+C`) puts the card's
+sentence and its answer on the clipboard. That is the only path in this
+product that carries what was
 read outside the process, and three things bound it:
 
 - It runs on a chord and on nothing else. A hover cannot reach it. A
@@ -360,7 +362,7 @@ gated by both application permission and effective OCR mode on both
 platforms. A user whose effective OCR is `off` for an application, or
 whose application tier is `Deny`, is never captured regardless of
 whether the OCR action is automatic (hover fallback) or manual
-(`Ctrl+Alt+O` / menu).
+(configurable Manual OCR shortcut / menu).
 
 Known limitation, stated rather than worked around: a Lens running
 without elevation cannot read an application running elevated, because
@@ -375,9 +377,10 @@ Claims are worth what a user can check.
 - The engine is named at startup, in every card's footer, and in the
   tray tooltip. A binary started from Explorer has no console, so the
   tooltip is the form of this claim most people will meet.
-- **Ctrl+Alt+L** pauses and resumes. Pause means the pointer is not
+- The configurable Pause global shortcut (default `Ctrl+Alt+L` on Windows,
+  `Cmd+Opt+L` on macOS) pauses and resumes. Pause means the pointer is not
   sampled, so no accessibility call is made at all, which a process
-  monitor can confirm. It is not a hidden card.
+  monitor can confirm. It is not a hidden card. Pause cannot be unbound.
 - The per-application tier list is in
   the settings file (`settings.toml` in the platform data directory),
   which the tray menu opens and
@@ -408,7 +411,7 @@ Every claim on this page, and whether the code keeps it:
 | Model output is untrusted | **kept structurally, weaker than it reads.** See §1: two of three local models obeyed an instruction in screen text. Nothing is executed; the mitigation is that the original is always shown beside the answer. |
 | Password managers denied by default | **kept.** Nine are denied by name in `AppPolicy`. |
 | Banking and payment applications denied by default | **not kept.** No banking application is denied by name, and naming them would be a guess that varies by country. What actually protects an unnamed application is the `Modifier` default, which is why the default tier is not `Allow`. This row is the honest version of a sentence in §2 that promised more than the code does. |
-| A pause control stops all acquisition | **kept**, as Ctrl+Alt+L. Paused means no accessibility call is made, not that a card is hidden, so a process monitor can confirm it. |
+| A pause control stops all acquisition | **kept**, as the configurable Pause shortcut (default `Ctrl+Alt+L` on Windows, `Cmd+Opt+L` on macOS). Paused means no accessibility call is made, not that a card is hidden, so a process monitor can confirm it. Pause cannot be unbound. |
 | The tray shows the current engine | **kept**, since 2026-08-05. The tooltip names the model and whether it is local, and the icon says whether Lens is listening or paused. This row said "there is no tray" for a fortnight after there was one, which is the same defect as a stale capability claim pointing the other way: a privacy document that understates the product is one nobody can calibrate against. |
 | The per-application tier list is visible and editable | **kept**, in `settings.toml` in the platform data directory, opened from the tray menu and re-read while Lens runs. The denied password managers are not in it and cannot be overridden from it, which is the one part deliberately out of the user's reach. |
 
@@ -421,9 +424,9 @@ the code keeps.
 What a capture contains is above. How many there are is this, because a
 page that answers only the first question is answering the easier one.
 
-**`ocr = manual`, the default.** Once per `Ctrl+Alt+O`. A reader who never
-presses it is never captured, and a reader who does knows exactly when,
-because they did it.
+**`ocr = manual`, the default.** Once per Manual OCR shortcut invocation.
+A reader who never presses it is never captured, and a reader who does
+knows exactly when, because they did it.
 
 **`ocr = automatic`.** Once per settled hover that the accessibility path
 could not serve. That sounds narrow and is not: in VS Code the

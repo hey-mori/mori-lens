@@ -541,7 +541,7 @@ fn extract_schema(doc: &toml_edit::DocumentMut, path: &Path) -> Result<Schema, S
     let quick = extract_engine(doc, "quick");
     let deep = extract_engine(doc, "deep");
     let applications = extract_applications(doc);
-    let shortcuts = extract_shortcuts(doc);
+    let shortcuts = extract_shortcuts(doc, path)?;
 
     Ok(Schema {
         version,
@@ -702,32 +702,102 @@ fn extract_applications(doc: &toml_edit::DocumentMut) -> Vec<schema::Application
     apps
 }
 
-fn extract_shortcuts(doc: &toml_edit::DocumentMut) -> lens_core::shortcut::ShortcutConfig {
+fn extract_shortcuts(
+    doc: &toml_edit::DocumentMut,
+    path: &Path,
+) -> Result<lens_core::shortcut::ShortcutConfig, SettingsError> {
     use lens_core::shortcut::{Shortcut, ShortcutAction};
 
     let Some(table) = doc.get("shortcuts").and_then(|v| v.as_table_like()) else {
         // No shortcuts section: use platform defaults
         if cfg!(target_os = "macos") {
-            return lens_core::shortcut::default_macos_shortcuts();
+            return Ok(lens_core::shortcut::default_macos_shortcuts());
         } else {
-            return lens_core::shortcut::default_windows_shortcuts();
+            return Ok(lens_core::shortcut::default_windows_shortcuts());
         }
     };
 
     let mut bindings = Vec::new();
     for action in ShortcutAction::ALL {
         let key = action.as_str();
-        let shortcut = table.get(key).and_then(|v| v.as_str()).and_then(|s| {
-            if s == "none" || s.is_empty() {
-                None
+        let value = table.get(key);
+
+        // Check if key exists
+        let Some(val) = value else {
+            // Missing key: use platform default for this action
+            let default_config = if cfg!(target_os = "macos") {
+                lens_core::shortcut::default_macos_shortcuts()
             } else {
-                Shortcut::parse(s).ok()
+                lens_core::shortcut::default_windows_shortcuts()
+            };
+            let default_shortcut = default_config.get(action).cloned().flatten();
+            bindings.push((action, default_shortcut));
+            continue;
+        };
+
+        // Key exists: must be a string
+        let Some(s) = val.as_str() else {
+            return Err(SettingsError::Parse {
+                path: path.to_path_buf(),
+                reason: format!("shortcuts.{} must be a string", key),
+            });
+        };
+
+        // Check for explicit unbound
+        if s == "none" || s.is_empty() {
+            if !action.can_be_unbound() {
+                return Err(SettingsError::Parse {
+                    path: path.to_path_buf(),
+                    reason: format!("{} cannot be unbound", action),
+                });
             }
-        });
-        bindings.push((action, shortcut));
+            bindings.push((action, None));
+            continue;
+        }
+
+        // Parse the shortcut
+        match Shortcut::parse(s) {
+            Ok(shortcut) => bindings.push((action, Some(shortcut))),
+            Err(_) => {
+                return Err(SettingsError::Parse {
+                    path: path.to_path_buf(),
+                    reason: format!("invalid shortcut syntax for {}: {}", key, s),
+                });
+            }
+        }
     }
 
-    lens_core::shortcut::ShortcutConfig::new(bindings)
+    let config = lens_core::shortcut::ShortcutConfig::new(bindings);
+
+    // Validate the complete config
+    if let Err(errors) = config.validate() {
+        let messages: Vec<String> = errors
+            .iter()
+            .map(|e| match e {
+                lens_core::shortcut::ShortcutValidationError::RequiredActionUnbound { action } => {
+                    format!("{} must have a shortcut", action)
+                }
+                lens_core::shortcut::ShortcutValidationError::CannotBeUnbound { action } => {
+                    format!("{} cannot be unbound", action)
+                }
+                lens_core::shortcut::ShortcutValidationError::DuplicateBinding {
+                    action1,
+                    action2,
+                } => {
+                    format!("{} and {} use the same shortcut", action1, action2)
+                }
+                lens_core::shortcut::ShortcutValidationError::InsufficientModifiers => {
+                    "global shortcuts require Ctrl/Alt/Meta".to_string()
+                }
+            })
+            .collect();
+        return Err(SettingsError::Parse {
+            path: path.to_path_buf(),
+            reason: messages.join("; "),
+        });
+    }
+
+    Ok(config)
 }
 
 fn parse_tier(value: &str) -> Option<lens_core::policy::AppTier> {
@@ -2152,10 +2222,10 @@ endpoint = \"127.0.0.1:11434\"
         let path = dir.join("settings.toml");
 
         let mut file = SettingsFile::new_defaults(path.clone());
-        // Customize the Pause shortcut to Ctrl+Alt+P
+        // Customize the Pause shortcut to Ctrl+Alt+X
         file.schema_mut().shortcuts.set(
             ShortcutAction::Pause,
-            Some(Shortcut::parse("Ctrl+Alt+P").unwrap()),
+            Some(Shortcut::parse("Ctrl+Alt+X").unwrap()),
         );
         // Unbind the Copy shortcut
         file.schema_mut().shortcuts.set(ShortcutAction::Copy, None);
@@ -2167,7 +2237,7 @@ endpoint = \"127.0.0.1:11434\"
             .shortcuts
             .get(ShortcutAction::Pause)
             .unwrap();
-        assert_eq!(pause.as_ref().unwrap().format(), "Ctrl+Alt+P");
+        assert_eq!(pause.as_ref().unwrap().format(), "Ctrl+Alt+X");
         let copy = loaded.schema().shortcuts.get(ShortcutAction::Copy).unwrap();
         assert!(copy.is_none());
 

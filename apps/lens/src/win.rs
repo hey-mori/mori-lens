@@ -850,12 +850,13 @@ pub fn main() -> std::process::ExitCode {
         }
     );
     let mut pause = pause::PauseKey::register_with(&options.shortcuts);
+    let pause_shortcut = format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::Pause);
     println!(
         "  pause     {}",
         if pause.is_registered() {
-            "Ctrl+Alt+L stops the pointer being sampled"
+            format!("{} stops the pointer being sampled", pause_shortcut)
         } else {
-            "UNAVAILABLE: Ctrl+Alt+L is taken by another application"
+            format!("UNAVAILABLE: {} is taken by another application", pause_shortcut)
         }
     );
     if options.ocr_mode == OcrMode::Automatic {
@@ -867,16 +868,18 @@ pub fn main() -> std::process::ExitCode {
         // a user once and a banner once.
         println!("  cost      36% of one core while reading, measured 2026-08-06");
     }
+    let ocr_shortcut = format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::ManualOcr);
     println!(
         "  ocr       {} · {}",
         options.ocr_mode.as_str(),
         if !pause.ocr_is_registered() {
-            "UNAVAILABLE: Ctrl+Alt+O is taken by another application".to_owned()
+            format!("UNAVAILABLE: {} is taken by another application", ocr_shortcut)
         } else if ocr::available_languages().is_empty() {
-            "Ctrl+Alt+O, but this system has no recognisers installed".to_owned()
+            format!("{}, but this system has no recognisers installed", ocr_shortcut)
         } else {
             format!(
-                "Ctrl+Alt+O reads under the pointer with OCR · {}",
+                "{} reads under the pointer with OCR · {}",
+                ocr_shortcut,
                 ocr::available_languages().join(", "),
             )
         },
@@ -892,41 +895,46 @@ pub fn main() -> std::process::ExitCode {
             Profile::Exam => "the clause pattern and what governs what",
         },
     );
+    let pin_shortcut = format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::Pin);
     println!(
         "  pin       {}",
         if pause.pin_is_registered() {
-            "Ctrl+Alt+P keeps the card in a window that stays until Esc"
+            format!("{} keeps the card in a window that stays until Esc", pin_shortcut)
         } else {
-            "UNAVAILABLE: Ctrl+Alt+P is taken by another application"
+            format!("UNAVAILABLE: {} is taken by another application", pin_shortcut)
         },
     );
+    let deep_shortcut = format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::Deep);
     println!(
         "  explain   {}",
         if pause.explain_is_registered() {
-            "Ctrl+Alt+D explains the sentence on the card: form, part of speech, structure"
+            format!("{} explains the sentence on the card: form, part of speech, structure", deep_shortcut)
         } else {
-            "UNAVAILABLE: Ctrl+Alt+D is taken by another application"
+            format!("UNAVAILABLE: {} is taken by another application", deep_shortcut)
         }
     );
+    let copy_shortcut = format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::Copy);
     println!(
         "  copy      {}",
         if pause.copy_is_registered() {
-            "Ctrl+Alt+C puts the card on the clipboard, with the sentence it explains"
+            format!("{} puts the card on the clipboard, with the sentence it explains", copy_shortcut)
         } else {
-            "UNAVAILABLE: Ctrl+Alt+C is taken by another application"
+            format!("UNAVAILABLE: {} is taken by another application", copy_shortcut)
         }
     );
+    let save_shortcut = format_shortcut_display(&options.shortcuts, lens_core::shortcut::ShortcutAction::Save);
     println!(
         "  keep      {}",
         if pause.keep_is_registered() {
             // The path, because a reader who saves something and cannot find
             // it has not saved it.
             format!(
-                "Ctrl+Alt+S appends it to {}",
+                "{} appends it to {}",
+                save_shortcut,
                 keeping::path_beside(&options.source.path).display(),
             )
         } else {
-            "UNAVAILABLE: Ctrl+Alt+S is taken by another application".to_owned()
+            format!("UNAVAILABLE: {} is taken by another application", save_shortcut)
         }
     );
     // The one line that tells a first-time user what to do, so it has to
@@ -1579,6 +1587,7 @@ pub fn main() -> std::process::ExitCode {
         deep_model: options.ai_config.deep.model.clone(),
         deep_endpoint: options.ai_config.deep.endpoint.clone(),
         ocr_mode: options.ocr_mode.as_str().to_owned(),
+        shortcuts: options.shortcuts.clone(),
     };
     let shared_settings = std::sync::Arc::new(std::sync::Mutex::new(
         settings_service::load_or_migrate(&options.source.path, active_baseline),
@@ -3054,6 +3063,7 @@ fn tooltip(
     // has never seen. They would press the key, get nothing, and conclude the
     // product was broken, which is the failure this file keeps meeting.
     let trouble = hotkey_trouble(
+        keys.shortcuts(),
         keys.is_registered(),
         keys.ocr_is_registered(),
         keys.explain_is_registered(),
@@ -3088,21 +3098,25 @@ fn tooltip(
 /// Naming one of three would be worse than naming none: it reads as a
 /// complete account.
 fn hotkey_trouble(
+    shortcuts: &lens_core::shortcut::ShortcutConfig,
     pause_registered: bool,
     ocr_registered: bool,
     explain_registered: bool,
     copy_registered: bool,
     keep_registered: bool,
 ) -> String {
-    let taken: Vec<&str> = [
-        (pause_registered, "Ctrl+Alt+L"),
-        (ocr_registered, "Ctrl+Alt+O"),
-        (explain_registered, "Ctrl+Alt+D"),
-        (copy_registered, "Ctrl+Alt+C"),
-        (keep_registered, "Ctrl+Alt+S"),
+    use lens_core::shortcut::ShortcutAction;
+    let taken: Vec<String> = [
+        (pause_registered, ShortcutAction::Pause),
+        (ocr_registered, ShortcutAction::ManualOcr),
+        (explain_registered, ShortcutAction::Deep),
+        (copy_registered, ShortcutAction::Copy),
+        (keep_registered, ShortcutAction::Save),
     ]
     .into_iter()
-    .filter_map(|(held, name)| (!held).then_some(name))
+    .filter_map(|(held, action)| {
+        (!held).then(|| format_shortcut_display(shortcuts, action))
+    })
     .collect();
 
     if taken.is_empty() {
@@ -3446,6 +3460,18 @@ fn log_card(card: &Card, app: Option<&str>) {
 ///
 /// Only the short key-and-value ones. The banner's longer lines explain a
 /// setting rather than state it, and a window that repeated them would be a
+/// Format a configured shortcut for display, or return a default message.
+fn format_shortcut_display(
+    shortcuts: &lens_core::shortcut::ShortcutConfig,
+    action: lens_core::shortcut::ShortcutAction,
+) -> String {
+    match shortcuts.get(action) {
+        Some(Some(shortcut)) => shortcut.to_string(),
+        Some(None) => "disabled".to_owned(),
+        None => "not configured".to_owned(),
+    }
+}
+
 /// manual rather than a diagnostic.
 ///
 /// The function takes the ACTIVE runtime values for fields that can change
@@ -4011,6 +4037,11 @@ selftest passed: text on screen became a card, pointer untouched."
 mod tooltip_tests {
     use super::{hotkey_trouble, korean_how_to};
     use lens_core::policy::AppPolicy;
+    use lens_core::shortcut::default_windows_shortcuts;
+
+    fn test_shortcuts() -> lens_core::shortcut::ShortcutConfig {
+        default_windows_shortcuts()
+    }
 
     /// The shell gives a tooltip 127 UTF-16 units and truncates the rest, so
     /// the worst case has to fit or the last line is what disappears.
@@ -4023,9 +4054,11 @@ mod tooltip_tests {
         // Every combination, so the longest is measured rather than assumed.
         // The obvious candidate is all three taken, and it is not: that one
         // collapses to the generic sentence and one named key is longer.
+        let shortcuts = test_shortcuts();
         let worst = (0..32)
             .map(|bits| {
                 hotkey_trouble(
+                    &shortcuts,
                     bits & 1 == 0,
                     bits & 2 == 0,
                     bits & 4 == 0,
@@ -4057,7 +4090,8 @@ mod tooltip_tests {
     /// The ordinary case costs nothing.
     #[test]
     fn five_working_hotkeys_add_no_line() {
-        assert!(hotkey_trouble(true, true, true, true, true).is_empty());
+        let shortcuts = test_shortcuts();
+        assert!(hotkey_trouble(&shortcuts, true, true, true, true, true).is_empty());
     }
 
     /// One taken key names itself, and the pause line names the way that still
@@ -4065,21 +4099,22 @@ mod tooltip_tests {
     /// same thing on a click.
     #[test]
     fn a_taken_hotkey_names_itself_and_the_way_round_it() {
-        let pause_gone = hotkey_trouble(false, true, true, true, true);
+        let shortcuts = test_shortcuts();
+        let pause_gone = hotkey_trouble(&shortcuts, false, true, true, true, true);
         assert!(pause_gone.contains("Ctrl+Alt+L"), "{pause_gone}");
         assert!(pause_gone.contains("클릭"), "{pause_gone}");
 
-        let ocr_gone = hotkey_trouble(true, false, true, true, true);
+        let ocr_gone = hotkey_trouble(&shortcuts, true, false, true, true, true);
         assert!(ocr_gone.contains("Ctrl+Alt+O"), "{ocr_gone}");
         assert!(!ocr_gone.contains("클릭"), "{ocr_gone}");
 
-        let explain_gone = hotkey_trouble(true, true, false, true, true);
+        let explain_gone = hotkey_trouble(&shortcuts, true, true, false, true, true);
         assert!(explain_gone.contains("Ctrl+Alt+D"), "{explain_gone}");
 
-        let copy_gone = hotkey_trouble(true, true, true, false, true);
+        let copy_gone = hotkey_trouble(&shortcuts, true, true, true, false, true);
         assert!(copy_gone.contains("Ctrl+Alt+C"), "{copy_gone}");
 
-        let keep_gone = hotkey_trouble(true, true, true, true, false);
+        let keep_gone = hotkey_trouble(&shortcuts, true, true, true, true, false);
         assert!(keep_gone.contains("Ctrl+Alt+S"), "{keep_gone}");
     }
 
@@ -4089,13 +4124,14 @@ mod tooltip_tests {
     /// naming three does not fit in what the shell keeps.
     #[test]
     fn several_taken_hotkeys_are_reported_without_naming_one() {
+        let shortcuts = test_shortcuts();
         for line in [
-            hotkey_trouble(false, false, true, true, true),
-            hotkey_trouble(false, true, false, true, true),
-            hotkey_trouble(true, false, false, true, true),
-            hotkey_trouble(true, true, false, false, true),
-            hotkey_trouble(true, true, true, false, false),
-            hotkey_trouble(false, false, false, false, false),
+            hotkey_trouble(&shortcuts, false, false, true, true, true),
+            hotkey_trouble(&shortcuts, false, true, false, true, true),
+            hotkey_trouble(&shortcuts, true, false, false, true, true),
+            hotkey_trouble(&shortcuts, true, true, false, false, true),
+            hotkey_trouble(&shortcuts, true, true, true, false, false),
+            hotkey_trouble(&shortcuts, false, false, false, false, false),
         ] {
             assert!(!line.is_empty());
             assert!(!line.contains("Ctrl+Alt+"), "{line}");

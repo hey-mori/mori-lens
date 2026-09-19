@@ -179,6 +179,7 @@ struct Slot {
 pub struct PauseKey {
     slots: Vec<Slot>,
     paused: bool,
+    shortcuts: ShortcutConfig,
 }
 
 impl PauseKey {
@@ -215,7 +216,13 @@ impl PauseKey {
         Self {
             slots,
             paused: false,
+            shortcuts: config.clone(),
         }
+    }
+
+    /// Access the configured shortcuts.
+    pub fn shortcuts(&self) -> &ShortcutConfig {
+        &self.shortcuts
     }
 
     fn slot_for(&self, action: ShortcutAction) -> Option<&Slot> {
