@@ -2362,7 +2362,8 @@ pub fn main() -> std::process::ExitCode {
                 // Privacy gate: manual OCR must respect application permission
                 // and effective OCR mode before any screen capture.
                 let manual_ocr_process = pointer::process_name_at(at);
-                if !policy.allows(manual_ocr_process.as_deref(), false) {
+                let modifier_held = pointer::modifier_held();
+                if !policy.allows(manual_ocr_process.as_deref(), modifier_held) {
                     // Denied by policy: no OCR, no screen capture.
                     println!(
                         "ocr   denied by policy for {}",
