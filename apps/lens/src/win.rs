@@ -20,7 +20,7 @@ use crate::settings_service;
 use crate::tauri_app;
 use lens_core::icon::Glyph;
 use lens_core::language::{decide, Decision};
-use lens_core::policy::{AppPolicy, AppTier};
+use lens_core::policy::{effective_ocr, AppPolicy, AppTier};
 use lens_core::session::{HoverSession, InputState, OcrMode, Resolution};
 use lens_core::settings::{Problem, Settings};
 use lens_core::theme::{Preset, TextScale, Theme, Translucency};
@@ -1450,6 +1450,11 @@ pub fn main() -> std::process::ExitCode {
     // so nothing could be measured. Reported once, on the way out.
     let capture_cost = std::sync::Arc::new(lens_platform_windows::CaptureCost::default());
     let worker_cost = capture_cost.clone();
+    // Clone for the main loop's manual OCR privacy gate before the hover
+    // worker takes ownership.
+    let main_ocr_rules = worker_ocr_rules.clone();
+    let main_cli_override = worker_cli_override;
+    let main_ocr_mode = worker_ocr;
     let Some(mut hover) = hover_worker::HoverWorker::start(move || {
         let acquirer = UiaTextAcquirer::new().ok()?;
         // The lesson answers first and only for its own window, so the staged
@@ -2354,6 +2359,57 @@ pub fn main() -> std::process::ExitCode {
                 // for it. Roughly a tenth of a second, against the second and a
                 // half the translation after it will take.
                 let at = pointer::position().unwrap_or(ScreenPoint::new(0, 0));
+                // Privacy gate: manual OCR must respect application permission
+                // and effective OCR mode before any screen capture.
+                let manual_ocr_process = pointer::process_name_at(at);
+                if !policy.allows(manual_ocr_process.as_deref(), false) {
+                    // Denied by policy: no OCR, no screen capture.
+                    println!(
+                        "ocr   denied by policy for {}",
+                        manual_ocr_process.as_deref().unwrap_or("<unknown>")
+                    );
+                    let anchor = ScreenRect::new(at.x, at.y, 1, 1);
+                    show_card(
+                        &overlay,
+                        &mut on_screen,
+                        Card::not_readable("이 앱은 OCR이 허용되지 않습니다"),
+                        anchor,
+                        PresentationKind::Feedback,
+                        manual_ocr_process.as_deref(),
+                        &language,
+                        &shared_recent,
+                        &loop_library,
+                        &loop_settings,
+                    );
+                    continue;
+                }
+                let manual_effective_ocr = effective_ocr(
+                    main_ocr_mode,
+                    manual_ocr_process.as_deref(),
+                    main_cli_override,
+                    &main_ocr_rules,
+                );
+                if manual_effective_ocr == OcrMode::Off {
+                    // OCR is off for this app: no screen capture.
+                    println!(
+                        "ocr   OCR is off for {}",
+                        manual_ocr_process.as_deref().unwrap_or("<unknown>")
+                    );
+                    let anchor = ScreenRect::new(at.x, at.y, 1, 1);
+                    show_card(
+                        &overlay,
+                        &mut on_screen,
+                        Card::not_readable("OCR이 비활성화되어 있습니다"),
+                        anchor,
+                        PresentationKind::Feedback,
+                        manual_ocr_process.as_deref(),
+                        &language,
+                        &shared_recent,
+                        &loop_library,
+                        &loop_settings,
+                    );
+                    continue;
+                }
                 // SAFETY-free: a read-only monitor query.
                 let scale = monitor_scale_at(at);
                 // A round trip to the worker, because there is one generation
