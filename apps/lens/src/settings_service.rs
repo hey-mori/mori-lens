@@ -57,14 +57,14 @@ pub struct ApplicationConfigDto {
 }
 
 /// A single shortcut binding for the webview.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShortcutBindingDto {
     pub action: String,
     pub shortcut: Option<String>,
 }
 
 /// Shortcut configuration for the webview.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShortcutsView {
     pub bindings: Vec<ShortcutBindingDto>,
 }
@@ -253,57 +253,67 @@ impl SettingsState {
     /// Returns a [`SettingsSaveOutcome`] indicating whether a restart is required.
     /// A restart is required if any engine-related settings (model, endpoint, OCR mode)
     /// differ from the active baseline captured at startup.
+    ///
+    /// # Transactionality
+    ///
+    /// The entire apply operation is atomic: if any validation fails (including
+    /// shortcut validation), no part of the schema is mutated and the disk file
+    /// remains unchanged. This is achieved by building a complete candidate schema,
+    /// validating it, and only then committing it.
     pub fn apply(&mut self, view: SettingsView) -> Result<SettingsSaveOutcome, String> {
-        let schema = self.file.schema_mut();
         let defaults = lens_core::settings::Settings::default();
 
-        // Capture old engine values before modification to detect provider changes.
-        let old_quick_engine = schema.quick.engine.clone();
-        let old_deep_engine = schema.deep.engine.clone();
+        // Build a complete candidate schema without mutating the current one.
+        // This ensures transactionality: if validation fails, nothing changes.
+        let mut candidate = self.file.schema().clone();
 
-        schema.general.language = view.language;
-        schema.general.dwell_ms = view.dwell_ms.clamp(80, 3000);
-        schema.general.theme =
+        // Capture old engine values before modification to detect provider changes.
+        let old_quick_engine = candidate.quick.engine.clone();
+        let old_deep_engine = candidate.deep.engine.clone();
+
+        candidate.general.language = view.language;
+        candidate.general.dwell_ms = view.dwell_ms.clamp(80, 3000);
+        candidate.general.theme =
             validate_or_default(&view.theme, is_valid_theme, &defaults.theme, "theme");
-        schema.general.translucency = validate_or_default(
+        candidate.general.translucency = validate_or_default(
             &view.translucency,
             is_valid_translucency,
             &defaults.translucency,
             "translucency",
         );
-        schema.general.text_size = validate_or_default(
+        candidate.general.text_size = validate_or_default(
             &view.text_size,
             is_valid_text_size,
             &defaults.text,
             "text_size",
         );
-        schema.general.default_tier =
+        candidate.general.default_tier =
             parse_tier(&view.default_tier).unwrap_or(defaults.default_tier);
-        schema.general.ocr = validate_or_default(&view.ocr, is_valid_ocr, &defaults.ocr, "ocr");
-        schema.general.profile = validate_or_default(
+        candidate.general.ocr = validate_or_default(&view.ocr, is_valid_ocr, &defaults.ocr, "ocr");
+        candidate.general.profile = validate_or_default(
             &view.profile,
             is_valid_profile,
             &defaults.profile,
             "profile",
         );
-        schema.general.hover_scope = validate_or_default(
+        candidate.general.hover_scope = validate_or_default(
             &view.hover_scope,
             is_valid_hover_scope,
             &defaults.hover_scope,
             "hover_scope",
         );
-        schema.general.history = view.history;
-        schema.general.history_days = if [0, 1, 7, 30, 90].contains(&view.history_days) {
+        candidate.general.history = view.history;
+        candidate.general.history_days = if [0, 1, 7, 30, 90].contains(&view.history_days) {
             view.history_days
         } else {
             defaults.history_days
         };
-        schema.general.history_store_app = view.history_store_app;
-        schema.general.history_excluded = view.history_excluded;
+        candidate.general.history_store_app = view.history_store_app;
+        candidate.general.history_excluded = view.history_excluded;
 
         let new_quick_engine = validate_quick_engine(&view.quick_engine);
         let quick_engine_changed = new_quick_engine != old_quick_engine;
-        schema.quick = EngineConfig {
+        candidate.quick = EngineConfig {
             engine: new_quick_engine.clone(),
             model: if quick_engine_changed {
                 None // Clear model when provider changes
@@ -332,7 +342,7 @@ impl SettingsState {
 
         let new_deep_engine = validate_deep_engine(&view.deep_engine);
         let deep_engine_changed = new_deep_engine != old_deep_engine;
-        schema.deep = EngineConfig {
+        candidate.deep = EngineConfig {
             engine: new_deep_engine.clone(),
             model: if deep_engine_changed {
                 None // Clear model when provider changes
@@ -359,7 +369,7 @@ impl SettingsState {
             },
         };
 
-        schema.applications = view
+        candidate.applications = view
             .applications
             .into_iter()
             .filter_map(|app_dto| {
@@ -412,9 +422,9 @@ impl SettingsState {
             new_bindings.push((action, shortcut));
         }
 
-        // Build candidate config and validate before mutating schema
-        let candidate = lens_core::shortcut::ShortcutConfig::new(new_bindings);
-        if let Err(errors) = candidate.validate() {
+        // Build candidate shortcuts config and validate before committing
+        let candidate_shortcuts = lens_core::shortcut::ShortcutConfig::new(new_bindings);
+        if let Err(errors) = candidate_shortcuts.validate() {
             let messages: Vec<String> = errors
                 .iter()
                 .map(|e| match e {
@@ -435,7 +445,10 @@ impl SettingsState {
             return Err(messages.join("; "));
         }
 
-        schema.shortcuts = candidate;
+        candidate.shortcuts = candidate_shortcuts;
+
+        // All validation passed. Now commit the candidate schema.
+        *self.file.schema_mut() = candidate;
 
         if let Err(e) = self.file.save() {
             return Err(format!("save failed: {e}"));
@@ -1329,6 +1342,98 @@ mod tests {
         let outcome = state.apply(view).unwrap();
         assert!(!outcome.restart_required);
         assert!(!outcome.reasons.contains(&"shortcuts".to_owned()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Regression test: apply() must be transactional.
+    ///
+    /// If shortcut validation fails, no other setting should be mutated.
+    /// This prevents partial state corruption where the user changes language
+    /// and enters a malformed shortcut, and the language is changed despite
+    /// the save failing.
+    #[test]
+    fn apply_is_transactional_failed_shortcut_validation_does_not_mutate_other_settings() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+
+        // Capture initial state
+        let initial_language = state.view().language.clone();
+        let initial_generation = state.generation;
+        let initial_pending = state.pending.clone();
+        let initial_shortcuts = state.view().shortcuts.clone();
+
+        // Read disk content before failed apply
+        let disk_before = std::fs::read_to_string(state.file.path()).unwrap();
+
+        // Try to apply: change language AND enter malformed shortcut
+        let mut view = default_view();
+        view.language = "Japanese".into();
+        view.shortcuts.bindings[0].shortcut = Some("MalformedShortcut".into());
+
+        // Apply should fail
+        let result = state.apply(view);
+        assert!(result.is_err(), "malformed shortcut should cause apply to fail");
+
+        // Verify transactionality: nothing should have changed
+        assert_eq!(
+            state.view().language, initial_language,
+            "language should not be mutated when shortcut validation fails"
+        );
+        assert_eq!(
+            state.generation, initial_generation,
+            "generation should not increment when apply fails"
+        );
+        assert_eq!(
+            state.pending, initial_pending,
+            "pending should not change when apply fails"
+        );
+        assert_eq!(
+            state.view().shortcuts, initial_shortcuts,
+            "shortcuts should not change when validation fails"
+        );
+
+        // Verify disk is unchanged
+        let disk_after = std::fs::read_to_string(state.file.path()).unwrap();
+        assert_eq!(
+            disk_before, disk_after,
+            "disk file should not be modified when apply fails"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Regression test: apply() must be transactional for duplicate shortcuts too.
+    #[test]
+    fn apply_is_transactional_duplicate_shortcut_does_not_mutate_engine() {
+        let dir = temp_dir();
+        let mut state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+
+        // Capture initial engine state
+        let initial_quick_engine = state.view().quick_engine.clone();
+        let initial_quick_model = state.view().quick_model.clone();
+
+        // Try to apply: change engine AND enter duplicate shortcuts
+        let mut view = default_view();
+        view.quick_engine = "lmstudio".into();
+        view.quick_model = Some("test-model".into());
+        // Create duplicate shortcuts
+        view.shortcuts.bindings[0].shortcut = Some("Ctrl+Alt+X".into());
+        view.shortcuts.bindings[1].shortcut = Some("Ctrl+Alt+X".into());
+
+        // Apply should fail
+        let result = state.apply(view);
+        assert!(result.is_err(), "duplicate shortcuts should cause apply to fail");
+
+        // Verify transactionality: engine should not have changed
+        assert_eq!(
+            state.view().quick_engine, initial_quick_engine,
+            "quick_engine should not be mutated when shortcut validation fails"
+        );
+        assert_eq!(
+            state.view().quick_model, initial_quick_model,
+            "quick_model should not be mutated when shortcut validation fails"
+        );
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
