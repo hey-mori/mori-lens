@@ -168,6 +168,11 @@ impl Detail {
     pub fn nothing_explained_yet(key: &str) -> String {
         format!("{key} 를 누르면 이 문장을 설명합니다")
     }
+
+    /// Placeholder text when Deep action is unbound or unavailable.
+    pub fn nothing_explained_yet_no_hint() -> String {
+        "이 문장을 설명할 수 있습니다".to_owned()
+    }
 }
 
 #[cfg(test)]

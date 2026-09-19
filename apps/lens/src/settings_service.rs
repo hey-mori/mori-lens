@@ -472,13 +472,22 @@ impl SettingsState {
 
         candidate.shortcuts = candidate_shortcuts;
 
-        // All validation passed. Now commit the candidate schema.
-        *self.file.schema_mut() = candidate;
+        // Save the candidate to disk before mutating in-memory state.
+        // This ensures true transactionality: if save fails, nothing changes.
+        let old_file = self.file.clone();
+        self.file = lens_settings::SettingsFile::from_schema_and_document(
+            candidate.clone(),
+            old_file.document().cloned(),
+            old_file.path().to_path_buf(),
+        );
 
         if let Err(e) = self.file.save() {
+            // Save failed: restore the old file state.
+            self.file = old_file;
             return Err(format!("save failed: {e}"));
         }
 
+        // Save succeeded: update the rest of the state.
         self.current = self.file.to_settings();
         self.pending = Some(self.current.clone());
         self.generation += 1;
@@ -1471,6 +1480,51 @@ mod tests {
             "quick_model should not be mutated when shortcut validation fails"
         );
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Regression test: apply() must be transactional even when save fails.
+    /// If persistence fails after validation succeeds, in-memory state must not be mutated.
+    #[test]
+    fn apply_is_transactional_save_failure_does_not_mutate_state() {
+        let dir = temp_dir();
+        let settings_path = dir.join("settings.toml");
+        let mut state = load_or_migrate(&settings_path, default_baseline());
+
+        // Capture initial state
+        let initial_language = state.view().language.clone();
+        let initial_generation = state.generation;
+        let initial_pending = state.pending.clone();
+
+        // Make the save path invalid by replacing the file with a directory.
+        // This will cause the atomic write to fail.
+        std::fs::remove_file(&settings_path).unwrap();
+        std::fs::create_dir(&settings_path).unwrap();
+
+        // Try to apply a valid change
+        let mut view = default_view();
+        view.language = "Japanese".into();
+
+        // Apply should fail because save will fail
+        let result = state.apply(view);
+        assert!(result.is_err(), "save failure should cause apply to fail");
+
+        // Verify transactionality: nothing should have changed
+        assert_eq!(
+            state.view().language, initial_language,
+            "language should not be mutated when save fails"
+        );
+        assert_eq!(
+            state.generation, initial_generation,
+            "generation should not increment when save fails"
+        );
+        assert_eq!(
+            state.pending, initial_pending,
+            "pending should not change when save fails"
+        );
+
+        // Clean up the directory we created
+        std::fs::remove_dir(&settings_path).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

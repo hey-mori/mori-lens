@@ -50,7 +50,8 @@ read outside the process, and three things bound it:
   not the timing.
 
 **One file and one database hold what was read, and a person put every line in them.**
-Since 2026-08-07, `Ctrl+Alt+S` appends the card in front of the reader to
+Since 2026-08-07, the configured Save shortcut (default `Ctrl+Alt+S` on Windows,
+`Cmd+Opt+S` on macOS) appends the card in front of the reader to
 `saved.md`, beside the settings file. Since 2026-08-31, the same entry is
 stored in `library.db` for structured access: search, filters, notes, tags,
 and export. Everything else about a durable record still holds: the
@@ -403,7 +404,7 @@ Every claim on this page, and whether the code keeps it:
 | Claim | State |
 |---|---|
 | Nothing leaves the machine by default | **kept**, and the reason changed on 2026-08-06. The endpoint is now a setting and a flag, because Ollama does not always listen on the default port. Both go through one check, `translate::engine_for`, which accepts `localhost`, `127.0.0.0/8` and `::1` and refuses everything else as a settings error. A name that might resolve to a loopback address is refused too: this cannot resolve names, and guessing from a string is how a promise gets broken quietly. The HTTP client still has no TLS, which is why the restriction is a refusal rather than a warning. |
-| Nothing is recorded | **kept for everything automatic and default, and three tiers exist with different defaults** ([ADR-0014](decisions/ADR-0014-three-tiers-of-history.md)). Session recent is memory only and dies with the process. Saved library holds what a person chose to keep with `Ctrl+Alt+S`: since 2026-08-07 in `saved.md`, since 2026-08-31 also in `library.db` for structured access. Persistent history is off by default; when enabled, future translations are stored according to retention and application-exclusion settings. Off means nothing is written. |
+| Nothing is recorded | **kept for everything automatic and default, and three tiers exist with different defaults** ([ADR-0014](decisions/ADR-0014-three-tiers-of-history.md)). Session recent is memory only and dies with the process. Saved library holds what a person chose to keep with the configured Save shortcut (default `Ctrl+Alt+S` on Windows, `Cmd+Opt+S` on macOS): since 2026-08-07 in `saved.md`, since 2026-08-31 also in `library.db` for structured access. Persistent history is off by default; when enabled, future translations are stored according to retention and application-exclusion settings. Off means nothing is written. |
 | No screen image written to disk | **kept**, and no longer trivially. Two capture paths exist as of M4, and **how often each runs** is below. Both capture a band around the pointer, recognise it, and drop the pixels. `Capture` is not `Clone`, holds no path, and its `Debug` omits the buffer. The claim used to be kept because there was nothing to write. |
 | How often the screen is captured is stated, not only what | **kept** since 2026-08-06, and it was not before. This page said what a capture contains and never how many there are, which is most of what somebody deciding about a screen-reading tool wants to know. §7. |
 | Protected fields refused before they are read | **kept and executed**, against a real `ES_PASSWORD` control. See §1. |
@@ -493,7 +494,8 @@ application with `ocr = "off"` has no OCR capture, whether automatic or
 manual, even if the global OCR is `automatic`.
 
 Both the automatic hover fallback and the manual OCR command
-(`Ctrl+Alt+O` / menu bar) resolve the effective OCR mode before any
+(configured Manual OCR shortcut, default `Ctrl+Alt+O` on Windows, `Cmd+Opt+O` on macOS,
+or menu bar) resolve the effective OCR mode before any
 screen capture. If the effective mode is `off`, or if the application
 tier is `deny`, the capture is refused.
 
