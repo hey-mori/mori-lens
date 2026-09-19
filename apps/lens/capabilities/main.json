@@ -42,6 +42,8 @@
     "allow-mori-send-item",
     "allow-mori-status",
     "allow-request-pause-toggle",
-    "allow-request-quit"
+    "allow-request-quit",
+    "allow-run-health-check",
+    "allow-get-diagnostic-events"
   ]
 }
