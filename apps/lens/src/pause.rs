@@ -187,6 +187,7 @@ impl PauseKey {
     /// Failure is not fatal: another application may already own a chord, and
     /// a Lens without a pause key is worse than a Lens that refuses to start,
     /// so the caller is told and carries on.
+    #[allow(dead_code)]
     pub fn register() -> Self {
         Self::register_with(&lens_core::shortcut::default_windows_shortcuts())
     }
