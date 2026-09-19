@@ -113,7 +113,7 @@ fn a_successful_accessibility_read_never_reaches_ocr() {
     let mut session = session(accessibility).with_ocr(Box::new(ocr), OcrMode::Automatic);
     let generation = settle(&mut session, POINT);
 
-    let resolution = session.resolve(generation, POINT, ms(400), InputState::default());
+    let resolution = session.resolve(generation, POINT, ms(400), InputState::default(), None);
 
     assert!(matches!(resolution, Resolution::Presented(_)));
     assert_eq!(uia_calls.get(), 1);
@@ -129,7 +129,7 @@ fn a_repairable_failure_reaches_ocr_when_it_is_automatic() {
     let mut session = session(accessibility).with_ocr(Box::new(ocr), OcrMode::Automatic);
     let generation = settle(&mut session, POINT);
 
-    let resolution = session.resolve(generation, POINT, ms(400), InputState::default());
+    let resolution = session.resolve(generation, POINT, ms(400), InputState::default(), None);
 
     assert!(matches!(resolution, Resolution::Presented(_)));
     assert_eq!(ocr_calls.get(), 1);
@@ -144,7 +144,7 @@ fn manual_ocr_does_not_run_unless_the_user_asked() {
     let mut session = session(accessibility).with_ocr(Box::new(ocr), OcrMode::Manual);
     let generation = settle(&mut session, POINT);
 
-    let unasked = session.resolve(generation, POINT, ms(400), InputState::default());
+    let unasked = session.resolve(generation, POINT, ms(400), InputState::default(), None);
     assert!(matches!(
         unasked,
         Resolution::Failed(AcquireError::Unsupported)
@@ -159,6 +159,7 @@ fn manual_ocr_does_not_run_unless_the_user_asked() {
             ocr_requested: true,
             ..Default::default()
         },
+        None,
     );
     assert!(matches!(asked, Resolution::Presented(_)));
     assert_eq!(ocr_calls.get(), 1);
@@ -179,7 +180,7 @@ fn ocr_that_is_off_does_not_run_even_when_asked_for() {
     let mut session = session(accessibility).with_ocr(Box::new(ocr), OcrMode::Off);
     let generation = settle(&mut session, POINT);
 
-    let unasked = session.resolve(generation, POINT, ms(400), InputState::default());
+    let unasked = session.resolve(generation, POINT, ms(400), InputState::default(), None);
     assert!(matches!(
         unasked,
         Resolution::Failed(AcquireError::Unsupported)
@@ -194,6 +195,7 @@ fn ocr_that_is_off_does_not_run_even_when_asked_for() {
             ocr_requested: true,
             ..Default::default()
         },
+        None,
     );
     assert!(
         matches!(asked, Resolution::Failed(AcquireError::Unsupported)),
@@ -224,6 +226,7 @@ fn a_protected_field_never_reaches_ocr() {
                 ocr_requested: true,
                 ..Default::default()
             },
+            None,
         );
 
         assert!(matches!(
@@ -245,7 +248,7 @@ fn an_unrepairable_failure_is_reported_as_itself() {
     let mut session = session(accessibility).with_ocr(Box::new(ocr), OcrMode::Automatic);
     let generation = settle(&mut session, POINT);
 
-    let resolution = session.resolve(generation, POINT, ms(400), InputState::default());
+    let resolution = session.resolve(generation, POINT, ms(400), InputState::default(), None);
 
     assert!(matches!(
         resolution,
@@ -316,7 +319,7 @@ fn a_result_for_a_superseded_generation_is_never_presented() {
     session.observe(PointerSample::moved(elsewhere, ms(1200)));
 
     assert!(matches!(
-        session.resolve(first, POINT, ms(1300), InputState::default()),
+        session.resolve(first, POINT, ms(1300), InputState::default(), None),
         Resolution::Stale
     ));
 }
@@ -329,11 +332,11 @@ fn the_same_sentence_twice_is_a_duplicate_not_a_second_answer() {
     let generation = settle(&mut session, POINT);
 
     assert!(matches!(
-        session.resolve(generation, POINT, ms(400), InputState::default()),
+        session.resolve(generation, POINT, ms(400), InputState::default(), None),
         Resolution::Presented(_)
     ));
     assert!(matches!(
-        session.resolve(generation, POINT, ms(600), InputState::default()),
+        session.resolve(generation, POINT, ms(600), InputState::default(), None),
         Resolution::Duplicate(_)
     ));
     // Acquisition still ran: dedup happens after the read, because the
@@ -360,7 +363,7 @@ fn text_a_screen_away_is_suppressed_rather_than_shown() {
     };
 
     assert!(matches!(
-        session.resolve(generation, point, ms(400), InputState::default()),
+        session.resolve(generation, point, ms(400), InputState::default(), None),
         Resolution::OffTarget(_)
     ));
 }
@@ -383,13 +386,13 @@ fn a_suppressed_target_does_not_block_the_next_real_hover() {
         panic!("expected the pointer to settle");
     };
     assert!(matches!(
-        session.resolve(generation, point, ms(400), InputState::default()),
+        session.resolve(generation, point, ms(400), InputState::default(), None),
         Resolution::OffTarget(_)
     ));
 
     // Now a hover that lands on the word.
     assert!(matches!(
-        session.resolve(generation, POINT, ms(500), InputState::default()),
+        session.resolve(generation, POINT, ms(500), InputState::default(), None),
         Resolution::Presented(_)
     ));
 }
@@ -402,7 +405,7 @@ fn a_target_carries_its_anchor_and_its_distance_from_the_pointer() {
     let generation = settle(&mut session, POINT);
 
     let Resolution::Presented(target) =
-        session.resolve(generation, POINT, ms(400), InputState::default())
+        session.resolve(generation, POINT, ms(400), InputState::default(), None)
     else {
         panic!("expected a presented target");
     };
@@ -449,7 +452,7 @@ fn a_pointer_crossing_the_screen_costs_no_accessibility_calls() {
             session.observe(PointerSample::moved(point, at))
         {
             settled += 1;
-            let _ = session.resolve(generation, point, at, InputState::default());
+            let _ = session.resolve(generation, point, at, InputState::default(), None);
         }
     }
 
@@ -487,7 +490,7 @@ fn resting_a_hand_on_one_word_costs_one_call_not_forty() {
         if let Some(HoverEvent::Settled { generation, point }) =
             session.observe(PointerSample::moved(point, at))
         {
-            let _ = session.resolve(generation, point, at, InputState::default());
+            let _ = session.resolve(generation, point, at, InputState::default(), None);
         }
     }
 
@@ -531,7 +534,7 @@ fn the_first_hover_is_told_the_view_may_have_changed() {
     );
 
     let generation = settle(&mut session, POINT);
-    let _ = session.resolve(generation, POINT, ms(400), InputState::default());
+    let _ = session.resolve(generation, POINT, ms(400), InputState::default(), None);
 
     assert_eq!(seen.borrow().as_slice(), &[true]);
 }
@@ -557,7 +560,7 @@ fn a_scroll_between_hovers_reaches_the_next_acquisition() {
     );
 
     let generation = settle(&mut session, POINT);
-    let _ = session.resolve(generation, POINT, ms(400), InputState::default());
+    let _ = session.resolve(generation, POINT, ms(400), InputState::default(), None);
 
     // A second hover with nothing in between. Leaving a settled hover costs
     // the grace period and a `Left` before a new dwell can start, which is why
@@ -571,7 +574,7 @@ fn a_scroll_between_hovers_reaches_the_next_acquisition() {
     else {
         panic!("expected a second settle");
     };
-    let _ = session.resolve(generation, elsewhere, ms(1300), InputState::default());
+    let _ = session.resolve(generation, elsewhere, ms(1300), InputState::default(), None);
 
     // A third, with a scroll before it. The scroll cancels, so it never
     // settles and never reaches an acquisition of its own.
@@ -591,7 +594,7 @@ fn a_scroll_between_hovers_reaches_the_next_acquisition() {
     else {
         panic!("expected a third settle");
     };
-    let _ = session.resolve(generation, further, ms(1900), InputState::default());
+    let _ = session.resolve(generation, further, ms(1900), InputState::default(), None);
 
     assert_eq!(seen.borrow().as_slice(), &[true, false, true]);
 }
@@ -632,7 +635,7 @@ fn text_longer_than_the_domain_allows_is_refused() {
     );
 
     let generation = settle(&mut session, POINT);
-    let resolution = session.resolve(generation, POINT, ms(400), InputState::default());
+    let resolution = session.resolve(generation, POINT, ms(400), InputState::default(), None);
 
     assert!(
         matches!(resolution, Resolution::Failed(AcquireError::TooLong)),

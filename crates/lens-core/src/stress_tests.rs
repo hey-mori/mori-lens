@@ -121,7 +121,7 @@ fn one_thousand_rapid_resolution_cycles_do_not_panic_or_leak() {
             Some(HoverEvent::Settled { generation, .. }) => generation,
             _ => continue,
         };
-        match session.resolve(gen, point, ms(base + 400), InputState::default()) {
+        match session.resolve(gen, point, ms(base + 400), InputState::default(), None) {
             Resolution::Presented(_) | Resolution::Duplicate(_) => resolved += 1,
             Resolution::OffTarget(_) | Resolution::Stale | Resolution::Failed(_) => {}
         }
@@ -206,7 +206,7 @@ fn acquired_text_at_exactly_the_limit_is_accepted() {
     let mut session = session_with(acquirer);
     let gen = settle(&mut session, POINT);
 
-    match session.resolve(gen, POINT, ms(400), InputState::default()) {
+    match session.resolve(gen, POINT, ms(400), InputState::default(), None) {
         Resolution::Presented(_) | Resolution::Duplicate(_) => {} // expected
         other => panic!(
             "expected Presented or Duplicate at exactly the limit, got {:?}",
@@ -223,7 +223,7 @@ fn acquired_text_one_over_the_limit_is_refused() {
     let gen = settle(&mut session, POINT);
 
     assert!(matches!(
-        session.resolve(gen, POINT, ms(400), InputState::default()),
+        session.resolve(gen, POINT, ms(400), InputState::default(), None),
         Resolution::Failed(AcquireError::TooLong)
     ));
 }
