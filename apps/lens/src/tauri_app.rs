@@ -48,6 +48,18 @@ pub type SharedDiagnostics = Arc<Mutex<DiagnosticsSnapshot>>;
 /// Privacy-safe: events contain only enums and numbers, no captured text.
 pub type SharedDiagnosticEvents = Arc<Mutex<lens_core::event_ring::DiagnosticEventRing>>;
 
+/// Shared health snapshot, caching the last health check result.
+///
+/// Process-local, no persistence. Privacy-safe: contains only enums, numbers,
+/// and relative timestamps. No user content, no model output, no raw errors.
+pub type SharedHealthSnapshot = Arc<Mutex<lens_core::health::HealthSnapshot>>;
+
+/// Backend concurrency guard for health checks.
+///
+/// Prevents multiple simultaneous health check runs. True while a check is
+/// in progress, false otherwise.
+pub type SharedHealthCheckRunning = Arc<std::sync::atomic::AtomicBool>;
+
 /// Result of a health check run, for the webview.
 #[derive(Clone, Debug, Serialize)]
 pub struct HealthCheckView {
@@ -328,9 +340,27 @@ fn get_settings(state: tauri::State<'_, SharedSettings>) -> SettingsView {
 #[tauri::command]
 fn save_settings(
     state: tauri::State<'_, SharedSettings>,
+    health: tauri::State<'_, SharedHealthSnapshot>,
     settings: SettingsView,
 ) -> Result<crate::settings_service::SettingsSaveOutcome, String> {
-    state.lock().unwrap().apply(settings)
+    // Check if AI settings changed before applying.
+    let old_view = state.lock().unwrap().view();
+    let ai_changed = old_view.quick_engine != settings.quick_engine
+        || old_view.quick_endpoint != settings.quick_endpoint
+        || old_view.quick_model != settings.quick_model
+        || old_view.deep_engine != settings.deep_engine
+        || old_view.deep_endpoint != settings.deep_endpoint
+        || old_view.deep_model != settings.deep_model;
+
+    let outcome = state.lock().unwrap().apply(settings)?;
+
+    // Invalidate cached health if AI settings changed.
+    if ai_changed {
+        let mut snapshot = health.lock().unwrap();
+        snapshot.mark_stale();
+    }
+
+    Ok(outcome)
 }
 
 /// Tauri command: list models on a provider endpoint.
@@ -664,17 +694,36 @@ async fn test_model(
 /// 5. Classify the result as Ready, Degraded, or Unavailable
 ///
 /// This is a one-shot explicit user action. No periodic polling.
-/// Records the result in the diagnostic event ring.
+/// Records the result in the diagnostic event ring and updates the health snapshot.
+/// Protected by backend concurrency guard: returns error if already running.
 #[tauri::command]
 async fn run_health_check(
     settings: tauri::State<'_, SharedSettings>,
     events: tauri::State<'_, SharedDiagnosticEvents>,
+    health: tauri::State<'_, SharedHealthSnapshot>,
+    health_running: tauri::State<'_, SharedHealthCheckRunning>,
 ) -> Result<HealthCheckView, String> {
     use lens_core::event_ring::{DiagnosticComponent, DiagnosticEventKind, DiagnosticFailureClass};
+    use lens_core::health::HealthState;
     use lens_core::translate::Provider;
     use std::time::Instant;
 
+    // Backend concurrency guard: prevent multiple simultaneous health checks.
+    if health_running
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return Err("health check already in progress".to_string());
+    }
+    health_running.store(true, std::sync::atomic::Ordering::SeqCst);
+
     let start = Instant::now();
+
+    // Mark both lanes as Running in the snapshot.
+    {
+        let mut snapshot = health.lock().unwrap();
+        let now_ms = start.elapsed().as_millis() as u64;
+        snapshot.mark_running(now_ms);
+    }
 
     // Read settings once.
     let (quick_provider, quick_endpoint, quick_model, deep_provider, deep_endpoint, deep_model) = {
@@ -710,10 +759,66 @@ async fn run_health_check(
         let _ = tx.send((quick_state, quick_failure, deep_state, deep_failure));
     });
 
-    let (quick_state, quick_failure, deep_state, deep_failure) =
-        rx.recv().map_err(|_| "thread error".to_string())?;
+    let result = rx.recv().map_err(|_| "thread error".to_string());
+
+    // Clear the concurrency guard.
+    health_running.store(false, std::sync::atomic::Ordering::SeqCst);
+
+    let (quick_state, quick_failure, deep_state, deep_failure) = result?;
 
     let latency_ms = start.elapsed().as_millis() as u64;
+
+    // Update health snapshot and record event in the ring.
+    {
+        let mut snapshot = health.lock().unwrap();
+        let now_ms = start.elapsed().as_millis() as u64;
+
+        // Map Quick state string to HealthState enum.
+        let quick_health_state = match quick_state.as_str() {
+            "ready" => HealthState::Ready,
+            "degraded" => HealthState::Degraded,
+            _ => HealthState::Unavailable,
+        };
+
+        // Map Deep state string to HealthState enum.
+        let deep_health_state = match deep_state.as_str() {
+            "ready" => HealthState::Ready,
+            "degraded" => HealthState::Degraded,
+            _ => HealthState::Unavailable,
+        };
+
+        // Map failure strings to DiagnosticFailureClass.
+        let quick_failure_class = quick_failure.as_deref().and_then(|f| match f {
+            "provider_unreachable" => Some(DiagnosticFailureClass::ConnectionFailed),
+            "timeout" => Some(DiagnosticFailureClass::Timeout),
+            "model_missing" => Some(DiagnosticFailureClass::ModelMissing),
+            "malformed" => Some(DiagnosticFailureClass::Malformed),
+            _ => Some(DiagnosticFailureClass::InferenceFailed),
+        });
+
+        let deep_failure_class = deep_failure.as_deref().and_then(|f| match f {
+            "provider_unreachable" => Some(DiagnosticFailureClass::ConnectionFailed),
+            "timeout" => Some(DiagnosticFailureClass::Timeout),
+            "model_missing" => Some(DiagnosticFailureClass::ModelMissing),
+            "malformed" => Some(DiagnosticFailureClass::Malformed),
+            "empty_analysis" => Some(DiagnosticFailureClass::InferenceFailed),
+            _ => Some(DiagnosticFailureClass::InferenceFailed),
+        });
+
+        // Update snapshot.
+        snapshot.update_quick(
+            quick_health_state,
+            quick_failure_class,
+            Some(latency_ms / 2), // Approximate per-lane latency.
+            now_ms,
+        );
+        snapshot.update_deep(
+            deep_health_state,
+            deep_failure_class,
+            Some(latency_ms / 2),
+            now_ms,
+        );
+    }
 
     // Record health check event in the ring.
     {
@@ -734,6 +839,18 @@ async fn run_health_check(
         deep_failure,
         latency_ms,
     })
+}
+
+/// Tauri command: get cached health status without triggering inference.
+///
+/// Returns the last health check result from the shared snapshot.
+/// Does NOT run inference. Only `run_health_check` does that.
+/// Returns Unknown state if health has never been checked or is stale.
+#[tauri::command]
+fn get_health_status(
+    health: tauri::State<'_, SharedHealthSnapshot>,
+) -> lens_core::health::HealthSnapshot {
+    health.lock().unwrap().clone()
 }
 
 /// Check health of the Quick engine using the production path.
@@ -1306,6 +1423,10 @@ pub fn build(
     let quit_request: SharedQuitRequest = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let diagnostic_events: SharedDiagnosticEvents =
         Arc::new(Mutex::new(lens_core::event_ring::DiagnosticEventRing::new()));
+    let health_snapshot: SharedHealthSnapshot =
+        Arc::new(Mutex::new(lens_core::health::HealthSnapshot::default()));
+    let health_running: SharedHealthCheckRunning =
+        Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -1321,6 +1442,7 @@ pub fn build(
             get_local_ai_status,
             test_model,
             run_health_check,
+            get_health_status,
             get_diagnostic_events,
             library_query,
             library_get,
@@ -1358,6 +1480,8 @@ pub fn build(
         ])
         .manage(diagnostics.clone())
         .manage(diagnostic_events.clone())
+        .manage(health_snapshot.clone())
+        .manage(health_running.clone())
         .manage(pause_request.clone())
         .manage(quit_request.clone())
         .manage(shared_settings)
