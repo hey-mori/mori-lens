@@ -15,6 +15,7 @@ export async function loadSettings() {
   applySettingsToForm(state.currentSettings);
   attachProviderChangeHandler();
   import('./apps.js').then(m => m.renderApps());
+  renderShortcuts(state.currentSettings.shortcuts);
   import('./models.js').then(m => m.refreshModels(state.currentSettings.quick_model));
 }
 
@@ -64,7 +65,8 @@ export async function saveSettings() {
     deep_engine: document.getElementById('f-deep-engine').value,
     deep_model: document.getElementById('f-deep-model').value || null,
     deep_endpoint: document.getElementById('f-deep-endpoint').value,
-    applications: state.currentSettings.applications
+    applications: state.currentSettings.applications,
+    shortcuts: collectShortcuts()
   };
   try {
     const outcome = await invoke('save_settings', { settings: view });
@@ -123,4 +125,51 @@ function attachProviderChangeHandler() {
     // Refresh model list for the new provider
     import('./models.js').then(m => m.refreshModels(null));
   });
+}
+
+const ACTION_LABELS = {
+  pause: 'Pause/Resume',
+  manual_ocr: 'Manual OCR',
+  deep: 'Deep Analysis',
+  copy: 'Copy Card',
+  save: 'Save to Library',
+  pin: 'Pin Card'
+};
+
+function renderShortcuts(shortcuts) {
+  const container = document.getElementById('shortcuts-list');
+  if (!container) return;
+
+  const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+  const availableActions = isMac
+    ? ['pause', 'manual_ocr', 'deep', 'copy', 'save']
+    : ['pause', 'manual_ocr', 'deep', 'copy', 'save', 'pin'];
+
+  let html = '';
+  for (const action of availableActions) {
+    const binding = shortcuts.bindings.find(b => b.action === action);
+    const value = binding?.shortcut || '';
+    const label = ACTION_LABELS[action] || action;
+    html += `
+      <div class="field">
+        <label>${label}</label>
+        <input type="text" data-shortcut-action="${action}" value="${value}" placeholder="e.g. Ctrl+Alt+P" style="font-family:monospace">
+      </div>
+    `;
+  }
+  container.innerHTML = html;
+}
+
+function collectShortcuts() {
+  const bindings = [];
+  const inputs = document.querySelectorAll('[data-shortcut-action]');
+  inputs.forEach(input => {
+    const action = input.dataset.shortcutAction;
+    const value = input.value.trim();
+    bindings.push({
+      action,
+      shortcut: value || null
+    });
+  });
+  return { bindings };
 }
