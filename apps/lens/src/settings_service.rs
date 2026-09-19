@@ -18,6 +18,21 @@ use lens_settings::schema::Schema;
 use lens_settings::SettingsFile;
 use serde::{Deserialize, Serialize};
 
+/// Get the platform default shortcut for a given action.
+fn get_platform_default_shortcut(action: lens_core::shortcut::ShortcutAction) -> Option<String> {
+    #[cfg(target_os = "windows")]
+    let defaults = lens_core::shortcut::default_windows_shortcuts();
+    #[cfg(target_os = "macos")]
+    let defaults = lens_core::shortcut::default_macos_shortcuts();
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let defaults = lens_core::shortcut::default_windows_shortcuts();
+
+    defaults
+        .get(action)
+        .and_then(|opt| opt.as_ref())
+        .map(|s| s.to_string())
+}
+
 /// The active engine settings at startup, used to detect restart-required changes.
 ///
 /// These fields are captured from the initial settings and compared against
@@ -60,7 +75,12 @@ pub struct ApplicationConfigDto {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShortcutBindingDto {
     pub action: String,
+    /// The currently configured shortcut, or None if unbound.
     pub shortcut: Option<String>,
+    /// The platform default for this action.
+    pub default_shortcut: Option<String>,
+    /// Whether this action can be unbound (set to None).
+    pub can_unbind: bool,
 }
 
 /// Shortcut configuration for the webview.
@@ -232,9 +252,14 @@ impl SettingsState {
                     .shortcuts
                     .bindings
                     .iter()
-                    .map(|(action, shortcut)| ShortcutBindingDto {
-                        action: action.as_str().to_string(),
-                        shortcut: shortcut.map(|s| s.to_string()),
+                    .map(|(action, shortcut)| {
+                        let default_shortcut = get_platform_default_shortcut(*action);
+                        ShortcutBindingDto {
+                            action: action.as_str().to_string(),
+                            shortcut: shortcut.map(|s| s.to_string()),
+                            default_shortcut,
+                            can_unbind: action.can_be_unbound(),
+                        }
                     })
                     .collect(),
             },
@@ -676,26 +701,38 @@ mod tests {
                     ShortcutBindingDto {
                         action: "pause".into(),
                         shortcut: Some("Ctrl+Alt+L".into()),
+                        default_shortcut: Some("Ctrl+Alt+L".into()),
+                        can_unbind: false,
                     },
                     ShortcutBindingDto {
                         action: "manual_ocr".into(),
                         shortcut: Some("Ctrl+Alt+O".into()),
+                        default_shortcut: Some("Ctrl+Alt+O".into()),
+                        can_unbind: true,
                     },
                     ShortcutBindingDto {
                         action: "deep".into(),
                         shortcut: Some("Ctrl+Alt+D".into()),
+                        default_shortcut: Some("Ctrl+Alt+D".into()),
+                        can_unbind: true,
                     },
                     ShortcutBindingDto {
                         action: "copy".into(),
                         shortcut: Some("Ctrl+Alt+C".into()),
+                        default_shortcut: Some("Ctrl+Alt+C".into()),
+                        can_unbind: true,
                     },
                     ShortcutBindingDto {
                         action: "save".into(),
                         shortcut: Some("Ctrl+Alt+S".into()),
+                        default_shortcut: Some("Ctrl+Alt+S".into()),
+                        can_unbind: true,
                     },
                     ShortcutBindingDto {
                         action: "pin".into(),
                         shortcut: Some("Ctrl+Alt+P".into()),
+                        default_shortcut: Some("Ctrl+Alt+P".into()),
+                        can_unbind: true,
                     },
                 ],
             },
