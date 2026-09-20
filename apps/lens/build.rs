@@ -22,9 +22,12 @@ const COMMANDS: &[&str] = &[
     // System/diagnostics
     "check_provider",
     "export_diagnostics",
+    "get_diagnostic_events",
     "get_diagnostics",
+    "get_health_status",
     "get_local_ai_status",
     "get_runtime_status",
+    "run_health_check",
     // Settings
     "get_settings",
     "save_settings",

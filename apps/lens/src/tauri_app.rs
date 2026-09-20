@@ -42,6 +42,47 @@ pub struct DiagnosticsSnapshot {
 /// Shared diagnostics state, updated by the polling loop and read by Tauri commands.
 pub type SharedDiagnostics = Arc<Mutex<DiagnosticsSnapshot>>;
 
+/// Shared diagnostic event ring, recording recent abnormal operational events.
+///
+/// Bounded in-memory ring (capacity 128). Dies with the process. No persistence.
+/// Privacy-safe: events contain only enums and numbers, no captured text.
+pub type SharedDiagnosticEvents = Arc<Mutex<lens_core::event_ring::DiagnosticEventRing>>;
+
+/// Global diagnostic events ring for access from product runtime.
+///
+/// The Tauri-managed ring is not reachable from the Windows/macOS product loops
+/// which run outside Tauri's state management. This static provides a single
+/// shared ring for the entire process.
+static GLOBAL_DIAGNOSTIC_EVENTS: std::sync::LazyLock<SharedDiagnosticEvents> =
+    std::sync::LazyLock::new(|| Arc::new(Mutex::new(lens_core::event_ring::DiagnosticEventRing::new())));
+
+/// Access the global diagnostic events ring.
+pub fn global_diagnostic_events() -> SharedDiagnosticEvents {
+    GLOBAL_DIAGNOSTIC_EVENTS.clone()
+}
+
+/// Shared health snapshot, caching the last health check result.
+///
+/// Process-local, no persistence. Privacy-safe: contains only enums, numbers,
+/// and relative timestamps. No user content, no model output, no raw errors.
+pub type SharedHealthSnapshot = Arc<Mutex<lens_core::health::HealthSnapshot>>;
+
+/// Backend concurrency guard for health checks.
+///
+/// Prevents multiple simultaneous health check runs. True while a check is
+/// in progress, false otherwise.
+pub type SharedHealthCheckRunning = Arc<std::sync::atomic::AtomicBool>;
+
+/// Result of a health check run, for the webview.
+#[derive(Clone, Debug, Serialize)]
+pub struct HealthCheckView {
+    pub quick_state: String,
+    pub quick_failure: Option<String>,
+    pub deep_state: String,
+    pub deep_failure: Option<String>,
+    pub latency_ms: u64,
+}
+
 /// Shared pause toggle request.
 ///
 /// The polling loop checks this on each iteration and applies any pending toggle.
@@ -312,9 +353,27 @@ fn get_settings(state: tauri::State<'_, SharedSettings>) -> SettingsView {
 #[tauri::command]
 fn save_settings(
     state: tauri::State<'_, SharedSettings>,
+    health: tauri::State<'_, SharedHealthSnapshot>,
     settings: SettingsView,
 ) -> Result<crate::settings_service::SettingsSaveOutcome, String> {
-    state.lock().unwrap().apply(settings)
+    // Check if AI settings changed before applying.
+    let old_view = state.lock().unwrap().view();
+    let ai_changed = old_view.quick_engine != settings.quick_engine
+        || old_view.quick_endpoint != settings.quick_endpoint
+        || old_view.quick_model != settings.quick_model
+        || old_view.deep_engine != settings.deep_engine
+        || old_view.deep_endpoint != settings.deep_endpoint
+        || old_view.deep_model != settings.deep_model;
+
+    let outcome = state.lock().unwrap().apply(settings)?;
+
+    // Invalidate cached health if AI settings changed.
+    if ai_changed {
+        let mut snapshot = health.lock().unwrap();
+        snapshot.mark_stale();
+    }
+
+    Ok(outcome)
 }
 
 /// Tauri command: list models on a provider endpoint.
@@ -636,6 +695,293 @@ async fn test_model(
             model: t.model,
         })
         .map_err(|e| format!("{e}"))
+}
+
+/// Tauri command: run an explicit health check testing actual inference capability.
+///
+/// Tests both Quick and Deep engines. For each engine:
+/// 1. Check provider reachability
+/// 2. Resolve the production model (not DEFAULT_MODEL)
+/// 3. Send a fixed test translation/analysis (exercises the actual path)
+/// 4. Verify the response is valid
+/// 5. Classify the result as Ready, Degraded, or Unavailable
+///
+/// This is a one-shot explicit user action. No periodic polling.
+/// Records the result in the diagnostic event ring and updates the health snapshot.
+/// Protected by backend concurrency guard: returns error if already running.
+#[tauri::command]
+async fn run_health_check(
+    settings: tauri::State<'_, SharedSettings>,
+    events: tauri::State<'_, SharedDiagnosticEvents>,
+    health: tauri::State<'_, SharedHealthSnapshot>,
+    health_running: tauri::State<'_, SharedHealthCheckRunning>,
+) -> Result<HealthCheckView, String> {
+    use lens_core::event_ring::{DiagnosticComponent, DiagnosticEventKind, DiagnosticFailureClass};
+    use lens_core::health::HealthState;
+    use lens_core::translate::Provider;
+    use std::time::Instant;
+
+    // Backend concurrency guard: prevent multiple simultaneous health checks.
+    if health_running
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return Err("health check already in progress".to_string());
+    }
+    health_running.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let start = Instant::now();
+
+    // Mark both lanes as Running in the snapshot.
+    {
+        let mut snapshot = health.lock().unwrap();
+        let now_ms = start.elapsed().as_millis() as u64;
+        snapshot.mark_running(now_ms);
+    }
+
+    // Read settings once.
+    let (quick_provider, quick_endpoint, quick_model, deep_provider, deep_endpoint, deep_model) = {
+        let s = settings.lock().unwrap();
+        let view = s.view();
+        let qp = Provider::from_token(&view.quick_engine).unwrap_or(Provider::Ollama);
+        let dp_raw = Provider::from_token(&view.deep_engine).unwrap_or(Provider::Ollama);
+        // Deep is Ollama-only.
+        let (dp, deep_ep, deep_m) = if dp_raw == Provider::Ollama {
+            (Provider::Ollama, view.deep_endpoint.clone(), view.deep_model.clone())
+        } else {
+            (Provider::Ollama, Provider::Ollama.default_endpoint().to_owned(), None)
+        };
+        (qp, view.quick_endpoint.clone(), view.quick_model.clone(), dp, deep_ep, deep_m)
+    };
+
+    // Run health check in a background thread to avoid blocking the Tauri command.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        // Check Quick engine using QuickRequest and Translator::quick.
+        let (quick_state, quick_failure) = check_quick_engine_health(
+            quick_provider,
+            &quick_endpoint,
+            quick_model.as_deref(),
+        );
+
+        // Check Deep engine using DeepRequest and Analyser::deep (Ollama-only).
+        let (deep_state, deep_failure) = check_deep_engine_health(
+            &deep_endpoint,
+            deep_model.as_deref(),
+        );
+
+        let _ = tx.send((quick_state, quick_failure, deep_state, deep_failure));
+    });
+
+    let result = rx.recv().map_err(|_| "thread error".to_string());
+
+    // Clear the concurrency guard.
+    health_running.store(false, std::sync::atomic::Ordering::SeqCst);
+
+    let (quick_state, quick_failure, deep_state, deep_failure) = result?;
+
+    let latency_ms = start.elapsed().as_millis() as u64;
+
+    // Map failure strings to DiagnosticFailureClass (needed for both snapshot and events).
+    let quick_failure_class = quick_failure.as_deref().and_then(|f| match f {
+        "provider_unreachable" => Some(DiagnosticFailureClass::ConnectionFailed),
+        "timeout" => Some(DiagnosticFailureClass::Timeout),
+        "model_missing" => Some(DiagnosticFailureClass::ModelMissing),
+        "malformed" => Some(DiagnosticFailureClass::Malformed),
+        _ => Some(DiagnosticFailureClass::InferenceFailed),
+    });
+
+    let deep_failure_class = deep_failure.as_deref().and_then(|f| match f {
+        "provider_unreachable" => Some(DiagnosticFailureClass::ConnectionFailed),
+        "timeout" => Some(DiagnosticFailureClass::Timeout),
+        "model_missing" => Some(DiagnosticFailureClass::ModelMissing),
+        "malformed" => Some(DiagnosticFailureClass::Malformed),
+        "empty_analysis" => Some(DiagnosticFailureClass::InferenceFailed),
+        _ => Some(DiagnosticFailureClass::InferenceFailed),
+    });
+
+    // Update health snapshot and record event in the ring.
+    {
+        let mut snapshot = health.lock().unwrap();
+        let now_ms = start.elapsed().as_millis() as u64;
+
+        // Map Quick state string to HealthState enum.
+        let quick_health_state = match quick_state.as_str() {
+            "ready" => HealthState::Ready,
+            "degraded" => HealthState::Degraded,
+            _ => HealthState::Unavailable,
+        };
+
+        // Map Deep state string to HealthState enum.
+        let deep_health_state = match deep_state.as_str() {
+            "ready" => HealthState::Ready,
+            "degraded" => HealthState::Degraded,
+            _ => HealthState::Unavailable,
+        };
+
+        // Update snapshot.
+        snapshot.update_quick(
+            quick_health_state,
+            quick_failure_class,
+            Some(latency_ms / 2), // Approximate per-lane latency.
+            now_ms,
+        );
+        snapshot.update_deep(
+            deep_health_state,
+            deep_failure_class,
+            Some(latency_ms / 2),
+            now_ms,
+        );
+    }
+
+    // Record health check events in the ring (separate for each lane).
+    {
+        let mut ring = events.lock().unwrap();
+        let kind = DiagnosticEventKind::HealthCheck;
+
+        // Record Quick lane event if it failed.
+        if quick_state == "unavailable" || quick_state == "degraded" {
+            ring.record(DiagnosticComponent::Quick, kind, quick_failure_class);
+        }
+
+        // Record Deep lane event if it failed.
+        if deep_state == "unavailable" || deep_state == "degraded" {
+            ring.record(DiagnosticComponent::Deep, kind, deep_failure_class);
+        }
+    }
+
+    Ok(HealthCheckView {
+        quick_state,
+        quick_failure,
+        deep_state,
+        deep_failure,
+        latency_ms,
+    })
+}
+
+/// Tauri command: get cached health status without triggering inference.
+///
+/// Returns the last health check result from the shared snapshot.
+/// Does NOT run inference. Only `run_health_check` does that.
+/// Returns Unknown state if health has never been checked or is stale.
+#[tauri::command]
+fn get_health_status(
+    health: tauri::State<'_, SharedHealthSnapshot>,
+) -> lens_core::health::HealthSnapshot {
+    health.lock().unwrap().clone()
+}
+
+/// Check health of the Quick engine using the production path.
+///
+/// Uses production model resolution (resolve_model), not DEFAULT_MODEL.
+/// Exercises the same QuickRequest + Translator::quick path as the product loop.
+///
+/// Returns (state, failure_reason).
+fn check_quick_engine_health(
+    provider: lens_core::translate::Provider,
+    endpoint: &str,
+    configured_model: Option<&str>,
+) -> (String, Option<String>) {
+    use lens_core::translate::QuickRequest;
+
+    // Step 1: Check reachability.
+    if !lens_translate::check_provider_reachable(provider, endpoint) {
+        return ("unavailable".to_string(), Some("provider_unreachable".to_string()));
+    }
+
+    // Step 2: Build translator and resolve model using production pattern.
+    // This matches win.rs:688-691 where production creates OllamaTranslator and calls resolve_model().
+    let mut translator = lens_translate::OllamaTranslator::new(endpoint, configured_model.unwrap_or(""));
+    let model_name = match translator.resolve_model() {
+        Ok(m) => m.to_owned(),
+        Err(_) => configured_model.unwrap_or(lens_translate::DEFAULT_MODEL).to_owned(),
+    };
+
+    // Step 3: Rebuild translator with resolved model and test inference.
+    let translator = lens_translate::build_translator(provider, endpoint, &model_name);
+    let test_input = "The output files came back empty.";
+    let target_lang = "ko";
+    let request = QuickRequest::new(test_input, target_lang);
+
+    match translator.quick(&request) {
+        Ok(result) => {
+            // Inference succeeded. Check if the output is meaningful.
+            if result.text.trim().is_empty() {
+                ("degraded".to_string(), Some("empty_response".to_string()))
+            } else {
+                ("ready".to_string(), None)
+            }
+        }
+        Err(err) => {
+            let reason = err.reason().to_string();
+            ("unavailable".to_string(), Some(reason))
+        }
+    }
+}
+
+/// Check health of the Deep engine using the production path.
+///
+/// Uses production model resolution (resolve_model), not DEFAULT_MODEL.
+/// Exercises the same DeepRequest + Analyser::deep path as the product loop.
+/// This is the CRITICAL FIX: Deep health check now tests Deep, not Quick.
+///
+/// Returns (state, failure_reason).
+fn check_deep_engine_health(
+    endpoint: &str,
+    configured_model: Option<&str>,
+) -> (String, Option<String>) {
+    use lens_core::analyse::{Analyser, DeepRequest};
+
+    // Step 1: Check reachability.
+    if !lens_translate::check_provider_reachable(lens_core::translate::Provider::Ollama, endpoint) {
+        return ("unavailable".to_string(), Some("provider_unreachable".to_string()));
+    }
+
+    // Step 2: Build translator and resolve model using production pattern.
+    // This matches win.rs:719-722 where production creates OllamaTranslator and calls resolve_model().
+    let mut analyser = lens_translate::OllamaTranslator::new(endpoint, configured_model.unwrap_or(""));
+    let model_name = match analyser.resolve_model() {
+        Ok(m) => m.to_owned(),
+        Err(_) => configured_model.unwrap_or(lens_translate::DEFAULT_MODEL).to_owned(),
+    };
+
+    // Step 3: Rebuild analyser with resolved model and test Deep inference.
+    let analyser = lens_translate::OllamaTranslator::new(endpoint, &model_name);
+
+    // Use a test sentence that exercises both word and structure analysis.
+    // This is a multi-word sentence with a focused word to test the full Deep pipeline.
+    let test_request = DeepRequest::new(
+        "The output files came back empty.",
+        "출력 파일이 비어 있었습니다.",
+        "Korean",
+    );
+
+    match Analyser::deep(&analyser, &test_request) {
+        Ok(analysis) => {
+            // Deep inference succeeded. Check if the analysis says anything meaningful.
+            // This matches the production check: DeepAnalysis::says_anything() in analyse.rs:473-475.
+            if analysis.says_anything() {
+                ("ready".to_string(), None)
+            } else {
+                ("degraded".to_string(), Some("empty_analysis".to_string()))
+            }
+        }
+        Err(err) => {
+            let reason = err.reason().to_string();
+            ("unavailable".to_string(), Some(reason))
+        }
+    }
+}
+
+/// Tauri command: get recent diagnostic events from the ring.
+///
+/// Returns a snapshot of the most recent abnormal operational events.
+/// Events are returned oldest-first. Privacy-safe: no captured text.
+#[tauri::command]
+fn get_diagnostic_events(
+    events: tauri::State<'_, SharedDiagnosticEvents>,
+) -> Vec<lens_core::event_ring::DiagnosticEvent> {
+    let ring = events.lock().unwrap();
+    ring.snapshot()
 }
 
 /// Tauri command: search and filter combined.
@@ -1001,6 +1347,8 @@ pub fn serialize_diagnostics_report(
     refusals: &[(String, u32)],
     ocr_mode: &str,
     language: &str,
+    recent_events: &[lens_core::event_ring::DiagnosticEvent],
+    health_snapshot: &lens_core::health::HealthSnapshot,
 ) -> String {
     let report = serde_json::json!({
         "version": version,
@@ -1016,6 +1364,8 @@ pub fn serialize_diagnostics_report(
         "refusals": refusals,
         "ocr_mode": ocr_mode,
         "language": language,
+        "recent_events": recent_events,
+        "health": health_snapshot,
     });
 
     serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_owned())
@@ -1032,14 +1382,19 @@ fn export_diagnostics(
     diagnostics: tauri::State<'_, SharedDiagnostics>,
     settings: tauri::State<'_, SharedSettings>,
     library: tauri::State<'_, SharedLibrary>,
+    events: tauri::State<'_, SharedDiagnosticEvents>,
+    health: tauri::State<'_, SharedHealthSnapshot>,
 ) -> String {
     let diag = diagnostics.lock().unwrap();
     let conf = settings.lock().unwrap();
     let lib = library.lock().unwrap();
+    let ring = events.lock().unwrap();
+    let health_snap = health.lock().unwrap();
 
     let schema_version = lib.library().schema_version().unwrap_or(-1);
     let library_count = lib.library().count().unwrap_or(0);
     let history_count = lib.library().history_count().unwrap_or(0);
+    let recent_events = ring.snapshot();
 
     serialize_diagnostics_report(
         env!("CARGO_PKG_VERSION"),
@@ -1055,6 +1410,8 @@ fn export_diagnostics(
         &diag.refusals,
         &diag.ocr_mode,
         &conf.current().language,
+        &recent_events,
+        &*health_snap,
     )
 }
 
@@ -1086,6 +1443,11 @@ pub fn build(
     }));
     let pause_request: SharedPauseRequest = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let quit_request: SharedQuitRequest = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let diagnostic_events: SharedDiagnosticEvents = global_diagnostic_events();
+    let health_snapshot: SharedHealthSnapshot =
+        Arc::new(Mutex::new(lens_core::health::HealthSnapshot::default()));
+    let health_running: SharedHealthCheckRunning =
+        Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -1100,6 +1462,9 @@ pub fn build(
             check_provider,
             get_local_ai_status,
             test_model,
+            run_health_check,
+            get_health_status,
+            get_diagnostic_events,
             library_query,
             library_get,
             library_delete,
@@ -1135,6 +1500,9 @@ pub fn build(
             crate::detail_view::detail_open_in_library,
         ])
         .manage(diagnostics.clone())
+        .manage(diagnostic_events.clone())
+        .manage(health_snapshot.clone())
+        .manage(health_running.clone())
         .manage(pause_request.clone())
         .manage(quit_request.clone())
         .manage(shared_settings)
@@ -1241,6 +1609,21 @@ mod tests {
 
         let refusals = vec![("no_text".to_owned(), 5), ("password_field".to_owned(), 2)];
 
+        // Create a health snapshot for the privacy test.
+        let mut health_snapshot = lens_core::health::HealthSnapshot::new(0);
+        health_snapshot.update_quick(
+            lens_core::health::HealthState::Ready,
+            None,
+            Some(42),
+            1000,
+        );
+        health_snapshot.update_deep(
+            lens_core::health::HealthState::Ready,
+            None,
+            Some(100),
+            1000,
+        );
+
         let json = serialize_diagnostics_report(
             "0.1.0",
             "2026-09-13-test",
@@ -1255,6 +1638,8 @@ mod tests {
             &refusals,
             "windows-gdi",
             "ko",
+            &[], // recent_events: empty for privacy test
+            &health_snapshot,
         );
 
         // Verify no canary strings appear in the output.
@@ -1282,6 +1667,11 @@ mod tests {
         assert!(json.contains("\"target\""));
         assert!(json.contains("\"dwell\""));
         assert!(json.contains("\"mode\""));
+        // Health snapshot IS present (privacy-safe enums only).
+        assert!(json.contains("\"health\""));
+        assert!(json.contains("\"quick\""));
+        assert!(json.contains("\"deep\""));
+        assert!(json.contains("\"state\": \"ready\""));
     }
 
     /// Schema allowlist test for diagnostics export.
@@ -1314,6 +1704,21 @@ mod tests {
 
         let refusals = vec![("no_text".to_owned(), 5)];
 
+        // Create a health snapshot for the schema test.
+        let mut health_snapshot = lens_core::health::HealthSnapshot::new(0);
+        health_snapshot.update_quick(
+            lens_core::health::HealthState::Ready,
+            None,
+            Some(42),
+            1000,
+        );
+        health_snapshot.update_deep(
+            lens_core::health::HealthState::Ready,
+            None,
+            Some(100),
+            1000,
+        );
+
         let json = serialize_diagnostics_report(
             "0.1.0",
             "2026-09-13-test",
@@ -1328,6 +1733,8 @@ mod tests {
             &refusals,
             "windows-gdi",
             "ko",
+            &[], // recent_events: empty for schema test
+            &health_snapshot,
         );
 
         // Parse the JSON and assert the exact allowed top-level key set.
@@ -1349,6 +1756,8 @@ mod tests {
             "refusals",
             "ocr_mode",
             "language",
+            "recent_events",
+            "health",
         ]
         .iter()
         .copied()
