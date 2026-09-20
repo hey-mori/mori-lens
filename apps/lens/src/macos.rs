@@ -601,41 +601,12 @@ fn product_loop(
             while let Ok((provider, ep, m)) = quick_config_rx.try_recv() {
                 current_provider = provider;
                 current_endpoint = ep.clone();
-                let resolved_model_result = match provider {
-                    Provider::Ollama => {
-                        let mut t = OllamaTranslator::choosing(&ep);
-                        if let Some(ref model) = m {
-                            t = OllamaTranslator::new(&ep, model);
-                        }
-                        match t.resolve_model() {
-                            Ok(rm) => Ok(Some(rm.to_owned())),
-                            Err(e) => {
-                                // If resolution failed but we have a configured model, use it
-                                if let Some(model) = &m {
-                                    Ok(Some(model.clone()))
-                                } else {
-                                    Err(e)
-                                }
-                            }
-                        }
-                    }
-                    Provider::LmStudio => match &m {
-                        Some(model) => Ok(Some(model.clone())),
-                        None => {
-                            match lens_translate::list_models_for_provider(Provider::LmStudio, &ep)
-                            {
-                                Ok(models) if !models.is_empty() => Ok(Some(models[0].id.clone())),
-                                Ok(_) => Err(lens_core::translate::TranslateError::ModelMissing(
-                                    "auto".to_owned(),
-                                )),
-                                Err(e) => Err(e),
-                            }
-                        }
-                    },
-                };
+                // Use the shared resolution seam instead of duplicating logic.
+                let resolved_model_result =
+                    lens_translate::resolve_model_for_provider(provider, &ep, m.as_deref());
                 // Update state atomically: model, translator, and error
                 current_resolution_error = resolved_model_result.clone().err();
-                let resolved_model = resolved_model_result.unwrap_or(None);
+                let resolved_model = resolved_model_result.ok();
                 // Rebuild translator only if model resolved successfully
                 translator = resolved_model
                     .as_ref()
