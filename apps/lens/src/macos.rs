@@ -531,30 +531,41 @@ fn product_loop(
 
     // Phase 3: Provider-aware Quick and Deep construction.
     // Resolve models provider-specifically before construction.
-    let quick_model = match ai_config.quick.provider {
+    // Preserve typed errors for diagnostics.
+    let quick_model_result = match ai_config.quick.provider {
         Provider::Ollama => {
             let mut t = OllamaTranslator::choosing(&ai_config.quick.endpoint);
             if let Some(model) = &ai_config.quick.model {
                 t = OllamaTranslator::new(&ai_config.quick.endpoint, model);
             }
             match t.resolve_model() {
-                Ok(m) => Some(m.to_owned()),
-                Err(_) => ai_config.quick.model.clone(),
+                Ok(m) => Ok(Some(m.to_owned())),
+                Err(e) => {
+                    // If resolution failed but we have a configured model, use it
+                    if let Some(model) = &ai_config.quick.model {
+                        Ok(Some(model.clone()))
+                    } else {
+                        Err(e)
+                    }
+                }
             }
         }
         Provider::LmStudio => match &ai_config.quick.model {
-            Some(m) => Some(m.clone()),
+            Some(m) => Ok(Some(m.clone())),
             None => {
                 match lens_translate::list_models_for_provider(
                     Provider::LmStudio,
                     &ai_config.quick.endpoint,
                 ) {
-                    Ok(models) if !models.is_empty() => Some(models[0].id.clone()),
-                    _ => None,
+                    Ok(models) if !models.is_empty() => Ok(Some(models[0].id.clone())),
+                    Ok(_) => Err(lens_core::translate::TranslateError::ModelMissing("auto".to_owned())),
+                    Err(e) => Err(e),
                 }
             }
         },
     };
+    let quick_model = quick_model_result.clone().unwrap_or(None);
+    let quick_model_error = quick_model_result.err();
 
     // Quick lane: dedicated thread for hover translations.
     // Drains pending jobs and keeps only the latest (stale coalescing).
@@ -573,10 +584,12 @@ fn product_loop(
     let quick_result_tx = result_tx.clone();
     let quick_provider = ai_config.quick.provider;
     let quick_endpoint = ai_config.quick.endpoint.clone();
+    let quick_model_error_for_worker = quick_model_error.clone();
     std::thread::spawn(move || {
         let mut translator = quick_translator;
         let mut current_model = quick_model;
         let mut current_provider = quick_provider;
+        let quick_model_error = quick_model_error_for_worker;
         let mut current_endpoint = quick_endpoint;
         // P12: Per-lane failure state tracker for recovery event emission.
         let mut quick_lane_state = lens_core::event_ring::DiagnosticLaneState::new();
@@ -687,20 +700,21 @@ fn product_loop(
                     result
                 }
                 _ => {
-                    // No model or translator available. Surface as a typed
-                    // TranslateError so the diagnostic block below classifies
-                    // and records it; a raw String would bypass P12 entirely.
-                    let err = lens_core::translate::TranslateError::Unavailable;
-                    quick_lane_state.on_failure(
-                        lens_core::event_ring::DiagnosticFailureClass::ConnectionFailed,
-                    );
+                    // No model or translator available. Use the preserved model resolution
+                    // error if available, otherwise default to ConnectionFailed.
+                    let err = quick_model_error
+                        .clone()
+                        .unwrap_or(lens_core::translate::TranslateError::Unavailable);
+                    let failure_class = lens_core::event_ring::DiagnosticFailureClass::from_translate_error(&err)
+                        .unwrap_or(lens_core::event_ring::DiagnosticFailureClass::ConnectionFailed);
+                    quick_lane_state.on_failure(failure_class);
                     crate::tauri_app::global_diagnostic_events()
                         .lock()
                         .unwrap()
                         .record(
                             lens_core::event_ring::DiagnosticComponent::Quick,
                             lens_core::event_ring::DiagnosticEventKind::Failure,
-                            Some(lens_core::event_ring::DiagnosticFailureClass::ConnectionFailed),
+                            Some(failure_class),
                         );
                     Err(err)
                 }
