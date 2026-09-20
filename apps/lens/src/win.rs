@@ -714,7 +714,9 @@ pub fn main() -> std::process::ExitCode {
                         &options.ai_config.quick.endpoint,
                     ) {
                         Ok(models) if !models.is_empty() => Ok(Some(models[0].id.clone())),
-                        Ok(_) => Err(lens_core::translate::TranslateError::ModelMissing("auto".to_owned())),
+                        Ok(_) => Err(lens_core::translate::TranslateError::ModelMissing(
+                            "auto".to_owned(),
+                        )),
                         Err(e) => Err(e),
                     }
                 }
@@ -755,7 +757,9 @@ pub fn main() -> std::process::ExitCode {
                         &options.ai_config.deep.endpoint,
                     ) {
                         Ok(models) if !models.is_empty() => Ok(Some(models[0].id.clone())),
-                        Ok(_) => Err(lens_core::translate::TranslateError::ModelMissing("auto".to_owned())),
+                        Ok(_) => Err(lens_core::translate::TranslateError::ModelMissing(
+                            "auto".to_owned(),
+                        )),
                         Err(e) => Err(e),
                     }
                 }
@@ -1227,7 +1231,9 @@ pub fn main() -> std::process::ExitCode {
             // Use the preserved model resolution error if available, otherwise default to ConnectionFailed
             let failure_class = worker_quick_model_error
                 .as_ref()
-                .and_then(|e| lens_core::event_ring::DiagnosticFailureClass::from_translate_error(e))
+                .and_then(|e| {
+                    lens_core::event_ring::DiagnosticFailureClass::from_translate_error(e)
+                })
                 .unwrap_or(lens_core::event_ring::DiagnosticFailureClass::ConnectionFailed);
             quick_lane_state.on_failure(failure_class);
             crate::tauri_app::global_diagnostic_events()
