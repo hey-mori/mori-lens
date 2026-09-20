@@ -206,10 +206,19 @@ impl PauseKey {
                 // SAFETY: registers a documented thread-local hotkey.
                 unsafe { register_one(*action, sc) }
             } else {
-                false
+                // Intentionally unbound. This is not a registration failure,
+                // so it must not emit a ShortcutUnavailable diagnostic.
+                // (P8: Disabled / Active / Unavailable are distinct states.)
+                slots.push(Slot {
+                    action: *action,
+                    registered: false,
+                });
+                continue;
             };
 
-            // Record shortcut registration failure for diagnostics.
+            // Record configured-but-failed registration for diagnostics.
+            // This is only reached when a real shortcut was configured and
+            // native registration refused it.
             if !registered {
                 crate::tauri_app::global_diagnostic_events()
                     .lock()
@@ -450,6 +459,61 @@ mod tests {
         let key = PauseKey::register_with(&config);
         assert!(key.is_registered());
         assert!(!key.ocr_is_registered());
+    }
+
+    /// An intentionally unbound optional action must NOT emit a
+    /// ShortcutUnavailable diagnostic. P8 treats Disabled / Active /
+    /// Unavailable as distinct: a user who chose no binding did not fail.
+    /// (Parallel tests may also mutate the global ring, so we compare the
+    /// Shortcut+ShortcutUnavailable count before and after rather than
+    /// asserting absolute emptiness.)
+    #[test]
+    fn register_with_unbound_action_does_not_emit_shortcut_unavailable() {
+        use lens_core::event_ring::{DiagnosticComponent, DiagnosticEventKind};
+
+        let events = crate::tauri_app::global_diagnostic_events();
+        let before: usize = {
+            let ring = events.lock().unwrap();
+            ring.events()
+                .filter(|e| {
+                    e.component == DiagnosticComponent::Shortcut
+                        && e.kind == DiagnosticEventKind::Failure
+                        && e.failure_class
+                            == Some(
+                                lens_core::event_ring::DiagnosticFailureClass::ShortcutUnavailable,
+                            )
+                })
+                .count()
+        };
+
+        // All-None config: every binding is intentionally unbound.
+        let config = ShortcutConfig::new(vec![
+            (ShortcutAction::ManualOcr, None),
+            (ShortcutAction::Deep, None),
+            (ShortcutAction::Copy, None),
+            (ShortcutAction::Save, None),
+            (ShortcutAction::Pin, None),
+        ]);
+        let _key = PauseKey::register_with(&config);
+
+        let after: usize = {
+            let ring = events.lock().unwrap();
+            ring.events()
+                .filter(|e| {
+                    e.component == DiagnosticComponent::Shortcut
+                        && e.kind == DiagnosticEventKind::Failure
+                        && e.failure_class
+                            == Some(
+                                lens_core::event_ring::DiagnosticFailureClass::ShortcutUnavailable,
+                            )
+                })
+                .count()
+        };
+
+        assert_eq!(
+            before, after,
+            "intentionally unbound action(s) emitted a ShortcutUnavailable diagnostic",
+        );
     }
 
     #[test]

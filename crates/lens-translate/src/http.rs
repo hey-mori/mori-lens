@@ -173,6 +173,10 @@ fn request(
 /// framing properly would buy nothing, because each JSON object still arrives
 /// whole on its own line either way.
 ///
+/// Returns the HTTP status alongside success, so a 4xx/5xx streaming response
+/// propagates as [`TranslateError::HttpFailed`]. A malformed status line
+/// surfaces as [`TranslateError::Malformed`] rather than silently continuing.
+///
 /// Returning `false` from the callback stops the read and closes the socket,
 /// which is how a hover the user has moved on from stops costing anything.
 pub fn post_streaming(
@@ -181,7 +185,7 @@ pub fn post_streaming(
     body: &str,
     timeout: Duration,
     on_line: &mut dyn FnMut(&str) -> bool,
-) -> Result<(), TranslateError> {
+) -> Result<u16, TranslateError> {
     let address = resolve_loopback(endpoint)?;
 
     let stream =
@@ -205,8 +209,18 @@ pub fn post_streaming(
         .map_err(|error| classify(&error))?;
 
     let mut reader = BufReader::new(stream);
-    // Status line and headers, discarded. Unlike the buffered path there is no
-    // need to know whether the body is chunked, per the note above.
+    // Parse the status line (`HTTP/1.1 200 OK`) so the streaming path can
+    // surface 4xx/5xx as HttpFailed instead of silently continuing.
+    let mut status_line = String::new();
+    let read = reader
+        .read_line(&mut status_line)
+        .map_err(|error| classify(&error))?;
+    if read == 0 {
+        return Err(TranslateError::Malformed);
+    }
+    let status = parse_status_line(&status_line).ok_or(TranslateError::Malformed)?;
+
+    // Skip the remaining headers.
     loop {
         let mut header = String::new();
         let read = reader
@@ -238,7 +252,19 @@ pub fn post_streaming(
             break;
         }
     }
-    Ok(())
+    Ok(status)
+}
+
+/// Extract the status code from an HTTP status line.
+///
+/// Accepts `HTTP/1.0 200 OK`, `HTTP/1.1 404 Not Found`, etc. Returns `None`
+/// if the line is not recognisably an HTTP status line.
+fn parse_status_line(line: &str) -> Option<u16> {
+    let trimmed = line.trim();
+    let mut parts = trimmed.splitn(3, ' ');
+    let _protocol = parts.next()?;
+    let status_str = parts.next()?;
+    status_str.parse::<u16>().ok()
 }
 
 /// Decode `Transfer-Encoding: chunked`.
@@ -518,5 +544,23 @@ mod tests {
             "oversized streaming response must not succeed: got {:?}",
             result,
         );
+    }
+
+    /// `parse_status_line` is the function that lets the streaming path
+    /// surface 4xx/5xx. Verify the happy paths and the malformed input it
+    /// must refuse.
+    #[test]
+    fn parse_status_line_handles_common_forms() {
+        assert_eq!(parse_status_line("HTTP/1.1 200 OK\r\n"), Some(200));
+        assert_eq!(parse_status_line("HTTP/1.1 404 Not Found\r\n"), Some(404));
+        assert_eq!(
+            parse_status_line("HTTP/1.0 500 Internal Server Error"),
+            Some(500)
+        );
+        assert_eq!(parse_status_line("HTTP/2 200"), Some(200));
+        // Garbage must not parse to a status.
+        assert_eq!(parse_status_line(""), None);
+        assert_eq!(parse_status_line("not a status line"), None);
+        assert_eq!(parse_status_line("HTTP/1.1 abc OK"), None);
     }
 }
