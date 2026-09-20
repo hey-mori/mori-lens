@@ -573,6 +573,8 @@ fn product_loop(
         let mut current_model = quick_model;
         let mut current_provider = quick_provider;
         let mut current_endpoint = quick_endpoint;
+        // P12: Per-lane failure state tracker for recovery event emission.
+        let mut quick_lane_state = lens_core::event_ring::DiagnosticLaneState::new();
         while let Ok(job) = quick_rx.recv() {
             // Check for config updates (non-blocking) BEFORE any cache operation.
             // After this drain, current_model is authoritative for the cache key.
@@ -638,6 +640,40 @@ fn product_loop(
                         }
                     }
                     let result = trans.quick(request);
+                    // P12: Record diagnostic event while error is still typed.
+                    match &result {
+                        Ok(_) => {
+                            // Track recovery after failure.
+                            if quick_lane_state.on_success() {
+                                crate::tauri_app::global_diagnostic_events()
+                                    .lock()
+                                    .unwrap()
+                                    .record(
+                                        lens_core::event_ring::DiagnosticComponent::Quick,
+                                        lens_core::event_ring::DiagnosticEventKind::Recovered,
+                                        None,
+                                    );
+                            }
+                        }
+                        Err(error) => {
+                            // Record failure with typed classification before error is flattened to String.
+                            if let Some(failure_class) =
+                                lens_core::event_ring::DiagnosticFailureClass::from_translate_error(
+                                    error,
+                                )
+                            {
+                                quick_lane_state.on_failure(failure_class);
+                                crate::tauri_app::global_diagnostic_events()
+                                    .lock()
+                                    .unwrap()
+                                    .record(
+                                        lens_core::event_ring::DiagnosticComponent::Quick,
+                                        lens_core::event_ring::DiagnosticEventKind::Failure,
+                                        Some(failure_class),
+                                    );
+                            }
+                        }
+                    }
                     if let Ok(ref t) = result {
                         if let Ok(mut c) = quick_cache.lock() {
                             c.insert(key, t.clone());
@@ -696,6 +732,8 @@ fn product_loop(
         let mut current_endpoint = deep_endpoint;
         // Deep analysis cache — separate from translation cache per ADR-0005.
         let mut explanations = AnalysisCache::new(ANALYSIS_ENTRIES);
+        // P12: Per-lane failure state tracker for recovery event emission.
+        let mut deep_lane_state = lens_core::event_ring::DiagnosticLaneState::new();
         while let Ok(job) = deep_rx.recv() {
             // Check for config updates (non-blocking).
             while let Ok((provider, ep, m)) = deep_config_rx.try_recv() {
@@ -753,6 +791,38 @@ fn product_loop(
                 Some(a) => lens_core::analyse::Analyser::deep(a, &deep_req),
                 None => Err(lens_core::translate::TranslateError::Unavailable),
             };
+            // P12: Record diagnostic event while error is still typed.
+            match &result {
+                Ok(_) => {
+                    // Track recovery after failure.
+                    if deep_lane_state.on_success() {
+                        crate::tauri_app::global_diagnostic_events()
+                            .lock()
+                            .unwrap()
+                            .record(
+                                lens_core::event_ring::DiagnosticComponent::Deep,
+                                lens_core::event_ring::DiagnosticEventKind::Recovered,
+                                None,
+                            );
+                    }
+                }
+                Err(error) => {
+                    // Record failure with typed classification before error is flattened to String.
+                    if let Some(failure_class) =
+                        lens_core::event_ring::DiagnosticFailureClass::from_translate_error(error)
+                    {
+                        deep_lane_state.on_failure(failure_class);
+                        crate::tauri_app::global_diagnostic_events()
+                            .lock()
+                            .unwrap()
+                            .record(
+                                lens_core::event_ring::DiagnosticComponent::Deep,
+                                lens_core::event_ring::DiagnosticEventKind::Failure,
+                                Some(failure_class),
+                            );
+                    }
+                }
+            }
             // Cache successful results for future reuse.
             if let Ok(ref analysis) = result {
                 explanations.insert(key, analysis.clone());
@@ -832,30 +902,8 @@ fn product_loop(
                             tally.card();
                         }
                         Err(msg) => {
-                            // Record Quick operational failure for diagnostics.
-                            // Map error message to failure class for event ring.
-                            let failure_class = if msg.contains("unreachable")
-                                || msg.contains("connection")
-                            {
-                                Some(
-                                    lens_core::event_ring::DiagnosticFailureClass::ConnectionFailed,
-                                )
-                            } else if msg.contains("timeout") || msg.contains("timed out") {
-                                Some(lens_core::event_ring::DiagnosticFailureClass::Timeout)
-                            } else if msg.contains("model") {
-                                Some(lens_core::event_ring::DiagnosticFailureClass::ModelMissing)
-                            } else {
-                                Some(lens_core::event_ring::DiagnosticFailureClass::InferenceFailed)
-                            };
-                            crate::tauri_app::global_diagnostic_events()
-                                .lock()
-                                .unwrap()
-                                .record(
-                                    lens_core::event_ring::DiagnosticComponent::Quick,
-                                    lens_core::event_ring::DiagnosticEventKind::Failure,
-                                    failure_class,
-                                );
-
+                            // Diagnostics are recorded in the worker thread where the error is still typed.
+                            // No string-matching classification here.
                             let card = Card {
                                 original: display_text.clone(),
                                 body: CardBody::Problem(msg),
@@ -911,30 +959,8 @@ fn product_loop(
                             tally.card();
                         }
                         Err(msg) => {
-                            // Record Deep operational failure for diagnostics.
-                            // Map error message to failure class for event ring.
-                            let failure_class = if msg.contains("unreachable")
-                                || msg.contains("connection")
-                            {
-                                Some(
-                                    lens_core::event_ring::DiagnosticFailureClass::ConnectionFailed,
-                                )
-                            } else if msg.contains("timeout") || msg.contains("timed out") {
-                                Some(lens_core::event_ring::DiagnosticFailureClass::Timeout)
-                            } else if msg.contains("model") {
-                                Some(lens_core::event_ring::DiagnosticFailureClass::ModelMissing)
-                            } else {
-                                Some(lens_core::event_ring::DiagnosticFailureClass::InferenceFailed)
-                            };
-                            crate::tauri_app::global_diagnostic_events()
-                                .lock()
-                                .unwrap()
-                                .record(
-                                    lens_core::event_ring::DiagnosticComponent::Deep,
-                                    lens_core::event_ring::DiagnosticEventKind::Failure,
-                                    failure_class,
-                                );
-
+                            // Diagnostics are recorded in the worker thread where the error is still typed.
+                            // No string-matching classification here.
                             let card = Card {
                                 original: sentence.clone(),
                                 body: CardBody::Problem(format!("analysis failed: {}", msg)),
