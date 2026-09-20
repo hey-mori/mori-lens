@@ -722,12 +722,29 @@ async fn run_health_check(
     use std::time::Instant;
 
     // Backend concurrency guard: prevent multiple simultaneous health checks.
+    // Use atomic compare_exchange to avoid race condition.
     if health_running
-        .load(std::sync::atomic::Ordering::SeqCst)
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+        )
+        .is_err()
     {
         return Err("health check already in progress".to_string());
     }
-    health_running.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    // RAII guard to ensure the flag is always released, even on panic or early return.
+    struct HealthGuard<'a> {
+        flag: &'a std::sync::atomic::AtomicBool,
+    }
+    impl<'a> Drop for HealthGuard<'a> {
+        fn drop(&mut self) {
+            self.flag.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let _guard = HealthGuard { flag: &health_running };
 
     let start = Instant::now();
 
@@ -774,8 +791,7 @@ async fn run_health_check(
 
     let result = rx.recv().map_err(|_| "thread error".to_string());
 
-    // Clear the concurrency guard.
-    health_running.store(false, std::sync::atomic::Ordering::SeqCst);
+    // RAII guard handles release automatically on all exit paths.
 
     let (quick_state, quick_failure, deep_state, deep_failure) = result?;
 

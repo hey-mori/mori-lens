@@ -1723,6 +1723,12 @@ pub fn main() -> std::process::ExitCode {
             }
             library_service::LibraryBacking::InMemoryFallback { reason, .. } => {
                 println!("  library   in-memory fallback: {reason}");
+                // Record library degradation event for diagnostics.
+                crate::tauri_app::global_diagnostic_events().lock().unwrap().record(
+                    lens_core::event_ring::DiagnosticComponent::Library,
+                    lens_core::event_ring::DiagnosticEventKind::Degraded,
+                    Some(lens_core::event_ring::DiagnosticFailureClass::LibraryDegraded),
+                );
             }
         }
     }
