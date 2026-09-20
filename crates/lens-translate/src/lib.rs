@@ -1436,6 +1436,38 @@ mod tests {
             assert!(matches!(result, Err(TranslateError::Unavailable)));
         }
 
+        #[test]
+        fn ollama_auto_with_timeout_preserves_timeout_error() {
+            // Use a non-routable IP address to trigger a timeout.
+            // 10.255.255.1 is typically non-routable and will timeout.
+            // This test may be slow (up to 3 seconds due to HTTP timeout).
+            let result = resolve_model_for_provider(Provider::Ollama, "10.255.255.1:11434", None);
+            // The result should be either Timeout or Unavailable depending on OS/network.
+            // The important contract is that it's NOT silently converted to something else.
+            assert!(
+                matches!(
+                    result,
+                    Err(TranslateError::Timeout) | Err(TranslateError::Unavailable)
+                ),
+                "timeout/unreachable should preserve typed error, got {:?}",
+                result
+            );
+        }
+
+        #[test]
+        fn lmstudio_auto_with_malformed_json_returns_malformed() {
+            let server = FakeServer::start(vec![
+                FakeResponse::ok_json("not valid json at all").expect_get("/api/v1/models")
+            ]);
+
+            let result = resolve_model_for_provider(Provider::LmStudio, server.address(), None);
+            assert!(
+                matches!(result, Err(TranslateError::Malformed)),
+                "malformed JSON should return Malformed, got {:?}",
+                result
+            );
+        }
+
         // P12 live config regression test.
         // Proves that the resolution seam preserves typed errors through
         // configuration changes, and that diagnostic classification works
@@ -1519,6 +1551,131 @@ mod tests {
                 "recovery to working config should succeed"
             );
             assert_eq!(after_recovery.unwrap(), "llama-3.1-8b");
+        }
+
+        // P12 state transition regression test.
+        // Proves that the resolution seam correctly transitions through
+        // the state machine used by macOS Quick live configuration.
+
+        #[test]
+        fn live_config_state_transitions_match_production_worker() {
+            use lens_core::event_ring::DiagnosticFailureClass;
+
+            // This test exercises the same state transition logic that the
+            // macOS Quick worker uses after PR #609 refactored it to call
+            // resolve_model_for_provider.
+            //
+            // State: (current_model, current_resolution_error)
+            // Transition: apply_config(provider, endpoint, model)
+            //   - Call resolve_model_for_provider
+            //   - current_resolution_error = result.err()
+            //   - current_model = result.ok()
+
+            let mut current_model: Option<String>;
+            let mut current_error: Option<TranslateError>;
+
+            // Transition 1: Valid configuration → ready.
+            let server_working = FakeServer::start(vec![FakeResponse::ok_json(
+                r#"{"models":[{"key":"llama-3.1-8b","display_name":"LLaMA 3.1 8B","type":"llm","size_bytes":4700000000,"loaded_instances":[]}]}"#,
+            )
+            .expect_get("/api/v1/models")]);
+            let result1 =
+                resolve_model_for_provider(Provider::LmStudio, server_working.address(), None);
+            current_error = result1.clone().err();
+            current_model = result1.ok();
+            assert!(
+                current_model.is_some(),
+                "transition 1: model should be Some"
+            );
+            assert!(
+                current_error.is_none(),
+                "transition 1: error should be None"
+            );
+            assert_eq!(current_model.as_deref(), Some("llama-3.1-8b"));
+
+            // Transition 2: Unreachable auto provider → error becomes Unavailable.
+            let result2 = resolve_model_for_provider(Provider::LmStudio, "127.0.0.1:1", None);
+            current_error = result2.clone().err();
+            current_model = result2.ok();
+            assert!(
+                current_model.is_none(),
+                "transition 2: model should be None"
+            );
+            assert!(
+                matches!(current_error, Some(TranslateError::Unavailable)),
+                "transition 2: error should be Unavailable, got {:?}",
+                current_error
+            );
+            assert_eq!(
+                DiagnosticFailureClass::from_translate_error(current_error.as_ref().unwrap()),
+                Some(DiagnosticFailureClass::ConnectionFailed),
+                "transition 2: should classify as ConnectionFailed"
+            );
+
+            // Transition 3: HTTP 401 → error becomes HttpFailed(401).
+            let server_401 = FakeServer::start(vec![
+                FakeResponse::unauthorized().expect_get("/api/v1/models")
+            ]);
+            let result3 =
+                resolve_model_for_provider(Provider::LmStudio, server_401.address(), None);
+            current_error = result3.clone().err();
+            current_model = result3.ok();
+            assert!(
+                current_model.is_none(),
+                "transition 3: model should be None"
+            );
+            assert!(
+                matches!(current_error, Some(TranslateError::HttpFailed(401))),
+                "transition 3: error should be HttpFailed(401), got {:?}",
+                current_error
+            );
+            assert_eq!(
+                DiagnosticFailureClass::from_translate_error(current_error.as_ref().unwrap()),
+                Some(DiagnosticFailureClass::HttpClient),
+                "transition 3: should classify as HttpClient"
+            );
+
+            // Transition 4: Zero-model response → error becomes ModelMissing.
+            let server_empty = FakeServer::start(vec![
+                FakeResponse::ok_json(r#"{"models":[]}"#).expect_get("/api/v1/models")
+            ]);
+            let result4 =
+                resolve_model_for_provider(Provider::LmStudio, server_empty.address(), None);
+            current_error = result4.clone().err();
+            current_model = result4.ok();
+            assert!(
+                current_model.is_none(),
+                "transition 4: model should be None"
+            );
+            assert!(
+                matches!(current_error, Some(TranslateError::ModelMissing(_))),
+                "transition 4: error should be ModelMissing, got {:?}",
+                current_error
+            );
+            assert_eq!(
+                DiagnosticFailureClass::from_translate_error(current_error.as_ref().unwrap()),
+                Some(DiagnosticFailureClass::ModelMissing),
+                "transition 4: should classify as ModelMissing"
+            );
+
+            // Transition 5: Successful configuration → error cleared, state ready.
+            let server_working2 = FakeServer::start(vec![FakeResponse::ok_json(
+                r#"{"models":[{"key":"qwen2.5-7b","display_name":"Qwen 2.5 7B","type":"llm","size_bytes":4300000000,"loaded_instances":[]}]}"#,
+            )
+            .expect_get("/api/v1/models")]);
+            let result5 =
+                resolve_model_for_provider(Provider::LmStudio, server_working2.address(), None);
+            current_error = result5.clone().err();
+            current_model = result5.ok();
+            assert!(
+                current_model.is_some(),
+                "transition 5: model should be Some after recovery"
+            );
+            assert!(
+                current_error.is_none(),
+                "transition 5: error should be None after recovery"
+            );
+            assert_eq!(current_model.as_deref(), Some("qwen2.5-7b"));
         }
     }
 }
