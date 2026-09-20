@@ -208,7 +208,9 @@ impl Translator for LmStudioTranslator {
         // A 500 with valid-looking body must not succeed.
         match status {
             200..=299 => {} // success, continue to parse body
-            401 | 403 => return Err(TranslateError::Unavailable), // auth failure
+            // 4xx/5xx are HttpFailed: carries the status so the diagnostic
+            // ring can classify as HttpClient (4xx) or HttpServer (5xx).
+            // ModelMissing is preserved for 404 with structured evidence.
             404 => {
                 // Only return ModelMissing when we have structured evidence
                 // that the configured model is missing. A generic 404 can mean
@@ -219,9 +221,9 @@ impl Translator for LmStudioTranslator {
                         return Err(TranslateError::ModelMissing(self.model.clone()));
                     }
                 }
-                return Err(TranslateError::Unavailable);
+                return Err(TranslateError::HttpFailed(404));
             }
-            _ => return Err(TranslateError::Unavailable), // other non-2xx
+            other => return Err(TranslateError::HttpFailed(other)),
         }
 
         // Parse the success body
@@ -293,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn quick_returns_unavailable_on_auth_error() {
+    fn quick_returns_http_failed_on_auth_error() {
         let server = FakeServer::start(vec![FakeResponse::unauthorized()
             .expect_post("/v1/chat/completions")
             .expect_header("Authorization", "Bearer invalid-token")]);
@@ -304,7 +306,7 @@ mod tests {
         let request = QuickRequest::new("Hello world", "ko");
         let result = translator.quick(&request);
 
-        assert!(matches!(result, Err(TranslateError::Unavailable)));
+        assert!(matches!(result, Err(TranslateError::HttpFailed(401))));
     }
 
     #[test]
@@ -633,9 +635,9 @@ mod tests {
     // AUTOMATED CONTRACT PASS
 
     /// HTTP 500 with valid-looking body must fail.
-    /// Status is checked BEFORE parsing body.
+    /// Status is checked BEFORE parsing body. Now produces HttpServer diagnostic.
     #[test]
-    fn http_500_with_valid_body_is_unavailable() {
+    fn http_500_with_valid_body_is_http_failed() {
         let server = FakeServer::start(vec![FakeResponse {
             status: 500,
             status_text: "Internal Server Error".to_owned(),
@@ -655,15 +657,15 @@ mod tests {
         let result = translator.quick(&request);
 
         assert!(
-            matches!(result, Err(TranslateError::Unavailable)),
-            "500 must fail even with valid body: {:?}",
+            matches!(result, Err(TranslateError::HttpFailed(500))),
+            "500 must fail with HttpFailed even with valid body: {:?}",
             result
         );
     }
 
-    /// HTTP 403 (forbidden) must return Unavailable.
+    /// HTTP 403 (forbidden) returns HttpFailed(403), classified as HttpClient.
     #[test]
-    fn http_403_is_unavailable() {
+    fn http_403_is_http_failed() {
         let server = FakeServer::start(vec![FakeResponse::forbidden()
             .expect_post("/v1/chat/completions")
             .expect_header("Authorization", "Bearer bad-token")]);
@@ -674,14 +676,14 @@ mod tests {
         let request = QuickRequest::new("Hello world", "ko");
         let result = translator.quick(&request);
 
-        assert!(matches!(result, Err(TranslateError::Unavailable)));
+        assert!(matches!(result, Err(TranslateError::HttpFailed(403))));
     }
 
-    /// HTTP 404 without structured model_not_found evidence returns Unavailable.
+    /// HTTP 404 without structured model_not_found evidence returns HttpFailed(404).
     /// A generic 404 can mean route mismatch, API surface incompatibility,
     /// or proxy issues, which must not be falsely reported as a missing model.
     #[test]
-    fn http_404_generic_is_unavailable() {
+    fn http_404_generic_is_http_failed() {
         let server = FakeServer::start(vec![
             FakeResponse::not_found().expect_post("/v1/chat/completions")
         ]);
@@ -692,7 +694,7 @@ mod tests {
         let request = QuickRequest::new("Hello world", "ko");
         let result = translator.quick(&request);
 
-        assert!(matches!(result, Err(TranslateError::Unavailable)));
+        assert!(matches!(result, Err(TranslateError::HttpFailed(404))));
     }
 
     /// HTTP 404 with structured model_not_found evidence returns ModelMissing.
@@ -712,9 +714,9 @@ mod tests {
         assert!(matches!(result, Err(TranslateError::ModelMissing(_))));
     }
 
-    /// HTTP 400 (bad request) must return Unavailable.
+    /// HTTP 400 (bad request) returns HttpFailed(400), classified as HttpClient.
     #[test]
-    fn http_400_is_unavailable() {
+    fn http_400_is_http_failed() {
         let server = FakeServer::start(vec![
             FakeResponse::bad_request().expect_post("/v1/chat/completions")
         ]);
@@ -725,7 +727,7 @@ mod tests {
         let request = QuickRequest::new("Hello world", "ko");
         let result = translator.quick(&request);
 
-        assert!(matches!(result, Err(TranslateError::Unavailable)));
+        assert!(matches!(result, Err(TranslateError::HttpFailed(400))));
     }
 
     // Phase 4: Parser correctness tests
