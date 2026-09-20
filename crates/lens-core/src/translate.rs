@@ -770,6 +770,14 @@ pub enum TranslateError {
     Stale,
     /// Nothing worth translating: empty, or no letters in it.
     NotWorthTranslating,
+    /// The engine answered with an HTTP error status (4xx/5xx).
+    ///
+    /// Separate from [`Self::Unavailable`] because a transport failure (nothing
+    /// answered) and an HTTP error (the engine answered with an error status)
+    /// are different diagnostic facts. Carries the status so the diagnostic
+    /// ring can classify it as [`HttpClient`](crate::event_ring::DiagnosticFailureClass::HttpClient)
+    /// or [`HttpServer`](crate::event_ring::DiagnosticFailureClass::HttpServer).
+    HttpFailed(u16),
 }
 
 impl TranslateError {
@@ -783,6 +791,19 @@ impl TranslateError {
             Self::AlreadyReadable => "already-readable",
             Self::Stale => "stale",
             Self::NotWorthTranslating => "not-worth-translating",
+            Self::HttpFailed(_) => "http-failed",
+        }
+    }
+
+    /// The HTTP status code that caused this error, if any.
+    ///
+    /// Only [`Self::HttpFailed`] carries an HTTP status. Other variants return
+    /// `None`, including [`Self::Unavailable`] which is a transport-level
+    /// failure where no HTTP response was received at all.
+    pub fn http_status(&self) -> Option<u16> {
+        match self {
+            Self::HttpFailed(status) => Some(*status),
+            _ => None,
         }
     }
 
@@ -807,6 +828,7 @@ impl TranslateError {
             Self::AlreadyReadable => "이미 읽을 수 있는 언어입니다".to_owned(),
             Self::Stale => "취소되었습니다".to_owned(),
             Self::NotWorthTranslating => "번역할 내용이 없습니다".to_owned(),
+            Self::HttpFailed(_) => "번역 엔진이 오류를 응답했습니다".to_owned(),
         }
     }
 
@@ -836,7 +858,7 @@ impl TranslateError {
             Self::NotTranslated => Some("다른 모델로 바꿔 보세요".to_owned()),
             // Nothing to fix. The reader can read it.
             Self::AlreadyReadable => None,
-            Self::Stale | Self::NotWorthTranslating => None,
+            Self::Stale | Self::NotWorthTranslating | Self::HttpFailed(_) => None,
         }
     }
 }
