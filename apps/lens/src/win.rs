@@ -1196,7 +1196,6 @@ pub fn main() -> std::process::ExitCode {
     let worker_quick_provider = options.ai_config.quick.provider;
     let worker_deep_provider = options.ai_config.deep.provider;
     let worker_quick_model_error = quick_model_error.clone();
-    let worker_deep_model_error = deep_model_error.clone();
     std::thread::spawn(move || {
         // ADR-0005: Two translators, one for each path. Quick and Deep are
         // separate engines with separate models and endpoints.
