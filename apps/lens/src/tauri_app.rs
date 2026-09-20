@@ -48,6 +48,19 @@ pub type SharedDiagnostics = Arc<Mutex<DiagnosticsSnapshot>>;
 /// Privacy-safe: events contain only enums and numbers, no captured text.
 pub type SharedDiagnosticEvents = Arc<Mutex<lens_core::event_ring::DiagnosticEventRing>>;
 
+/// Global diagnostic events ring for access from product runtime.
+///
+/// The Tauri-managed ring is not reachable from the Windows/macOS product loops
+/// which run outside Tauri's state management. This static provides a single
+/// shared ring for the entire process.
+static GLOBAL_DIAGNOSTIC_EVENTS: std::sync::LazyLock<SharedDiagnosticEvents> =
+    std::sync::LazyLock::new(|| Arc::new(Mutex::new(lens_core::event_ring::DiagnosticEventRing::new())));
+
+/// Access the global diagnostic events ring.
+pub fn global_diagnostic_events() -> SharedDiagnosticEvents {
+    GLOBAL_DIAGNOSTIC_EVENTS.clone()
+}
+
 /// Shared health snapshot, caching the last health check result.
 ///
 /// Process-local, no persistence. Privacy-safe: contains only enums, numbers,
@@ -1430,8 +1443,7 @@ pub fn build(
     }));
     let pause_request: SharedPauseRequest = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let quit_request: SharedQuitRequest = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let diagnostic_events: SharedDiagnosticEvents =
-        Arc::new(Mutex::new(lens_core::event_ring::DiagnosticEventRing::new()));
+    let diagnostic_events: SharedDiagnosticEvents = global_diagnostic_events();
     let health_snapshot: SharedHealthSnapshot =
         Arc::new(Mutex::new(lens_core::health::HealthSnapshot::default()));
     let health_running: SharedHealthCheckRunning =

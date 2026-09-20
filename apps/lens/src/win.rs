@@ -1252,6 +1252,16 @@ pub fn main() -> std::process::ExitCode {
                                 }
                                 Err(error) => {
                                     eprintln!("deep  no analysis [{}]", error.reason());
+                                    // Record Deep operational failure for diagnostics.
+                                    if let Some(failure_class) =
+                                        lens_core::event_ring::DiagnosticFailureClass::from_translate_error(&error)
+                                    {
+                                        crate::tauri_app::global_diagnostic_events().lock().unwrap().record(
+                                            lens_core::event_ring::DiagnosticComponent::Deep,
+                                            lens_core::event_ring::DiagnosticEventKind::Failure,
+                                            Some(failure_class),
+                                        );
+                                    }
                                     Card::not_readable(error.user_message())
                                 }
                             }
@@ -1357,7 +1367,19 @@ pub fn main() -> std::process::ExitCode {
                             cache.insert(key, translation.clone());
                             Card::translated(&job.display_text, &translation)
                         }
-                        Err(error) => Card::not_translated(&job.display_text, &error),
+                        Err(error) => {
+                            // Record Quick operational failure for diagnostics.
+                            if let Some(failure_class) =
+                                lens_core::event_ring::DiagnosticFailureClass::from_translate_error(&error)
+                            {
+                                crate::tauri_app::global_diagnostic_events().lock().unwrap().record(
+                                    lens_core::event_ring::DiagnosticComponent::Quick,
+                                    lens_core::event_ring::DiagnosticEventKind::Failure,
+                                    Some(failure_class),
+                                );
+                            }
+                            Card::not_translated(&job.display_text, &error)
+                        }
                     };
                     // The caveat rides the answer rather than preceding it, so it is
                     // on the card the reader is still looking at a second later.
