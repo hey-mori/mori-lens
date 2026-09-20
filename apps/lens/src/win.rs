@@ -1188,6 +1188,25 @@ pub fn main() -> std::process::ExitCode {
         let mut quick_lane_state = lens_core::event_ring::DiagnosticLaneState::new();
         let mut deep_lane_state = lens_core::event_ring::DiagnosticLaneState::new();
 
+        // P12: Surface a typed diagnostic when a worker starts without a
+        // configured Quick engine or model. A persistent `None` here is
+        // different from a transient transport failure: the engine will not
+        // become available until the user reconfigures. Emit once at startup
+        // so the ring reflects the fact rather than leaving Quick in a
+        // silently-broken state.
+        if worker_quick_model.is_none() || quick_translator.is_none() {
+            quick_lane_state
+                .on_failure(lens_core::event_ring::DiagnosticFailureClass::ConnectionFailed);
+            crate::tauri_app::global_diagnostic_events()
+                .lock()
+                .unwrap()
+                .record(
+                    lens_core::event_ring::DiagnosticComponent::Quick,
+                    lens_core::event_ring::DiagnosticEventKind::Failure,
+                    Some(lens_core::event_ring::DiagnosticFailureClass::ConnectionFailed),
+                );
+        }
+
         while let Ok(job) = jobs_rx.recv() {
             // Take only the newest queued job. A pointer crossing three
             // sentences queues three translations, and finishing them all
