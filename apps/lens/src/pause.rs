@@ -208,6 +208,19 @@ impl PauseKey {
             } else {
                 false
             };
+
+            // Record shortcut registration failure for diagnostics.
+            if !registered {
+                crate::tauri_app::global_diagnostic_events()
+                    .lock()
+                    .unwrap()
+                    .record(
+                        lens_core::event_ring::DiagnosticComponent::Shortcut,
+                        lens_core::event_ring::DiagnosticEventKind::Failure,
+                        Some(lens_core::event_ring::DiagnosticFailureClass::ShortcutUnavailable),
+                    );
+            }
+
             slots.push(Slot {
                 action: *action,
                 registered,
