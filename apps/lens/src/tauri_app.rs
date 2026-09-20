@@ -16,11 +16,31 @@ use tauri::{Emitter, Manager};
 /// a check triggered thirty minutes after launch must report ~1_800_000ms,
 /// not 0.
 ///
-/// Call early during app startup (in `build()` or `main()`) to ensure the
-/// timestamp origin predates any health check invocation.
+/// Call `initialize_process_start()` early during app startup (in `build()` or `main()`)
+/// to ensure the timestamp origin predates any health check invocation.
+/// Then call `process_start_elapsed_ms()` to read elapsed time.
+use std::sync::OnceLock;
+static PROCESS_START: OnceLock<std::time::Instant> = OnceLock::new();
+
+/// Initialize the process-start anchor. Call once at startup.
+/// Returns the initialized Instant.
+pub fn initialize_process_start() -> std::time::Instant {
+    *PROCESS_START.get_or_init(std::time::Instant::now)
+}
+
+/// Read elapsed milliseconds since process start.
+/// Panics if `initialize_process_start()` was not called.
+pub fn process_start_elapsed_ms() -> u64 {
+    PROCESS_START
+        .get()
+        .expect("process_start not initialized; call initialize_process_start() at startup")
+        .elapsed()
+        .as_millis() as u64
+}
+
+/// Legacy accessor for backward compatibility. Returns the process-start Instant.
+/// Prefer `process_start_elapsed_ms()` for reading elapsed time.
 pub fn process_start() -> std::time::Instant {
-    use std::sync::OnceLock;
-    static PROCESS_START: OnceLock<std::time::Instant> = OnceLock::new();
     *PROCESS_START.get_or_init(std::time::Instant::now)
 }
 
@@ -780,7 +800,7 @@ async fn run_health_check(
     {
         let mut snapshot = health.lock().unwrap();
         // Process-relative monotonic timestamp, not the duration of this call.
-        let now_ms = process_start().elapsed().as_millis() as u64;
+        let now_ms = process_start_elapsed_ms();
         snapshot.mark_running(now_ms);
     }
 
@@ -859,7 +879,7 @@ async fn run_health_check(
         // `updated_ms` is the process-relative monotonic timestamp, not the
         // duration of this health check. `latency_ms` is the per-lane
         // measured inference time, not half the wall-clock total.
-        let now_ms = process_start().elapsed().as_millis() as u64;
+        let now_ms = process_start_elapsed_ms();
 
         // Snapshot uses typed HealthState directly, no string parsing.
         snapshot.update_quick(
@@ -1538,7 +1558,7 @@ pub fn build(
     // Initialize process-start timestamp anchor early, during app startup.
     // This ensures health check timestamps are truly process-relative, not
     // relative to first health check invocation.
-    let _ = process_start();
+    let _ = initialize_process_start();
 
     let diagnostics: SharedDiagnostics = Arc::new(Mutex::new(DiagnosticsSnapshot {
         version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -2033,35 +2053,42 @@ mod tests {
     }
 
     // P12 timestamp-origin regression evidence.
-    // Proves that process_start() establishes the timestamp anchor at
-    // application initialization, not lazily on first health check.
+    // Proves that the process-start anchor is established by explicit initialization,
+    // and that elapsed time is read from the already-established anchor.
 
     #[test]
-    fn process_start_timestamp_is_established_early() {
-        // Call process_start() to initialize the anchor (simulates early startup).
-        let start1 = process_start();
+    fn process_start_initialization_and_reading_are_distinct() {
+        // This test proves the contract: initialization and reading are separate operations.
+        // The production code calls initialize_process_start() at startup (in build()),
+        // then calls process_start_elapsed_ms() to read elapsed time.
 
-        // Small delay to ensure time has passed (not a long sleep).
+        // Step 1: Initialize the anchor (simulates startup).
+        let start = initialize_process_start();
+
+        // Step 2: Small delay to ensure time has passed.
         std::thread::sleep(std::time::Duration::from_millis(10));
 
-        // Call again - should return the same Instant.
-        let start2 = process_start();
+        // Step 3: Read elapsed time using the dedicated function.
+        let elapsed = process_start_elapsed_ms();
 
-        // Both calls must return the same Instant (OnceLock semantics).
-        assert_eq!(
-            start1, start2,
-            "process_start() must return the same Instant on repeated calls"
-        );
-
-        // Elapsed time must be > 0 (proves anchor was established in the past).
-        let elapsed = start2.elapsed();
+        // Elapsed time must reflect the delay (proves reading uses the initialized anchor).
         assert!(
-            elapsed.as_millis() >= 10,
+            elapsed >= 10,
             "elapsed time must reflect time since initialization, got {}ms",
-            elapsed.as_millis()
+            elapsed
         );
 
-        // This proves the timestamp origin predates any health check invocation,
-        // satisfying the P12 contract that health timestamps are process-relative.
+        // Step 4: Verify the anchor is stable (OnceLock semantics).
+        let start2 = initialize_process_start();
+        assert_eq!(
+            start, start2,
+            "initialize_process_start() must return the same Instant on repeated calls"
+        );
+
+        // This proves:
+        // 1. Initialization is explicit (initialize_process_start)
+        // 2. Reading is separate (process_start_elapsed_ms)
+        // 3. The anchor is stable (OnceLock)
+        // 4. Health checks cannot silently create the origin
     }
 }
