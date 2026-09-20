@@ -8,6 +8,7 @@
     "allow-check-provider",
     "allow-export-diagnostics",
     "allow-get-diagnostics",
+    "allow-get-health-status",
     "allow-get-local-ai-status",
     "allow-get-runtime-status",
     "allow-get-settings",
@@ -42,6 +43,8 @@
     "allow-mori-send-item",
     "allow-mori-status",
     "allow-request-pause-toggle",
-    "allow-request-quit"
+    "allow-request-quit",
+    "allow-run-health-check",
+    "allow-get-diagnostic-events"
   ]
 }

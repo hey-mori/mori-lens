@@ -7,9 +7,10 @@ import { refreshLocalAiStatus } from './local_ai.js';
 
 export async function loadStatus() {
   try {
-    const [diag, runtime] = await Promise.all([
+    const [diag, runtime, health] = await Promise.all([
       invoke('get_diagnostics'),
       invoke('get_runtime_status'),
+      invoke('get_health_status'),
     ]);
     const localAi = state.cachedLocalAiStatus;
     const el = document.getElementById('status-content');
@@ -64,7 +65,41 @@ export async function loadStatus() {
       html += '<tr><td>Deep</td><td>확인 중...</td></tr>';
     }
     html += '</table>';
-    html += '<div style="margin-top:12px"><button class="btn" id="refresh-local-ai-btn" style="padding:6px 12px;font-size:12px">새로고침</button></div>';
+    html += '<div style="margin-top:12px;display:flex;gap:8px">';
+    html += '<button class="btn" id="refresh-local-ai-btn" style="padding:6px 12px;font-size:12px">새로고침</button>';
+    html += '<button class="btn" id="run-health-check-btn" style="padding:6px 12px;font-size:12px">헬스체크 실행</button>';
+    html += '</div>';
+    html += '<div id="health-check-result" style="margin-top:12px;display:none"></div>';
+
+    // Cached health status from last health check
+    if (health && (health.quick.state !== 'unknown' || health.deep.state !== 'unknown')) {
+      html += '<div style="margin-top:12px;padding:12px;background:rgba(0,0,0,0.02);border-radius:4px;font-size:12px">';
+      html += '<div style="color:#888;font-size:11px;margin-bottom:8px">마지막 헬스체크</div>';
+      const quickLabel = health.quick.state === 'ready' ? '✓ 준비됨' :
+                         health.quick.state === 'degraded' ? '⚠ 성능 저하' :
+                         health.quick.state === 'running' ? '⟳ 실행 중' : '✗ 사용 불가';
+      const quickColor = health.quick.state === 'ready' ? '#2e7d32' :
+                         health.quick.state === 'degraded' ? '#f57c00' :
+                         health.quick.state === 'running' ? '#1976d2' : '#c00';
+      html += '<div style="margin-bottom:4px"><strong>Quick:</strong> <span style="color:' + quickColor + '">' + quickLabel + '</span>';
+      if (health.quick.failure) html += ' <span style="color:#888">(' + health.quick.failure + ')</span>';
+      if (health.quick.latency_ms) html += ' <span style="color:#888">(' + health.quick.latency_ms + 'ms)</span>';
+      html += '</div>';
+      const deepLabel = health.deep.state === 'ready' ? '✓ 준비됨' :
+                        health.deep.state === 'degraded' ? '⚠ 성능 저하' :
+                        health.deep.state === 'running' ? '⟳ 실행 중' : '✗ 사용 불가';
+      const deepColor = health.deep.state === 'ready' ? '#2e7d32' :
+                        health.deep.state === 'degraded' ? '#f57c00' :
+                        health.deep.state === 'running' ? '#1976d2' : '#c00';
+      html += '<div><strong>Deep:</strong> <span style="color:' + deepColor + '">' + deepLabel + '</span>';
+      if (health.deep.failure) html += ' <span style="color:#888">(' + health.deep.failure + ')</span>';
+      if (health.deep.latency_ms) html += ' <span style="color:#888">(' + health.deep.latency_ms + 'ms)</span>';
+      html += '</div>';
+      if (health.stale) {
+        html += '<div style="color:#f57c00;font-size:11px;margin-top:8px">⚠ 설정 변경으로 인해 헬스체크가 필요함</div>';
+      }
+      html += '</div>';
+    }
 
     // Runtime configuration table
     if (runtime) {
@@ -126,6 +161,8 @@ export async function loadStatus() {
       }
       html += '</table>';
     }
+    // Recent diagnostic events
+    html += '<div id="recent-diagnostics-section" style="margin-top:16px"></div>';
     // Diagnostics export button
     html += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid #eee">';
     html += '<button class="btn" id="export-diagnostics-btn" style="padding:8px 16px;font-size:12px">진단 정보 보기</button>';
@@ -168,6 +205,12 @@ function attachStatusHandlers() {
     import('./diagnostics.js').then(m => m.copyDiagnostics(this));
   });
 
+  const healthCheckBtn = document.getElementById('run-health-check-btn');
+  if (healthCheckBtn) healthCheckBtn.addEventListener('click', runHealthCheck);
+
+  // Load recent diagnostic events
+  loadRecentDiagnostics();
+
   // Pull command copy buttons
   import('./diagnostics.js').then(m => m.attachPullCommandHandlers());
 }
@@ -175,6 +218,120 @@ function attachStatusHandlers() {
 export async function refreshLocalAi() {
   await refreshLocalAiStatus();
   await loadStatus();
+}
+
+async function runHealthCheck() {
+  const resultEl = document.getElementById('health-check-result');
+  const btn = document.getElementById('run-health-check-btn');
+  if (!resultEl || !btn) return;
+
+  btn.disabled = true;
+  btn.textContent = '실행 중...';
+  resultEl.style.display = 'block';
+  resultEl.innerHTML = '<p style="color:#888;font-size:12px">헬스체크 실행 중...</p>';
+
+  try {
+    const result = await invoke('run_health_check');
+    const quickLabel = result.quick_state === 'ready' ? '✓ 준비됨' :
+                       result.quick_state === 'degraded' ? '⚠ 성능 저하' : '✗ 사용 불가';
+    const deepLabel = result.deep_state === 'ready' ? '✓ 준비됨' :
+                      result.deep_state === 'degraded' ? '⚠ 성능 저하' : '✗ 사용 불가';
+    const quickColor = result.quick_state === 'ready' ? '#2e7d32' :
+                       result.quick_state === 'degraded' ? '#f57c00' : '#c00';
+    const deepColor = result.deep_state === 'ready' ? '#2e7d32' :
+                      result.deep_state === 'degraded' ? '#f57c00' : '#c00';
+
+    let html = '<div style="font-size:12px;padding:12px;background:rgba(0,0,0,0.02);border-radius:4px">';
+    html += '<div style="margin-bottom:8px"><strong>Quick:</strong> <span style="color:' + quickColor + '">' + quickLabel + '</span>';
+    if (result.quick_failure) html += ' <span style="color:#888">(' + result.quick_failure + ')</span>';
+    html += '</div>';
+    html += '<div style="margin-bottom:8px"><strong>Deep:</strong> <span style="color:' + deepColor + '">' + deepLabel + '</span>';
+    if (result.deep_failure) html += ' <span style="color:#888">(' + result.deep_failure + ')</span>';
+    html += '</div>';
+    html += '<div style="color:#888;font-size:11px">소요 시간: ' + result.latency_ms + 'ms</div>';
+    html += '</div>';
+    resultEl.innerHTML = html;
+
+    // Refresh the status page to update the event ring display
+    await loadRecentDiagnostics();
+  } catch (e) {
+    resultEl.innerHTML = '<p style="color:#c00;font-size:12px">헬스체크 실패: ' + escapeHtml(String(e)) + '</p>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '헬스체크 실행';
+  }
+}
+
+async function loadRecentDiagnostics() {
+  const section = document.getElementById('recent-diagnostics-section');
+  if (!section) return;
+
+  try {
+    const events = await invoke('get_diagnostic_events');
+    if (!events || events.length === 0) {
+      section.innerHTML = '';
+      return;
+    }
+
+    const componentLabels = {
+      runtime: '런타임',
+      acquisition: '텍스트 수집',
+      quick: 'Quick',
+      deep: 'Deep',
+      ocr: 'OCR',
+      library: '라이브러리',
+      settings: '설정',
+      shortcut: '단축키',
+      health_check: '헬스체크'
+    };
+
+    const kindLabels = {
+      failure: '실패',
+      degraded: '성능 저하',
+      recovered: '복구',
+      health_check: '헬스체크'
+    };
+
+    const failureLabels = {
+      connection_failed: '연결 실패',
+      timeout: '시간 초과',
+      http_server: 'HTTP 서버 오류',
+      http_client: 'HTTP 클라이언트 오류',
+      model_missing: '모델 없음',
+      malformed: '응답 형식 오류',
+      inference_failed: '추론 실패',
+      settings_invalid: '설정 오류',
+      library_degraded: '라이브러리 성능 저하',
+      shortcut_unavailable: '단축키 사용 불가',
+      worker_stopped: '워커 중단'
+    };
+
+    let html = '<h2 style="font-size:14px;margin-bottom:8px">최근 진단 이벤트</h2>';
+    html += '<div style="font-size:11px;color:#888;margin-bottom:8px">세션 중 발생한 비정상 이벤트 (최대 128개)</div>';
+    html += '<table style="font-size:12px">';
+    // Show most recent first
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i];
+      const comp = componentLabels[e.component] || e.component;
+      const kind = kindLabels[e.kind] || e.kind;
+      const failure = e.failure_class ? (failureLabels[e.failure_class] || e.failure_class) : '';
+      const count = e.count > 1 ? ' (×' + e.count + ')' : '';
+      const color = e.kind === 'failure' ? '#c00' :
+                    e.kind === 'degraded' ? '#f57c00' :
+                    e.kind === 'recovered' ? '#2e7d32' : '#555';
+      html += '<tr>';
+      html += '<td style="color:' + color + ';padding:4px 8px 4px 0">' + kind + '</td>';
+      html += '<td style="padding:4px 8px 4px 0">' + comp + '</td>';
+      html += '<td style="padding:4px 8px 4px 0">' + failure + count + '</td>';
+      html += '<td style="color:#888;padding:4px 0">' + e.elapsed_ms + 'ms</td>';
+      html += '</tr>';
+    }
+    html += '</table>';
+    section.innerHTML = html;
+  } catch (e) {
+    console.error('loadRecentDiagnostics failed:', e);
+    section.innerHTML = '';
+  }
 }
 
 async function togglePause() {
