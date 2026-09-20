@@ -112,6 +112,11 @@ impl DiagnosticFailureClass {
             TranslateError::Timeout => Some(Self::Timeout),
             TranslateError::ModelMissing(_) => Some(Self::ModelMissing),
             TranslateError::Malformed => Some(Self::Malformed),
+            // HTTP-level failure: classify by the status code. 4xx is a client
+            // error (auth, bad request, not found); 5xx is a server error.
+            // This is the seam that gives HttpClient and HttpServer real
+            // producers rather than being decorative variants.
+            TranslateError::HttpFailed(status) => Self::from_http_status(*status),
             // Non-operational: product control flow, not provider failures.
             TranslateError::NotTranslated
             | TranslateError::AlreadyReadable
@@ -305,10 +310,64 @@ pub fn failure_class_from_translate_error(
         TranslateError::Timeout => DiagnosticFailureClass::Timeout,
         TranslateError::ModelMissing(_) => DiagnosticFailureClass::ModelMissing,
         TranslateError::Malformed => DiagnosticFailureClass::Malformed,
+        // HTTP status gives a typed class: 4xx is HttpClient, 5xx is HttpServer.
+        // Falls through to InferenceFailed only for unexpected status ranges.
+        TranslateError::HttpFailed(status) => DiagnosticFailureClass::from_http_status(*status)
+            .unwrap_or(DiagnosticFailureClass::InferenceFailed),
         TranslateError::NotTranslated => DiagnosticFailureClass::InferenceFailed,
         TranslateError::AlreadyReadable => DiagnosticFailureClass::InferenceFailed,
         TranslateError::Stale => DiagnosticFailureClass::InferenceFailed,
         TranslateError::NotWorthTranslating => DiagnosticFailureClass::InferenceFailed,
+    }
+}
+
+/// Tracks per-lane failure state for recovery event emission.
+///
+/// Privacy-safe: contains only a boolean flag. No source text, no translation,
+/// no app/process identity. Used to emit [`DiagnosticEventKind::Recovered`]
+/// events only when transitioning from failure to success.
+///
+/// # Behavior
+///
+/// - `on_failure()`: Marks the lane as failed. Caller should record a Failure event.
+/// - `on_success()`: If the lane was previously failed, returns true to indicate
+///   a Recovered event should be emitted. Clears the failed flag.
+/// - Success without prior failure returns false (no event needed).
+#[derive(Debug, Clone, Default)]
+pub struct DiagnosticLaneState {
+    failed: bool,
+}
+
+impl DiagnosticLaneState {
+    /// Create a new lane state tracker (initially not failed).
+    pub fn new() -> Self {
+        Self { failed: false }
+    }
+
+    /// Record a failure. Returns the failure class to record.
+    ///
+    /// The caller should record a Failure event with the returned class.
+    pub fn on_failure(&mut self, failure_class: DiagnosticFailureClass) -> DiagnosticFailureClass {
+        self.failed = true;
+        failure_class
+    }
+
+    /// Record a success. Returns true if a Recovered event should be emitted.
+    ///
+    /// - Returns true if the lane was previously failed (transition to recovered).
+    /// - Returns false if the lane was not failed (no event needed).
+    pub fn on_success(&mut self) -> bool {
+        if self.failed {
+            self.failed = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Whether the lane is currently in a failed state.
+    pub fn is_failed(&self) -> bool {
+        self.failed
     }
 }
 
@@ -679,6 +738,48 @@ mod tests {
     }
 
     #[test]
+    fn http_failed_classifies_via_status_code() {
+        use crate::translate::TranslateError;
+
+        // 4xx is HttpClient, 5xx is HttpServer.
+        assert_eq!(
+            DiagnosticFailureClass::from_translate_error(&TranslateError::HttpFailed(401)),
+            Some(DiagnosticFailureClass::HttpClient),
+            "401 is a client error"
+        );
+        assert_eq!(
+            DiagnosticFailureClass::from_translate_error(&TranslateError::HttpFailed(404)),
+            Some(DiagnosticFailureClass::HttpClient),
+            "404 is a client error"
+        );
+        assert_eq!(
+            DiagnosticFailureClass::from_translate_error(&TranslateError::HttpFailed(500)),
+            Some(DiagnosticFailureClass::HttpServer),
+            "500 is a server error"
+        );
+        assert_eq!(
+            DiagnosticFailureClass::from_translate_error(&TranslateError::HttpFailed(503)),
+            Some(DiagnosticFailureClass::HttpServer),
+            "503 is a server error"
+        );
+    }
+
+    #[test]
+    fn failure_class_from_translate_error_uses_http_status() {
+        use crate::translate::TranslateError;
+
+        // The non-optional path should use the status code too.
+        assert_eq!(
+            failure_class_from_translate_error(&TranslateError::HttpFailed(401)),
+            DiagnosticFailureClass::HttpClient
+        );
+        assert_eq!(
+            failure_class_from_translate_error(&TranslateError::HttpFailed(500)),
+            DiagnosticFailureClass::HttpServer
+        );
+    }
+
+    #[test]
     fn classify_http_status_maps_server_errors() {
         assert_eq!(
             DiagnosticFailureClass::from_http_status(500),
@@ -727,5 +828,65 @@ mod tests {
             None,
             "301 redirect is tolerated on loopback"
         );
+    }
+
+    #[test]
+    fn lane_state_starts_not_failed() {
+        let state = DiagnosticLaneState::new();
+        assert!(!state.is_failed());
+    }
+
+    #[test]
+    fn lane_state_failure_marks_failed() {
+        let mut state = DiagnosticLaneState::new();
+        state.on_failure(DiagnosticFailureClass::Timeout);
+        assert!(state.is_failed());
+    }
+
+    #[test]
+    fn lane_state_success_after_failure_returns_recovered() {
+        let mut state = DiagnosticLaneState::new();
+        state.on_failure(DiagnosticFailureClass::Timeout);
+        assert!(state.is_failed());
+
+        let should_emit_recovered = state.on_success();
+        assert!(
+            should_emit_recovered,
+            "success after failure should emit Recovered"
+        );
+        assert!(!state.is_failed(), "state should be cleared after recovery");
+    }
+
+    #[test]
+    fn lane_state_success_without_failure_returns_no_event() {
+        let mut state = DiagnosticLaneState::new();
+        assert!(!state.is_failed());
+
+        let should_emit_recovered = state.on_success();
+        assert!(
+            !should_emit_recovered,
+            "success without prior failure should not emit Recovered"
+        );
+        assert!(!state.is_failed());
+    }
+
+    #[test]
+    fn lane_state_multiple_failures_then_recovery() {
+        let mut state = DiagnosticLaneState::new();
+
+        // Multiple failures
+        state.on_failure(DiagnosticFailureClass::Timeout);
+        assert!(state.is_failed());
+        state.on_failure(DiagnosticFailureClass::ConnectionFailed);
+        assert!(state.is_failed());
+
+        // Recovery
+        let should_emit = state.on_success();
+        assert!(should_emit);
+        assert!(!state.is_failed());
+
+        // Next success should not emit
+        let should_emit = state.on_success();
+        assert!(!should_emit);
     }
 }
