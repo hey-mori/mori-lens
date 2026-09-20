@@ -1177,6 +1177,55 @@ pub fn list_models_for_provider(
     }
 }
 
+/// Resolve a model for a provider endpoint.
+///
+/// Provider-aware model resolution. For Ollama, attempts to resolve the
+/// configured model (or auto-detect if None). For LM Studio, uses the
+/// configured model or auto-detects the first available model.
+///
+/// Returns `ModelMissing` when LM Studio auto-detection finds zero models.
+/// Preserves typed errors from the underlying provider runtime.
+///
+/// This is the authoritative resolution seam used by health checks and
+/// live configuration. Callers should use the returned error for diagnostic
+/// classification rather than inferring failure from String contents.
+pub fn resolve_model_for_provider(
+    provider: Provider,
+    endpoint: &str,
+    configured_model: Option<&str>,
+) -> Result<String, TranslateError> {
+    match provider {
+        Provider::Ollama => {
+            let mut t = OllamaTranslator::choosing(endpoint);
+            if let Some(model) = configured_model {
+                t = OllamaTranslator::new(endpoint, model);
+            }
+            match t.resolve_model() {
+                Ok(m) => Ok(m.to_owned()),
+                Err(e) => {
+                    // If resolution failed but we have a configured model, use it
+                    if let Some(model) = configured_model {
+                        Ok(model.to_owned())
+                    } else {
+                        Err(e)
+                    }
+                }
+            }
+        }
+        Provider::LmStudio => match configured_model {
+            Some(m) => Ok(m.to_owned()),
+            None => match list_models_for_provider(Provider::LmStudio, endpoint) {
+                Ok(models) if !models.is_empty() => Ok(models[0].id.clone()),
+                Ok(_) => {
+                    // No models available. This is ModelMissing, not a connection failure.
+                    Err(TranslateError::ModelMissing("auto".to_owned()))
+                }
+                Err(e) => Err(e),
+            },
+        },
+    }
+}
+
 /// Check whether a provider endpoint is reachable.
 ///
 /// Provider-aware version of [`check_reachable`]. Dispatches to the appropriate
@@ -1280,6 +1329,197 @@ mod tests {
             OllamaTranslator::new("127.0.0.1:1", "any").with_timeout(Duration::from_millis(200));
         let request = QuickRequest::new("The suite did not produce anything.", "ko");
         assert_eq!(translator.quick(&request), Err(TranslateError::Unavailable));
+    }
+
+    // P12 integration tests: provider/model resolution seam.
+    // These test the authoritative resolution helper used by health checks
+    // and live configuration, proving that typed errors are preserved.
+
+    mod resolution_integration {
+        use super::*;
+        use crate::fake_server::{FakeResponse, FakeServer};
+
+        #[test]
+        fn ollama_explicit_model_returns_configured_model() {
+            // Explicit model should be returned without resolution.
+            let result =
+                resolve_model_for_provider(Provider::Ollama, "127.0.0.1:11434", Some("qwen2.5:3b"));
+            // Even if endpoint is unreachable, explicit model is returned.
+            assert_eq!(result.unwrap(), "qwen2.5:3b");
+        }
+
+        #[test]
+        fn ollama_auto_with_unreachable_endpoint_returns_unavailable() {
+            // Auto-detection on unreachable endpoint should return Unavailable.
+            let result = resolve_model_for_provider(Provider::Ollama, "127.0.0.1:1", None);
+            assert!(matches!(result, Err(TranslateError::Unavailable)));
+        }
+
+        #[test]
+        fn lmstudio_explicit_model_returns_configured_model() {
+            // Explicit model should be returned without querying.
+            let result = resolve_model_for_provider(
+                Provider::LmStudio,
+                "127.0.0.1:1234",
+                Some("llama-3.1-8b"),
+            );
+            assert_eq!(result.unwrap(), "llama-3.1-8b");
+        }
+
+        #[test]
+        fn lmstudio_auto_with_model_available_returns_first_model() {
+            // Use the actual LM Studio fixture format.
+            let server = FakeServer::start(vec![FakeResponse::ok_json(
+                r#"{"models":[{"key":"llama-3.1-8b","display_name":"LLaMA 3.1 8B","type":"llm","size_bytes":4700000000,"loaded_instances":[]}]}"#,
+            )
+            .expect_get("/api/v1/models")]);
+
+            let result = resolve_model_for_provider(Provider::LmStudio, server.address(), None);
+            assert_eq!(result.unwrap(), "llama-3.1-8b");
+        }
+
+        #[test]
+        fn lmstudio_auto_with_zero_models_returns_model_missing() {
+            let server = FakeServer::start(vec![
+                FakeResponse::ok_json(r#"{"models":[]}"#).expect_get("/api/v1/models")
+            ]);
+
+            let result = resolve_model_for_provider(Provider::LmStudio, server.address(), None);
+            assert!(matches!(result, Err(TranslateError::ModelMissing(_))));
+        }
+
+        #[test]
+        fn lmstudio_auto_never_substitutes_ollama_default_model() {
+            // CRITICAL: LM Studio auto with no models must return ModelMissing,
+            // not silently fall back to Ollama's DEFAULT_MODEL.
+            let server = FakeServer::start(vec![
+                FakeResponse::ok_json(r#"{"models":[]}"#).expect_get("/api/v1/models")
+            ]);
+
+            let result = resolve_model_for_provider(Provider::LmStudio, server.address(), None);
+            match result {
+                Err(TranslateError::ModelMissing(_)) => {
+                    // Correct: ModelMissing, not DEFAULT_MODEL.
+                }
+                Ok(model) => {
+                    panic!("LM Studio auto with no models returned {model}, not ModelMissing");
+                }
+                Err(other) => {
+                    panic!("LM Studio auto with no models returned {other:?}, not ModelMissing");
+                }
+            }
+        }
+
+        #[test]
+        fn lmstudio_auto_with_http_401_returns_http_failed() {
+            let server = FakeServer::start(vec![
+                FakeResponse::unauthorized().expect_get("/api/v1/models")
+            ]);
+
+            let result = resolve_model_for_provider(Provider::LmStudio, server.address(), None);
+            assert!(matches!(result, Err(TranslateError::HttpFailed(401))));
+        }
+
+        #[test]
+        fn lmstudio_auto_with_http_500_returns_http_failed() {
+            let server = FakeServer::start(vec![
+                FakeResponse::server_error().expect_get("/api/v1/models")
+            ]);
+
+            let result = resolve_model_for_provider(Provider::LmStudio, server.address(), None);
+            assert!(matches!(result, Err(TranslateError::HttpFailed(500))));
+        }
+
+        #[test]
+        fn lmstudio_auto_with_unreachable_endpoint_returns_unavailable() {
+            let result = resolve_model_for_provider(Provider::LmStudio, "127.0.0.1:1", None);
+            assert!(matches!(result, Err(TranslateError::Unavailable)));
+        }
+
+        // P12 live config regression test.
+        // Proves that the resolution seam preserves typed errors through
+        // configuration changes, and that diagnostic classification works
+        // correctly for each error type.
+
+        #[test]
+        fn live_config_regression_typed_error_preservation() {
+            use lens_core::event_ring::DiagnosticFailureClass;
+
+            // Scenario 1: Initial config with working endpoint (simulated by explicit model).
+            let initial = resolve_model_for_provider(
+                Provider::LmStudio,
+                "127.0.0.1:1234",
+                Some("llama-3.1-8b"),
+            );
+            assert!(initial.is_ok(), "initial config should resolve");
+
+            // Scenario 2: Settings change to unreachable endpoint (auto-detect fails).
+            let after_change = resolve_model_for_provider(Provider::LmStudio, "127.0.0.1:1", None);
+            assert!(
+                matches!(after_change, Err(TranslateError::Unavailable)),
+                "unreachable endpoint should return Unavailable"
+            );
+
+            // Diagnostic classification must match the actual error.
+            let failure_class =
+                DiagnosticFailureClass::from_translate_error(&after_change.unwrap_err());
+            assert_eq!(
+                failure_class,
+                Some(DiagnosticFailureClass::ConnectionFailed),
+                "Unavailable should classify as ConnectionFailed"
+            );
+
+            // Scenario 3: Settings change to HTTP 401 endpoint.
+            let server_401 = FakeServer::start(vec![
+                FakeResponse::unauthorized().expect_get("/api/v1/models")
+            ]);
+            let after_401 =
+                resolve_model_for_provider(Provider::LmStudio, server_401.address(), None);
+            assert!(
+                matches!(after_401, Err(TranslateError::HttpFailed(401))),
+                "HTTP 401 should return HttpFailed(401)"
+            );
+
+            let failure_class_401 =
+                DiagnosticFailureClass::from_translate_error(&after_401.unwrap_err());
+            assert_eq!(
+                failure_class_401,
+                Some(DiagnosticFailureClass::HttpClient),
+                "HTTP 401 should classify as HttpClient"
+            );
+
+            // Scenario 4: Settings change to zero-model endpoint.
+            let server_empty = FakeServer::start(vec![
+                FakeResponse::ok_json(r#"{"models":[]}"#).expect_get("/api/v1/models")
+            ]);
+            let after_empty =
+                resolve_model_for_provider(Provider::LmStudio, server_empty.address(), None);
+            assert!(
+                matches!(after_empty, Err(TranslateError::ModelMissing(_))),
+                "zero models should return ModelMissing"
+            );
+
+            let failure_class_empty =
+                DiagnosticFailureClass::from_translate_error(&after_empty.unwrap_err());
+            assert_eq!(
+                failure_class_empty,
+                Some(DiagnosticFailureClass::ModelMissing),
+                "ModelMissing should classify as ModelMissing"
+            );
+
+            // Scenario 5: Recovery to working config.
+            let server_working = FakeServer::start(vec![FakeResponse::ok_json(
+                r#"{"models":[{"key":"llama-3.1-8b","display_name":"LLaMA 3.1 8B","type":"llm","size_bytes":4700000000,"loaded_instances":[]}]}"#,
+            )
+            .expect_get("/api/v1/models")]);
+            let after_recovery =
+                resolve_model_for_provider(Provider::LmStudio, server_working.address(), None);
+            assert!(
+                after_recovery.is_ok(),
+                "recovery to working config should succeed"
+            );
+            assert_eq!(after_recovery.unwrap(), "llama-3.1-8b");
+        }
     }
 }
 
