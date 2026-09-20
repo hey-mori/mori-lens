@@ -15,7 +15,10 @@ use tauri::{Emitter, Manager};
 /// give the time since the health-check call, not since the process began;
 /// a check triggered thirty minutes after launch must report ~1_800_000ms,
 /// not 0.
-fn process_start() -> std::time::Instant {
+///
+/// Call early during app startup (in `build()` or `main()`) to ensure the
+/// timestamp origin predates any health check invocation.
+pub fn process_start() -> std::time::Instant {
     use std::sync::OnceLock;
     static PROCESS_START: OnceLock<std::time::Instant> = OnceLock::new();
     *PROCESS_START.get_or_init(std::time::Instant::now)
@@ -937,10 +940,13 @@ fn check_quick_engine_health(
     // configured model or the first listed, since it has no Ollama-style
     // defaulting.
     let model_name = match resolve_model_for_provider(provider, endpoint, configured_model) {
-        Some(m) => m,
-        None => configured_model
-            .unwrap_or(lens_translate::DEFAULT_MODEL)
-            .to_owned(),
+        Ok(m) => m,
+        Err(e) => {
+            // Model resolution failed. Map to appropriate failure class.
+            let failure_class = DiagnosticFailureClass::from_translate_error(&e)
+                .unwrap_or(DiagnosticFailureClass::ModelMissing);
+            return (HealthState::Unavailable, Some(failure_class));
+        }
     };
 
     // Step 3: Build translator with resolved model and test inference.
@@ -977,13 +983,15 @@ fn check_quick_engine_health(
 /// `resolve_model()`; LM Studio uses the configured model or picks the first
 /// listed model, since it has no Ollama-style defaulting.
 ///
-/// Returns the resolved model name, or `None` if no model could be found.
+/// Returns the resolved model name, or a typed error explaining why resolution
+/// failed. LM Studio auto with no available models returns `ModelMissing`, not
+/// a fallback to `DEFAULT_MODEL`.
 fn resolve_model_for_provider(
     provider: lens_core::translate::Provider,
     endpoint: &str,
     configured_model: Option<&str>,
-) -> Option<String> {
-    use lens_core::translate::Provider;
+) -> Result<String, lens_core::translate::TranslateError> {
+    use lens_core::translate::{Provider, TranslateError};
     match provider {
         Provider::Ollama => {
             let mut t = lens_translate::OllamaTranslator::choosing(endpoint);
@@ -991,15 +999,26 @@ fn resolve_model_for_provider(
                 t = lens_translate::OllamaTranslator::new(endpoint, model);
             }
             match t.resolve_model() {
-                Ok(m) => Some(m.to_owned()),
-                Err(_) => configured_model.map(|s| s.to_owned()),
+                Ok(m) => Ok(m.to_owned()),
+                Err(e) => {
+                    // If resolution failed but we have a configured model, use it
+                    if let Some(model) = configured_model {
+                        Ok(model.to_owned())
+                    } else {
+                        Err(e)
+                    }
+                }
             }
         }
         Provider::LmStudio => match configured_model {
-            Some(m) => Some(m.to_owned()),
+            Some(m) => Ok(m.to_owned()),
             None => match lens_translate::list_models_for_provider(Provider::LmStudio, endpoint) {
-                Ok(models) if !models.is_empty() => Some(models[0].id.clone()),
-                _ => None,
+                Ok(models) if !models.is_empty() => Ok(models[0].id.clone()),
+                Ok(_) => {
+                    // No models available. This is ModelMissing, not a connection failure.
+                    Err(TranslateError::ModelMissing("auto".to_owned()))
+                }
+                Err(e) => Err(e),
             },
         },
     }
@@ -1039,10 +1058,13 @@ fn check_deep_engine_health(
         endpoint,
         configured_model,
     ) {
-        Some(m) => m,
-        None => configured_model
-            .unwrap_or(lens_translate::DEFAULT_MODEL)
-            .to_owned(),
+        Ok(m) => m,
+        Err(e) => {
+            // Model resolution failed. Map to appropriate failure class.
+            let failure_class = DiagnosticFailureClass::from_translate_error(&e)
+                .unwrap_or(DiagnosticFailureClass::ModelMissing);
+            return (HealthState::Unavailable, Some(failure_class));
+        }
     };
 
     // Step 3: Build analyser with resolved model and test Deep inference.
@@ -1543,6 +1565,11 @@ pub fn build(
     ),
     tauri::Error,
 > {
+    // Initialize process-start timestamp anchor early, during app startup.
+    // This ensures health check timestamps are truly process-relative, not
+    // relative to first health check invocation.
+    let _ = process_start();
+
     let diagnostics: SharedDiagnostics = Arc::new(Mutex::new(DiagnosticsSnapshot {
         version: env!("CARGO_PKG_VERSION").to_owned(),
         ..Default::default()
