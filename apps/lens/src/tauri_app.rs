@@ -760,33 +760,18 @@ async fn run_health_check(
     }
 
     // Read settings once.
-    let (quick_provider, quick_endpoint, quick_model, deep_provider, deep_endpoint, deep_model) = {
+    let (quick_provider, quick_endpoint, quick_model, _deep_provider, deep_endpoint, deep_model) = {
         let s = settings.lock().unwrap();
         let view = s.view();
         let qp = Provider::from_token(&view.quick_engine).unwrap_or(Provider::Ollama);
         let dp_raw = Provider::from_token(&view.deep_engine).unwrap_or(Provider::Ollama);
         // Deep is Ollama-only.
         let (dp, deep_ep, deep_m) = if dp_raw == Provider::Ollama {
-            (
-                Provider::Ollama,
-                view.deep_endpoint.clone(),
-                view.deep_model.clone(),
-            )
+            (Provider::Ollama, view.deep_endpoint.clone(), view.deep_model.clone())
         } else {
-            (
-                Provider::Ollama,
-                Provider::Ollama.default_endpoint().to_owned(),
-                None,
-            )
+            (Provider::Ollama, Provider::Ollama.default_endpoint().to_owned(), None)
         };
-        (
-            qp,
-            view.quick_endpoint.clone(),
-            view.quick_model.clone(),
-            dp,
-            deep_ep,
-            deep_m,
-        )
+        (qp, view.quick_endpoint.clone(), view.quick_model.clone(), dp, deep_ep, deep_m)
     };
 
     // Run health check in a background thread to avoid blocking the Tauri command.
