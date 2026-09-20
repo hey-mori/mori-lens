@@ -683,7 +683,8 @@ pub fn main() -> std::process::ExitCode {
     // Lifecycle operations (prewarm, release, is_resident) remain Ollama-specific.
 
     // Resolve models provider-specifically before construction
-    let (quick_model, quick_ollama) = match options.ai_config.quick.provider {
+    // Preserve typed errors for startup diagnostics
+    let (quick_model_result, quick_ollama) = match options.ai_config.quick.provider {
         lens_core::translate::Provider::Ollama => {
             let mut t =
                 lens_translate::OllamaTranslator::choosing(&options.ai_config.quick.endpoint);
@@ -691,30 +692,40 @@ pub fn main() -> std::process::ExitCode {
                 t = lens_translate::OllamaTranslator::new(&options.ai_config.quick.endpoint, model);
             }
             let resolved = match t.resolve_model() {
-                Ok(m) => Some(m.to_owned()),
-                Err(_) => options.ai_config.quick.model.clone(),
+                Ok(m) => Ok(Some(m.to_owned())),
+                Err(e) => {
+                    // If resolution failed but we have a configured model, use it
+                    if let Some(model) = &options.ai_config.quick.model {
+                        Ok(Some(model.clone()))
+                    } else {
+                        Err(e)
+                    }
+                }
             };
             (resolved, Some(t))
         }
         lens_core::translate::Provider::LmStudio => {
             // LM Studio: use configured model or first available
-            let model = match &options.ai_config.quick.model {
-                Some(m) => Some(m.clone()),
+            let model_result = match &options.ai_config.quick.model {
+                Some(m) => Ok(Some(m.clone())),
                 None => {
                     match lens_translate::list_models_for_provider(
                         lens_core::translate::Provider::LmStudio,
                         &options.ai_config.quick.endpoint,
                     ) {
-                        Ok(models) if !models.is_empty() => Some(models[0].id.clone()),
-                        _ => None,
+                        Ok(models) if !models.is_empty() => Ok(Some(models[0].id.clone())),
+                        Ok(_) => Err(lens_core::translate::TranslateError::ModelMissing("auto".to_owned())),
+                        Err(e) => Err(e),
                     }
                 }
             };
-            (model, None)
+            (model_result, None)
         }
     };
+    let quick_model = quick_model_result.clone().unwrap_or(None);
+    let quick_model_error = quick_model_result.err();
 
-    let (deep_model, deep_ollama) = match options.ai_config.deep.provider {
+    let (deep_model_result, deep_ollama) = match options.ai_config.deep.provider {
         lens_core::translate::Provider::Ollama => {
             let mut t =
                 lens_translate::OllamaTranslator::choosing(&options.ai_config.deep.endpoint);
@@ -722,27 +733,38 @@ pub fn main() -> std::process::ExitCode {
                 t = lens_translate::OllamaTranslator::new(&options.ai_config.deep.endpoint, model);
             }
             let resolved = match t.resolve_model() {
-                Ok(m) => Some(m.to_owned()),
-                Err(_) => options.ai_config.deep.model.clone(),
+                Ok(m) => Ok(Some(m.to_owned())),
+                Err(e) => {
+                    // If resolution failed but we have a configured model, use it
+                    if let Some(model) = &options.ai_config.deep.model {
+                        Ok(Some(model.clone()))
+                    } else {
+                        Err(e)
+                    }
+                }
             };
             (resolved, Some(t))
         }
         lens_core::translate::Provider::LmStudio => {
-            let model = match &options.ai_config.deep.model {
-                Some(m) => Some(m.clone()),
+            // Deep is Ollama-only, but preserve typed errors for consistency
+            let model_result = match &options.ai_config.deep.model {
+                Some(m) => Ok(Some(m.clone())),
                 None => {
                     match lens_translate::list_models_for_provider(
                         lens_core::translate::Provider::LmStudio,
                         &options.ai_config.deep.endpoint,
                     ) {
-                        Ok(models) if !models.is_empty() => Some(models[0].id.clone()),
-                        _ => None,
+                        Ok(models) if !models.is_empty() => Ok(Some(models[0].id.clone())),
+                        Ok(_) => Err(lens_core::translate::TranslateError::ModelMissing("auto".to_owned())),
+                        Err(e) => Err(e),
                     }
                 }
             };
-            (model, None)
+            (model_result, None)
         }
     };
+    let deep_model = deep_model_result.clone().unwrap_or(None);
+    let deep_model_error = deep_model_result.err();
 
     // Construct the Quick translator using the provider factory.
     // Deep path uses Analyser through deep_ollama directly (Ollama-only in Phase 3).
@@ -1169,6 +1191,8 @@ pub fn main() -> std::process::ExitCode {
     let worker_quick_model = quick_model.clone();
     let worker_quick_provider = options.ai_config.quick.provider;
     let worker_deep_provider = options.ai_config.deep.provider;
+    let worker_quick_model_error = quick_model_error.clone();
+    let worker_deep_model_error = deep_model_error.clone();
     std::thread::spawn(move || {
         // ADR-0005: Two translators, one for each path. Quick and Deep are
         // separate engines with separate models and endpoints.
@@ -1200,15 +1224,19 @@ pub fn main() -> std::process::ExitCode {
         // so the ring reflects the fact rather than leaving Quick in a
         // silently-broken state.
         if worker_quick_model.is_none() || quick_translator.is_none() {
-            quick_lane_state
-                .on_failure(lens_core::event_ring::DiagnosticFailureClass::ConnectionFailed);
+            // Use the preserved model resolution error if available, otherwise default to ConnectionFailed
+            let failure_class = worker_quick_model_error
+                .as_ref()
+                .and_then(|e| lens_core::event_ring::DiagnosticFailureClass::from_translate_error(e))
+                .unwrap_or(lens_core::event_ring::DiagnosticFailureClass::ConnectionFailed);
+            quick_lane_state.on_failure(failure_class);
             crate::tauri_app::global_diagnostic_events()
                 .lock()
                 .unwrap()
                 .record(
                     lens_core::event_ring::DiagnosticComponent::Quick,
                     lens_core::event_ring::DiagnosticEventKind::Failure,
-                    Some(lens_core::event_ring::DiagnosticFailureClass::ConnectionFailed),
+                    Some(failure_class),
                 );
         }
 
