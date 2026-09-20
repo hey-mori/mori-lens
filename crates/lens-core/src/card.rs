@@ -1647,6 +1647,7 @@ mod copy_tests {
             TranslateError::AlreadyReadable,
             TranslateError::Stale,
             TranslateError::NotWorthTranslating,
+            TranslateError::HttpFailed(500),
         ] {
             copy.push(("user_message", error.user_message()));
             if let Some(remedy) = error.remedy() {
