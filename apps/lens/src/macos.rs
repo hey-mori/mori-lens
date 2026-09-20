@@ -558,7 +558,9 @@ fn product_loop(
                     &ai_config.quick.endpoint,
                 ) {
                     Ok(models) if !models.is_empty() => Ok(Some(models[0].id.clone())),
-                    Ok(_) => Err(lens_core::translate::TranslateError::ModelMissing("auto".to_owned())),
+                    Ok(_) => Err(lens_core::translate::TranslateError::ModelMissing(
+                        "auto".to_owned(),
+                    )),
                     Err(e) => Err(e),
                 }
             }
@@ -705,8 +707,11 @@ fn product_loop(
                     let err = quick_model_error
                         .clone()
                         .unwrap_or(lens_core::translate::TranslateError::Unavailable);
-                    let failure_class = lens_core::event_ring::DiagnosticFailureClass::from_translate_error(&err)
-                        .unwrap_or(lens_core::event_ring::DiagnosticFailureClass::ConnectionFailed);
+                    let failure_class =
+                        lens_core::event_ring::DiagnosticFailureClass::from_translate_error(&err)
+                            .unwrap_or(
+                                lens_core::event_ring::DiagnosticFailureClass::ConnectionFailed,
+                            );
                     quick_lane_state.on_failure(failure_class);
                     crate::tauri_app::global_diagnostic_events()
                         .lock()
