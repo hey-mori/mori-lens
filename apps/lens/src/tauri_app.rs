@@ -812,21 +812,21 @@ async fn run_health_check(
     let latency_ms = start.elapsed().as_millis() as u64;
 
     // Map failure strings to DiagnosticFailureClass (needed for both snapshot and events).
-    let quick_failure_class = quick_failure.as_deref().and_then(|f| match f {
-        "provider_unreachable" => Some(DiagnosticFailureClass::ConnectionFailed),
-        "timeout" => Some(DiagnosticFailureClass::Timeout),
-        "model_missing" => Some(DiagnosticFailureClass::ModelMissing),
-        "malformed" => Some(DiagnosticFailureClass::Malformed),
-        _ => Some(DiagnosticFailureClass::InferenceFailed),
+    let quick_failure_class = quick_failure.as_deref().map(|f| match f {
+        "provider_unreachable" => DiagnosticFailureClass::ConnectionFailed,
+        "timeout" => DiagnosticFailureClass::Timeout,
+        "model_missing" => DiagnosticFailureClass::ModelMissing,
+        "malformed" => DiagnosticFailureClass::Malformed,
+        _ => DiagnosticFailureClass::InferenceFailed,
     });
 
-    let deep_failure_class = deep_failure.as_deref().and_then(|f| match f {
-        "provider_unreachable" => Some(DiagnosticFailureClass::ConnectionFailed),
-        "timeout" => Some(DiagnosticFailureClass::Timeout),
-        "model_missing" => Some(DiagnosticFailureClass::ModelMissing),
-        "malformed" => Some(DiagnosticFailureClass::Malformed),
-        "empty_analysis" => Some(DiagnosticFailureClass::InferenceFailed),
-        _ => Some(DiagnosticFailureClass::InferenceFailed),
+    let deep_failure_class = deep_failure.as_deref().map(|f| match f {
+        "provider_unreachable" => DiagnosticFailureClass::ConnectionFailed,
+        "timeout" => DiagnosticFailureClass::Timeout,
+        "model_missing" => DiagnosticFailureClass::ModelMissing,
+        "malformed" => DiagnosticFailureClass::Malformed,
+        "empty_analysis" => DiagnosticFailureClass::InferenceFailed,
+        _ => DiagnosticFailureClass::InferenceFailed,
     });
 
     // Update health snapshot and record event in the ring.
@@ -1453,7 +1453,7 @@ fn export_diagnostics(
         &diag.ocr_mode,
         &conf.current().language,
         &recent_events,
-        &*health_snap,
+        &health_snap,
     )
 }
 
