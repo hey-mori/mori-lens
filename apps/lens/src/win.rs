@@ -768,7 +768,6 @@ pub fn main() -> std::process::ExitCode {
         }
     };
     let deep_model = deep_model_result.clone().unwrap_or(None);
-    let deep_model_error = deep_model_result.err();
 
     // Construct the Quick translator using the provider factory.
     // Deep path uses Analyser through deep_ollama directly (Ollama-only in Phase 3).
