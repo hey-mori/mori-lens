@@ -185,13 +185,13 @@ fn list_models_with_loaded(
 
     // Check for authentication errors using HTTP status code
     if status == 401 || status == 403 {
-        return Err(TranslateError::Unavailable);
+        return Err(TranslateError::HttpFailed(status));
     }
 
     // Any non-2xx status is an error, not a successful empty list.
     // This prevents 400, 404, 500, etc. from being treated as "no models".
     if !(200..300).contains(&status) {
-        return Err(TranslateError::Unavailable);
+        return Err(TranslateError::HttpFailed(status));
     }
 
     // Also check for authentication errors in the response body
@@ -514,7 +514,7 @@ mod tests {
     }
 
     #[test]
-    fn list_models_returns_unavailable_on_401_unauthorized() {
+    fn list_models_returns_http_failed_on_401_unauthorized() {
         let server = FakeServer::start(vec![FakeResponse::unauthorized()
             .expect_get("/api/v1/models")
             .expect_header("Authorization", "Bearer invalid-token")]);
@@ -522,12 +522,12 @@ mod tests {
         let runtime = LmStudioRuntime::with_token(server.address(), "invalid-token");
         let result = runtime.list_models();
 
-        // 401 should be treated as Unreachable (authentication failure)
-        assert!(matches!(result, Err(TranslateError::Unavailable)));
+        // 401 should be preserved as HttpFailed for diagnostic classification
+        assert!(matches!(result, Err(TranslateError::HttpFailed(401))));
     }
 
     #[test]
-    fn list_models_returns_unavailable_on_403_forbidden() {
+    fn list_models_returns_http_failed_on_403_forbidden() {
         let server = FakeServer::start(vec![FakeResponse::forbidden()
             .expect_get("/api/v1/models")
             .expect_header("Authorization", "Bearer forbidden-token")]);
@@ -535,8 +535,8 @@ mod tests {
         let runtime = LmStudioRuntime::with_token(server.address(), "forbidden-token");
         let result = runtime.list_models();
 
-        // 403 should be treated as Unreachable (permission failure)
-        assert!(matches!(result, Err(TranslateError::Unavailable)));
+        // 403 should be preserved as HttpFailed for diagnostic classification
+        assert!(matches!(result, Err(TranslateError::HttpFailed(403))));
     }
 
     #[test]
@@ -620,7 +620,7 @@ mod tests {
 
     // HTTP 500 must not become a successful empty list.
     #[test]
-    fn list_models_returns_unavailable_on_500() {
+    fn list_models_returns_http_failed_on_500() {
         let server = FakeServer::start(vec![
             FakeResponse::server_error().expect_get("/api/v1/models")
         ]);
@@ -628,12 +628,13 @@ mod tests {
         let runtime = LmStudioRuntime::new(server.address());
         let result = runtime.list_models();
 
-        assert!(matches!(result, Err(TranslateError::Unavailable)));
+        // 500 should be preserved as HttpFailed for diagnostic classification
+        assert!(matches!(result, Err(TranslateError::HttpFailed(500))));
     }
 
     // HTTP 400 must not become a successful empty list.
     #[test]
-    fn list_models_returns_unavailable_on_400() {
+    fn list_models_returns_http_failed_on_400() {
         let server = FakeServer::start(vec![
             FakeResponse::bad_request().expect_get("/api/v1/models")
         ]);
@@ -641,19 +642,21 @@ mod tests {
         let runtime = LmStudioRuntime::new(server.address());
         let result = runtime.list_models();
 
-        assert!(matches!(result, Err(TranslateError::Unavailable)));
+        // 400 should be preserved as HttpFailed for diagnostic classification
+        assert!(matches!(result, Err(TranslateError::HttpFailed(400))));
     }
 
     // HTTP 404 must not become a successful empty list.
     #[test]
-    fn list_models_returns_unavailable_on_404() {
+    fn list_models_returns_http_failed_on_404() {
         let server =
             FakeServer::start(vec![FakeResponse::not_found().expect_get("/api/v1/models")]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let result = runtime.list_models();
 
-        assert!(matches!(result, Err(TranslateError::Unavailable)));
+        // 404 should be preserved as HttpFailed for diagnostic classification
+        assert!(matches!(result, Err(TranslateError::HttpFailed(404))));
     }
 
     // Reachability: 500 must NOT become Reachable.

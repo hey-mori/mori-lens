@@ -607,6 +607,11 @@ pub fn main() -> std::process::ExitCode {
     // Before the first `println!`, or the banner goes nowhere.
     console::attach_to_launcher();
 
+    // Initialize process-start timestamp anchor early, during app startup.
+    // This ensures health check timestamps are truly process-relative, not
+    // relative to first health check invocation.
+    let _ = crate::tauri_app::process_start();
+
     let options = match parse() {
         Ok(options) => options,
         Err(message) => {
