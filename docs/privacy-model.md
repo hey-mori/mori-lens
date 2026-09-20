@@ -558,7 +558,9 @@ Control Center Status page, not a periodic poll.
 - Send fixed, repository-owned test inputs to the configured endpoints
   ("The output files came back empty." for Quick, a multi-word sentence
   for Deep)
-- Use the same model resolution as production (`resolve_model()`)
+- Use the same model resolution as production (provider-aware:
+  `resolve_model()` for Ollama, first-listed or configured model for
+  LM Studio)
 - Exercise the same code paths as production (`Translator::quick` for
   Quick, `Analyser::deep` for Deep)
 - Discard the probe output after verifying the engine responded
@@ -573,9 +575,10 @@ Control Center Status page, not a periodic poll.
 - Auto-remediate (pull models, switch providers, rewrite settings)
 
 **Loopback HTTP only.** Health probes use HTTP to `127.0.0.1` or `::1`
-(the configured Ollama/LM Studio endpoint). They do not send data over
-the network. The product promise "nothing leaves the machine" applies to
-health checks the same way it applies to translation.
+(the configured Ollama/LM Studio endpoint). The traffic stays on the
+loopback interface and does not leave the machine. The product promise
+"nothing leaves the machine" applies to health checks the same way it
+applies to translation.
 
 **Cached health state.** The result of the last health check is cached
 in a `HealthSnapshot` containing typed state (Unknown, Running, Ready,
@@ -598,6 +601,7 @@ numbers, booleans, and relative timestamps. No captured text, model
 output, raw errors, URLs, or paths are included.
 
 The export is an explicit user action (Control Center → Export
-Diagnostics). It writes a JSON file to a user-chosen location. The
+Diagnostics). The frontend displays the JSON in a textarea and offers a
+copy action; nothing is written to disk by the export itself. The
 content is privacy-safe by construction: the type system prevents
 free-form strings from entering the event or health snapshot structures.
