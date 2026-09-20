@@ -236,6 +236,15 @@ pub fn main() -> std::process::ExitCode {
             }
             library_service::LibraryBacking::InMemoryFallback { reason, .. } => {
                 println!("  library   in-memory fallback: {reason}");
+                // Record library degradation event for diagnostics.
+                crate::tauri_app::global_diagnostic_events()
+                    .lock()
+                    .unwrap()
+                    .record(
+                        lens_core::event_ring::DiagnosticComponent::Library,
+                        lens_core::event_ring::DiagnosticEventKind::Degraded,
+                        Some(lens_core::event_ring::DiagnosticFailureClass::LibraryDegraded),
+                    );
             }
         }
     }
@@ -823,6 +832,30 @@ fn product_loop(
                             tally.card();
                         }
                         Err(msg) => {
+                            // Record Quick operational failure for diagnostics.
+                            // Map error message to failure class for event ring.
+                            let failure_class = if msg.contains("unreachable")
+                                || msg.contains("connection")
+                            {
+                                Some(
+                                    lens_core::event_ring::DiagnosticFailureClass::ConnectionFailed,
+                                )
+                            } else if msg.contains("timeout") || msg.contains("timed out") {
+                                Some(lens_core::event_ring::DiagnosticFailureClass::Timeout)
+                            } else if msg.contains("model") {
+                                Some(lens_core::event_ring::DiagnosticFailureClass::ModelMissing)
+                            } else {
+                                Some(lens_core::event_ring::DiagnosticFailureClass::InferenceFailed)
+                            };
+                            crate::tauri_app::global_diagnostic_events()
+                                .lock()
+                                .unwrap()
+                                .record(
+                                    lens_core::event_ring::DiagnosticComponent::Quick,
+                                    lens_core::event_ring::DiagnosticEventKind::Failure,
+                                    failure_class,
+                                );
+
                             let card = Card {
                                 original: display_text.clone(),
                                 body: CardBody::Problem(msg),
@@ -878,6 +911,30 @@ fn product_loop(
                             tally.card();
                         }
                         Err(msg) => {
+                            // Record Deep operational failure for diagnostics.
+                            // Map error message to failure class for event ring.
+                            let failure_class = if msg.contains("unreachable")
+                                || msg.contains("connection")
+                            {
+                                Some(
+                                    lens_core::event_ring::DiagnosticFailureClass::ConnectionFailed,
+                                )
+                            } else if msg.contains("timeout") || msg.contains("timed out") {
+                                Some(lens_core::event_ring::DiagnosticFailureClass::Timeout)
+                            } else if msg.contains("model") {
+                                Some(lens_core::event_ring::DiagnosticFailureClass::ModelMissing)
+                            } else {
+                                Some(lens_core::event_ring::DiagnosticFailureClass::InferenceFailed)
+                            };
+                            crate::tauri_app::global_diagnostic_events()
+                                .lock()
+                                .unwrap()
+                                .record(
+                                    lens_core::event_ring::DiagnosticComponent::Deep,
+                                    lens_core::event_ring::DiagnosticEventKind::Failure,
+                                    failure_class,
+                                );
+
                             let card = Card {
                                 original: sentence.clone(),
                                 body: CardBody::Problem(format!("analysis failed: {}", msg)),
