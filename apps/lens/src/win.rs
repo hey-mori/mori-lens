@@ -1184,6 +1184,10 @@ pub fn main() -> std::process::ExitCode {
         let mut explanations = AnalysisCache::new(ANALYSIS_ENTRIES);
         const LEASE_IS_SAFE_FOR: Duration = Duration::from_secs(20 * 60);
 
+        // P12: Per-lane failure state trackers for recovery event emission.
+        let mut quick_lane_state = lens_core::event_ring::DiagnosticLaneState::new();
+        let mut deep_lane_state = lens_core::event_ring::DiagnosticLaneState::new();
+
         while let Ok(job) = jobs_rx.recv() {
             // Take only the newest queued job. A pointer crossing three
             // sentences queues three translations, and finishing them all
@@ -1248,6 +1252,17 @@ pub fn main() -> std::process::ExitCode {
                                         analysis.latency_ms,
                                     );
                                     explanations.insert(key, analysis.clone());
+                                    // P12: Track recovery after failure.
+                                    if deep_lane_state.on_success() {
+                                        crate::tauri_app::global_diagnostic_events()
+                                            .lock()
+                                            .unwrap()
+                                            .record(
+                                                lens_core::event_ring::DiagnosticComponent::Deep,
+                                                lens_core::event_ring::DiagnosticEventKind::Recovered,
+                                                None,
+                                            );
+                                    }
                                     Card::analysed(&job.original, &analysis)
                                 }
                                 Err(error) => {
@@ -1256,11 +1271,16 @@ pub fn main() -> std::process::ExitCode {
                                     if let Some(failure_class) =
                                         lens_core::event_ring::DiagnosticFailureClass::from_translate_error(&error)
                                     {
-                                        crate::tauri_app::global_diagnostic_events().lock().unwrap().record(
-                                            lens_core::event_ring::DiagnosticComponent::Deep,
-                                            lens_core::event_ring::DiagnosticEventKind::Failure,
-                                            Some(failure_class),
-                                        );
+                                        // P12: Mark lane as failed.
+                                        deep_lane_state.on_failure(failure_class);
+                                        crate::tauri_app::global_diagnostic_events()
+                                            .lock()
+                                            .unwrap()
+                                            .record(
+                                                lens_core::event_ring::DiagnosticComponent::Deep,
+                                                lens_core::event_ring::DiagnosticEventKind::Failure,
+                                                Some(failure_class),
+                                            );
                                     }
                                     Card::not_readable(error.user_message())
                                 }
@@ -1365,6 +1385,17 @@ pub fn main() -> std::process::ExitCode {
                     let card = match translator.quick_streaming(&request, &mut on_partial) {
                         Ok(translation) => {
                             cache.insert(key, translation.clone());
+                            // P12: Track recovery after failure.
+                            if quick_lane_state.on_success() {
+                                crate::tauri_app::global_diagnostic_events()
+                                    .lock()
+                                    .unwrap()
+                                    .record(
+                                        lens_core::event_ring::DiagnosticComponent::Quick,
+                                        lens_core::event_ring::DiagnosticEventKind::Recovered,
+                                        None,
+                                    );
+                            }
                             Card::translated(&job.display_text, &translation)
                         }
                         Err(error) => {
@@ -1374,6 +1405,8 @@ pub fn main() -> std::process::ExitCode {
                                     &error,
                                 )
                             {
+                                // P12: Mark lane as failed.
+                                quick_lane_state.on_failure(failure_class);
                                 crate::tauri_app::global_diagnostic_events()
                                     .lock()
                                     .unwrap()

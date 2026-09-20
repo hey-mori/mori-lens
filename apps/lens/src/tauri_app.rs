@@ -8,6 +8,9 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
+use lens_core::event_ring::DiagnosticFailureClass;
+use lens_core::health::HealthState;
+
 use crate::detail_view::{ExplainFlag, SharedDetail, SharedSavePath};
 use crate::library_service::{LibraryBacking, SharedLibrary};
 use crate::settings_service::{SettingsView, SharedSettings};
@@ -76,12 +79,17 @@ pub type SharedHealthSnapshot = Arc<Mutex<lens_core::health::HealthSnapshot>>;
 pub type SharedHealthCheckRunning = Arc<std::sync::atomic::AtomicBool>;
 
 /// Result of a health check run, for the webview.
+///
+/// Uses typed enums instead of strings: `state` is a `HealthState` (serialized
+/// as snake_case) and `failure` is an optional `DiagnosticFailureClass`. The
+/// frontend compares the state strings (`"ready"`, `"degraded"`, `"unavailable"`)
+/// and renders the failure class as-is.
 #[derive(Clone, Debug, Serialize)]
 pub struct HealthCheckView {
-    pub quick_state: String,
-    pub quick_failure: Option<String>,
-    pub deep_state: String,
-    pub deep_failure: Option<String>,
+    pub quick_state: lens_core::health::HealthState,
+    pub quick_failure: Option<lens_core::event_ring::DiagnosticFailureClass>,
+    pub deep_state: lens_core::health::HealthState,
+    pub deep_failure: Option<lens_core::event_ring::DiagnosticFailureClass>,
     pub latency_ms: u64,
 }
 
@@ -718,7 +726,7 @@ async fn run_health_check(
     health: tauri::State<'_, SharedHealthSnapshot>,
     health_running: tauri::State<'_, SharedHealthCheckRunning>,
 ) -> Result<HealthCheckView, String> {
-    use lens_core::event_ring::{DiagnosticComponent, DiagnosticEventKind, DiagnosticFailureClass};
+    use lens_core::event_ring::{DiagnosticComponent, DiagnosticEventKind};
     use lens_core::health::HealthState;
     use lens_core::translate::Provider;
     use std::time::Instant;
@@ -811,56 +819,23 @@ async fn run_health_check(
 
     let latency_ms = start.elapsed().as_millis() as u64;
 
-    // Map failure strings to DiagnosticFailureClass (needed for both snapshot and events).
-    let quick_failure_class = quick_failure.as_deref().map(|f| match f {
-        "provider_unreachable" => DiagnosticFailureClass::ConnectionFailed,
-        "timeout" => DiagnosticFailureClass::Timeout,
-        "model_missing" => DiagnosticFailureClass::ModelMissing,
-        "malformed" => DiagnosticFailureClass::Malformed,
-        _ => DiagnosticFailureClass::InferenceFailed,
-    });
-
-    let deep_failure_class = deep_failure.as_deref().map(|f| match f {
-        "provider_unreachable" => DiagnosticFailureClass::ConnectionFailed,
-        "timeout" => DiagnosticFailureClass::Timeout,
-        "model_missing" => DiagnosticFailureClass::ModelMissing,
-        "malformed" => DiagnosticFailureClass::Malformed,
-        "empty_analysis" => DiagnosticFailureClass::InferenceFailed,
-        _ => DiagnosticFailureClass::InferenceFailed,
-    });
+    // Failure classes arrive already typed from the check functions.
+    let quick_failure_class = quick_failure;
+    let deep_failure_class = deep_failure;
 
     // Update health snapshot and record event in the ring.
     {
         let mut snapshot = health.lock().unwrap();
         let now_ms = start.elapsed().as_millis() as u64;
 
-        // Map Quick state string to HealthState enum.
-        let quick_health_state = match quick_state.as_str() {
-            "ready" => HealthState::Ready,
-            "degraded" => HealthState::Degraded,
-            _ => HealthState::Unavailable,
-        };
-
-        // Map Deep state string to HealthState enum.
-        let deep_health_state = match deep_state.as_str() {
-            "ready" => HealthState::Ready,
-            "degraded" => HealthState::Degraded,
-            _ => HealthState::Unavailable,
-        };
-
-        // Update snapshot.
+        // Snapshot uses typed HealthState directly, no string parsing.
         snapshot.update_quick(
-            quick_health_state,
+            quick_state,
             quick_failure_class,
             Some(latency_ms / 2), // Approximate per-lane latency.
             now_ms,
         );
-        snapshot.update_deep(
-            deep_health_state,
-            deep_failure_class,
-            Some(latency_ms / 2),
-            now_ms,
-        );
+        snapshot.update_deep(deep_state, deep_failure_class, Some(latency_ms / 2), now_ms);
     }
 
     // Record health check events in the ring (separate for each lane).
@@ -868,13 +843,15 @@ async fn run_health_check(
         let mut ring = events.lock().unwrap();
         let kind = DiagnosticEventKind::HealthCheck;
 
-        // Record Quick lane event if it failed.
-        if quick_state == "unavailable" || quick_state == "degraded" {
+        // Typed comparison: no stringly-typed state checks.
+        if matches!(
+            quick_state,
+            HealthState::Unavailable | HealthState::Degraded
+        ) {
             ring.record(DiagnosticComponent::Quick, kind, quick_failure_class);
         }
 
-        // Record Deep lane event if it failed.
-        if deep_state == "unavailable" || deep_state == "degraded" {
+        if matches!(deep_state, HealthState::Unavailable | HealthState::Degraded) {
             ring.record(DiagnosticComponent::Deep, kind, deep_failure_class);
         }
     }
@@ -905,19 +882,21 @@ fn get_health_status(
 /// Uses production model resolution (resolve_model), not DEFAULT_MODEL.
 /// Exercises the same QuickRequest + Translator::quick path as the product loop.
 ///
-/// Returns (state, failure_reason).
+/// Returns typed `(HealthState, Option<DiagnosticFailureClass>)`. The failure
+/// class is present only for non-Ready states, giving the caller a typed
+/// diagnostic token rather than a string to re-parse.
 fn check_quick_engine_health(
     provider: lens_core::translate::Provider,
     endpoint: &str,
     configured_model: Option<&str>,
-) -> (String, Option<String>) {
+) -> (HealthState, Option<DiagnosticFailureClass>) {
     use lens_core::translate::QuickRequest;
 
     // Step 1: Check reachability.
     if !lens_translate::check_provider_reachable(provider, endpoint) {
         return (
-            "unavailable".to_string(),
-            Some("provider_unreachable".to_string()),
+            HealthState::Unavailable,
+            Some(DiagnosticFailureClass::ConnectionFailed),
         );
     }
 
@@ -942,14 +921,19 @@ fn check_quick_engine_health(
         Ok(result) => {
             // Inference succeeded. Check if the output is meaningful.
             if result.text.trim().is_empty() {
-                ("degraded".to_string(), Some("empty_response".to_string()))
+                (
+                    HealthState::Degraded,
+                    Some(DiagnosticFailureClass::InferenceFailed),
+                )
             } else {
-                ("ready".to_string(), None)
+                (HealthState::Ready, None)
             }
         }
         Err(err) => {
-            let reason = err.reason().to_string();
-            ("unavailable".to_string(), Some(reason))
+            // TranslateError -> DiagnosticFailureClass is a typed mapping, no strings.
+            let failure_class = DiagnosticFailureClass::from_translate_error(&err)
+                .unwrap_or(DiagnosticFailureClass::InferenceFailed);
+            (HealthState::Unavailable, Some(failure_class))
         }
     }
 }
@@ -960,18 +944,19 @@ fn check_quick_engine_health(
 /// Exercises the same DeepRequest + Analyser::deep path as the product loop.
 /// This is the CRITICAL FIX: Deep health check now tests Deep, not Quick.
 ///
-/// Returns (state, failure_reason).
+/// Returns typed `(HealthState, Option<DiagnosticFailureClass>)`. The failure
+/// class is present only for non-Ready states.
 fn check_deep_engine_health(
     endpoint: &str,
     configured_model: Option<&str>,
-) -> (String, Option<String>) {
+) -> (HealthState, Option<DiagnosticFailureClass>) {
     use lens_core::analyse::{Analyser, DeepRequest};
 
     // Step 1: Check reachability.
     if !lens_translate::check_provider_reachable(lens_core::translate::Provider::Ollama, endpoint) {
         return (
-            "unavailable".to_string(),
-            Some("provider_unreachable".to_string()),
+            HealthState::Unavailable,
+            Some(DiagnosticFailureClass::ConnectionFailed),
         );
     }
 
@@ -1002,14 +987,19 @@ fn check_deep_engine_health(
             // Deep inference succeeded. Check if the analysis says anything meaningful.
             // This matches the production check: DeepAnalysis::says_anything() in analyse.rs:473-475.
             if analysis.says_anything() {
-                ("ready".to_string(), None)
+                (HealthState::Ready, None)
             } else {
-                ("degraded".to_string(), Some("empty_analysis".to_string()))
+                (
+                    HealthState::Degraded,
+                    Some(DiagnosticFailureClass::InferenceFailed),
+                )
             }
         }
         Err(err) => {
-            let reason = err.reason().to_string();
-            ("unavailable".to_string(), Some(reason))
+            // TranslateError -> DiagnosticFailureClass is a typed mapping, no strings.
+            let failure_class = DiagnosticFailureClass::from_translate_error(&err)
+                .unwrap_or(DiagnosticFailureClass::InferenceFailed);
+            (HealthState::Unavailable, Some(failure_class))
         }
     }
 }
@@ -1622,8 +1612,14 @@ mod tests {
     /// somebody added privacy-sensitive content to the export.
     #[test]
     fn diagnostics_export_excludes_canary_strings() {
+        use lens_core::event_ring::{
+            DiagnosticComponent, DiagnosticEvent, DiagnosticEventKind, DiagnosticFailureClass,
+        };
+
         // Canary strings that must NEVER appear in diagnostics output.
         // These represent the kinds of content that are privacy-sensitive.
+        // Expanded list: original six plus the additional canaries tracked in
+        // the health snapshot test and docs/privacy-model.md.
         let canaries = [
             "SUPER_SECRET_ORIGINAL_CANARY",
             "SUPER_SECRET_TRANSLATION_CANARY",
@@ -1631,6 +1627,11 @@ mod tests {
             "SUPER_SECRET_NOTE_CANARY",
             "SUPER_SECRET_HISTORY_CANARY",
             "SUPER_SECRET_RECENT_CANARY",
+            "SUPER_SECRET_WINDOW_TITLE_CANARY",
+            "SUPER_SECRET_APP_NAME_CANARY",
+            "SUPER_SECRET_PATH_CANARY",
+            "SUPER_SECRET_TOKEN_CANARY",
+            "SUPER_SECRET_ERROR_BODY_CANARY",
         ];
 
         // Build a diagnostics report with realistic metadata.
@@ -1651,10 +1652,76 @@ mod tests {
 
         let refusals = vec![("no_text".to_owned(), 5), ("password_field".to_owned(), 2)];
 
-        // Create a health snapshot for the privacy test.
+        // Create a health snapshot for the privacy test, with typed failures.
         let mut health_snapshot = lens_core::health::HealthSnapshot::new(0);
-        health_snapshot.update_quick(lens_core::health::HealthState::Ready, None, Some(42), 1000);
-        health_snapshot.update_deep(lens_core::health::HealthState::Ready, None, Some(100), 1000);
+        health_snapshot.update_quick(
+            lens_core::health::HealthState::Unavailable,
+            Some(DiagnosticFailureClass::Timeout),
+            Some(42),
+            1000,
+        );
+        health_snapshot.update_deep(
+            lens_core::health::HealthState::Degraded,
+            Some(DiagnosticFailureClass::HttpClient),
+            Some(100),
+            1000,
+        );
+
+        // Build a realistic set of diagnostic events covering each component
+        // and kind. These events are privacy-safe by construction: enums and
+        // numbers only, no captured text or file paths.
+        let populated_events = vec![
+            DiagnosticEvent {
+                seq: 1,
+                elapsed_ms: 500,
+                component: DiagnosticComponent::Quick,
+                kind: DiagnosticEventKind::Failure,
+                failure_class: Some(DiagnosticFailureClass::ConnectionFailed),
+                count: 3,
+                first_seen_ms: 100,
+                last_seen_ms: 500,
+            },
+            DiagnosticEvent {
+                seq: 2,
+                elapsed_ms: 1200,
+                component: DiagnosticComponent::Quick,
+                kind: DiagnosticEventKind::Recovered,
+                failure_class: None,
+                count: 1,
+                first_seen_ms: 1200,
+                last_seen_ms: 1200,
+            },
+            DiagnosticEvent {
+                seq: 3,
+                elapsed_ms: 2000,
+                component: DiagnosticComponent::Deep,
+                kind: DiagnosticEventKind::Failure,
+                failure_class: Some(DiagnosticFailureClass::HttpServer),
+                count: 1,
+                first_seen_ms: 2000,
+                last_seen_ms: 2000,
+            },
+            DiagnosticEvent {
+                seq: 4,
+                elapsed_ms: 2500,
+                component: DiagnosticComponent::HealthCheck,
+                kind: DiagnosticEventKind::HealthCheck,
+                failure_class: Some(DiagnosticFailureClass::Timeout),
+                count: 1,
+                first_seen_ms: 2500,
+                last_seen_ms: 2500,
+            },
+            DiagnosticEvent {
+                seq: 5,
+                elapsed_ms: 3000,
+                component: DiagnosticComponent::Library,
+                kind: DiagnosticEventKind::Degraded,
+                failure_class: Some(DiagnosticFailureClass::LibraryDegraded),
+                count: 2,
+                first_seen_ms: 2800,
+                last_seen_ms: 3000,
+            },
+        ];
 
         let json = serialize_diagnostics_report(
             "0.1.0",
@@ -1670,7 +1737,7 @@ mod tests {
             &refusals,
             "windows-gdi",
             "ko",
-            &[], // recent_events: empty for privacy test
+            &populated_events,
             &health_snapshot,
         );
 
@@ -1703,7 +1770,17 @@ mod tests {
         assert!(json.contains("\"health\""));
         assert!(json.contains("\"quick\""));
         assert!(json.contains("\"deep\""));
-        assert!(json.contains("\"state\": \"ready\""));
+        // Failure classes are serialized as snake_case enum names.
+        assert!(json.contains("\"timeout\""));
+        assert!(json.contains("\"http_client\""));
+        // Recent events IS present (populated, privacy-safe).
+        assert!(json.contains("\"recent_events\""));
+        assert!(json.contains("\"connection_failed\""));
+        assert!(json.contains("\"http_server\""));
+        assert!(json.contains("\"library_degraded\""));
+        // Sequence numbers and counts are present (proves events are populated).
+        assert!(json.contains("\"seq\":"));
+        assert!(json.contains("\"count\": 3"));
     }
 
     /// Schema allowlist test for diagnostics export.
@@ -1716,6 +1793,9 @@ mod tests {
     /// configuration_facts() are allowed.
     #[test]
     fn diagnostics_export_schema_is_bounded() {
+        use lens_core::event_ring::{
+            DiagnosticComponent, DiagnosticEvent, DiagnosticEventKind, DiagnosticFailureClass,
+        };
         use serde_json::Value;
         use std::collections::HashSet;
 
@@ -1736,10 +1816,27 @@ mod tests {
 
         let refusals = vec![("no_text".to_owned(), 5)];
 
-        // Create a health snapshot for the schema test.
+        // Create a health snapshot with typed failure classes.
         let mut health_snapshot = lens_core::health::HealthSnapshot::new(0);
-        health_snapshot.update_quick(lens_core::health::HealthState::Ready, None, Some(42), 1000);
+        health_snapshot.update_quick(
+            lens_core::health::HealthState::Unavailable,
+            Some(DiagnosticFailureClass::ConnectionFailed),
+            Some(42),
+            1000,
+        );
         health_snapshot.update_deep(lens_core::health::HealthState::Ready, None, Some(100), 1000);
+
+        // Populated events exercise the event serialization schema too.
+        let populated_events = vec![DiagnosticEvent {
+            seq: 1,
+            elapsed_ms: 500,
+            component: DiagnosticComponent::Quick,
+            kind: DiagnosticEventKind::Failure,
+            failure_class: Some(DiagnosticFailureClass::Timeout),
+            count: 1,
+            first_seen_ms: 500,
+            last_seen_ms: 500,
+        }];
 
         let json = serialize_diagnostics_report(
             "0.1.0",
@@ -1755,7 +1852,7 @@ mod tests {
             &refusals,
             "windows-gdi",
             "ko",
-            &[], // recent_events: empty for schema test
+            &populated_events,
             &health_snapshot,
         );
 
