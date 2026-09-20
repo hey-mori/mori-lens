@@ -65,8 +65,14 @@ pub use lens_core::translate::ModelInfo;
 /// For Ollama, the model `name` serves as both the canonical `id` and the
 /// `display_name` since Ollama has no separate human-readable label.
 pub fn list_models(endpoint: &str) -> Result<Vec<ModelInfo>, TranslateError> {
-    let (_status, body) = http::get(endpoint, "/api/tags", Duration::from_secs(3))
+    let (status, body) = http::get(endpoint, "/api/tags", Duration::from_secs(3))
         .map_err(|_| TranslateError::Unavailable)?;
+    // Surface non-2xx so the diagnostic ring can classify HttpClient vs
+    // HttpServer. A 500 whose body happens to parse as valid JSON must not
+    // silently return an empty list.
+    if !(200..=299).contains(&status) {
+        return Err(TranslateError::HttpFailed(status));
+    }
     let names = json::string_values_of_key(&body, "name");
     let sizes = json::number_values_of_key(&body, "size");
     Ok(names
@@ -86,6 +92,21 @@ pub fn list_models(endpoint: &str) -> Result<Vec<ModelInfo>, TranslateError> {
 /// answered `/api/tags`; false means it did not, whatever the reason.
 pub fn check_reachable(endpoint: &str) -> bool {
     http::get(endpoint, "/api/tags", Duration::from_secs(2)).is_ok()
+}
+
+/// Typed reachability check that preserves the failure reason.
+///
+/// Returns `Ok(())` when the endpoint answers, or the underlying
+/// [`TranslateError`] otherwise. A [`TranslateError::Timeout`] from this
+/// function means the endpoint was reachable but did not respond in time,
+/// which is a different diagnostic fact from
+/// [`TranslateError::Unavailable`] (nothing listening or connection refused).
+///
+/// The boolean [`check_reachable`] collapses both to `false`; this function
+/// lets callers distinguish them.
+pub fn check_reachable_typed(endpoint: &str) -> Result<(), TranslateError> {
+    let (_status, _body) = http::get(endpoint, "/api/tags", Duration::from_secs(2))?;
+    Ok(())
 }
 
 /// The model used when the caller does not choose.
@@ -577,11 +598,18 @@ impl OllamaTranslator {
     fn retry_once(&self, request: &QuickRequest) -> Result<QuickTranslation, TranslateError> {
         let (body, _) = self.body_with_budget(request, false, GENEROUS_BUDGET);
         let started = Instant::now();
-        let Ok((_status, response)) =
+        let Ok((status, response)) =
             http::post(&self.endpoint, "/api/generate", &body, self.timeout)
         else {
             return Err(TranslateError::Malformed);
         };
+        // Status is the first-class diagnostic boundary here too.
+        if !(200..=299).contains(&status) {
+            if let Some(TranslateError::ModelMissing(_)) = self.error_in(&response) {
+                return Err(TranslateError::ModelMissing(self.model.clone()));
+            }
+            return Err(TranslateError::HttpFailed(status));
+        }
         if let Some(error) = self.error_in(&response) {
             return Err(error);
         }
@@ -662,11 +690,19 @@ impl OllamaTranslator {
                 request.target_language,
             ),
         );
-        let Ok((_status, response)) =
+        let Ok((status, response)) =
             http::post(&self.endpoint, "/api/generate", &body, self.timeout)
         else {
             return Err(TranslateError::NotTranslated);
         };
+        // Surface non-2xx as HttpFailed so a server error does not masquerade
+        // as a translation failure.
+        if !(200..=299).contains(&status) {
+            if let Some(TranslateError::ModelMissing(_)) = self.error_in(&response) {
+                return Err(TranslateError::ModelMissing(self.model.clone()));
+            }
+            return Err(TranslateError::HttpFailed(status));
+        }
         if let Some(error) = self.error_in(&response) {
             return Err(error);
         }
@@ -770,8 +806,20 @@ impl Translator for OllamaTranslator {
 
         let (body, fence) = self.body_for(request, false);
         let started = Instant::now();
-        let (_status, response) = http::post(&self.endpoint, "/api/generate", &body, self.timeout)?;
+        let (status, response) = http::post(&self.endpoint, "/api/generate", &body, self.timeout)?;
         let latency_ms = started.elapsed().as_millis();
+
+        // Status is the first-class diagnostic boundary. A 4xx/5xx must
+        // propagate as HttpFailed so the ring can classify HttpClient vs
+        // HttpServer, even when Ollama returns a body that parses.
+        if !(200..=299).contains(&status) {
+            // Preserve the structured ModelMissing signal when the body names
+            // the model, otherwise surface the raw status.
+            if let Some(TranslateError::ModelMissing(_)) = self.error_in(&response) {
+                return Err(TranslateError::ModelMissing(self.model.clone()));
+            }
+            return Err(TranslateError::HttpFailed(status));
+        }
 
         if let Some(error) = self.error_in(&response) {
             return Err(error);
@@ -911,7 +959,7 @@ impl Translator for OllamaTranslator {
         let mut last_report = Instant::now();
         let mut failure = None;
 
-        http::post_streaming(
+        let status = http::post_streaming(
             &self.endpoint,
             "/api/generate",
             &body,
@@ -938,6 +986,12 @@ impl Translator for OllamaTranslator {
 
         if let Some(error) = failure {
             return Err(error);
+        }
+
+        // Surface non-2xx as HttpFailed before accepting any accumulated text.
+        // A 4xx/5xx with valid-looking JSON lines must not succeed.
+        if !(200..=299).contains(&status) {
+            return Err(TranslateError::HttpFailed(status));
         }
 
         let text = accumulated.trim().to_owned();
@@ -1135,6 +1189,32 @@ pub fn check_provider_reachable(provider: Provider, endpoint: &str) -> bool {
         Provider::LmStudio => {
             let runtime = LmStudioRuntime::new(endpoint);
             matches!(runtime.reachability(), Reachability::Reachable)
+        }
+    }
+}
+
+/// Provider-aware typed reachability check.
+///
+/// Returns `Ok(())` when the provider endpoint answers, or the underlying
+/// [`TranslateError`] otherwise. A [`TranslateError::Timeout`] from this
+/// function means the endpoint was reachable but did not respond in time,
+/// which is a different diagnostic fact from
+/// [`TranslateError::Unavailable`] (nothing listening or connection refused).
+///
+/// The boolean [`check_provider_reachable`] collapses both to `false`; this
+/// function lets callers map each to a distinct [`DiagnosticFailureClass`].
+pub fn check_provider_reachable_typed(
+    provider: Provider,
+    endpoint: &str,
+) -> Result<(), TranslateError> {
+    match provider {
+        Provider::Ollama => check_reachable_typed(endpoint),
+        Provider::LmStudio => {
+            let runtime = LmStudioRuntime::new(endpoint);
+            // `list_models` returns a typed TranslateError that preserves
+            // Timeout vs Unavailable distinction.
+            let _models = runtime.list_models()?;
+            Ok(())
         }
     }
 }
@@ -1529,5 +1609,56 @@ mod lease_tests {
         // The function signature itself is the test: if it were Option,
         // this call would need to be Some("model").
         let _t = build_translator(Provider::LmStudio, "127.0.0.1:1234", "my-model");
+    }
+
+    /// A 500 from Ollama surfaces as `HttpFailed(500)`, not as `Malformed`
+    /// or silently as a successful translation with an empty body. The
+    /// diagnostic ring classifies 5xx as HttpServer; a 4xx as HttpClient.
+    /// Without status propagation, a 500 with a JSON-shaped body would
+    /// reach `error_in` and disappear.
+    #[test]
+    fn ollama_quick_surfaces_server_error_status() {
+        use crate::fake_server::{FakeResponse, FakeServer};
+
+        let server = FakeServer::start(vec![FakeResponse::server_error()]);
+        let translator = OllamaTranslator::new(server.address(), "any");
+        let request = QuickRequest::new("a sentence", "Korean");
+
+        let err = translator.quick(&request).unwrap_err();
+        assert!(
+            matches!(err, TranslateError::HttpFailed(500)),
+            "expected HttpFailed(500), got {err:?}"
+        );
+    }
+
+    /// A 404 from Ollama without a model-missing body surfaces as
+    /// `HttpFailed(404)`, not swallowed by the JSON parser.
+    #[test]
+    fn ollama_quick_surfaces_client_error_status() {
+        use crate::fake_server::{FakeResponse, FakeServer};
+
+        let server = FakeServer::start(vec![FakeResponse::not_found()]);
+        let translator = OllamaTranslator::new(server.address(), "any");
+        let request = QuickRequest::new("a sentence", "Korean");
+
+        let err = translator.quick(&request).unwrap_err();
+        assert!(
+            matches!(err, TranslateError::HttpFailed(404)),
+            "expected HttpFailed(404), got {err:?}"
+        );
+    }
+
+    /// `list_models` propagates non-2xx as `HttpFailed` so a 500 from
+    /// `/api/tags` does not silently return an empty model list.
+    #[test]
+    fn ollama_list_models_propagates_status() {
+        use crate::fake_server::{FakeResponse, FakeServer};
+
+        let server = FakeServer::start(vec![FakeResponse::server_error()]);
+        let err = list_models(server.address()).unwrap_err();
+        assert!(
+            matches!(err, TranslateError::HttpFailed(500)),
+            "expected HttpFailed(500), got {err:?}"
+        );
     }
 }
