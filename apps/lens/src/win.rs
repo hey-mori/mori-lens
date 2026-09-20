@@ -1370,13 +1370,18 @@ pub fn main() -> std::process::ExitCode {
                         Err(error) => {
                             // Record Quick operational failure for diagnostics.
                             if let Some(failure_class) =
-                                lens_core::event_ring::DiagnosticFailureClass::from_translate_error(&error)
+                                lens_core::event_ring::DiagnosticFailureClass::from_translate_error(
+                                    &error,
+                                )
                             {
-                                crate::tauri_app::global_diagnostic_events().lock().unwrap().record(
-                                    lens_core::event_ring::DiagnosticComponent::Quick,
-                                    lens_core::event_ring::DiagnosticEventKind::Failure,
-                                    Some(failure_class),
-                                );
+                                crate::tauri_app::global_diagnostic_events()
+                                    .lock()
+                                    .unwrap()
+                                    .record(
+                                        lens_core::event_ring::DiagnosticComponent::Quick,
+                                        lens_core::event_ring::DiagnosticEventKind::Failure,
+                                        Some(failure_class),
+                                    );
                             }
                             Card::not_translated(&job.display_text, &error)
                         }
@@ -1724,11 +1729,14 @@ pub fn main() -> std::process::ExitCode {
             library_service::LibraryBacking::InMemoryFallback { reason, .. } => {
                 println!("  library   in-memory fallback: {reason}");
                 // Record library degradation event for diagnostics.
-                crate::tauri_app::global_diagnostic_events().lock().unwrap().record(
-                    lens_core::event_ring::DiagnosticComponent::Library,
-                    lens_core::event_ring::DiagnosticEventKind::Degraded,
-                    Some(lens_core::event_ring::DiagnosticFailureClass::LibraryDegraded),
-                );
+                crate::tauri_app::global_diagnostic_events()
+                    .lock()
+                    .unwrap()
+                    .record(
+                        lens_core::event_ring::DiagnosticComponent::Library,
+                        lens_core::event_ring::DiagnosticEventKind::Degraded,
+                        Some(lens_core::event_ring::DiagnosticFailureClass::LibraryDegraded),
+                    );
             }
         }
     }
