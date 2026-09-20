@@ -65,8 +65,7 @@ pub use lens_core::translate::ModelInfo;
 /// For Ollama, the model `name` serves as both the canonical `id` and the
 /// `display_name` since Ollama has no separate human-readable label.
 pub fn list_models(endpoint: &str) -> Result<Vec<ModelInfo>, TranslateError> {
-    let (status, body) = http::get(endpoint, "/api/tags", Duration::from_secs(3))
-        .map_err(|_| TranslateError::Unavailable)?;
+    let (status, body) = http::get(endpoint, "/api/tags", Duration::from_secs(3))?;
     // Surface non-2xx so the diagnostic ring can classify HttpClient vs
     // HttpServer. A 500 whose body happens to parse as valid JSON must not
     // silently return an empty list.
