@@ -8,6 +8,19 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
+/// Process-start anchor for monotonic `updated_ms` timestamps.
+///
+/// `HealthLane.updated_ms` is documented as milliseconds since process start.
+/// Measuring `Instant::now().elapsed()` inside `run_health_check` would only
+/// give the time since the health-check call, not since the process began;
+/// a check triggered thirty minutes after launch must report ~1_800_000ms,
+/// not 0.
+fn process_start() -> std::time::Instant {
+    use std::sync::OnceLock;
+    static PROCESS_START: OnceLock<std::time::Instant> = OnceLock::new();
+    *PROCESS_START.get_or_init(std::time::Instant::now)
+}
+
 use lens_core::event_ring::DiagnosticFailureClass;
 use lens_core::health::HealthState;
 
@@ -763,7 +776,8 @@ async fn run_health_check(
     // Mark both lanes as Running in the snapshot.
     {
         let mut snapshot = health.lock().unwrap();
-        let now_ms = start.elapsed().as_millis() as u64;
+        // Process-relative monotonic timestamp, not the duration of this call.
+        let now_ms = process_start().elapsed().as_millis() as u64;
         snapshot.mark_running(now_ms);
     }
 
@@ -800,22 +814,35 @@ async fn run_health_check(
     // Run health check in a background thread to avoid blocking the Tauri command.
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
+        use std::time::Instant;
         // Check Quick engine using QuickRequest and Translator::quick.
+        let started_quick = Instant::now();
         let (quick_state, quick_failure) =
             check_quick_engine_health(quick_provider, &quick_endpoint, quick_model.as_deref());
+        let quick_latency = started_quick.elapsed().as_millis() as u64;
 
         // Check Deep engine using DeepRequest and Analyser::deep (Ollama-only).
+        let started_deep = Instant::now();
         let (deep_state, deep_failure) =
             check_deep_engine_health(&deep_endpoint, deep_model.as_deref());
+        let deep_latency = started_deep.elapsed().as_millis() as u64;
 
-        let _ = tx.send((quick_state, quick_failure, deep_state, deep_failure));
+        let _ = tx.send((
+            quick_state,
+            quick_failure,
+            quick_latency,
+            deep_state,
+            deep_failure,
+            deep_latency,
+        ));
     });
 
     let result = rx.recv().map_err(|_| "thread error".to_string());
 
     // RAII guard handles release automatically on all exit paths.
 
-    let (quick_state, quick_failure, deep_state, deep_failure) = result?;
+    let (quick_state, quick_failure, quick_latency, deep_state, deep_failure, deep_latency) =
+        result?;
 
     let latency_ms = start.elapsed().as_millis() as u64;
 
@@ -826,16 +853,19 @@ async fn run_health_check(
     // Update health snapshot and record event in the ring.
     {
         let mut snapshot = health.lock().unwrap();
-        let now_ms = start.elapsed().as_millis() as u64;
+        // `updated_ms` is the process-relative monotonic timestamp, not the
+        // duration of this health check. `latency_ms` is the per-lane
+        // measured inference time, not half the wall-clock total.
+        let now_ms = process_start().elapsed().as_millis() as u64;
 
         // Snapshot uses typed HealthState directly, no string parsing.
         snapshot.update_quick(
             quick_state,
             quick_failure_class,
-            Some(latency_ms / 2), // Approximate per-lane latency.
+            Some(quick_latency),
             now_ms,
         );
-        snapshot.update_deep(deep_state, deep_failure_class, Some(latency_ms / 2), now_ms);
+        snapshot.update_deep(deep_state, deep_failure_class, Some(deep_latency), now_ms);
     }
 
     // Record health check events in the ring (separate for each lane).
@@ -892,26 +922,28 @@ fn check_quick_engine_health(
 ) -> (HealthState, Option<DiagnosticFailureClass>) {
     use lens_core::translate::QuickRequest;
 
-    // Step 1: Check reachability.
-    if !lens_translate::check_provider_reachable(provider, endpoint) {
-        return (
-            HealthState::Unavailable,
-            Some(DiagnosticFailureClass::ConnectionFailed),
-        );
+    // Step 1: Check reachability. Typed so the ring can distinguish Timeout
+    // from ConnectionFailed, rather than collapsing both to ConnectionFailed
+    // the way the boolean `check_provider_reachable` did.
+    let reachability = lens_translate::check_provider_reachable_typed(provider, endpoint);
+    if let Err(error) = reachability {
+        let failure_class = DiagnosticFailureClass::from_translate_error(&error)
+            .unwrap_or(DiagnosticFailureClass::ConnectionFailed);
+        return (HealthState::Unavailable, Some(failure_class));
     }
 
-    // Step 2: Build translator and resolve model using production pattern.
-    // This matches win.rs:688-691 where production creates OllamaTranslator and calls resolve_model().
-    let mut translator =
-        lens_translate::OllamaTranslator::new(endpoint, configured_model.unwrap_or(""));
-    let model_name = match translator.resolve_model() {
-        Ok(m) => m.to_owned(),
-        Err(_) => configured_model
+    // Step 2: Resolve a model provider-aware. Ollama honours the configured
+    // model and falls back via `resolve_model()`; LM Studio uses the
+    // configured model or the first listed, since it has no Ollama-style
+    // defaulting.
+    let model_name = match resolve_model_for_provider(provider, endpoint, configured_model) {
+        Some(m) => m,
+        None => configured_model
             .unwrap_or(lens_translate::DEFAULT_MODEL)
             .to_owned(),
     };
 
-    // Step 3: Rebuild translator with resolved model and test inference.
+    // Step 3: Build translator with resolved model and test inference.
     let translator = lens_translate::build_translator(provider, endpoint, &model_name);
     let test_input = "The output files came back empty.";
     let target_lang = "ko";
@@ -938,6 +970,41 @@ fn check_quick_engine_health(
     }
 }
 
+/// Provider-aware model resolution for health checks.
+///
+/// Mirrors the branching already present in the worker loops (win.rs and
+/// macos.rs): Ollama honours a configured model and falls back via
+/// `resolve_model()`; LM Studio uses the configured model or picks the first
+/// listed model, since it has no Ollama-style defaulting.
+///
+/// Returns the resolved model name, or `None` if no model could be found.
+fn resolve_model_for_provider(
+    provider: lens_core::translate::Provider,
+    endpoint: &str,
+    configured_model: Option<&str>,
+) -> Option<String> {
+    use lens_core::translate::Provider;
+    match provider {
+        Provider::Ollama => {
+            let mut t = lens_translate::OllamaTranslator::choosing(endpoint);
+            if let Some(model) = configured_model {
+                t = lens_translate::OllamaTranslator::new(endpoint, model);
+            }
+            match t.resolve_model() {
+                Ok(m) => Some(m.to_owned()),
+                Err(_) => configured_model.map(|s| s.to_owned()),
+            }
+        }
+        Provider::LmStudio => match configured_model {
+            Some(m) => Some(m.to_owned()),
+            None => match lens_translate::list_models_for_provider(Provider::LmStudio, endpoint) {
+                Ok(models) if !models.is_empty() => Some(models[0].id.clone()),
+                _ => None,
+            },
+        },
+    }
+}
+
 /// Check health of the Deep engine using the production path.
 ///
 /// Uses production model resolution (resolve_model), not DEFAULT_MODEL.
@@ -952,26 +1019,33 @@ fn check_deep_engine_health(
 ) -> (HealthState, Option<DiagnosticFailureClass>) {
     use lens_core::analyse::{Analyser, DeepRequest};
 
-    // Step 1: Check reachability.
-    if !lens_translate::check_provider_reachable(lens_core::translate::Provider::Ollama, endpoint) {
-        return (
-            HealthState::Unavailable,
-            Some(DiagnosticFailureClass::ConnectionFailed),
-        );
+    // Step 1: Check reachability. Typed so a Timeout is reported as Timeout,
+    // not collapsed to ConnectionFailed.
+    let reachability = lens_translate::check_provider_reachable_typed(
+        lens_core::translate::Provider::Ollama,
+        endpoint,
+    );
+    if let Err(error) = reachability {
+        let failure_class = DiagnosticFailureClass::from_translate_error(&error)
+            .unwrap_or(DiagnosticFailureClass::ConnectionFailed);
+        return (HealthState::Unavailable, Some(failure_class));
     }
 
-    // Step 2: Build translator and resolve model using production pattern.
-    // This matches win.rs:719-722 where production creates OllamaTranslator and calls resolve_model().
-    let mut analyser =
-        lens_translate::OllamaTranslator::new(endpoint, configured_model.unwrap_or(""));
-    let model_name = match analyser.resolve_model() {
-        Ok(m) => m.to_owned(),
-        Err(_) => configured_model
+    // Step 2: Resolve a model using the same provider-aware path the Quick
+    // health check uses. Deep is Ollama-only (ADR-0004), but the helper keeps
+    // the model-resolution logic in one place.
+    let model_name = match resolve_model_for_provider(
+        lens_core::translate::Provider::Ollama,
+        endpoint,
+        configured_model,
+    ) {
+        Some(m) => m,
+        None => configured_model
             .unwrap_or(lens_translate::DEFAULT_MODEL)
             .to_owned(),
     };
 
-    // Step 3: Rebuild analyser with resolved model and test Deep inference.
+    // Step 3: Build analyser with resolved model and test Deep inference.
     let analyser = lens_translate::OllamaTranslator::new(endpoint, &model_name);
 
     // Use a test sentence that exercises both word and structure analysis.

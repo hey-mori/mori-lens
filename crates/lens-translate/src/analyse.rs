@@ -216,8 +216,18 @@ impl Analyser for OllamaTranslator {
         // they did not ask for; this reader pressed a key and is watching the
         // screen. Cutting a deep call off at a hover's budget would fail on
         // exactly the slower models it is worth waiting for.
-        let (_status, response) = http::post(&self.endpoint, "/api/generate", &body, DEEP_TIMEOUT)?;
+        let (status, response) = http::post(&self.endpoint, "/api/generate", &body, DEEP_TIMEOUT)?;
         let latency_ms = started.elapsed().as_millis();
+
+        // Status is the first-class diagnostic boundary. A 4xx/5xx must
+        // propagate as HttpFailed so the ring can classify HttpClient vs
+        // HttpServer, even when Ollama returns a body that parses.
+        if !(200..=299).contains(&status) {
+            if let Some(TranslateError::ModelMissing(_)) = self.error_in(&response) {
+                return Err(TranslateError::ModelMissing(self.model.clone()));
+            }
+            return Err(TranslateError::HttpFailed(status));
+        }
 
         if let Some(error) = self.error_in(&response) {
             return Err(error);
@@ -270,8 +280,14 @@ impl OllamaTranslator {
         }
         let (body, fence) = self.deep_body(request);
         let started = Instant::now();
-        let (_status, response) = http::post(&self.endpoint, "/api/generate", &body, DEEP_TIMEOUT)?;
+        let (status, response) = http::post(&self.endpoint, "/api/generate", &body, DEEP_TIMEOUT)?;
         let latency_ms = started.elapsed().as_millis();
+        if !(200..=299).contains(&status) {
+            if let Some(TranslateError::ModelMissing(_)) = self.error_in(&response) {
+                return Err(TranslateError::ModelMissing(self.model.clone()));
+            }
+            return Err(TranslateError::HttpFailed(status));
+        }
         if let Some(error) = self.error_in(&response) {
             return Err(error);
         }
