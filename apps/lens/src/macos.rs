@@ -591,7 +591,7 @@ fn product_loop(
         let mut translator = quick_translator;
         let mut current_model = quick_model;
         let mut current_provider = quick_provider;
-        let quick_model_error = quick_model_error_for_worker;
+        let mut current_resolution_error = quick_model_error_for_worker;
         let mut current_endpoint = quick_endpoint;
         // P12: Per-lane failure state tracker for recovery event emission.
         let mut quick_lane_state = lens_core::event_ring::DiagnosticLaneState::new();
@@ -601,28 +601,41 @@ fn product_loop(
             while let Ok((provider, ep, m)) = quick_config_rx.try_recv() {
                 current_provider = provider;
                 current_endpoint = ep.clone();
-                let resolved_model = match provider {
+                let resolved_model_result = match provider {
                     Provider::Ollama => {
                         let mut t = OllamaTranslator::choosing(&ep);
                         if let Some(ref model) = m {
                             t = OllamaTranslator::new(&ep, model);
                         }
                         match t.resolve_model() {
-                            Ok(rm) => Some(rm.to_owned()),
-                            Err(_) => m.clone(),
+                            Ok(rm) => Ok(Some(rm.to_owned())),
+                            Err(e) => {
+                                // If resolution failed but we have a configured model, use it
+                                if let Some(model) = &m {
+                                    Ok(Some(model.clone()))
+                                } else {
+                                    Err(e)
+                                }
+                            }
                         }
                     }
                     Provider::LmStudio => match &m {
-                        Some(model) => Some(model.clone()),
+                        Some(model) => Ok(Some(model.clone())),
                         None => {
                             match lens_translate::list_models_for_provider(Provider::LmStudio, &ep)
                             {
-                                Ok(models) if !models.is_empty() => Some(models[0].id.clone()),
-                                _ => None,
+                                Ok(models) if !models.is_empty() => Ok(Some(models[0].id.clone())),
+                                Ok(_) => Err(lens_core::translate::TranslateError::ModelMissing(
+                                    "auto".to_owned(),
+                                )),
+                                Err(e) => Err(e),
                             }
                         }
                     },
                 };
+                // Update state atomically: model, translator, and error
+                current_resolution_error = resolved_model_result.clone().err();
+                let resolved_model = resolved_model_result.unwrap_or(None);
                 // Rebuild translator only if model resolved successfully
                 translator = resolved_model
                     .as_ref()
@@ -702,9 +715,9 @@ fn product_loop(
                     result
                 }
                 _ => {
-                    // No model or translator available. Use the preserved model resolution
+                    // No model or translator available. Use the current resolution
                     // error if available, otherwise default to ConnectionFailed.
-                    let err = quick_model_error
+                    let err = current_resolution_error
                         .clone()
                         .unwrap_or(lens_core::translate::TranslateError::Unavailable);
                     let failure_class =
@@ -767,6 +780,7 @@ fn product_loop(
         let mut analyser = deep_ollama;
         let mut current_model = deep_model;
         let mut current_provider = deep_provider;
+        let mut current_resolution_error: Option<lens_core::translate::TranslateError> = None;
         let mut current_endpoint = deep_endpoint;
         // Deep analysis cache — separate from translation cache per ADR-0005.
         let mut explanations = AnalysisCache::new(ANALYSIS_ENTRIES);
@@ -777,35 +791,41 @@ fn product_loop(
             while let Ok((provider, ep, m)) = deep_config_rx.try_recv() {
                 current_provider = provider;
                 current_endpoint = ep.clone();
-                analyser = match provider {
+                // Deep is Ollama-only. LM Studio Deep is not supported.
+                let resolved_model_result = match provider {
                     Provider::Ollama => {
                         let mut t = OllamaTranslator::choosing(&ep);
                         if let Some(ref model) = m {
                             t = OllamaTranslator::new(&ep, model);
                         }
-                        let _ = t.resolve_model();
-                        Some(t)
-                    }
-                    Provider::LmStudio => None,
-                };
-                current_model = match provider {
-                    Provider::Ollama => {
-                        match analyser.as_ref().and_then(|a| a.resolve_model().ok()) {
-                            Some(m) => Some(m.to_owned()),
-                            None => m.clone(),
-                        }
-                    }
-                    Provider::LmStudio => match &m {
-                        Some(model) => Some(model.clone()),
-                        None => {
-                            match lens_translate::list_models_for_provider(Provider::LmStudio, &ep)
-                            {
-                                Ok(models) if !models.is_empty() => Some(models[0].id.clone()),
-                                _ => None,
+                        match t.resolve_model() {
+                            Ok(rm) => {
+                                analyser = Some(t);
+                                Ok(Some(rm.to_owned()))
+                            }
+                            Err(e) => {
+                                // If resolution failed but we have a configured model, use it
+                                if let Some(model) = &m {
+                                    analyser = Some(t);
+                                    Ok(Some(model.clone()))
+                                } else {
+                                    analyser = Some(t);
+                                    Err(e)
+                                }
                             }
                         }
-                    },
+                    }
+                    Provider::LmStudio => {
+                        // Deep is Ollama-only. LM Studio is not supported for Deep.
+                        analyser = None;
+                        Err(lens_core::translate::TranslateError::ModelMissing(
+                            "deep-ollama-only".to_owned(),
+                        ))
+                    }
                 };
+                // Update state atomically: model and error
+                current_resolution_error = resolved_model_result.clone().err();
+                current_model = resolved_model_result.unwrap_or(None);
             }
             // Use the production seam: build_request creates the DeepRequest
             // from the job's fields, and into_result produces TransResult
@@ -827,7 +847,9 @@ fn product_loop(
             // LM Studio deep is not yet implemented.
             let result = match &analyser {
                 Some(a) => lens_core::analyse::Analyser::deep(a, &deep_req),
-                None => Err(lens_core::translate::TranslateError::Unavailable),
+                None => Err(current_resolution_error
+                    .clone()
+                    .unwrap_or(lens_core::translate::TranslateError::Unavailable)),
             };
             // P12: Record diagnostic event while error is still typed.
             match &result {
