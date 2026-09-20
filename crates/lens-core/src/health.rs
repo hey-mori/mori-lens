@@ -32,7 +32,7 @@ pub struct HealthLane {
     pub state: HealthState,
     /// Typed failure class (present only for Unavailable/Degraded).
     pub failure: Option<DiagnosticFailureClass>,
-    /// Latency of the last successful check in milliseconds.
+    /// Latency of the last check in milliseconds (recorded for all outcomes, not only successful).
     pub latency_ms: Option<u64>,
     /// Milliseconds since process start when this was last updated.
     pub updated_ms: Option<u64>,
