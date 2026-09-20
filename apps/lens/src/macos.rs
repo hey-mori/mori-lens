@@ -682,8 +682,22 @@ fn product_loop(
                     result
                 }
                 _ => {
-                    // No model or translator available
-                    Err("AI engine not ready".to_owned())
+                    // No model or translator available. Surface as a typed
+                    // TranslateError so the diagnostic block below classifies
+                    // and records it; a raw String would bypass P12 entirely.
+                    let err = lens_core::translate::TranslateError::Unavailable;
+                    quick_lane_state.on_failure(
+                        lens_core::event_ring::DiagnosticFailureClass::ConnectionFailed,
+                    );
+                    crate::tauri_app::global_diagnostic_events()
+                        .lock()
+                        .unwrap()
+                        .record(
+                            lens_core::event_ring::DiagnosticComponent::Quick,
+                            lens_core::event_ring::DiagnosticEventKind::Failure,
+                            Some(lens_core::event_ring::DiagnosticFailureClass::ConnectionFailed),
+                        );
+                    Err(err)
                 }
             };
             let _ = quick_result_tx.send(current.into_result(result.map_err(|e| e.to_owned())));
