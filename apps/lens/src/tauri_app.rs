@@ -54,7 +54,9 @@ pub type SharedDiagnosticEvents = Arc<Mutex<lens_core::event_ring::DiagnosticEve
 /// which run outside Tauri's state management. This static provides a single
 /// shared ring for the entire process.
 static GLOBAL_DIAGNOSTIC_EVENTS: std::sync::LazyLock<SharedDiagnosticEvents> =
-    std::sync::LazyLock::new(|| Arc::new(Mutex::new(lens_core::event_ring::DiagnosticEventRing::new())));
+    std::sync::LazyLock::new(|| {
+        Arc::new(Mutex::new(lens_core::event_ring::DiagnosticEventRing::new()))
+    });
 
 /// Access the global diagnostic events ring.
 pub fn global_diagnostic_events() -> SharedDiagnosticEvents {
@@ -744,7 +746,9 @@ async fn run_health_check(
             self.flag.store(false, std::sync::atomic::Ordering::SeqCst);
         }
     }
-    let _guard = HealthGuard { flag: &health_running };
+    let _guard = HealthGuard {
+        flag: &health_running,
+    };
 
     let start = Instant::now();
 
@@ -763,28 +767,38 @@ async fn run_health_check(
         let dp_raw = Provider::from_token(&view.deep_engine).unwrap_or(Provider::Ollama);
         // Deep is Ollama-only.
         let (dp, deep_ep, deep_m) = if dp_raw == Provider::Ollama {
-            (Provider::Ollama, view.deep_endpoint.clone(), view.deep_model.clone())
+            (
+                Provider::Ollama,
+                view.deep_endpoint.clone(),
+                view.deep_model.clone(),
+            )
         } else {
-            (Provider::Ollama, Provider::Ollama.default_endpoint().to_owned(), None)
+            (
+                Provider::Ollama,
+                Provider::Ollama.default_endpoint().to_owned(),
+                None,
+            )
         };
-        (qp, view.quick_endpoint.clone(), view.quick_model.clone(), dp, deep_ep, deep_m)
+        (
+            qp,
+            view.quick_endpoint.clone(),
+            view.quick_model.clone(),
+            dp,
+            deep_ep,
+            deep_m,
+        )
     };
 
     // Run health check in a background thread to avoid blocking the Tauri command.
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         // Check Quick engine using QuickRequest and Translator::quick.
-        let (quick_state, quick_failure) = check_quick_engine_health(
-            quick_provider,
-            &quick_endpoint,
-            quick_model.as_deref(),
-        );
+        let (quick_state, quick_failure) =
+            check_quick_engine_health(quick_provider, &quick_endpoint, quick_model.as_deref());
 
         // Check Deep engine using DeepRequest and Analyser::deep (Ollama-only).
-        let (deep_state, deep_failure) = check_deep_engine_health(
-            &deep_endpoint,
-            deep_model.as_deref(),
-        );
+        let (deep_state, deep_failure) =
+            check_deep_engine_health(&deep_endpoint, deep_model.as_deref());
 
         let _ = tx.send((quick_state, quick_failure, deep_state, deep_failure));
     });
@@ -901,15 +915,21 @@ fn check_quick_engine_health(
 
     // Step 1: Check reachability.
     if !lens_translate::check_provider_reachable(provider, endpoint) {
-        return ("unavailable".to_string(), Some("provider_unreachable".to_string()));
+        return (
+            "unavailable".to_string(),
+            Some("provider_unreachable".to_string()),
+        );
     }
 
     // Step 2: Build translator and resolve model using production pattern.
     // This matches win.rs:688-691 where production creates OllamaTranslator and calls resolve_model().
-    let mut translator = lens_translate::OllamaTranslator::new(endpoint, configured_model.unwrap_or(""));
+    let mut translator =
+        lens_translate::OllamaTranslator::new(endpoint, configured_model.unwrap_or(""));
     let model_name = match translator.resolve_model() {
         Ok(m) => m.to_owned(),
-        Err(_) => configured_model.unwrap_or(lens_translate::DEFAULT_MODEL).to_owned(),
+        Err(_) => configured_model
+            .unwrap_or(lens_translate::DEFAULT_MODEL)
+            .to_owned(),
     };
 
     // Step 3: Rebuild translator with resolved model and test inference.
@@ -949,15 +969,21 @@ fn check_deep_engine_health(
 
     // Step 1: Check reachability.
     if !lens_translate::check_provider_reachable(lens_core::translate::Provider::Ollama, endpoint) {
-        return ("unavailable".to_string(), Some("provider_unreachable".to_string()));
+        return (
+            "unavailable".to_string(),
+            Some("provider_unreachable".to_string()),
+        );
     }
 
     // Step 2: Build translator and resolve model using production pattern.
     // This matches win.rs:719-722 where production creates OllamaTranslator and calls resolve_model().
-    let mut analyser = lens_translate::OllamaTranslator::new(endpoint, configured_model.unwrap_or(""));
+    let mut analyser =
+        lens_translate::OllamaTranslator::new(endpoint, configured_model.unwrap_or(""));
     let model_name = match analyser.resolve_model() {
         Ok(m) => m.to_owned(),
-        Err(_) => configured_model.unwrap_or(lens_translate::DEFAULT_MODEL).to_owned(),
+        Err(_) => configured_model
+            .unwrap_or(lens_translate::DEFAULT_MODEL)
+            .to_owned(),
     };
 
     // Step 3: Rebuild analyser with resolved model and test Deep inference.
@@ -1627,18 +1653,8 @@ mod tests {
 
         // Create a health snapshot for the privacy test.
         let mut health_snapshot = lens_core::health::HealthSnapshot::new(0);
-        health_snapshot.update_quick(
-            lens_core::health::HealthState::Ready,
-            None,
-            Some(42),
-            1000,
-        );
-        health_snapshot.update_deep(
-            lens_core::health::HealthState::Ready,
-            None,
-            Some(100),
-            1000,
-        );
+        health_snapshot.update_quick(lens_core::health::HealthState::Ready, None, Some(42), 1000);
+        health_snapshot.update_deep(lens_core::health::HealthState::Ready, None, Some(100), 1000);
 
         let json = serialize_diagnostics_report(
             "0.1.0",
@@ -1722,18 +1738,8 @@ mod tests {
 
         // Create a health snapshot for the schema test.
         let mut health_snapshot = lens_core::health::HealthSnapshot::new(0);
-        health_snapshot.update_quick(
-            lens_core::health::HealthState::Ready,
-            None,
-            Some(42),
-            1000,
-        );
-        health_snapshot.update_deep(
-            lens_core::health::HealthState::Ready,
-            None,
-            Some(100),
-            1000,
-        );
+        health_snapshot.update_quick(lens_core::health::HealthState::Ready, None, Some(42), 1000);
+        health_snapshot.update_deep(lens_core::health::HealthState::Ready, None, Some(100), 1000);
 
         let json = serialize_diagnostics_report(
             "0.1.0",
