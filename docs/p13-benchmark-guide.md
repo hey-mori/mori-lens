@@ -121,7 +121,7 @@ cargo test -p lens-translate
 These prove:
 - Schema validation (all 5 fields required)
 - Links array validation
-- Fence-based injection defence
+- Fence/prompt construction contract (tests verify structural fence presence, not model resistance)
 - Parser correctness
 - Language filter (Korean output except lemma)
 - Restatement filter

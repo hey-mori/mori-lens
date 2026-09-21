@@ -462,8 +462,15 @@ pub mod bridge {
             ),
             automated: AutomatedChecks {
                 non_empty: !analysis.lemma.trim().is_empty(),
+                // Check all Korean-bearing fields (lemma may legitimately remain English)
                 target_language_detected: QuickObservations::target_script_detected(
                     &analysis.part_of_speech,
+                ) || QuickObservations::target_script_detected(
+                    &analysis.sense,
+                ) || QuickObservations::target_script_detected(
+                    &analysis.structure,
+                ) || QuickObservations::target_script_detected(
+                    &analysis.note,
                 ),
                 schema_valid: Some(true), // Production parser validates schema
                 lemma_match: None,
@@ -1103,7 +1110,7 @@ pub mod report {
             let automated_total = count_automated_checks(&case.automated);
             let automated_str = format!("{}/{}", automated_count, automated_total);
             let observations_str = format_observations(&case.observations);
-            let human_count = count_human_scores(&case.human);
+            let human_count = count_human_scores(&case.human, case.lane);
             let human_total = count_applicable_human_fields(case.lane);
             let human_str = if human_total > 0 {
                 format!("{}/{}", human_count, human_total)
@@ -1232,34 +1239,47 @@ pub mod report {
         count
     }
 
-    /// Count how many human scores are present.
-    fn count_human_scores(scores: &HumanScores) -> usize {
-        let mut count = 0;
-        if scores.meaning_preserved.is_some() {
-            count += 1;
+    /// Count how many human scores are present for the given lane.
+    ///
+    /// Quick: meaning_preserved, naturalness, completeness (3 fields)
+    /// Deep: factual_correctness, sense_correctness, grammar_correctness,
+    ///       structure_correctness, usefulness (5 fields)
+    /// `misleading` is tracked separately.
+    fn count_human_scores(scores: &HumanScores, lane: BenchmarkLane) -> usize {
+        match lane {
+            BenchmarkLane::Quick => {
+                let mut count = 0;
+                if scores.meaning_preserved.is_some() {
+                    count += 1;
+                }
+                if scores.naturalness.is_some() {
+                    count += 1;
+                }
+                if scores.completeness.is_some() {
+                    count += 1;
+                }
+                count
+            }
+            BenchmarkLane::Deep => {
+                let mut count = 0;
+                if scores.factual_correctness.is_some() {
+                    count += 1;
+                }
+                if scores.sense_correctness.is_some() {
+                    count += 1;
+                }
+                if scores.grammar_correctness.is_some() {
+                    count += 1;
+                }
+                if scores.structure_correctness.is_some() {
+                    count += 1;
+                }
+                if scores.usefulness.is_some() {
+                    count += 1;
+                }
+                count
+            }
         }
-        if scores.naturalness.is_some() {
-            count += 1;
-        }
-        if scores.completeness.is_some() {
-            count += 1;
-        }
-        if scores.factual_correctness.is_some() {
-            count += 1;
-        }
-        if scores.sense_correctness.is_some() {
-            count += 1;
-        }
-        if scores.grammar_correctness.is_some() {
-            count += 1;
-        }
-        if scores.structure_correctness.is_some() {
-            count += 1;
-        }
-        if scores.usefulness.is_some() {
-            count += 1;
-        }
-        count
     }
 
     #[cfg(test)]
@@ -1425,6 +1445,158 @@ pub mod report {
             run.add_case(case);
             let md = generate_markdown_report(&run);
             assert!(md.contains("**Misleading content review:** NOT REVIEWED"));
+        }
+
+        #[test]
+        fn count_human_scores_quick_ignores_deep_fields() {
+            let scores = HumanScores {
+                meaning_preserved: QualityScore::new(2),
+                naturalness: QualityScore::new(1),
+                completeness: QualityScore::new(2),
+                // Deep-only fields populated (should be ignored for Quick)
+                factual_correctness: QualityScore::new(2),
+                sense_correctness: QualityScore::new(1),
+                grammar_correctness: QualityScore::new(2),
+                structure_correctness: QualityScore::new(1),
+                usefulness: QualityScore::new(2),
+                misleading: None,
+                note: None,
+            };
+            // Quick lane should only count the 3 Quick fields
+            assert_eq!(count_human_scores(&scores, BenchmarkLane::Quick), 3);
+        }
+
+        #[test]
+        fn count_human_scores_deep_ignores_quick_fields() {
+            let scores = HumanScores {
+                // Quick-only fields populated (should be ignored for Deep)
+                meaning_preserved: QualityScore::new(2),
+                naturalness: QualityScore::new(1),
+                completeness: QualityScore::new(2),
+                factual_correctness: QualityScore::new(2),
+                sense_correctness: QualityScore::new(1),
+                grammar_correctness: QualityScore::new(2),
+                structure_correctness: QualityScore::new(1),
+                usefulness: QualityScore::new(2),
+                misleading: None,
+                note: None,
+            };
+            // Deep lane should only count the 5 Deep fields
+            assert_eq!(count_human_scores(&scores, BenchmarkLane::Deep), 5);
+        }
+
+        #[test]
+        fn human_coverage_never_exceeds_denominator() {
+            let mut run = BenchmarkRun::new(
+                BenchmarkMetadata {
+                    model: "test-model".to_string(),
+                    provider: "TestProvider".to_string(),
+                    endpoint: "127.0.0.1:9999".to_string(),
+                    timestamp: "2026-09-21T12:00:00Z".to_string(),
+                    runs_per_entry: 1,
+                    warm_start: true,
+                    corpus_revision: "v1".to_string(),
+                    notes: None,
+                },
+                BenchmarkLane::Quick,
+            );
+            // Quick case with all fields populated (including Deep-only)
+            let case = BenchmarkCaseResult {
+                entry_id: "A01".to_string(),
+                category: "general".to_string(),
+                lane: BenchmarkLane::Quick,
+                run_index: 0,
+                source: "Test.".to_string(),
+                focused_word: None,
+                output: "출력".to_string(),
+                automated: AutomatedChecks::default(),
+                observations: FactualObservations::default(),
+                human: HumanScores {
+                    meaning_preserved: QualityScore::new(2),
+                    naturalness: QualityScore::new(1),
+                    completeness: QualityScore::new(2),
+                    factual_correctness: QualityScore::new(2), // Deep-only, should be ignored
+                    sense_correctness: QualityScore::new(1),   // Deep-only, should be ignored
+                    grammar_correctness: QualityScore::new(2), // Deep-only, should be ignored
+                    structure_correctness: QualityScore::new(1), // Deep-only, should be ignored
+                    usefulness: QualityScore::new(2),          // Deep-only, should be ignored
+                    misleading: None,
+                    note: None,
+                },
+            };
+            run.add_case(case);
+            let md = generate_markdown_report(&run);
+            // Should show 3/3 for Quick, not 8/3
+            assert!(md.contains("| A01 | general | - | 0/2 | NOT MEASURED | 3/3 |"));
+        }
+
+        #[test]
+        fn deep_target_language_checks_all_korean_bearing_fields() {
+            use lens_core::analyse::DeepAnalysis;
+            use lens_core::translate::Provider;
+
+            // POS has Hangul, other fields don't
+            let analysis = DeepAnalysis {
+                lemma: "rest".to_string(),
+                part_of_speech: "동사".to_string(), // Korean
+                sense: "to remain".to_string(),     // English
+                structure: "".to_string(),
+                note: "".to_string(),
+                word: None,
+                translation: None,
+                counterpart: None,
+                model: "test".to_string(),
+                provider: Provider::Ollama,
+                latency_ms: 100,
+                cached: false,
+                links: vec![],
+            };
+
+            let case = bridge::from_deep_analysis("A01", "general", "test", None, &analysis, 0);
+            // Should detect Korean from POS field
+            assert!(case.automated.target_language_detected);
+
+            // Now test where POS is English but sense has Korean
+            let analysis2 = DeepAnalysis {
+                lemma: "rest".to_string(),
+                part_of_speech: "verb".to_string(), // English
+                sense: "멈추다".to_string(),        // Korean
+                structure: "".to_string(),
+                note: "".to_string(),
+                word: None,
+                translation: None,
+                counterpart: None,
+                model: "test".to_string(),
+                provider: Provider::Ollama,
+                latency_ms: 100,
+                cached: false,
+                links: vec![],
+            };
+
+            let case2 = bridge::from_deep_analysis("A02", "general", "test", None, &analysis2, 0);
+            // Should detect Korean from sense field
+            assert!(case2.automated.target_language_detected);
+
+            // Test where no Korean-bearing field has Korean
+            let analysis3 = DeepAnalysis {
+                lemma: "rest".to_string(),
+                part_of_speech: "verb".to_string(),
+                sense: "to remain".to_string(),
+                structure: "clause".to_string(),
+                note: "note".to_string(),
+                word: None,
+                translation: None,
+                counterpart: None,
+                model: "test".to_string(),
+                provider: Provider::Ollama,
+                latency_ms: 100,
+                cached: false,
+                links: vec![],
+            };
+
+            let case3 = bridge::from_deep_analysis("A03", "general", "test", None, &analysis3, 0);
+            // Should not detect Korean
+            assert!(!case3.automated.target_language_detected);
         }
     }
 }
