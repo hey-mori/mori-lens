@@ -289,7 +289,7 @@ impl QuickObservations {
     pub fn target_script_ratio(output: &str) -> f64 {
         let hangul_count = output
             .chars()
-            .filter(|c| ('\u{AC00}'..='\u{D7A3}').contains(&c))
+            .filter(|c| ('\u{AC00}'..='\u{D7A3}').contains(c))
             .count();
         let total_chars = output.chars().count();
         if total_chars == 0 {
