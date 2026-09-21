@@ -8,10 +8,13 @@
 //! # Evidence taxonomy
 //!
 //! - AUTOMATED CONTRACT PASS: Deterministic checks (schema, parsing, exact match)
+//! - FACTUAL OBSERVATION: Automated measurements (keyword coverage, script ratio, length ratio)
 //! - HUMAN REVIEWED: Quality judgments requiring person evaluation
 //! - LIVE OLLAMA MEASUREMENT: Requires running Ollama runtime
 //! - LIVE LM STUDIO MEASUREMENT: Requires running LM Studio runtime
 //! - NOT VERIFIED: No evidence exists
+//! - NOT MEASURED: Applicable but not computed
+//! - NOT REVIEWED: Applicable but human review not performed
 //!
 //! # Factual observations vs quality scores
 //!
@@ -21,6 +24,15 @@
 //!   can be computed automatically. They are not quality judgments.
 //! - **Human quality scores** (`QualityScore`): Require person evaluation on a
 //!   0-2 scale. Never conflated with factual observations.
+//!
+//! # Tri-state automated evidence
+//!
+//! Automated checks use `Option<bool>` where:
+//! - `Some(true)` = actually checked and passed
+//! - `Some(false)` = actually checked and failed
+//! - `None` = not measured / not applicable
+//!
+//! A `None` value must never be counted as PASS in statistics.
 //!
 //! # Privacy
 //!
@@ -57,13 +69,17 @@ pub struct BenchmarkMetadata {
 /// Automated contract check result for a single corpus entry.
 ///
 /// These are deterministic checks that can be asserted without human judgment.
+/// Uses tri-state semantics: `Some(true)` = checked and passed, `Some(false)` =
+/// checked and failed, `None` = not measured / not applicable.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AutomatedChecks {
     /// Output is non-empty
     pub non_empty: bool,
     /// Output is in target language (Korean for this project)
     pub target_language_detected: bool,
-    /// Response parses through production schema (Deep only)
+    /// Response parses through production schema (Deep only).
+    /// `Some(true)` for a successfully constructed `DeepAnalysis` because the
+    /// production parser necessarily validates the schema before the type exists.
     pub schema_valid: Option<bool>,
     /// Lemma matches expected (exact match, case-insensitive)
     pub lemma_match: Option<bool>,
@@ -71,10 +87,12 @@ pub struct AutomatedChecks {
     pub pos_match: Option<bool>,
     /// Structure field populated when expected
     pub structure_present: Option<bool>,
-    /// Forbidden restatement behavior not detected
-    pub no_restatement: bool,
-    /// Provenance/model/provider identity correct
-    pub provenance_correct: bool,
+    /// Forbidden restatement behavior not detected.
+    /// `None` when not measured (e.g., bridge from production output).
+    pub no_restatement: Option<bool>,
+    /// Provenance/model/provider identity correct.
+    /// `None` when not measured (e.g., bridge from production output).
+    pub provenance_correct: Option<bool>,
     /// Timeout/error type (if any)
     pub error_type: Option<String>,
     /// Latency in milliseconds
@@ -154,18 +172,24 @@ pub struct HumanScores {
 ///
 /// These are deterministic measurements, not quality judgments.
 /// They describe observable properties of the output.
+/// Uses `Option<T>` where `None` means not measured.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FactualObservations {
-    /// Ratio of expected keywords found in output (0.0 to 1.0)
-    pub keyword_coverage_ratio: f64,
-    /// Ratio of target script (Hangul) characters in output (0.0 to 1.0)
-    pub target_script_ratio: f64,
-    /// Whether target script was detected at all
-    pub target_script_detected: bool,
-    /// Ratio of output length to source length
-    pub length_ratio: f64,
-    /// Whether length ratio is within sanity band (0.3 to 1.5)
-    pub length_ratio_within_sanity_band: bool,
+    /// Ratio of expected keywords found in output (0.0 to 1.0).
+    /// `None` when expected keywords not provided.
+    pub keyword_coverage_ratio: Option<f64>,
+    /// Ratio of target script (Hangul) characters in output (0.0 to 1.0).
+    /// `None` when not measured.
+    pub target_script_ratio: Option<f64>,
+    /// Whether target script was detected at all.
+    /// `None` when not measured.
+    pub target_script_detected: Option<bool>,
+    /// Ratio of output length to source length.
+    /// `None` when not measured.
+    pub length_ratio: Option<f64>,
+    /// Whether length ratio is within sanity band (0.3 to 1.5).
+    /// `None` when not measured.
+    pub length_ratio_within_sanity_band: Option<bool>,
 }
 
 /// Result for a single corpus entry in a benchmark run.
@@ -229,10 +253,12 @@ pub struct BenchmarkStats {
     pub median_latency_ms: Option<f64>,
     /// Average human score by field (if reviewed)
     pub avg_human_scores: HashMap<String, f64>,
-    /// Number of cases reviewed for misleading content
+    /// Number of cases reviewed for misleading content (Deep only)
     pub misleading_reviewed_count: usize,
     /// Number of cases flagged as misleading (Deep only, among reviewed)
     pub misleading_count: usize,
+    /// Total cases applicable for misleading review (Deep only)
+    pub misleading_applicable_count: usize,
 }
 
 /// Quick translation factual observations.
@@ -263,7 +289,7 @@ impl QuickObservations {
     pub fn target_script_ratio(output: &str) -> f64 {
         let hangul_count = output
             .chars()
-            .filter(|c| ('\u{AC00}'..='\u{D7A3}').contains(c))
+            .filter(|c| ('\u{AC00}'..='\u{D7A3}').contains(&c))
             .count();
         let total_chars = output.chars().count();
         if total_chars == 0 {
@@ -299,13 +325,22 @@ impl QuickObservations {
     }
 
     /// Compute all factual observations for a Quick translation.
-    pub fn compute(source: &str, output: &str, expected_keywords: &[&str]) -> FactualObservations {
+    ///
+    /// Keyword coverage requires expected keywords; if not provided, it is `None`.
+    pub fn compute(
+        source: &str,
+        output: &str,
+        expected_keywords: Option<&[&str]>,
+    ) -> FactualObservations {
         FactualObservations {
-            keyword_coverage_ratio: Self::keyword_coverage_ratio(output, expected_keywords),
-            target_script_ratio: Self::target_script_ratio(output),
-            target_script_detected: Self::target_script_detected(output),
-            length_ratio: Self::length_ratio(source, output),
-            length_ratio_within_sanity_band: Self::length_ratio_within_sanity_band(source, output),
+            keyword_coverage_ratio: expected_keywords
+                .map(|kws| Self::keyword_coverage_ratio(output, kws)),
+            target_script_ratio: Some(Self::target_script_ratio(output)),
+            target_script_detected: Some(Self::target_script_detected(output)),
+            length_ratio: Some(Self::length_ratio(source, output)),
+            length_ratio_within_sanity_band: Some(Self::length_ratio_within_sanity_band(
+                source, output,
+            )),
         }
     }
 }
@@ -355,18 +390,23 @@ pub mod bridge {
     ///
     /// Extracts automated facts from the production result.
     /// Human scores and observations must be filled separately.
+    ///
+    /// `run_index` must be provided explicitly for repeated runs.
+    /// `expected_keywords` is optional; if `None`, keyword coverage is not measured.
     pub fn from_quick_translation(
         entry_id: &str,
         category: &str,
         source: &str,
         focused_word: Option<&str>,
         translation: &QuickTranslation,
+        run_index: usize,
+        expected_keywords: Option<&[&str]>,
     ) -> BenchmarkCaseResult {
         BenchmarkCaseResult {
             entry_id: entry_id.to_string(),
             category: category.to_string(),
             lane: BenchmarkLane::Quick,
-            run_index: 0,
+            run_index,
             source: source.to_string(),
             focused_word: focused_word.map(|s| s.to_string()),
             output: translation.text.clone(),
@@ -379,12 +419,12 @@ pub mod bridge {
                 lemma_match: None,
                 pos_match: None,
                 structure_present: None,
-                no_restatement: true,
-                provenance_correct: true,
+                no_restatement: None,     // Not measured by bridge
+                provenance_correct: None, // Not measured by bridge
                 error_type: None,
                 latency_ms: Some(translation.latency_ms as u64),
             },
-            observations: FactualObservations::default(),
+            observations: QuickObservations::compute(source, &translation.text, expected_keywords),
             human: HumanScores::default(),
         }
     }
@@ -393,18 +433,23 @@ pub mod bridge {
     ///
     /// Extracts automated facts from the production result.
     /// Human scores and observations must be filled separately.
+    ///
+    /// `run_index` must be provided explicitly for repeated runs.
+    /// `schema_valid` is set to `Some(true)` because the production parser
+    /// necessarily validates the schema before `DeepAnalysis` can exist.
     pub fn from_deep_analysis(
         entry_id: &str,
         category: &str,
         source: &str,
         focused_word: Option<&str>,
         analysis: &DeepAnalysis,
+        run_index: usize,
     ) -> BenchmarkCaseResult {
         BenchmarkCaseResult {
             entry_id: entry_id.to_string(),
             category: category.to_string(),
             lane: BenchmarkLane::Deep,
-            run_index: 0,
+            run_index,
             source: source.to_string(),
             focused_word: focused_word.map(|s| s.to_string()),
             output: format!(
@@ -420,16 +465,16 @@ pub mod bridge {
                 target_language_detected: QuickObservations::target_script_detected(
                     &analysis.part_of_speech,
                 ),
-                schema_valid: Some(true),
+                schema_valid: Some(true), // Production parser validates schema
                 lemma_match: None,
                 pos_match: None,
                 structure_present: Some(!analysis.structure.trim().is_empty()),
-                no_restatement: true,
-                provenance_correct: true,
+                no_restatement: None,     // Not measured by bridge
+                provenance_correct: None, // Not measured by bridge
                 error_type: None,
                 latency_ms: Some(analysis.latency_ms),
             },
-            observations: FactualObservations::default(),
+            observations: FactualObservations::default(), // Deep does not inherit Quick observations
             human: HumanScores::default(),
         }
     }
@@ -464,38 +509,28 @@ impl BenchmarkRun {
             ..Default::default()
         };
 
-        // Compute automated check pass rates
+        // Compute automated check pass rates (only for measured checks)
         let mut check_counts: HashMap<String, (usize, usize)> = HashMap::new();
         for case in &self.cases {
-            let checks = [
-                ("non_empty", case.automated.non_empty),
+            let checks: [(&str, Option<bool>); 6] = [
+                ("non_empty", Some(case.automated.non_empty)),
                 (
                     "target_language_detected",
-                    case.automated.target_language_detected,
+                    Some(case.automated.target_language_detected),
                 ),
                 ("no_restatement", case.automated.no_restatement),
                 ("provenance_correct", case.automated.provenance_correct),
+                ("schema_valid", case.automated.schema_valid),
+                ("lemma_match", case.automated.lemma_match),
             ];
-            for (name, passed) in checks {
-                let entry = check_counts.entry(name.to_string()).or_insert((0, 0));
-                entry.0 += if passed { 1 } else { 0 };
-                entry.1 += 1;
+            for (name, value) in checks {
+                if let Some(passed) = value {
+                    let entry = check_counts.entry(name.to_string()).or_insert((0, 0));
+                    entry.0 += if passed { 1 } else { 0 };
+                    entry.1 += 1;
+                }
             }
-            // Optional checks
-            if let Some(schema_valid) = case.automated.schema_valid {
-                let entry = check_counts
-                    .entry("schema_valid".to_string())
-                    .or_insert((0, 0));
-                entry.0 += if schema_valid { 1 } else { 0 };
-                entry.1 += 1;
-            }
-            if let Some(lemma_match) = case.automated.lemma_match {
-                let entry = check_counts
-                    .entry("lemma_match".to_string())
-                    .or_insert((0, 0));
-                entry.0 += if lemma_match { 1 } else { 0 };
-                entry.1 += 1;
-            }
+            // Additional optional checks
             if let Some(pos_match) = case.automated.pos_match {
                 let entry = check_counts
                     .entry("pos_match".to_string())
@@ -569,8 +604,9 @@ impl BenchmarkRun {
         }
 
         // Count misleading cases (Deep only)
-        // Distinguish "not reviewed" from "reviewed and zero misleading"
+        // Track reviewed count separately from misleading count
         if self.lane == BenchmarkLane::Deep {
+            let applicable = self.cases.len();
             let reviewed = self
                 .cases
                 .iter()
@@ -581,11 +617,25 @@ impl BenchmarkRun {
                 .iter()
                 .filter(|c| c.human.misleading == Some(true))
                 .count();
+            stats.misleading_applicable_count = applicable;
             stats.misleading_reviewed_count = reviewed;
             stats.misleading_count = misleading;
         }
 
         stats
+    }
+}
+
+/// Count applicable human review fields by lane.
+///
+/// Quick: meaning_preserved, naturalness, completeness (3 fields)
+/// Deep: factual_correctness, sense_correctness, grammar_correctness,
+///       structure_correctness, usefulness (5 fields)
+/// misleading is a separate boolean field, not counted here.
+pub fn count_applicable_human_fields(lane: BenchmarkLane) -> usize {
+    match lane {
+        BenchmarkLane::Quick => 3,
+        BenchmarkLane::Deep => 5,
     }
 }
 
@@ -622,8 +672,8 @@ mod tests {
                 lemma_match: None,
                 pos_match: None,
                 structure_present: None,
-                no_restatement: true,
-                provenance_correct: true,
+                no_restatement: None,
+                provenance_correct: None,
                 error_type: None,
                 latency_ms: latency,
             },
@@ -673,6 +723,20 @@ mod tests {
                 .get("target_language_detected"),
             Some(&1.0)
         );
+    }
+
+    #[test]
+    fn compute_stats_does_not_count_none_as_pass() {
+        let mut run = BenchmarkRun::new(test_metadata(), BenchmarkLane::Quick);
+        let mut case = test_case("A01", Some(100));
+        case.automated.no_restatement = None; // Not measured
+        run.add_case(case);
+
+        let stats = run.compute_stats();
+        // no_restatement should not appear in pass rates when None
+        assert!(!stats
+            .automated_check_pass_rates
+            .contains_key("no_restatement"));
     }
 
     #[test]
@@ -736,6 +800,7 @@ mod tests {
         run.add_case(case3);
 
         let stats = run.compute_stats();
+        assert_eq!(stats.misleading_applicable_count, 3);
         assert_eq!(stats.misleading_reviewed_count, 2);
         assert_eq!(stats.misleading_count, 1);
     }
@@ -772,6 +837,16 @@ mod tests {
         let json = serde_json::to_string(&run).expect("serialize failed");
         assert!(json.contains("\"lane\":\"quick\""));
         assert!(json.contains("\"entry_id\":\"A01\""));
+    }
+
+    #[test]
+    fn factual_observations_default_to_none() {
+        let obs = FactualObservations::default();
+        assert!(obs.keyword_coverage_ratio.is_none());
+        assert!(obs.target_script_ratio.is_none());
+        assert!(obs.target_script_detected.is_none());
+        assert!(obs.length_ratio.is_none());
+        assert!(obs.length_ratio_within_sanity_band.is_none());
     }
 
     #[test]
@@ -836,6 +911,21 @@ mod tests {
     }
 
     #[test]
+    fn quick_observations_compute_with_keywords() {
+        let obs = QuickObservations::compute("source", "테스트", Some(&["테스트"]));
+        assert_eq!(obs.keyword_coverage_ratio, Some(1.0));
+        assert!(obs.target_script_ratio.is_some());
+        assert!(obs.target_script_detected.is_some());
+    }
+
+    #[test]
+    fn quick_observations_compute_without_keywords() {
+        let obs = QuickObservations::compute("source", "테스트", None);
+        assert!(obs.keyword_coverage_ratio.is_none());
+        assert!(obs.target_script_ratio.is_some());
+    }
+
+    #[test]
     fn deep_observations_check_lemma_match() {
         assert!(DeepObservations::lemma_matches("rest", "rest"));
         assert!(DeepObservations::lemma_matches("REST", "rest"));
@@ -863,6 +953,16 @@ mod tests {
             0.0
         );
         assert_eq!(DeepObservations::pos_coverage_ratio("", &["동사"]), 0.0);
+    }
+
+    #[test]
+    fn count_applicable_human_fields_quick() {
+        assert_eq!(count_applicable_human_fields(BenchmarkLane::Quick), 3);
+    }
+
+    #[test]
+    fn count_applicable_human_fields_deep() {
+        assert_eq!(count_applicable_human_fields(BenchmarkLane::Deep), 5);
     }
 }
 
@@ -922,13 +1022,27 @@ pub mod report {
         if let Some(median_latency) = stats.median_latency_ms {
             writeln!(md, "- **Median latency:** {:.1}ms", median_latency).unwrap();
         }
-        if stats.misleading_reviewed_count > 0 {
-            writeln!(
-                md,
-                "- **Misleading cases:** {} of {} reviewed",
-                stats.misleading_count, stats.misleading_reviewed_count
-            )
-            .unwrap();
+        // Misleading review coverage (Deep only)
+        if run.lane == BenchmarkLane::Deep {
+            if stats.misleading_reviewed_count == 0 {
+                writeln!(md, "- **Misleading content review:** NOT REVIEWED").unwrap();
+            } else if stats.misleading_reviewed_count == stats.misleading_applicable_count {
+                writeln!(
+                    md,
+                    "- **Misleading content:** {} flagged / {} reviewed",
+                    stats.misleading_count, stats.misleading_reviewed_count
+                )
+                .unwrap();
+            } else {
+                writeln!(
+                    md,
+                    "- **Misleading content:** {} flagged / {} reviewed / {} total cases",
+                    stats.misleading_count,
+                    stats.misleading_reviewed_count,
+                    stats.misleading_applicable_count
+                )
+                .unwrap();
+            }
         }
         writeln!(md).unwrap();
 
@@ -990,7 +1104,7 @@ pub mod report {
             let automated_str = format!("{}/{}", automated_count, automated_total);
             let observations_str = format_observations(&case.observations);
             let human_count = count_human_scores(&case.human);
-            let human_total = count_human_fields(&case.human);
+            let human_total = count_applicable_human_fields(case.lane);
             let human_str = if human_total > 0 {
                 format!("{}/{}", human_count, human_total)
             } else {
@@ -1034,6 +1148,12 @@ pub mod report {
         )
         .unwrap();
         writeln!(md, "- **NOT VERIFIED:** No evidence exists").unwrap();
+        writeln!(md, "- **NOT MEASURED:** Applicable but not computed").unwrap();
+        writeln!(
+            md,
+            "- **NOT REVIEWED:** Applicable but human review not performed"
+        )
+        .unwrap();
         writeln!(md).unwrap();
 
         md
@@ -1041,15 +1161,24 @@ pub mod report {
 
     /// Format factual observations for display in report table.
     fn format_observations(obs: &FactualObservations) -> String {
-        let parts = [
-            format!("kw={:.0}%", obs.keyword_coverage_ratio * 100.0),
-            format!("scr={:.0}%", obs.target_script_ratio * 100.0),
-            format!("len={:.2}", obs.length_ratio),
-        ];
-        parts.join(", ")
+        let mut parts = Vec::new();
+        if let Some(kw) = obs.keyword_coverage_ratio {
+            parts.push(format!("kw={:.0}%", kw * 100.0));
+        }
+        if let Some(scr) = obs.target_script_ratio {
+            parts.push(format!("scr={:.0}%", scr * 100.0));
+        }
+        if let Some(len) = obs.length_ratio {
+            parts.push(format!("len={:.2}", len));
+        }
+        if parts.is_empty() {
+            "NOT MEASURED".to_string()
+        } else {
+            parts.join(", ")
+        }
     }
 
-    /// Count how many automated checks passed.
+    /// Count how many automated checks passed (only measured checks).
     fn count_automated_passes(checks: &AutomatedChecks) -> usize {
         let mut count = 0;
         if checks.non_empty {
@@ -1070,18 +1199,18 @@ pub mod report {
         if checks.structure_present == Some(true) {
             count += 1;
         }
-        if checks.no_restatement {
+        if checks.no_restatement == Some(true) {
             count += 1;
         }
-        if checks.provenance_correct {
+        if checks.provenance_correct == Some(true) {
             count += 1;
         }
         count
     }
 
-    /// Count how many automated checks are applicable.
+    /// Count how many automated checks are applicable (measured).
     fn count_automated_checks(checks: &AutomatedChecks) -> usize {
-        let mut count = 4; // non_empty, target_language_detected, no_restatement, provenance_correct
+        let mut count = 2; // non_empty, target_language_detected (always measured)
         if checks.schema_valid.is_some() {
             count += 1;
         }
@@ -1092,6 +1221,12 @@ pub mod report {
             count += 1;
         }
         if checks.structure_present.is_some() {
+            count += 1;
+        }
+        if checks.no_restatement.is_some() {
+            count += 1;
+        }
+        if checks.provenance_correct.is_some() {
             count += 1;
         }
         count
@@ -1127,13 +1262,6 @@ pub mod report {
         count
     }
 
-    /// Count how many human score fields are applicable.
-    fn count_human_fields(_scores: &HumanScores) -> usize {
-        // For simplicity, count all fields as applicable
-        // Real implementation would check lane-specific relevance
-        8
-    }
-
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -1167,17 +1295,17 @@ pub mod report {
                     lemma_match: None,
                     pos_match: None,
                     structure_present: None,
-                    no_restatement: true,
-                    provenance_correct: true,
+                    no_restatement: None,
+                    provenance_correct: None,
                     error_type: None,
                     latency_ms: Some(100),
                 },
                 observations: FactualObservations {
-                    keyword_coverage_ratio: 1.0,
-                    target_script_ratio: 1.0,
-                    target_script_detected: true,
-                    length_ratio: 0.5,
-                    length_ratio_within_sanity_band: true,
+                    keyword_coverage_ratio: Some(1.0),
+                    target_script_ratio: Some(1.0),
+                    target_script_detected: Some(true),
+                    length_ratio: Some(0.5),
+                    length_ratio_within_sanity_band: Some(true),
                 },
                 human: HumanScores {
                     meaning_preserved: QualityScore::new(2),
@@ -1240,6 +1368,14 @@ pub mod report {
         }
 
         #[test]
+        fn generate_markdown_report_shows_not_measured_for_empty_observations() {
+            let mut run = test_run();
+            run.cases[0].observations = FactualObservations::default();
+            let md = generate_markdown_report(&run);
+            assert!(md.contains("NOT MEASURED"));
+        }
+
+        #[test]
         fn generate_markdown_report_includes_per_case_results() {
             let run = test_run();
             let md = generate_markdown_report(&run);
@@ -1255,6 +1391,40 @@ pub mod report {
             assert!(md.contains("AUTOMATED CONTRACT PASS"));
             assert!(md.contains("FACTUAL OBSERVATION"));
             assert!(md.contains("HUMAN REVIEWED"));
+            assert!(md.contains("NOT MEASURED"));
+            assert!(md.contains("NOT REVIEWED"));
+        }
+
+        #[test]
+        fn generate_markdown_report_shows_misleading_not_reviewed() {
+            let mut run = BenchmarkRun::new(
+                BenchmarkMetadata {
+                    model: "test-model".to_string(),
+                    provider: "TestProvider".to_string(),
+                    endpoint: "127.0.0.1:9999".to_string(),
+                    timestamp: "2026-09-21T12:00:00Z".to_string(),
+                    runs_per_entry: 3,
+                    warm_start: true,
+                    corpus_revision: "v1".to_string(),
+                    notes: None,
+                },
+                BenchmarkLane::Deep,
+            );
+            let case = BenchmarkCaseResult {
+                entry_id: "A01".to_string(),
+                category: "general".to_string(),
+                lane: BenchmarkLane::Deep,
+                run_index: 0,
+                source: "Test.".to_string(),
+                focused_word: None,
+                output: "출력".to_string(),
+                automated: AutomatedChecks::default(),
+                observations: FactualObservations::default(),
+                human: HumanScores::default(),
+            };
+            run.add_case(case);
+            let md = generate_markdown_report(&run);
+            assert!(md.contains("**Misleading content review:** NOT REVIEWED"));
         }
     }
 }

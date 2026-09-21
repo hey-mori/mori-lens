@@ -11,12 +11,15 @@ P13 measures the actual production Quick and Deep paths to establish quality bas
 ## Evidence Taxonomy
 
 - **AUTOMATED CONTRACT PASS:** Deterministic checks (schema, parsing, exact match)
+- **FACTUAL OBSERVATION:** Automated measurements (keyword coverage, script ratio, length ratio). These are not quality judgments.
 - **HUMAN REVIEWED:** Quality judgments requiring person evaluation
 - **LIVE OLLAMA MEASUREMENT:** Requires running Ollama runtime
 - **LIVE LM STUDIO MEASUREMENT:** Requires running LM Studio runtime
 - **NOT VERIFIED:** No evidence exists
+- **NOT MEASURED:** Applicable but not computed
+- **NOT REVIEWED:** Applicable but human review not performed
 
-**Do not conflate these.** An automated contract pass is not translation quality. A human review is not a reproducible test.
+**Do not conflate these.** An automated contract pass is not translation quality. A human review is not a reproducible test. A factual observation is not a quality judgment.
 
 ## Running Quick Evaluation
 
@@ -65,7 +68,7 @@ cargo test -p lens-translate -- --ignored --nocapture --test-threads=1 live_test
 **Interpreting results:**
 - Look for Hangul character count (≥5 indicates Korean output)
 - Check latency values (warm median is the meaningful metric)
-- Compare injection resistance across models
+- Compare measured injection susceptibility across models
 - Note any models that produce empty translations
 
 ### Using the Benchmark Infrastructure
@@ -254,17 +257,18 @@ The JSON report contains all raw data:
 ### Markdown Report
 
 The Markdown report is human-readable:
-- Summary statistics (total cases, successful cases, latency)
-- Automated check pass rates (as percentages)
-- Human score averages (as X/2)
+- Summary statistics (total cases, completed inference cases, latency)
+- Automated check pass rates (as percentages, only for measured checks)
+- Human score averages (as X/2, lane-specific coverage)
+- Misleading content review coverage (Deep only)
 - Per-case results table
 - Evidence labels
 
 **Key metrics to watch:**
-- **Automated check pass rates:** Should be 100% for deterministic checks
+- **Automated check pass rates:** Should be 100% for measured deterministic checks
 - **Average latency:** Lower is better, but context matters (cold vs. warm)
 - **Human score averages:** Higher is better (max 2.0)
-- **Misleading count (Deep only):** Lower is better (0 is ideal)
+- **Misleading content (Deep only):** Zero is meaningful only when all intended cases were reviewed
 
 ### Comparing Runs
 
@@ -273,7 +277,7 @@ To compare two benchmark runs:
 2. Compare automated check pass rates (should be stable)
 3. Compare latency (context matters: cold vs. warm, model size)
 4. Compare human scores (requires same reviewer for consistency)
-5. Look for regressions in misleading count
+5. Look for regressions in misleading content (when review coverage is complete)
 
 ## Evidence Gaps
 
