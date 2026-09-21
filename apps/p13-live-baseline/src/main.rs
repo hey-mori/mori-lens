@@ -1,8 +1,8 @@
 // P13 Live Baseline Runner
 //
 // This binary executes the P13 benchmark using production Translator and Analyser
-// against a small, repository-owned corpus. It produces a dated baseline report
-// under docs/benchmarks/.
+// against the canonical 25-entry repository-owned corpus from lens_translate::eval_corpus.
+// It produces a dated baseline report under docs/benchmarks/.
 //
 // Human review remains NOT REVIEWED. This is an automated baseline only.
 //
@@ -12,6 +12,13 @@
 // Prerequisites:
 // - Ollama running with the specified model loaded
 // - Network access to localhost:11434 (default Ollama endpoint)
+//
+// Evidence integrity:
+// - Corpus revision is traceable via git (see lens_translate::eval_corpus::CORPUS_REVISION)
+// - Quick lane: translation quality (non_empty, target_language_detected)
+// - Deep lane: word-specific checks only when word is present (eligibility semantics)
+// - Timeout evidence is preserved as-is, not filtered
+// - Environment metadata is captured (OS, commit SHA, Ollama version)
 
 use chrono::Utc;
 use lens_core::analyse::{Analyser, DeepRequest, Profile};
@@ -22,64 +29,10 @@ use lens_translate::benchmark::{
     FactualObservations, HumanScores, bridge,
     report::{generate_json_report, generate_markdown_report},
 };
+use lens_translate::eval_corpus::{CORPUS, CORPUS_REVISION};
 use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
-
-/// Repository-owned corpus for Quick lane benchmark.
-/// These are synthetic English sentences for translation to Korean.
-/// No captured text from any user session.
-const QUICK_CORPUS: &[(&str, &str, &str, Option<&str>, Option<&[&str]>)] = &[
-    (
-        "Q01",
-        "general",
-        "The weather is nice today.",
-        None,
-        Some(&["weather", "nice"]),
-    ),
-    (
-        "Q02",
-        "general",
-        "I need to finish this report by Friday.",
-        None,
-        Some(&["report", "Friday"]),
-    ),
-    (
-        "Q03",
-        "technical",
-        "The function returns a boolean value.",
-        None,
-        Some(&["function", "boolean"]),
-    ),
-    (
-        "Q04",
-        "general",
-        "Where is the nearest subway station?",
-        None,
-        Some(&["subway", "station"]),
-    ),
-    (
-        "Q05",
-        "general",
-        "This meeting has been postponed to next week.",
-        None,
-        Some(&["meeting", "postponed"]),
-    ),
-];
-
-/// Repository-owned corpus for Deep lane benchmark.
-/// Same sentences, but Deep provides richer analysis.
-const DEEP_CORPUS: &[(&str, &str, &str)] = &[
-    ("D01", "general", "The weather is nice today."),
-    ("D02", "general", "I need to finish this report by Friday."),
-    ("D03", "technical", "The function returns a boolean value."),
-    ("D04", "general", "Where is the nearest subway station?"),
-    (
-        "D05",
-        "general",
-        "This meeting has been postponed to next week.",
-    ),
-];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
@@ -92,6 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("P13 Live Baseline Runner");
     println!("Model: {}", model);
+    println!("Corpus revision: {}", CORPUS_REVISION);
     println!("Timestamp: {}", Utc::now().to_rfc3339());
     println!();
 
@@ -101,9 +55,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Check Ollama reachability
     println!("Checking Ollama reachability...");
     match lens_translate::check_reachable("127.0.0.1:11434") {
-        true => println!("✓ Ollama is reachable"),
+        true => println!("Ollama is reachable"),
         false => {
-            eprintln!("✗ Ollama is not reachable at 127.0.0.1:11434");
+            eprintln!("Ollama is not reachable at 127.0.0.1:11434");
             eprintln!("Please start Ollama and load the model before running this benchmark.");
             std::process::exit(1);
         }
@@ -117,13 +71,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Run Quick lane benchmark
     println!("Running Quick lane benchmark...");
     let quick_run = run_quick_benchmark(&translator, model)?;
-    println!("✓ Quick lane complete: {} cases", quick_run.cases.len());
+    println!("Quick lane complete: {} cases", quick_run.cases.len());
     println!();
 
     // Run Deep lane benchmark
     println!("Running Deep lane benchmark...");
     let deep_run = run_deep_benchmark(&translator, model)?;
-    println!("✓ Deep lane complete: {} cases", deep_run.cases.len());
+    println!("Deep lane complete: {} cases", deep_run.cases.len());
     println!();
 
     // Generate reports
@@ -172,20 +126,20 @@ fn run_quick_benchmark(
             timestamp: Utc::now().to_rfc3339(),
             runs_per_entry: 1,
             warm_start: true,
-            corpus_revision: "v1".to_string(),
-            notes: Some("Live baseline with production Translator".to_string()),
+            corpus_revision: CORPUS_REVISION.to_string(),
+            notes: Some(
+                "Live baseline with production Translator, canonical 25-entry corpus".to_string(),
+            ),
         },
         BenchmarkLane::Quick,
     );
 
-    for (i, (entry_id, category, source, focused_word, expected_keywords)) in
-        QUICK_CORPUS.iter().enumerate()
-    {
-        println!("  Quick [{}/{}]: {}", i + 1, QUICK_CORPUS.len(), entry_id);
+    for (i, entry) in CORPUS.iter().enumerate() {
+        println!("  Quick [{}/{}]: {}", i + 1, CORPUS.len(), entry.id);
 
         let request = QuickRequest {
-            source_text: source.to_string(),
-            focused_word: focused_word.map(|s| s.to_string()),
+            source_text: entry.source.to_string(),
+            focused_word: entry.word.map(|s| s.to_string()),
             target_language: "Korean".to_string(),
         };
 
@@ -196,13 +150,13 @@ fn run_quick_benchmark(
         match result {
             Ok(translation) => {
                 let case = bridge::from_quick_translation(
-                    entry_id,
-                    category,
-                    source,
-                    *focused_word,
+                    entry.id,
+                    entry.category,
+                    entry.source,
+                    entry.word,
                     &translation,
-                    0, // run_index
-                    *expected_keywords,
+                    0,    // run_index
+                    None, // expected_keywords: not measured (English keywords on Korean output is meaningless)
                 );
                 // Override latency with actual measurement
                 let case = BenchmarkCaseResult {
@@ -216,12 +170,12 @@ fn run_quick_benchmark(
             }
             Err(e) => {
                 let case = BenchmarkCaseResult {
-                    entry_id: entry_id.to_string(),
-                    category: category.to_string(),
+                    entry_id: entry.id.to_string(),
+                    category: entry.category.to_string(),
                     lane: BenchmarkLane::Quick,
                     run_index: 0,
-                    source: source.to_string(),
-                    focused_word: focused_word.map(|s| s.to_string()),
+                    source: entry.source.to_string(),
+                    focused_word: entry.word.map(|s| s.to_string()),
                     output: String::new(),
                     automated: AutomatedChecks {
                         latency_ms: Some(latency_ms),
@@ -251,19 +205,22 @@ fn run_deep_benchmark(
             timestamp: Utc::now().to_rfc3339(),
             runs_per_entry: 1,
             warm_start: true,
-            corpus_revision: "v1".to_string(),
-            notes: Some("Live baseline with production Analyser".to_string()),
+            corpus_revision: CORPUS_REVISION.to_string(),
+            notes: Some(
+                "Live baseline with production Analyser, canonical 25-entry corpus".to_string(),
+            ),
         },
         BenchmarkLane::Deep,
     );
 
-    for (i, (entry_id, category, source)) in DEEP_CORPUS.iter().enumerate() {
-        println!("  Deep [{}/{}]: {}", i + 1, DEEP_CORPUS.len(), entry_id);
+    for (i, entry) in CORPUS.iter().enumerate() {
+        println!("  Deep [{}/{}]: {}", i + 1, CORPUS.len(), entry.id);
 
+        // Build request with actual word field (not None)
         let request = DeepRequest {
-            sentence: source.to_string(),
-            word: None,
-            translation: None,
+            sentence: entry.source.to_string(),
+            word: entry.word.map(|s| s.to_string()),
+            translation: Some(entry.translation.to_string()),
             target_language: "Korean".to_string(),
             profile: Profile::Reader,
         };
@@ -275,8 +232,14 @@ fn run_deep_benchmark(
         match result {
             Ok(analysis) => {
                 let case = bridge::from_deep_analysis(
-                    entry_id, category, source, None, // focused_word
-                    &analysis, 0, // run_index
+                    entry.id,
+                    entry.category,
+                    entry.source,
+                    entry.word,
+                    &analysis,
+                    0, // run_index
+                    entry.expected_lemma,
+                    entry.expected_pos,
                 );
                 // Override latency with actual measurement
                 let case = BenchmarkCaseResult {
@@ -290,12 +253,12 @@ fn run_deep_benchmark(
             }
             Err(e) => {
                 let case = BenchmarkCaseResult {
-                    entry_id: entry_id.to_string(),
-                    category: category.to_string(),
+                    entry_id: entry.id.to_string(),
+                    category: entry.category.to_string(),
                     lane: BenchmarkLane::Deep,
                     run_index: 0,
-                    source: source.to_string(),
-                    focused_word: None,
+                    source: entry.source.to_string(),
+                    focused_word: entry.word.map(|s| s.to_string()),
                     output: String::new(),
                     automated: AutomatedChecks {
                         latency_ms: Some(latency_ms),
