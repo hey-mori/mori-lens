@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| Canonical baseline | 2026-09-21-054306 |
+| Canonical baseline | 20260921 |
 | Corpus revision | canary-25-v1 |
 | Model | qwen2.5:7b |
 | Provider | Ollama |
@@ -26,9 +26,10 @@
 
 - Total cases: 25
 - Completed inference: 24
-- Canonical failure: B01 `Malformed`
+- Inference failure: B01 `Malformed`
 - Median latency: 1538ms
-- non_empty: 96%, target_language_detected: 96%
+- non_empty: 96%
+- target_language_detected: 96%
 
 > The first measured request (A01, 14561ms) includes cold-start cost. Median represents steady-state.
 
@@ -40,7 +41,7 @@
 
 **Focused word:** rests
 
-**Reference translation:** 포인터가 문장 위에 멈추니다.
+**Reference translation:** 포인터가 문장 위에 멈춥니다.
 
 **Inference status:** completed
 **Latency:** 14561ms
@@ -349,7 +350,7 @@
 
 **Source:** The model is up to date with the latest release.
 
-**Reference translation:** 모델이 최신 릴리즈에 맞게 업데이트되어 있습니다.
+**Reference translation:** 모델이 최신 릴리스에 맞게 업데이트되어 있습니다.
 
 **Inference status:** completed
 **Latency:** 1538ms
@@ -635,7 +636,7 @@
 
 **Source:** So quickly did the model respond that nobody noticed the latency.
 
-**Reference translation:** 모델이 너무나 빨리 응답해서 아무도 지연을 눈치찰 못했습니다.
+**Reference translation:** 모델이 너무나 빨리 응답해서 아무도 지연을 눈치채지 못했습니다.
 
 **Inference status:** completed
 **Latency:** 1467ms
@@ -753,6 +754,6 @@
 | Naturalness avg | __ / 2 |
 | Completeness avg | __ / 2 |
 | Cases reviewed | __ / 25 |
-| Inference failures (B01) | 1 (not scored) |
+| Inference failures | 1 (B01: Malformed) |
 
-> Inference failures are part of user-facing quality evidence. Do not silently drop B01 from product-quality conclusions.
+> B01 remains part of the canonical review population. The reviewer should apply the rubric to the observed user-facing result. Do not silently remove it from product-quality conclusions.
