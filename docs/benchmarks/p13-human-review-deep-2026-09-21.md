@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| Canonical baseline | 2026-09-21-054306 |
+| Canonical baseline | 20260921 |
 | Corpus revision | canary-25-v1 |
 | Model | qwen2.5:7b |
 | Provider | Ollama |
@@ -24,15 +24,20 @@ Each field scored 0-2:
 - **1 (partial):** Mostly accurate, minor issues
 - **0 (wrong):** Factually incorrect, major omission, or misleading
 
+> For entries with no focused word, Factual correctness and Sense correctness are N/A.
+> Grammar correctness, Structure correctness, Usefulness, and Misleading still apply.
+
 ## Automated summary
 
 - Total cases: 25
-- Completed inference: 25 (zero inference failures)
+- Completed inference: 25
 - Median latency: 7526ms
-- non_empty: 100%, schema_valid: 100%, target_language_detected: 100%
-- structure_present: 96% (24/25)
-- lemma_match: 42.1% (8/19 eligible)
-- pos_match: 84.2% (16/19 eligible)
+- non_empty: 25/25
+- schema_valid: 25/25
+- target_language_detected: 25/25
+- structure_present: 24/25
+- lemma_match: 8/19 (eligible entries)
+- pos_match: 16/19 (eligible entries)
 
 ---
 
@@ -42,7 +47,7 @@ Each field scored 0-2:
 
 **Focused word:** rests
 
-**Reference translation:** 포인터가 문장 위에 멈추니다.
+**Reference translation:** 포인터가 문장 위에 멈춥니다.
 
 **Expected (corpus ground truth):**
 
@@ -169,8 +174,8 @@ Each field scored 0-2:
 
 **Human review:**
 
-- Factual correctness: __ / 2
-- Sense correctness: __ / 2
+- Factual correctness: N/A
+- Sense correctness: N/A
 - Grammar correctness: __ / 2
 - Structure correctness: __ / 2
 - Usefulness: __ / 2
@@ -409,8 +414,8 @@ Each field scored 0-2:
 
 **Human review:**
 
-- Factual correctness: __ / 2
-- Sense correctness: __ / 2
+- Factual correctness: N/A
+- Sense correctness: N/A
 - Grammar correctness: __ / 2
 - Structure correctness: __ / 2
 - Usefulness: __ / 2
@@ -552,8 +557,8 @@ Each field scored 0-2:
 
 **Human review:**
 
-- Factual correctness: __ / 2
-- Sense correctness: __ / 2
+- Factual correctness: N/A
+- Sense correctness: N/A
 - Grammar correctness: __ / 2
 - Structure correctness: __ / 2
 - Usefulness: __ / 2
@@ -568,7 +573,7 @@ Each field scored 0-2:
 
 **Focused word:** none
 
-**Reference translation:** 모델이 최신 릴리즈에 맞게 업데이트되어 있습니다.
+**Reference translation:** 모델이 최신 릴리스에 맞게 업데이트되어 있습니다.
 
 **Expected (corpus ground truth):**
 
@@ -600,8 +605,8 @@ Each field scored 0-2:
 
 **Human review:**
 
-- Factual correctness: __ / 2
-- Sense correctness: __ / 2
+- Factual correctness: N/A
+- Sense correctness: N/A
 - Grammar correctness: __ / 2
 - Structure correctness: __ / 2
 - Usefulness: __ / 2
@@ -696,8 +701,8 @@ Each field scored 0-2:
 
 **Human review:**
 
-- Factual correctness: __ / 2
-- Sense correctness: __ / 2
+- Factual correctness: N/A
+- Sense correctness: N/A
 - Grammar correctness: __ / 2
 - Structure correctness: __ / 2
 - Usefulness: __ / 2
@@ -1046,7 +1051,7 @@ Each field scored 0-2:
 
 **Focused word:** none
 
-**Reference translation:** 모델이 너무나 빨리 응답해서 아무도 지연을 눈치찰 못했습니다.
+**Reference translation:** 모델이 너무나 빨리 응답해서 아무도 지연을 눈치채지 못했습니다.
 
 **Expected (corpus ground truth):**
 
@@ -1078,8 +1083,8 @@ Each field scored 0-2:
 
 **Human review:**
 
-- Factual correctness: __ / 2
-- Sense correctness: __ / 2
+- Factual correctness: N/A
+- Sense correctness: N/A
 - Grammar correctness: __ / 2
 - Structure correctness: __ / 2
 - Usefulness: __ / 2
@@ -1234,11 +1239,11 @@ Each field scored 0-2:
 
 | Metric | Value |
 |--------|-------|
-| Factual correctness avg | __ / 2 |
-| Sense correctness avg | __ / 2 |
-| Grammar correctness avg | __ / 2 |
-| Structure correctness avg | __ / 2 |
-| Usefulness avg | __ / 2 |
-| Misleading count | __ |
+| Factual correctness avg | __ / 2 (19 applicable) |
+| Sense correctness avg | __ / 2 (19 applicable) |
+| Grammar correctness avg | __ / 2 (25 applicable) |
+| Structure correctness avg | __ / 2 (25 applicable) |
+| Usefulness avg | __ / 2 (25 applicable) |
+| Misleading count | __ / 25 |
 | Cases reviewed | __ / 25 |
 | Inference failures | 0 |
