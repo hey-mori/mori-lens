@@ -13,6 +13,15 @@
 //! - LIVE LM STUDIO MEASUREMENT: Requires running LM Studio runtime
 //! - NOT VERIFIED: No evidence exists
 //!
+//! # Factual observations vs quality scores
+//!
+//! This module distinguishes between:
+//! - **Factual observations** (`keyword_coverage_ratio`, `target_script_ratio`,
+//!   `length_ratio`, `target_script_detected`): Deterministic measurements that
+//!   can be computed automatically. They are not quality judgments.
+//! - **Human quality scores** (`QualityScore`): Require person evaluation on a
+//!   0-2 scale. Never conflated with factual observations.
+//!
 //! # Privacy
 //!
 //! All benchmark corpus text is repository-owned synthetic or curated content.
@@ -72,31 +81,91 @@ pub struct AutomatedChecks {
     pub latency_ms: Option<u64>,
 }
 
+/// A validated human quality score on a 0-2 scale.
+///
+/// This type ensures that only valid scores (0, 1, or 2) can be constructed.
+/// Scores represent:
+/// - 0 (wrong): Meaning lost, major omission/addition, or factually incorrect
+/// - 1 (partial): Meaning mostly preserved, minor issues, or partially correct
+/// - 2 (correct): Meaning fully preserved, natural, no material issues
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
+pub struct QualityScore(u8);
+
+impl QualityScore {
+    /// Create a new quality score. Returns `None` if value is not 0, 1, or 2.
+    pub fn new(value: u8) -> Option<Self> {
+        if value <= 2 {
+            Some(QualityScore(value))
+        } else {
+            None
+        }
+    }
+
+    /// Get the numeric value.
+    pub fn value(self) -> u8 {
+        self.0
+    }
+}
+
+impl TryFrom<u8> for QualityScore {
+    type Error = &'static str;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        QualityScore::new(value).ok_or("QualityScore must be 0, 1, or 2")
+    }
+}
+
+impl From<QualityScore> for u8 {
+    fn from(score: QualityScore) -> u8 {
+        score.0
+    }
+}
+
 /// Human quality review scores for a single corpus entry.
 ///
 /// These require person evaluation and must not be reported as automated pass.
+/// Each field uses `QualityScore` (0-2 validated) or `None` if not reviewed.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HumanScores {
     /// Quick translation: meaning preserved (0=wrong, 1=partial, 2=correct)
-    pub meaning_preserved: Option<u8>,
+    pub meaning_preserved: Option<QualityScore>,
     /// Quick translation: Korean naturalness (0=unnatural, 1=acceptable, 2=natural)
-    pub naturalness: Option<u8>,
+    pub naturalness: Option<QualityScore>,
     /// Quick translation: material omission/addition (0=major, 1=minor, 2=none)
-    pub completeness: Option<u8>,
+    pub completeness: Option<QualityScore>,
     /// Deep: lemma/POS factual correctness (0=wrong, 1=partial, 2=correct)
-    pub factual_correctness: Option<u8>,
+    pub factual_correctness: Option<QualityScore>,
     /// Deep: sense correctness (0=wrong, 1=partial, 2=correct)
-    pub sense_correctness: Option<u8>,
+    pub sense_correctness: Option<QualityScore>,
     /// Deep: grammar explanation correctness (0=wrong, 1=partial, 2=correct)
-    pub grammar_correctness: Option<u8>,
+    pub grammar_correctness: Option<QualityScore>,
     /// Deep: structure correctness (0=wrong, 1=partial, 2=correct)
-    pub structure_correctness: Option<u8>,
+    pub structure_correctness: Option<QualityScore>,
     /// Deep: usefulness/clarity (0=useless, 1=acceptable, 2=useful)
-    pub usefulness: Option<u8>,
+    pub usefulness: Option<QualityScore>,
     /// Deep: misleading content flag (true = contains misleading information)
     pub misleading: Option<bool>,
     /// Free-form reviewer note
     pub note: Option<String>,
+}
+
+/// Factual observations that can be computed automatically.
+///
+/// These are deterministic measurements, not quality judgments.
+/// They describe observable properties of the output.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FactualObservations {
+    /// Ratio of expected keywords found in output (0.0 to 1.0)
+    pub keyword_coverage_ratio: f64,
+    /// Ratio of target script (Hangul) characters in output (0.0 to 1.0)
+    pub target_script_ratio: f64,
+    /// Whether target script was detected at all
+    pub target_script_detected: bool,
+    /// Ratio of output length to source length
+    pub length_ratio: f64,
+    /// Whether length ratio is within sanity band (0.3 to 1.5)
+    pub length_ratio_within_sanity_band: bool,
 }
 
 /// Result for a single corpus entry in a benchmark run.
@@ -118,7 +187,9 @@ pub struct BenchmarkCaseResult {
     pub output: String,
     /// Automated contract checks
     pub automated: AutomatedChecks,
-    /// Human quality scores (populated by reviewer)
+    /// Factual observations (deterministic, not quality judgments)
+    pub observations: FactualObservations,
+    /// Human quality scores (populated by reviewer, None = not reviewed)
     pub human: HumanScores,
 }
 
@@ -148,8 +219,8 @@ pub struct BenchmarkRun {
 pub struct BenchmarkStats {
     /// Total number of cases
     pub total_cases: usize,
-    /// Number of successful cases (no error)
-    pub successful_cases: usize,
+    /// Number of cases that completed inference (no error)
+    pub completed_inference_cases: usize,
     /// Number of cases with each automated check passing
     pub automated_check_pass_rates: HashMap<String, f64>,
     /// Average latency in milliseconds (if measured)
@@ -158,181 +229,209 @@ pub struct BenchmarkStats {
     pub median_latency_ms: Option<f64>,
     /// Average human score by field (if reviewed)
     pub avg_human_scores: HashMap<String, f64>,
-    /// Number of cases flagged as misleading (Deep only)
-    pub misleading_count: Option<usize>,
+    /// Number of cases reviewed for misleading content
+    pub misleading_reviewed_count: usize,
+    /// Number of cases flagged as misleading (Deep only, among reviewed)
+    pub misleading_count: usize,
 }
 
-/// Quick translation quality rubric.
+/// Quick translation factual observations.
 ///
-/// Scores translation quality on a 0-2 scale:
-/// - 0 (wrong): Meaning lost, major omission/addition, or not Korean
-/// - 1 (acceptable): Meaning mostly preserved, minor awkwardness or omission
-/// - 2 (correct): Meaning fully preserved, natural Korean, no material issues
+/// Computes deterministic measurements about translation output.
+/// These are observations, not quality judgments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QuickQualityRubric;
+pub struct QuickObservations;
 
-impl QuickQualityRubric {
-    /// Score meaning preservation.
+impl QuickObservations {
+    /// Compute keyword coverage ratio.
     ///
-    /// - 2: All key concepts and relationships preserved
-    /// - 1: Most meaning preserved, minor details lost or added
-    /// - 0: Major meaning lost, or output is not a translation
-    pub fn score_meaning(output: &str, expected_keywords: &[&str]) -> u8 {
-        if output.trim().is_empty() {
-            return 0;
+    /// Returns the fraction of expected keywords found in output (0.0 to 1.0).
+    pub fn keyword_coverage_ratio(output: &str, expected_keywords: &[&str]) -> f64 {
+        if expected_keywords.is_empty() {
+            return 1.0;
         }
-        // Check if expected keywords are present in output
         let present = expected_keywords
             .iter()
             .filter(|kw| output.contains(**kw))
             .count();
-        let ratio = if expected_keywords.is_empty() {
-            1.0
-        } else {
-            present as f64 / expected_keywords.len() as f64
-        };
-        if ratio >= 0.8 {
-            2
-        } else if ratio >= 0.5 {
-            1
-        } else {
-            0
-        }
+        present as f64 / expected_keywords.len() as f64
     }
 
-    /// Score Korean naturalness (requires human review or heuristic).
+    /// Compute target script (Hangul) ratio.
     ///
-    /// This is a placeholder that detects Hangul presence.
-    /// Real naturalness scoring requires human judgment.
-    pub fn score_naturalness_heuristic(output: &str) -> u8 {
+    /// Returns the fraction of characters that are Hangul (0.0 to 1.0).
+    pub fn target_script_ratio(output: &str) -> f64 {
         let hangul_count = output
             .chars()
             .filter(|c| ('\u{AC00}'..='\u{D7A3}').contains(c))
             .count();
         let total_chars = output.chars().count();
         if total_chars == 0 {
-            return 0;
+            return 0.0;
         }
-        let hangul_ratio = hangul_count as f64 / total_chars as f64;
-        if hangul_ratio >= 0.5 {
-            2 // Mostly Korean
-        } else if hangul_ratio >= 0.2 {
-            1 // Some Korean
-        } else {
-            0 // Not Korean
-        }
+        hangul_count as f64 / total_chars as f64
     }
 
-    /// Score completeness (no major omission/addition).
-    ///
-    /// This is a heuristic based on output length relative to source.
-    /// Real completeness scoring requires human judgment.
-    pub fn score_completeness_heuristic(source: &str, output: &str) -> u8 {
+    /// Check if target script (Hangul) was detected.
+    pub fn target_script_detected(output: &str) -> bool {
+        output
+            .chars()
+            .any(|c| ('\u{AC00}'..='\u{D7A3}').contains(&c))
+    }
+
+    /// Compute length ratio (output length / source length).
+    pub fn length_ratio(source: &str, output: &str) -> f64 {
         let source_len = source.chars().count();
         let output_len = output.chars().count();
-        if source_len == 0 || output_len == 0 {
-            return 0;
+        if source_len == 0 {
+            return 0.0;
         }
-        // Korean text is typically shorter than English (fewer characters)
-        // Accept 0.3x to 1.5x length ratio
-        let ratio = output_len as f64 / source_len as f64;
-        if (0.3..=1.5).contains(&ratio) {
-            2 // Reasonable length
-        } else if (0.2..=2.0).contains(&ratio) {
-            1 // Acceptable length
-        } else {
-            0 // Major length mismatch
+        output_len as f64 / source_len as f64
+    }
+
+    /// Check if length ratio is within sanity band (0.3 to 1.5).
+    ///
+    /// Korean text is typically shorter than English (fewer characters).
+    /// A ratio between 0.3 and 1.5 is considered reasonable.
+    pub fn length_ratio_within_sanity_band(source: &str, output: &str) -> bool {
+        let ratio = Self::length_ratio(source, output);
+        (0.3..=1.5).contains(&ratio)
+    }
+
+    /// Compute all factual observations for a Quick translation.
+    pub fn compute(source: &str, output: &str, expected_keywords: &[&str]) -> FactualObservations {
+        FactualObservations {
+            keyword_coverage_ratio: Self::keyword_coverage_ratio(output, expected_keywords),
+            target_script_ratio: Self::target_script_ratio(output),
+            target_script_detected: Self::target_script_detected(output),
+            length_ratio: Self::length_ratio(source, output),
+            length_ratio_within_sanity_band: Self::length_ratio_within_sanity_band(source, output),
         }
     }
 }
 
-/// Deep analysis quality rubric.
+/// Deep analysis factual observations.
 ///
-/// Scores analysis fields on a 0-2 scale:
-/// - 0 (wrong): Factually incorrect or missing
-/// - 1 (partial): Partially correct or incomplete
-/// - 2 (correct): Fully correct and useful
+/// Computes deterministic measurements about analysis output.
+/// These are observations, not quality judgments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DeepQualityRubric;
+pub struct DeepObservations;
 
-impl DeepQualityRubric {
-    /// Score lemma accuracy (exact match, case-insensitive).
-    pub fn score_lemma(actual: &str, expected: &str) -> u8 {
-        if actual.trim().eq_ignore_ascii_case(expected.trim()) {
-            2
-        } else if actual.trim().is_empty() {
-            0
-        } else {
-            // Partial credit if they share a common root (heuristic)
-            let actual_lower = actual.trim().to_lowercase();
-            let expected_lower = expected.trim().to_lowercase();
-            if actual_lower.contains(&expected_lower) || expected_lower.contains(&actual_lower) {
-                1
-            } else {
-                0
-            }
-        }
+impl DeepObservations {
+    /// Check if lemma matches expected (exact match, case-insensitive).
+    pub fn lemma_matches(actual: &str, expected: &str) -> bool {
+        actual.trim().eq_ignore_ascii_case(expected.trim())
     }
 
-    /// Score part-of-speech accuracy (keyword containment).
-    pub fn score_pos(actual: &str, expected_keywords: &[&str]) -> u8 {
-        if actual.trim().is_empty() {
-            return 0;
+    /// Check if lemma partially matches (one contains the other).
+    pub fn lemma_partially_matches(actual: &str, expected: &str) -> bool {
+        let actual_lower = actual.trim().to_lowercase();
+        let expected_lower = expected.trim().to_lowercase();
+        actual_lower.contains(&expected_lower) || expected_lower.contains(&actual_lower)
+    }
+
+    /// Compute POS keyword coverage ratio.
+    pub fn pos_coverage_ratio(actual: &str, expected_keywords: &[&str]) -> f64 {
+        if expected_keywords.is_empty() {
+            return 1.0;
         }
         let present = expected_keywords
             .iter()
             .filter(|kw| actual.contains(**kw))
             .count();
-        if present == expected_keywords.len() {
-            2
-        } else if present > 0 {
-            1
-        } else {
-            0
+        present as f64 / expected_keywords.len() as f64
+    }
+}
+
+/// Bridge to production types.
+///
+/// Provides conversion from production Quick/Deep results to benchmark structures.
+pub mod bridge {
+    use super::*;
+    use lens_core::analyse::DeepAnalysis;
+    use lens_core::translate::QuickTranslation;
+
+    /// Create a BenchmarkCaseResult from a QuickTranslation.
+    ///
+    /// Extracts automated facts from the production result.
+    /// Human scores and observations must be filled separately.
+    pub fn from_quick_translation(
+        entry_id: &str,
+        category: &str,
+        source: &str,
+        focused_word: Option<&str>,
+        translation: &QuickTranslation,
+    ) -> BenchmarkCaseResult {
+        BenchmarkCaseResult {
+            entry_id: entry_id.to_string(),
+            category: category.to_string(),
+            lane: BenchmarkLane::Quick,
+            run_index: 0,
+            source: source.to_string(),
+            focused_word: focused_word.map(|s| s.to_string()),
+            output: translation.text.clone(),
+            automated: AutomatedChecks {
+                non_empty: !translation.text.trim().is_empty(),
+                target_language_detected: QuickObservations::target_script_detected(
+                    &translation.text,
+                ),
+                schema_valid: None,
+                lemma_match: None,
+                pos_match: None,
+                structure_present: None,
+                no_restatement: true,
+                provenance_correct: true,
+                error_type: None,
+                latency_ms: Some(translation.latency_ms as u64),
+            },
+            observations: FactualObservations::default(),
+            human: HumanScores::default(),
         }
     }
 
-    /// Score sense correctness (requires human review).
+    /// Create a BenchmarkCaseResult from a DeepAnalysis.
     ///
-    /// This is a placeholder. Real sense scoring requires checking if the
-    /// explanation is grounded in the sentence context, not generic dictionary.
-    pub fn score_sense_placeholder(_actual: &str, _sentence: &str, _word: &str) -> u8 {
-        // Real implementation would check if sense mentions the word and relates
-        // to the sentence context. For now, return None to indicate human review needed.
-        1 // Placeholder: assume partial correctness
-    }
-
-    /// Score structure correctness (requires human review).
-    ///
-    /// This is a placeholder. Real structure scoring requires checking if the
-    /// clause analysis is correct.
-    pub fn score_structure_placeholder(_actual: &str, _sentence: &str) -> u8 {
-        // Real implementation would parse the structure and verify clause relationships.
-        // For now, return None to indicate human review needed.
-        1 // Placeholder: assume partial correctness
-    }
-
-    /// Score grammar explanation correctness (requires human review).
-    ///
-    /// This is a placeholder. Real grammar scoring requires checking if the
-    /// explanation is accurate and not misleading.
-    pub fn score_grammar_placeholder(_actual: &str, _expected_grammar: &str) -> u8 {
-        // Real implementation would check if the explanation correctly identifies
-        // the grammar phenomenon. For now, return None to indicate human review needed.
-        1 // Placeholder: assume partial correctness
-    }
-
-    /// Check if explanation is misleading.
-    ///
-    /// Returns true if the explanation contains information that would confuse
-    /// or mislead the reader. Requires human review.
-    pub fn is_misleading_placeholder(_actual: &str) -> Option<bool> {
-        // Real implementation would check for common misleading patterns:
-        // - Wrong word sense
-        // - Incorrect grammar explanation
-        // - Hallucinated information
-        // For now, return None to indicate human review needed.
-        None
+    /// Extracts automated facts from the production result.
+    /// Human scores and observations must be filled separately.
+    pub fn from_deep_analysis(
+        entry_id: &str,
+        category: &str,
+        source: &str,
+        focused_word: Option<&str>,
+        analysis: &DeepAnalysis,
+    ) -> BenchmarkCaseResult {
+        BenchmarkCaseResult {
+            entry_id: entry_id.to_string(),
+            category: category.to_string(),
+            lane: BenchmarkLane::Deep,
+            run_index: 0,
+            source: source.to_string(),
+            focused_word: focused_word.map(|s| s.to_string()),
+            output: format!(
+                "{}|{}|{}|{}|{}",
+                analysis.lemma,
+                analysis.part_of_speech,
+                analysis.sense,
+                analysis.structure,
+                analysis.note
+            ),
+            automated: AutomatedChecks {
+                non_empty: !analysis.lemma.trim().is_empty(),
+                target_language_detected: QuickObservations::target_script_detected(
+                    &analysis.part_of_speech,
+                ),
+                schema_valid: Some(true),
+                lemma_match: None,
+                pos_match: None,
+                structure_present: Some(!analysis.structure.trim().is_empty()),
+                no_restatement: true,
+                provenance_correct: true,
+                error_type: None,
+                latency_ms: Some(analysis.latency_ms),
+            },
+            observations: FactualObservations::default(),
+            human: HumanScores::default(),
+        }
     }
 }
 
@@ -353,7 +452,7 @@ impl BenchmarkRun {
 
     /// Compute aggregate statistics for this run.
     pub fn compute_stats(&self) -> BenchmarkStats {
-        let successful_cases = self
+        let completed_inference_cases = self
             .cases
             .iter()
             .filter(|c| c.automated.error_type.is_none())
@@ -361,7 +460,7 @@ impl BenchmarkRun {
 
         let mut stats = BenchmarkStats {
             total_cases: self.cases.len(),
-            successful_cases,
+            completed_inference_cases,
             ..Default::default()
         };
 
@@ -431,13 +530,21 @@ impl BenchmarkRun {
             stats.avg_latency_ms = Some(sum as f64 / latencies.len() as f64);
             let mut sorted = latencies.clone();
             sorted.sort_unstable();
-            stats.median_latency_ms = Some(sorted[sorted.len() / 2] as f64);
+            // Correct median calculation for even/odd sample counts
+            let n = sorted.len();
+            stats.median_latency_ms = if n % 2 == 0 {
+                // Even: average of two middle values
+                Some((sorted[n / 2 - 1] as f64 + sorted[n / 2] as f64) / 2.0)
+            } else {
+                // Odd: middle value
+                Some(sorted[n / 2] as f64)
+            };
         }
 
         // Compute human score averages
         let mut score_sums: HashMap<String, (f64, usize)> = HashMap::new();
         for case in &self.cases {
-            let scores = [
+            let scores: [(&str, Option<QualityScore>); 8] = [
                 ("meaning_preserved", case.human.meaning_preserved),
                 ("naturalness", case.human.naturalness),
                 ("completeness", case.human.completeness),
@@ -450,7 +557,7 @@ impl BenchmarkRun {
             for (name, score) in scores {
                 if let Some(val) = score {
                     let entry = score_sums.entry(name.to_string()).or_insert((0.0, 0));
-                    entry.0 += val as f64;
+                    entry.0 += val.value() as f64;
                     entry.1 += 1;
                 }
             }
@@ -462,13 +569,20 @@ impl BenchmarkRun {
         }
 
         // Count misleading cases (Deep only)
+        // Distinguish "not reviewed" from "reviewed and zero misleading"
         if self.lane == BenchmarkLane::Deep {
-            stats.misleading_count = Some(
-                self.cases
-                    .iter()
-                    .filter(|c| c.human.misleading == Some(true))
-                    .count(),
-            );
+            let reviewed = self
+                .cases
+                .iter()
+                .filter(|c| c.human.misleading.is_some())
+                .count();
+            let misleading = self
+                .cases
+                .iter()
+                .filter(|c| c.human.misleading == Some(true))
+                .count();
+            stats.misleading_reviewed_count = reviewed;
+            stats.misleading_count = misleading;
         }
 
         stats
@@ -513,6 +627,7 @@ mod tests {
                 error_type: None,
                 latency_ms: latency,
             },
+            observations: FactualObservations::default(),
             human: HumanScores::default(),
         }
     }
@@ -528,7 +643,7 @@ mod tests {
     }
 
     #[test]
-    fn compute_stats_counts_successful_cases() {
+    fn compute_stats_counts_completed_inference_cases() {
         let mut run = BenchmarkRun::new(test_metadata(), BenchmarkLane::Quick);
         run.add_case(test_case("A01", Some(100)));
         run.add_case(test_case("A02", Some(200)));
@@ -538,7 +653,7 @@ mod tests {
 
         let stats = run.compute_stats();
         assert_eq!(stats.total_cases, 3);
-        assert_eq!(stats.successful_cases, 2);
+        assert_eq!(stats.completed_inference_cases, 2);
     }
 
     #[test]
@@ -573,16 +688,29 @@ mod tests {
     }
 
     #[test]
+    fn compute_stats_calculates_median_for_even_count() {
+        let mut run = BenchmarkRun::new(test_metadata(), BenchmarkLane::Quick);
+        run.add_case(test_case("A01", Some(100)));
+        run.add_case(test_case("A02", Some(200)));
+        run.add_case(test_case("A03", Some(300)));
+        run.add_case(test_case("A04", Some(400)));
+
+        let stats = run.compute_stats();
+        // Even count: median is average of two middle values (200 and 300)
+        assert_eq!(stats.median_latency_ms, Some(250.0));
+    }
+
+    #[test]
     fn compute_stats_handles_human_scores() {
         let mut run = BenchmarkRun::new(test_metadata(), BenchmarkLane::Quick);
         let mut case1 = test_case("A01", Some(100));
-        case1.human.meaning_preserved = Some(2);
-        case1.human.naturalness = Some(1);
+        case1.human.meaning_preserved = QualityScore::new(2);
+        case1.human.naturalness = QualityScore::new(1);
         run.add_case(case1);
 
         let mut case2 = test_case("A02", Some(200));
-        case2.human.meaning_preserved = Some(1);
-        case2.human.naturalness = Some(2);
+        case2.human.meaning_preserved = QualityScore::new(1);
+        case2.human.naturalness = QualityScore::new(2);
         run.add_case(case2);
 
         let stats = run.compute_stats();
@@ -591,7 +719,7 @@ mod tests {
     }
 
     #[test]
-    fn compute_stats_counts_misleading_for_deep() {
+    fn compute_stats_distinguishes_misleading_reviewed_from_count() {
         let mut run = BenchmarkRun::new(test_metadata(), BenchmarkLane::Deep);
         let mut case1 = test_case("A01", Some(100));
         case1.lane = BenchmarkLane::Deep;
@@ -603,8 +731,22 @@ mod tests {
         case2.human.misleading = Some(false);
         run.add_case(case2);
 
+        let case3 = test_case("A03", Some(300));
+        // Not reviewed: misleading is None
+        run.add_case(case3);
+
         let stats = run.compute_stats();
-        assert_eq!(stats.misleading_count, Some(1));
+        assert_eq!(stats.misleading_reviewed_count, 2);
+        assert_eq!(stats.misleading_count, 1);
+    }
+
+    #[test]
+    fn quality_score_rejects_invalid_values() {
+        assert!(QualityScore::new(0).is_some());
+        assert!(QualityScore::new(1).is_some());
+        assert!(QualityScore::new(2).is_some());
+        assert!(QualityScore::new(3).is_none());
+        assert!(QualityScore::new(255).is_none());
     }
 
     #[test]
@@ -633,68 +775,94 @@ mod tests {
     }
 
     #[test]
-    fn quick_rubric_scores_meaning_correctly() {
+    fn quick_observations_compute_keyword_coverage() {
         let output = "포인터가 문장 위에 멈춥니다.";
         assert_eq!(
-            QuickQualityRubric::score_meaning(output, &["포인터", "문장"]),
-            2
-        );
-        assert_eq!(QuickQualityRubric::score_meaning(output, &["포인터"]), 2);
-        assert_eq!(
-            QuickQualityRubric::score_meaning(output, &["없는키워드"]),
-            0
-        );
-        assert_eq!(QuickQualityRubric::score_meaning("", &["포인터"]), 0);
-    }
-
-    #[test]
-    fn quick_rubric_scores_naturalness_heuristic() {
-        assert_eq!(QuickQualityRubric::score_naturalness_heuristic("테스트"), 2);
-        assert_eq!(
-            QuickQualityRubric::score_naturalness_heuristic("test 테스트"),
-            1
-        );
-        assert_eq!(QuickQualityRubric::score_naturalness_heuristic("test"), 0);
-        assert_eq!(QuickQualityRubric::score_naturalness_heuristic(""), 0);
-    }
-
-    #[test]
-    fn quick_rubric_scores_completeness_heuristic() {
-        assert_eq!(
-            QuickQualityRubric::score_completeness_heuristic(
-                "The pointer rests on the sentence.",
-                "포인터가 문장 위에 멈춥니다."
-            ),
-            2
+            QuickObservations::keyword_coverage_ratio(output, &["포인터", "문장"]),
+            1.0
         );
         assert_eq!(
-            QuickQualityRubric::score_completeness_heuristic(
-                "Short",
-                "Very very very long output that is way too long"
-            ),
-            0
+            QuickObservations::keyword_coverage_ratio(output, &["포인터"]),
+            1.0
         );
         assert_eq!(
-            QuickQualityRubric::score_completeness_heuristic("", "output"),
-            0
+            QuickObservations::keyword_coverage_ratio(output, &["없는키워드"]),
+            0.0
+        );
+        assert_eq!(
+            QuickObservations::keyword_coverage_ratio("", &["포인터"]),
+            0.0
         );
     }
 
     #[test]
-    fn deep_rubric_scores_lemma_correctly() {
-        assert_eq!(DeepQualityRubric::score_lemma("rest", "rest"), 2);
-        assert_eq!(DeepQualityRubric::score_lemma("REST", "rest"), 2);
-        assert_eq!(DeepQualityRubric::score_lemma("resting", "rest"), 1);
-        assert_eq!(DeepQualityRubric::score_lemma("run", "rest"), 0);
-        assert_eq!(DeepQualityRubric::score_lemma("", "rest"), 0);
+    fn quick_observations_compute_target_script_ratio() {
+        assert_eq!(QuickObservations::target_script_ratio("테스트"), 1.0);
+        // "test 테스트" has 8 total chars (4 ASCII + 1 space + 3 Hangul), so ratio = 3/8 = 0.375
+        assert!((QuickObservations::target_script_ratio("test 테스트") - 0.375).abs() < 0.01);
+        assert_eq!(QuickObservations::target_script_ratio("test"), 0.0);
+        assert_eq!(QuickObservations::target_script_ratio(""), 0.0);
     }
 
     #[test]
-    fn deep_rubric_scores_pos_correctly() {
-        assert_eq!(DeepQualityRubric::score_pos("동사", &["동사"]), 2);
-        assert_eq!(DeepQualityRubric::score_pos("동사, 자동사", &["동사"]), 2);
-        assert_eq!(DeepQualityRubric::score_pos("형용사", &["동사"]), 0);
-        assert_eq!(DeepQualityRubric::score_pos("", &["동사"]), 0);
+    fn quick_observations_detect_target_script() {
+        assert!(QuickObservations::target_script_detected("테스트"));
+        assert!(QuickObservations::target_script_detected("test 테스트"));
+        assert!(!QuickObservations::target_script_detected("test"));
+        assert!(!QuickObservations::target_script_detected(""));
+    }
+
+    #[test]
+    fn quick_observations_compute_length_ratio() {
+        assert_eq!(QuickObservations::length_ratio("", "output"), 0.0);
+        let ratio = QuickObservations::length_ratio(
+            "The pointer rests on the sentence.",
+            "포인터가 문장 위에 멈춥니다.",
+        );
+        // 16 Korean chars / 34 English chars ≈ 0.47
+        assert!((ratio - 0.47).abs() < 0.01);
+    }
+
+    #[test]
+    fn quick_observations_check_length_sanity_band() {
+        assert!(QuickObservations::length_ratio_within_sanity_band(
+            "The pointer rests on the sentence.",
+            "포인터가 문장 위에 멈춥니다."
+        ));
+        assert!(!QuickObservations::length_ratio_within_sanity_band(
+            "Short",
+            "Very very very long output that is way too long"
+        ));
+    }
+
+    #[test]
+    fn deep_observations_check_lemma_match() {
+        assert!(DeepObservations::lemma_matches("rest", "rest"));
+        assert!(DeepObservations::lemma_matches("REST", "rest"));
+        assert!(!DeepObservations::lemma_matches("resting", "rest"));
+        assert!(!DeepObservations::lemma_matches("run", "rest"));
+        assert!(!DeepObservations::lemma_matches("", "rest"));
+    }
+
+    #[test]
+    fn deep_observations_check_lemma_partial_match() {
+        assert!(DeepObservations::lemma_partially_matches("rest", "rest"));
+        assert!(DeepObservations::lemma_partially_matches("resting", "rest"));
+        assert!(!DeepObservations::lemma_partially_matches("run", "rest"));
+    }
+
+    #[test]
+    fn deep_observations_compute_pos_coverage() {
+        assert_eq!(DeepObservations::pos_coverage_ratio("동사", &["동사"]), 1.0);
+        assert_eq!(
+            DeepObservations::pos_coverage_ratio("동사, 자동사", &["동사"]),
+            1.0
+        );
+        assert_eq!(
+            DeepObservations::pos_coverage_ratio("형용사", &["동사"]),
+            0.0
+        );
+        assert_eq!(DeepObservations::pos_coverage_ratio("", &["동사"]), 0.0);
     }
 }
 
@@ -742,15 +910,25 @@ pub mod report {
         writeln!(md, "## Summary").unwrap();
         writeln!(md).unwrap();
         writeln!(md, "- **Total cases:** {}", stats.total_cases).unwrap();
-        writeln!(md, "- **Successful cases:** {}", stats.successful_cases).unwrap();
+        writeln!(
+            md,
+            "- **Completed inference cases:** {}",
+            stats.completed_inference_cases
+        )
+        .unwrap();
         if let Some(avg_latency) = stats.avg_latency_ms {
             writeln!(md, "- **Average latency:** {:.1}ms", avg_latency).unwrap();
         }
         if let Some(median_latency) = stats.median_latency_ms {
             writeln!(md, "- **Median latency:** {:.1}ms", median_latency).unwrap();
         }
-        if let Some(misleading_count) = stats.misleading_count {
-            writeln!(md, "- **Misleading cases:** {}", misleading_count).unwrap();
+        if stats.misleading_reviewed_count > 0 {
+            writeln!(
+                md,
+                "- **Misleading cases:** {} of {} reviewed",
+                stats.misleading_count, stats.misleading_reviewed_count
+            )
+            .unwrap();
         }
         writeln!(md).unwrap();
 
@@ -782,7 +960,7 @@ pub mod report {
             writeln!(md).unwrap();
             writeln!(
                 md,
-                "*Note: Human scores require person evaluation. Automated heuristics may not reflect true quality.*"
+                "*Note: Human scores require person evaluation. Factual observations (keyword coverage, target script ratio, length ratio) are automated measurements, not quality judgments.*"
             )
             .unwrap();
             writeln!(md).unwrap();
@@ -791,8 +969,16 @@ pub mod report {
         // Per-case results
         writeln!(md, "## Per-Case Results").unwrap();
         writeln!(md).unwrap();
-        writeln!(md, "| ID | Category | Latency | Automated | Human |").unwrap();
-        writeln!(md, "|----|----------|---------|-----------|-------|").unwrap();
+        writeln!(
+            md,
+            "| ID | Category | Latency | Automated | Observations | Human |"
+        )
+        .unwrap();
+        writeln!(
+            md,
+            "|----|----------|---------|-----------|--------------|-------|"
+        )
+        .unwrap();
         for case in &run.cases {
             let latency = case
                 .automated
@@ -802,6 +988,7 @@ pub mod report {
             let automated_count = count_automated_passes(&case.automated);
             let automated_total = count_automated_checks(&case.automated);
             let automated_str = format!("{}/{}", automated_count, automated_total);
+            let observations_str = format_observations(&case.observations);
             let human_count = count_human_scores(&case.human);
             let human_total = count_human_fields(&case.human);
             let human_str = if human_total > 0 {
@@ -811,8 +998,8 @@ pub mod report {
             };
             writeln!(
                 md,
-                "| {} | {} | {} | {} | {} |",
-                case.entry_id, case.category, latency, automated_str, human_str
+                "| {} | {} | {} | {} | {} | {} |",
+                case.entry_id, case.category, latency, automated_str, observations_str, human_str
             )
             .unwrap();
         }
@@ -824,6 +1011,11 @@ pub mod report {
         writeln!(
             md,
             "- **AUTOMATED CONTRACT PASS:** Deterministic checks (schema, parsing, exact match)"
+        )
+        .unwrap();
+        writeln!(
+            md,
+            "- **FACTUAL OBSERVATION:** Automated measurements (keyword coverage, script ratio, length ratio). These are not quality judgments."
         )
         .unwrap();
         writeln!(
@@ -845,6 +1037,16 @@ pub mod report {
         writeln!(md).unwrap();
 
         md
+    }
+
+    /// Format factual observations for display in report table.
+    fn format_observations(obs: &FactualObservations) -> String {
+        let parts = [
+            format!("kw={:.0}%", obs.keyword_coverage_ratio * 100.0),
+            format!("scr={:.0}%", obs.target_script_ratio * 100.0),
+            format!("len={:.2}", obs.length_ratio),
+        ];
+        parts.join(", ")
     }
 
     /// Count how many automated checks passed.
@@ -970,9 +1172,16 @@ pub mod report {
                     error_type: None,
                     latency_ms: Some(100),
                 },
+                observations: FactualObservations {
+                    keyword_coverage_ratio: 1.0,
+                    target_script_ratio: 1.0,
+                    target_script_detected: true,
+                    length_ratio: 0.5,
+                    length_ratio_within_sanity_band: true,
+                },
                 human: HumanScores {
-                    meaning_preserved: Some(2),
-                    naturalness: Some(1),
+                    meaning_preserved: QualityScore::new(2),
+                    naturalness: QualityScore::new(1),
                     ..Default::default()
                 },
             };
@@ -1003,7 +1212,7 @@ pub mod report {
             let md = generate_markdown_report(&run);
             assert!(md.contains("## Summary"));
             assert!(md.contains("**Total cases:** 1"));
-            assert!(md.contains("**Successful cases:** 1"));
+            assert!(md.contains("**Completed inference cases:** 1"));
         }
 
         #[test]
@@ -1023,6 +1232,14 @@ pub mod report {
         }
 
         #[test]
+        fn generate_markdown_report_includes_observations_column() {
+            let run = test_run();
+            let md = generate_markdown_report(&run);
+            assert!(md.contains("| Observations |"));
+            assert!(md.contains("kw=100%"));
+        }
+
+        #[test]
         fn generate_markdown_report_includes_per_case_results() {
             let run = test_run();
             let md = generate_markdown_report(&run);
@@ -1036,6 +1253,7 @@ pub mod report {
             let md = generate_markdown_report(&run);
             assert!(md.contains("## Evidence Labels"));
             assert!(md.contains("AUTOMATED CONTRACT PASS"));
+            assert!(md.contains("FACTUAL OBSERVATION"));
             assert!(md.contains("HUMAN REVIEWED"));
         }
     }

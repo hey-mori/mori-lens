@@ -38,7 +38,7 @@ These prove:
 - Translation output is non-empty
 - Korean script detection works
 - Error mapping is correct
-- Injection resistance (fence-based defence)
+- Fence construction in prompts (automated tests verify the fence is present in the prompt string, not that the model resists injection)
 - Schema validation
 - Provider/model resolution logic
 
