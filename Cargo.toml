@@ -9,6 +9,7 @@ members = [
   "crates/platform-macos",
   "crates/platform-windows",
   "apps/hover-probe",
+  "apps/p13-live-baseline",
 ]
 # **Deliberately not a member.** The gate runs across the workspace, and
 # Tauri would take it from 23 crates to 384. Excluded until the Tauri

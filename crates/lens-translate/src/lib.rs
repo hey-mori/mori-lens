@@ -35,6 +35,7 @@ use lens_core::translate::{
 
 pub mod analyse;
 pub mod benchmark;
+pub mod eval_corpus;
 #[cfg(test)]
 mod fake_server;
 mod http;

@@ -1,0 +1,215 @@
+{
+  "metadata": {
+    "model": "qwen2.5:7b",
+    "provider": "Ollama",
+    "endpoint": "127.0.0.1:11434",
+    "timestamp": "2026-09-21T04:52:04.845270400+00:00",
+    "runs_per_entry": 1,
+    "warm_start": true,
+    "corpus_revision": "v1",
+    "notes": "Live baseline with production Analyser"
+  },
+  "lane": "deep",
+  "cases": [
+    {
+      "entry_id": "D01",
+      "category": "general",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "The weather is nice today.",
+      "focused_word": null,
+      "output": "|||주어 + 동사|",
+      "automated": {
+        "non_empty": false,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": null,
+        "pos_match": null,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 5421
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "D02",
+      "category": "general",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "I need to finish this report by Friday.",
+      "focused_word": null,
+      "output": "|||주어 + 필요부정사 + 목적어 + 시간대구문|",
+      "automated": {
+        "non_empty": false,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": null,
+        "pos_match": null,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 7371
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "D03",
+      "category": "technical",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "The function returns a boolean value.",
+      "focused_word": null,
+      "output": "|||주어 + 동사 + 목적어|",
+      "automated": {
+        "non_empty": false,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": null,
+        "pos_match": null,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 5904
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "D04",
+      "category": "general",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "Where is the nearest subway station?",
+      "focused_word": null,
+      "output": "",
+      "automated": {
+        "non_empty": false,
+        "target_language_detected": false,
+        "schema_valid": null,
+        "lemma_match": null,
+        "pos_match": null,
+        "structure_present": null,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": "Malformed",
+        "latency_ms": 7850
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "D05",
+      "category": "general",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "This meeting has been postponed to next week.",
+      "focused_word": null,
+      "output": "",
+      "automated": {
+        "non_empty": false,
+        "target_language_detected": false,
+        "schema_valid": null,
+        "lemma_match": null,
+        "pos_match": null,
+        "structure_present": null,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": "Malformed",
+        "latency_ms": 6870
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    }
+  ]
+}
