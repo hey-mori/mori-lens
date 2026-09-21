@@ -437,6 +437,19 @@ pub mod bridge {
     /// `run_index` must be provided explicitly for repeated runs.
     /// `schema_valid` is set to `Some(true)` because the production parser
     /// necessarily validates the schema before `DeepAnalysis` can exist.
+    ///
+    /// # Eligibility semantics
+    ///
+    /// Word-specific checks (lemma_match, pos_match) are only computed when
+    /// `focused_word` is `Some`. For no-word entries, these checks are `None`
+    /// (not measured) rather than failing.
+    ///
+    /// # Expected values
+    ///
+    /// Pass `expected_lemma` and `expected_pos` from the corpus ground truth
+    /// to populate deterministic checks. These are exact-match (lemma) and
+    /// containment-match (POS) checks.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_deep_analysis(
         entry_id: &str,
         category: &str,
@@ -444,7 +457,40 @@ pub mod bridge {
         focused_word: Option<&str>,
         analysis: &DeepAnalysis,
         run_index: usize,
+        expected_lemma: Option<&str>,
+        expected_pos: Option<&str>,
     ) -> BenchmarkCaseResult {
+        // Determine if this entry is eligible for word-specific analysis
+        let is_eligible = focused_word.map(|w| !w.trim().is_empty()).unwrap_or(false);
+
+        // Compute non_empty: check if any applicable field is populated
+        // For word-eligible entries, lemma is the primary field
+        // For no-word entries, check structure/note/sense (Korean-bearing fields)
+        let non_empty = if is_eligible {
+            !analysis.lemma.trim().is_empty()
+        } else {
+            // No-word entry: check if any Korean-bearing field is populated
+            !analysis.part_of_speech.trim().is_empty()
+                || !analysis.sense.trim().is_empty()
+                || !analysis.structure.trim().is_empty()
+                || !analysis.note.trim().is_empty()
+        };
+
+        // Compute lemma_match only if eligible and expected value provided
+        let lemma_match = if is_eligible {
+            expected_lemma
+                .map(|expected| analysis.lemma.trim().eq_ignore_ascii_case(expected.trim()))
+        } else {
+            None // Not applicable for no-word entries
+        };
+
+        // Compute pos_match only if eligible and expected value provided
+        let pos_match = if is_eligible {
+            expected_pos.map(|expected| analysis.part_of_speech.contains(expected.trim()))
+        } else {
+            None // Not applicable for no-word entries
+        };
+
         BenchmarkCaseResult {
             entry_id: entry_id.to_string(),
             category: category.to_string(),
@@ -461,7 +507,7 @@ pub mod bridge {
                 analysis.note
             ),
             automated: AutomatedChecks {
-                non_empty: !analysis.lemma.trim().is_empty(),
+                non_empty,
                 // Check all Korean-bearing fields (lemma may legitimately remain English)
                 target_language_detected: QuickObservations::target_script_detected(
                     &analysis.part_of_speech,
@@ -473,8 +519,8 @@ pub mod bridge {
                     &analysis.note,
                 ),
                 schema_valid: Some(true), // Production parser validates schema
-                lemma_match: None,
-                pos_match: None,
+                lemma_match,
+                pos_match,
                 structure_present: Some(!analysis.structure.trim().is_empty()),
                 no_restatement: None,     // Not measured by bridge
                 provenance_correct: None, // Not measured by bridge
@@ -1552,7 +1598,9 @@ pub mod report {
                 links: vec![],
             };
 
-            let case = bridge::from_deep_analysis("A01", "general", "test", None, &analysis, 0);
+            let case = bridge::from_deep_analysis(
+                "A01", "general", "test", None, &analysis, 0, None, None,
+            );
             // Should detect Korean from POS field
             assert!(case.automated.target_language_detected);
 
@@ -1573,7 +1621,9 @@ pub mod report {
                 links: vec![],
             };
 
-            let case2 = bridge::from_deep_analysis("A02", "general", "test", None, &analysis2, 0);
+            let case2 = bridge::from_deep_analysis(
+                "A02", "general", "test", None, &analysis2, 0, None, None,
+            );
             // Should detect Korean from sense field
             assert!(case2.automated.target_language_detected);
 
@@ -1594,7 +1644,9 @@ pub mod report {
                 links: vec![],
             };
 
-            let case3 = bridge::from_deep_analysis("A03", "general", "test", None, &analysis3, 0);
+            let case3 = bridge::from_deep_analysis(
+                "A03", "general", "test", None, &analysis3, 0, None, None,
+            );
             // Should not detect Korean
             assert!(!case3.automated.target_language_detected);
         }
