@@ -762,8 +762,46 @@ def validate(corpus_revision, corpus_entries, corpus_by_id, quick_data, deep_dat
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+def check_for_human_review_data():
+    """
+    Check if existing packets contain human review data.
+
+    Returns True if any human scores are present (not blank or N/A template).
+    """
+    import re
+    from pathlib import Path
+
+    def has_scores(packet_path):
+        packet_path = Path(packet_path)
+        if not packet_path.exists():
+            return False
+
+        text = packet_path.read_text(encoding='utf-8')
+
+        # Look for patterns like "- Meaning preserved: 1 / 2" or "- Factual correctness: 2 / 2"
+        # Exclude patterns like "- Meaning preserved: __ / 2" or "- Factual correctness: N/A"
+        score_pattern = re.compile(r'^- .+?: (\d) / \d+$', re.MULTILINE)
+        misleading_pattern = re.compile(r'^- Misleading: (Yes|No)$', re.MULTILINE)
+
+        # Check for any numeric scores
+        if score_pattern.search(text):
+            return True
+
+        # Check for explicit Yes/No (not "Yes / No" template)
+        if misleading_pattern.search(text):
+            return True
+
+        return False
+
+    quick_has_scores = has_scores(QUICK_PACKET)
+    deep_has_scores = has_scores(DEEP_PACKET)
+
+    return quick_has_scores or deep_has_scores
+
+
 def main():
     validate_only = '--validate' in sys.argv
+    force_overwrite = '--force-overwrite-reviewed' in sys.argv
 
     # 1. Parse corpus from Rust source
     print(f'Parsing corpus from {CORPUS_RS}')
@@ -791,6 +829,16 @@ def main():
         print('\n=== VALIDATION MODE ===')
         ok = validate(corpus_revision, corpus_entries, corpus_by_id, quick_data, deep_data)
         sys.exit(0 if ok else 1)
+
+    # 3.5. Check for existing human review data
+    if not force_overwrite:
+        print('\nChecking for existing human review data...')
+        has_human_data = check_for_human_review_data()
+        if has_human_data:
+            print('ERROR: Existing packets contain human review data.')
+            print('Use --force-overwrite-reviewed to overwrite.')
+            sys.exit(1)
+        print('  No human review data found.')
 
     # 4. Generate Quick packet
     print('\nGenerating Quick packet...')
