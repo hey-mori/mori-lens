@@ -1,0 +1,1015 @@
+{
+  "metadata": {
+    "model": "qwen2.5:7b",
+    "provider": "Ollama",
+    "endpoint": "127.0.0.1:11434",
+    "timestamp": "2026-09-21T05:40:02.954739500+00:00",
+    "runs_per_entry": 1,
+    "warm_start": true,
+    "corpus_revision": "canary-25-v1",
+    "notes": "Live baseline with production Analyser, canonical 25-entry corpus"
+  },
+  "lane": "deep",
+  "cases": [
+    {
+      "entry_id": "A01",
+      "category": "general",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "The pointer rests on the sentence.",
+      "focused_word": "rests",
+      "output": "rests|동사|포인터가 문장을 가리키고 있다.|주절|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": false,
+        "pos_match": true,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 6143
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "A02",
+      "category": "general",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "The card appears when the pointer settles, which takes a moment.",
+      "focused_word": "settles",
+      "output": "settles|동사|포인터가 안정되다|주절|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": false,
+        "pos_match": true,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 8278
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "A03",
+      "category": "general",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "The acquirer reads the full sentence rather than a single character.",
+      "focused_word": null,
+      "output": "|||주어의 설명|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": null,
+        "pos_match": null,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 3826
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "A04",
+      "category": "general",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "A card that the model has already answered is served from cache.",
+      "focused_word": "answered",
+      "output": "answered||모델이 이미 답변한|주어 + 동사被动语态结构|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": false,
+        "pos_match": false,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 8668
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "A05",
+      "category": "general",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "If the model is unavailable, the card says so.",
+      "focused_word": "unavailable",
+      "output": "불可用|형용사|사용할 수 없는 상태|만약 모델이 사용할 수 없으면, 카드는 그 사실을 알려줍니다.|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": false,
+        "pos_match": true,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 7526
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "B01",
+      "category": "grammar",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "The lease has expired and the model is no longer resident.",
+      "focused_word": "expired",
+      "output": "expired|동사|렌트 계약이 만료되었다.|서두르는 동사와 현재 분사가 연결되어 있는 복합 구조입니다.|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": false,
+        "pos_match": true,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 6772
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "B02",
+      "category": "grammar",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "I would rather it failed loudly than passed silently.",
+      "focused_word": "failed",
+      "output": "실패|동사|명확하게 실패하는 것 대신 조용히 통과하는 것을 선호합니다.|비교절: '보다'로 연결된 두 동사 구조|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": false,
+        "pos_match": true,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 7581
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "B03",
+      "category": "grammar",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "Not only does the model translate, it also explains.",
+      "focused_word": null,
+      "output": "|||복합명사 + 부사 + 동사 + 부사 + 동사|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": null,
+        "pos_match": null,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 4514
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "B04",
+      "category": "grammar",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "Placed on the wrong sentence, the card is worse than none.",
+      "focused_word": "Placed",
+      "output": "Placed|분사|잘못 배치되었을 때|주어 + 부정부사 + 보다 + 대명사|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": false,
+        "pos_match": true,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 7839
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "B05",
+      "category": "grammar",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "The reader asked for explaining the sentence.",
+      "focused_word": "explaining",
+      "output": "explaining|동사|해당 문장을 설명하는 것|주절|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": false,
+        "pos_match": false,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 7175
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "C01",
+      "category": "idiom",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "The output files came back empty.",
+      "focused_word": null,
+      "output": "|||주절|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": null,
+        "pos_match": null,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 5252
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "C02",
+      "category": "idiom",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "The model is up to date with the latest release.",
+      "focused_word": null,
+      "output": "|||주어+동사구|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": null,
+        "pos_match": null,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 8400
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "C03",
+      "category": "idiom",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "The build is green.",
+      "focused_word": "green",
+      "output": "green|형용사|빌드가 성공했음을 나타내는 색상 코드입니다.|단일 문장: 주어 + 동사|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": true,
+        "pos_match": true,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 8589
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "C04",
+      "category": "idiom",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "This is a no-op for existing sessions.",
+      "focused_word": null,
+      "output": "|||이 문장은 '기존 세션'에 대해 설명하며, '이것은 아무 작업도 하지 않습니다'라는 의미를 전달합니다.|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": null,
+        "pos_match": null,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 5275
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "D01",
+      "category": "developer",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "Error: the adapter returned null for a non-optional field.",
+      "focused_word": "adapter",
+      "output": "adapter|명사|오류 메시지에서 사용된 어댑터|주어 + 목적어|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": true,
+        "pos_match": true,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 7331
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "D02",
+      "category": "developer",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "Returns the nearest text range to a screen point.",
+      "focused_word": "nearest",
+      "output": "nearest|형용사|화면의 특정 위치에서 가장 가까이 있는 텍스트 범위를 의미합니다.|단일 명사절: 'nearest text range'|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": false,
+        "pos_match": true,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 8951
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "D03",
+      "category": "developer",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "This change removes an assumption the code was built on.",
+      "focused_word": "assumption",
+      "output": "assumption|명사|코드가 설계될 때 기초로 삼았던 전제|이 문장은 동사 'removes'와 연결詞汇，使得句子更为通顺：这个变化移除了代码所依赖的前提。|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": true,
+        "pos_match": true,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 8317
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "D04",
+      "category": "developer",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "Acquisition is solved and targeting is not.",
+      "focused_word": "targeting",
+      "output": "targeting|명사|목표를 정하는 과정; 공격 대상 선택|두 개의 부정문이 연결되어 있으며, 각각의 부정문은 별개의 개념을 나타냅니다.|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": true,
+        "pos_match": true,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 8499
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "D05",
+      "category": "developer",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "The token is valid but the lease has expired.",
+      "focused_word": "lease",
+      "output": "lease|명사|임대 계약|주어 + 부정부사 + 동사 + 서술어|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": true,
+        "pos_match": true,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 7870
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "E01",
+      "category": "exam",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "Were the model to fail, the fallback would engage immediately.",
+      "focused_word": "fail",
+      "output": "fail|동사|모델이 실패하는 경우|만약 조건절 + 결과절|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": true,
+        "pos_match": true,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 7039
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "E02",
+      "category": "exam",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "The data, having been processed, was written to the output.",
+      "focused_word": "processed",
+      "output": "processed|과거분사|처리되었음|본문은 '데이터'가 '처리된 후'라는 조건을 받고, 그 결과로 '출력에 기록되었습니다.'|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": false,
+        "pos_match": true,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 7401
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "E03",
+      "category": "exam",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "So quickly did the model respond that nobody noticed the latency.",
+      "focused_word": null,
+      "output": "|||주절|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": null,
+        "pos_match": null,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 4832
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "F01",
+      "category": "edge",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "vacuously",
+      "focused_word": "vacuously",
+      "output": "vacuously|형용사|비어 있고, 내용이 없음을 나타내는 상태로 행동하거나 말하는 것||공허하게는 주로 사람의 태도나 행동을 묘사할 때 사용됩니다.",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": true,
+        "pos_match": false,
+        "structure_present": false,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 7433
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "F02",
+      "category": "edge",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "The Workloom dashboard shows one row per session.",
+      "focused_word": "Workloom",
+      "output": "Workloom|명사|워크룸 시스템의 관리자 인터페이스|주어+동사+보어|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": true,
+        "pos_match": true,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 7620
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "F03",
+      "category": "edge",
+      "lane": "deep",
+      "run_index": 0,
+      "source": "The timeout is 404ms, which exceeds the 200ms budget.",
+      "focused_word": "timeout",
+      "output": "타임아웃|명사|실행 시간이 제한된 작업이나 프로세스가 일정 시간 동안 중지되는 기간|주어 + 숫자 + 단위 + , + which + 서술절 + 비교구|",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": true,
+        "lemma_match": false,
+        "pos_match": true,
+        "structure_present": true,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 12419
+      },
+      "observations": {
+        "keyword_coverage_ratio": null,
+        "target_script_ratio": null,
+        "target_script_detected": null,
+        "length_ratio": null,
+        "length_ratio_within_sanity_band": null
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    }
+  ]
+}

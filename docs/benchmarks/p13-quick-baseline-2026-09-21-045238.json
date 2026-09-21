@@ -1,0 +1,215 @@
+{
+  "metadata": {
+    "model": "qwen2.5:7b",
+    "provider": "Ollama",
+    "endpoint": "127.0.0.1:11434",
+    "timestamp": "2026-09-21T04:51:43.891505300+00:00",
+    "runs_per_entry": 1,
+    "warm_start": true,
+    "corpus_revision": "v1",
+    "notes": "Live baseline with production Translator"
+  },
+  "lane": "quick",
+  "cases": [
+    {
+      "entry_id": "Q01",
+      "category": "general",
+      "lane": "quick",
+      "run_index": 0,
+      "source": "The weather is nice today.",
+      "focused_word": null,
+      "output": "오늘 날씨가 좋습니다.",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": null,
+        "lemma_match": null,
+        "pos_match": null,
+        "structure_present": null,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 14894
+      },
+      "observations": {
+        "keyword_coverage_ratio": 0.0,
+        "target_script_ratio": 0.75,
+        "target_script_detected": true,
+        "length_ratio": 0.46153846153846156,
+        "length_ratio_within_sanity_band": true
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "Q02",
+      "category": "general",
+      "lane": "quick",
+      "run_index": 0,
+      "source": "I need to finish this report by Friday.",
+      "focused_word": null,
+      "output": "금주 금요일까지 이 보고서를 마쳐야 합니다.",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": null,
+        "lemma_match": null,
+        "pos_match": null,
+        "structure_present": null,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 1648
+      },
+      "observations": {
+        "keyword_coverage_ratio": 0.0,
+        "target_script_ratio": 0.75,
+        "target_script_detected": true,
+        "length_ratio": 0.6153846153846154,
+        "length_ratio_within_sanity_band": true
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "Q03",
+      "category": "technical",
+      "lane": "quick",
+      "run_index": 0,
+      "source": "The function returns a boolean value.",
+      "focused_word": null,
+      "output": "함수는 논리값을 반환합니다.",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": null,
+        "lemma_match": null,
+        "pos_match": null,
+        "structure_present": null,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 1636
+      },
+      "observations": {
+        "keyword_coverage_ratio": 0.0,
+        "target_script_ratio": 0.8,
+        "target_script_detected": true,
+        "length_ratio": 0.40540540540540543,
+        "length_ratio_within_sanity_band": true
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "Q04",
+      "category": "general",
+      "lane": "quick",
+      "run_index": 0,
+      "source": "Where is the nearest subway station?",
+      "focused_word": null,
+      "output": "가장 가까운 지하철 역은 어디에 있나요?",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": null,
+        "lemma_match": null,
+        "pos_match": null,
+        "structure_present": null,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 1472
+      },
+      "observations": {
+        "keyword_coverage_ratio": 0.0,
+        "target_script_ratio": 0.7272727272727273,
+        "target_script_detected": true,
+        "length_ratio": 0.6111111111111112,
+        "length_ratio_within_sanity_band": true
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    },
+    {
+      "entry_id": "Q05",
+      "category": "general",
+      "lane": "quick",
+      "run_index": 0,
+      "source": "This meeting has been postponed to next week.",
+      "focused_word": null,
+      "output": "이 회의는 다음 주로 연기되었습니다.",
+      "automated": {
+        "non_empty": true,
+        "target_language_detected": true,
+        "schema_valid": null,
+        "lemma_match": null,
+        "pos_match": null,
+        "structure_present": null,
+        "no_restatement": null,
+        "provenance_correct": null,
+        "error_type": null,
+        "latency_ms": 1299
+      },
+      "observations": {
+        "keyword_coverage_ratio": 0.0,
+        "target_script_ratio": 0.75,
+        "target_script_detected": true,
+        "length_ratio": 0.4444444444444444,
+        "length_ratio_within_sanity_band": true
+      },
+      "human": {
+        "meaning_preserved": null,
+        "naturalness": null,
+        "completeness": null,
+        "factual_correctness": null,
+        "sense_correctness": null,
+        "grammar_correctness": null,
+        "structure_correctness": null,
+        "usefulness": null,
+        "misleading": null,
+        "note": null
+      }
+    }
+  ]
+}
