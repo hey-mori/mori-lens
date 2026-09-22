@@ -149,11 +149,16 @@ def find_orphan_js_files(web_dir: Path, reachable: Set[str]) -> List[str]:
         "js/i18n-key-checker.js",  # Standalone integrity checker tool
         "js\\i18n.test.js",  # Windows path separator
         "js\\i18n-key-checker.js",  # Windows path separator
+        "js/test-infrastructure.js",  # Test infrastructure, imported by tests only
+        "js\\test-infrastructure.js",  # Windows path separator
     }
 
     orphans = []
     for js_file in js_dir.glob("*.js"):
         js_rel = str(js_file.relative_to(web_dir))
+        # Skip Vitest test files (they are run by Vitest, not imported)
+        if js_rel.endswith(".vitest.test.js") or js_rel.endswith("\\*.vitest.test.js"):
+            continue
         if js_rel not in reachable and js_rel not in allowed_orphans:
             orphans.append(js_rel)
 
