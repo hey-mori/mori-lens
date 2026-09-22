@@ -50,6 +50,10 @@ What ships:
 
 Global shortcuts are configurable in Control Center.
 
+The Control Center interface supports English and Korean, selectable in
+Settings > General. All UI strings are translated dynamically without
+restarting the application.
+
 What does not exist yet: real-world validation on macOS with outside
 readers (requires Accessibility and Screen Recording permissions).
 Sequenced in [docs/roadmap.md](docs/roadmap.md).

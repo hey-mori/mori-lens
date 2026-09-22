@@ -4,6 +4,7 @@ import { invoke } from './tauri.js';
 import { setStatus } from './ui.js';
 import { state } from './state.js';
 import { refreshLocalAiStatus } from './local_ai.js';
+import { getLocale, setLocale, t } from './i18n.js';
 
 const PROVIDER_DEFAULT_ENDPOINTS = {
   ollama: '127.0.0.1:11434',
@@ -14,9 +15,23 @@ export async function loadSettings() {
   state.currentSettings = await invoke('get_settings');
   applySettingsToForm(state.currentSettings);
   attachProviderChangeHandler();
+  initInterfaceLanguageSelector();
   import('./apps.js').then(m => m.renderApps());
   renderShortcuts(state.currentSettings.shortcuts);
   import('./models.js').then(m => m.refreshModels(state.currentSettings.quick_model));
+}
+
+export function initInterfaceLanguageSelector() {
+  const select = document.getElementById('interface-language-select');
+  if (!select) return;
+
+  // Set current locale
+  select.value = getLocale();
+
+  // Handle changes
+  select.addEventListener('change', (e) => {
+    setLocale(e.target.value);
+  });
 }
 
 export function applySettingsToForm(settings) {
@@ -81,12 +96,12 @@ export async function saveSettings() {
     await refreshLocalAiStatus();
 
     if (outcome.restart_required) {
-      setStatus('저장됨 · 변경사항을 적용하려면 Mori Lens를 다시 시작하세요', true);
+      setStatus(t('settings.saved.restart'), true);
     } else {
-      setStatus('저장됨 · 바로 적용되었습니다');
+      setStatus(t('settings.saved'));
     }
   } catch (e) {
-    setStatus('Error: ' + e);
+    setStatus(t('settings.error', { error: e }));
   }
 }
 
@@ -128,12 +143,12 @@ function attachProviderChangeHandler() {
 }
 
 const ACTION_LABELS = {
-  pause: 'Pause/Resume',
-  manual_ocr: 'Manual OCR',
-  deep: 'Deep Analysis',
-  copy: 'Copy Card',
-  save: 'Save to Library',
-  pin: 'Pin Card'
+  pause: () => t('settings.shortcuts.pause'),
+  manual_ocr: () => t('settings.shortcuts.manual.ocr'),
+  deep: () => t('settings.shortcuts.deep'),
+  copy: () => t('settings.shortcuts.copy'),
+  save: () => t('settings.shortcuts.save'),
+  pin: () => t('settings.shortcuts.pin')
 };
 
 function renderShortcuts(shortcuts) {
@@ -145,7 +160,8 @@ function renderShortcuts(shortcuts) {
 
   for (const binding of shortcuts.bindings) {
     const { action, shortcut, default_shortcut, can_unbind } = binding;
-    const label = ACTION_LABELS[action] || action;
+    const labelFn = ACTION_LABELS[action];
+    const label = labelFn ? labelFn() : action;
 
     // Create field container
     const fieldDiv = document.createElement('div');
@@ -163,7 +179,7 @@ function renderShortcuts(shortcuts) {
     input.id = inputId;
     input.dataset.shortcutAction = action;
     input.value = shortcut || '';
-    input.placeholder = default_shortcut ? `Default: ${default_shortcut}` : 'e.g. Ctrl+Alt+P';
+    input.placeholder = default_shortcut ? t('settings.shortcuts.default.prefix', { shortcut: default_shortcut }) : t('settings.shortcuts.example');
     input.style.fontFamily = 'monospace';
 
     // Add hint for unbindable actions
@@ -171,7 +187,7 @@ function renderShortcuts(shortcuts) {
       const hint = document.createElement('small');
       hint.style.color = '#888';
       hint.style.marginLeft = '8px';
-      hint.textContent = '(optional)';
+      hint.textContent = t('settings.shortcuts.optional');
       fieldDiv.appendChild(hint);
     }
 
@@ -211,5 +227,5 @@ export function restoreShortcutDefaults() {
   });
 
   // Show status message
-  setStatus('Defaults restored · Click Save to apply');
+  setStatus(t('settings.shortcuts.default.restored'));
 }
