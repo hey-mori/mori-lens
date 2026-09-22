@@ -143,10 +143,18 @@ def find_orphan_js_files(web_dir: Path, reachable: Set[str]) -> List[str]:
     if not js_dir.exists():
         return []
 
+    # Files that are intentionally standalone (not imported by other modules)
+    allowed_orphans = {
+        "js/i18n.test.js",  # Test file, run directly with node
+        "js/i18n-key-checker.js",  # Standalone integrity checker tool
+        "js\\i18n.test.js",  # Windows path separator
+        "js\\i18n-key-checker.js",  # Windows path separator
+    }
+
     orphans = []
     for js_file in js_dir.glob("*.js"):
         js_rel = str(js_file.relative_to(web_dir))
-        if js_rel not in reachable:
+        if js_rel not in reachable and js_rel not in allowed_orphans:
             orphans.append(js_rel)
 
     return orphans

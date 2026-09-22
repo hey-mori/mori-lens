@@ -274,48 +274,47 @@ async function loadRecentDiagnostics() {
       return;
     }
 
-    const componentLabels = {
-      runtime: '런타임',
-      acquisition: '텍스트 수집',
-      quick: 'Quick',
-      deep: 'Deep',
-      ocr: 'OCR',
-      library: '라이브러리',
-      settings: '설정',
-      shortcut: '단축키',
-      health_check: '헬스체크'
+    const componentKeys = {
+      runtime: 'status.component.runtime',
+      acquisition: 'status.component.acquisition',
+      library: 'status.component.library',
+      settings: 'status.component.settings',
+      shortcut: 'status.component.shortcut',
+      health_check: 'status.component.health.check'
+    };
+    // Quick, Deep, OCR are product/protocol names, intentionally nonlocalized
+    const componentPassthrough = { quick: 'Quick', deep: 'Deep', ocr: 'OCR' };
+
+    const kindKeys = {
+      failure: 'status.kind.failure',
+      degraded: 'status.kind.degraded',
+      recovered: 'status.kind.recovered',
+      health_check: 'status.kind.health.check'
     };
 
-    const kindLabels = {
-      failure: '실패',
-      degraded: '성능 저하',
-      recovered: '복구',
-      health_check: '헬스체크'
+    const failureKeys = {
+      connection_failed: 'status.failure.connection.failed',
+      timeout: 'status.failure.timeout',
+      http_server: 'status.failure.http.server',
+      http_client: 'status.failure.http.client',
+      model_missing: 'status.failure.model.missing',
+      malformed: 'status.failure.malformed',
+      inference_failed: 'status.failure.inference.failed',
+      settings_invalid: 'status.failure.settings.invalid',
+      library_degraded: 'status.failure.library.degraded',
+      shortcut_unavailable: 'status.failure.shortcut.unavailable',
+      worker_stopped: 'status.failure.worker.stopped'
     };
 
-    const failureLabels = {
-      connection_failed: '연결 실패',
-      timeout: '시간 초과',
-      http_server: 'HTTP 서버 오류',
-      http_client: 'HTTP 클라이언트 오류',
-      model_missing: '모델 없음',
-      malformed: '응답 형식 오류',
-      inference_failed: '추론 실패',
-      settings_invalid: '설정 오류',
-      library_degraded: '라이브러리 성능 저하',
-      shortcut_unavailable: '단축키 사용 불가',
-      worker_stopped: '워커 중단'
-    };
-
-    let html = '<h2 style="font-size:14px;margin-bottom:8px">최근 진단 이벤트</h2>';
-    html += '<div style="font-size:11px;color:#888;margin-bottom:8px">세션 중 발생한 비정상 이벤트 (최대 128개)</div>';
+    let html = '<h2 style="font-size:14px;margin-bottom:8px">' + escapeHtml(t('status.recent.events')) + '</h2>';
+    html += '<div style="font-size:11px;color:#888;margin-bottom:8px">' + escapeHtml(t('status.recent.events.hint')) + '</div>';
     html += '<table style="font-size:12px">';
     // Show most recent first
     for (let i = events.length - 1; i >= 0; i--) {
       const e = events[i];
-      const comp = componentLabels[e.component] || e.component;
-      const kind = kindLabels[e.kind] || e.kind;
-      const failure = e.failure_class ? (failureLabels[e.failure_class] || e.failure_class) : '';
+      const comp = componentKeys[e.component] ? t(componentKeys[e.component]) : (componentPassthrough[e.component] || e.component);
+      const kind = kindKeys[e.kind] ? t(kindKeys[e.kind]) : e.kind;
+      const failure = e.failure_class ? (failureKeys[e.failure_class] ? t(failureKeys[e.failure_class]) : e.failure_class) : '';
       const count = e.count > 1 ? ' (×' + e.count + ')' : '';
       const color = e.kind === 'failure' ? '#c00' :
                     e.kind === 'degraded' ? '#f57c00' :
