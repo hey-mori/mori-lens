@@ -59,7 +59,7 @@
 | Configurable shortcuts | RUNTIME VERIFIED | Control Center UI | Restart required |
 | Start with Windows | RUNTIME VERIFIED | Per-user run key | Off unless turned on |
 | Settings reload while running | RUNTIME VERIFIED | File watcher | No restart needed |
-| Interface language (en/ko) | RUNTIME VERIFIED | 321 keys, 0 duplicates, 100% parity | Dynamic re-render |
+| Interface language (en/ko) | AUTOMATED CONTRACT PASS | 321 keys, 0 duplicates, 100% parity, key-reference validation | Dynamic re-render, P15 automated contracts |
 
 ### Library and history
 
@@ -256,8 +256,8 @@
 ## Summary statistics
 
 - **Total capabilities tracked:** 110
-- **AUTOMATED CONTRACT PASS:** 33
-- **RUNTIME VERIFIED:** 27
+- **AUTOMATED CONTRACT PASS:** 34
+- **RUNTIME VERIFIED:** 26
 - **SOURCE VERIFIED:** 26
 - **PLATFORM BUILD VERIFIED:** 15
 - **NOT IMPLEMENTED:** 3
