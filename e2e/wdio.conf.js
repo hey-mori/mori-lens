@@ -9,6 +9,10 @@ const platform = process.platform;
 const binaryName = platform === 'win32' ? 'lens.exe' : 'lens';
 const binaryPath = path.join(repoRoot, 'apps', 'lens', 'target', 'release', binaryName);
 
+// Create isolated E2E data directory to avoid polluting user's real settings
+const e2eDataRoot = path.join(repoRoot, '.e2e-data');
+process.env.MORI_LENS_E2E_DATA_ROOT = e2eDataRoot;
+
 export const config = {
   //
   // ====================
@@ -69,6 +73,13 @@ export const config = {
       throw new Error(`Tauri binary not found at ${binaryPath}. Run 'cargo build --release' first.`);
     }
     console.log(`✓ Using Tauri binary: ${binaryPath}`);
+    console.log(`✓ E2E data root: ${e2eDataRoot}`);
+
+    // Clean up E2E data directory before tests
+    if (fs.existsSync(e2eDataRoot)) {
+      fs.rmSync(e2eDataRoot, { recursive: true, force: true });
+    }
+    fs.mkdirSync(e2eDataRoot, { recursive: true });
   },
 
   //
