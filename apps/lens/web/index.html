@@ -2,78 +2,122 @@
 <meta charset="utf-8">
 <title>Mori Lens</title>
 <link rel="stylesheet" href="styles.css">
+<script type="module" src="js/i18n.js"></script>
+<script type="module">
+  import { initI18n, t, setLocale, getLocale } from './js/i18n.js';
+
+  // Initialize i18n
+  initI18n();
+
+  // Update UI with translations
+  function updateUI() {
+    // Text content for elements with data-i18n
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+      const key = el.dataset.i18n;
+      if (el.tagName === 'INPUT' && el.type === 'text') {
+        el.placeholder = t(key);
+      } else {
+        el.textContent = t(key);
+      }
+    });
+
+    // ARIA labels
+    document.querySelectorAll('[data-i18n-aria]').forEach(el => {
+      const key = el.dataset.i18nAria;
+      el.setAttribute('aria-label', t(key));
+    });
+
+    // Title attributes
+    document.querySelectorAll('[data-i18n-title]').forEach(el => {
+      const key = el.dataset.i18nTitle;
+      el.title = t(key);
+    });
+
+    // Page title
+    document.title = t('app.title');
+  }
+
+  // Listen for locale changes
+  document.addEventListener('locale-changed', updateUI);
+
+  // Initial update
+  updateUI();
+
+  // Expose for debugging
+  window.i18n = { t, setLocale, getLocale };
+</script>
 <body>
-  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <a href="#main-content" class="skip-link" data-i18n="skip.to.main">Skip to main content</a>
   <nav class="sidebar" role="navigation" aria-label="Main navigation">
-    <div class="sidebar-item active" data-section="status" role="button" tabindex="0" aria-current="page">Status</div>
-    <div class="sidebar-item" data-section="library" role="button" tabindex="0">Library</div>
-    <div class="sidebar-item" data-section="review" role="button" tabindex="0">Review</div>
-    <div class="sidebar-item" data-section="recent" role="button" tabindex="0">Recent</div>
-    <div class="sidebar-item" data-section="history" role="button" tabindex="0">History</div>
-    <div class="sidebar-item" data-section="general" role="button" tabindex="0">General</div>
-    <div class="sidebar-item" data-section="shortcuts" role="button" tabindex="0">Shortcuts</div>
-    <div class="sidebar-item" data-section="models" role="button" tabindex="0">Models</div>
-    <div class="sidebar-item" data-section="apps" role="button" tabindex="0">Apps</div>
-    <div class="sidebar-item" data-section="about" role="button" tabindex="0">About</div>
+    <div class="sidebar-item active" data-section="status" role="button" tabindex="0" aria-current="page" data-i18n="nav.status">Status</div>
+    <div class="sidebar-item" data-section="library" role="button" tabindex="0" data-i18n="nav.library">Library</div>
+    <div class="sidebar-item" data-section="review" role="button" tabindex="0" data-i18n="nav.review">Review</div>
+    <div class="sidebar-item" data-section="recent" role="button" tabindex="0" data-i18n="nav.recent">Recent</div>
+    <div class="sidebar-item" data-section="history" role="button" tabindex="0" data-i18n="nav.history">History</div>
+    <div class="sidebar-item" data-section="general" role="button" tabindex="0" data-i18n="nav.general">General</div>
+    <div class="sidebar-item" data-section="shortcuts" role="button" tabindex="0" data-i18n="nav.shortcuts">Shortcuts</div>
+    <div class="sidebar-item" data-section="models" role="button" tabindex="0" data-i18n="nav.models">Models</div>
+    <div class="sidebar-item" data-section="apps" role="button" tabindex="0" data-i18n="nav.apps">Apps</div>
+    <div class="sidebar-item" data-section="about" role="button" tabindex="0" data-i18n="nav.about">About</div>
   </nav>
   <main class="content" id="main-content" role="main">
     <!-- Status -->
     <div class="section active" id="section-status">
-      <h1>Status</h1>
-      <div id="status-content"><p class="loading">Loading...</p></div>
+      <h1 data-i18n="status.title">Status</h1>
+      <div id="status-content"><p class="loading" data-i18n="common.loading">Loading...</p></div>
     </div>
     <!-- Library -->
     <div class="section" id="section-library">
-      <h1>Library</h1>
-      <p style="color:#666;margin-bottom:12px">Items you explicitly saved.</p>
-      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center" role="search" aria-label="Library search">
-        <input type="text" id="lib-search" placeholder="Search saved items..." aria-label="Search saved items" style="flex:1;max-width:400px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;background:white">
-        <button class="btn" id="lib-search-btn" style="padding:6px 12px">Search</button>
-        <button class="btn" id="lib-export-md-btn" style="padding:6px 12px">Export MD</button>
-        <button class="btn" id="lib-export-json-btn" style="padding:6px 12px">Export JSON</button>
-        <button class="btn" id="lib-export-jsonl-btn" style="padding:6px 12px">Export JSONL</button>
-        <button class="btn" id="lib-import-jsonl-btn" style="padding:6px 12px">Import JSONL</button>
+      <h1 data-i18n="library.title">Library</h1>
+      <p style="color:#666;margin-bottom:12px" data-i18n="library.description">Items you explicitly saved.</p>
+      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center" role="search" data-i18n-aria="library.search">
+        <input type="text" id="lib-search" data-i18n="library.search.placeholder" aria-label="Search saved items" style="flex:1;max-width:400px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;background:white">
+        <button class="btn" id="lib-search-btn" style="padding:6px 12px" data-i18n="library.search.button">Search</button>
+        <button class="btn" id="lib-export-md-btn" style="padding:6px 12px" data-i18n="library.export.md">Export MD</button>
+        <button class="btn" id="lib-export-json-btn" style="padding:6px 12px" data-i18n="library.export.json">Export JSON</button>
+        <button class="btn" id="lib-export-jsonl-btn" style="padding:6px 12px" data-i18n="library.export.jsonl">Export JSONL</button>
+        <button class="btn" id="lib-import-jsonl-btn" style="padding:6px 12px" data-i18n="library.import.jsonl">Import JSONL</button>
         <span id="lib-count" style="color:#888;font-size:12px;margin-left:auto"></span>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap" role="search" aria-label="Library filters">
-        <label for="lib-filter-kind" style="font-size:12px;color:#666">Type:</label>
+        <label for="lib-filter-kind" style="font-size:12px;color:#666" data-i18n="library.filter.type">Type:</label>
         <select id="lib-filter-kind" aria-label="Filter by type" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
-          <option value="">All</option>
-          <option value="translation">Translations</option>
-          <option value="analysis">Analyses</option>
+          <option value="" data-i18n="common.all">All</option>
+          <option value="translation" data-i18n="library.filter.translations">Translations</option>
+          <option value="analysis" data-i18n="library.filter.analyses">Analyses</option>
         </select>
-        <label for="lib-filter-app" style="font-size:12px;color:#666">App:</label>
+        <label for="lib-filter-app" style="font-size:12px;color:#666" data-i18n="library.filter.app">App:</label>
         <select id="lib-filter-app" aria-label="Filter by application" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
-          <option value="">All</option>
+          <option value="" data-i18n="common.all">All</option>
         </select>
-        <label for="lib-filter-source" style="font-size:12px;color:#666">Source:</label>
+        <label for="lib-filter-source" style="font-size:12px;color:#666" data-i18n="library.filter.source">Source:</label>
         <select id="lib-filter-source" aria-label="Filter by source language" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
-          <option value="">All</option>
+          <option value="" data-i18n="common.all">All</option>
         </select>
-        <label for="lib-filter-target" style="font-size:12px;color:#666">Target:</label>
+        <label for="lib-filter-target" style="font-size:12px;color:#666" data-i18n="library.filter.target">Target:</label>
         <select id="lib-filter-target" aria-label="Filter by target language" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
-          <option value="">All</option>
+          <option value="" data-i18n="common.all">All</option>
         </select>
-        <label for="lib-filter-state" style="font-size:12px;color:#666">State:</label>
+        <label for="lib-filter-state" style="font-size:12px;color:#666" data-i18n="library.filter.state">State:</label>
         <select id="lib-filter-state" aria-label="Filter by review state" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
-          <option value="">All</option>
+          <option value="" data-i18n="common.all">All</option>
           <option value="later">Later</option>
           <option value="known">Known</option>
           <option value="archive">Archive</option>
         </select>
-        <label for="lib-filter-tag" style="font-size:12px;color:#666">Tag:</label>
+        <label for="lib-filter-tag" style="font-size:12px;color:#666" data-i18n="library.filter.tag">Tag:</label>
         <select id="lib-filter-tag" aria-label="Filter by tag" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;font-size:12px;background:white">
-          <option value="">All</option>
+          <option value="" data-i18n="common.all">All</option>
         </select>
-        <button class="btn" id="lib-clear-filters-btn" style="padding:4px 12px;font-size:12px">Clear filters</button>
+        <button class="btn" id="lib-clear-filters-btn" style="padding:4px 12px;font-size:12px" data-i18n="library.clear.filters">Clear filters</button>
       </div>
       <div id="lib-list"><p class="loading">Loading...</p></div>
       <div id="lib-detail" style="display:none;margin-top:24px;padding:16px;background:rgba(0,0,0,0.02);border-radius:6px"></div>
     </div>
     <!-- Review -->
     <div class="section" id="section-review">
-      <h1>Review</h1>
-      <p style="color:#888;font-size:12px;margin-bottom:16px">Items marked for later review. Categorise each as Known or Archive.</p>
+      <h1 data-i18n="review.title">Review</h1>
+      <p style="color:#888;font-size:12px;margin-bottom:16px" data-i18n="review.description">Items marked for later review. Categorise each as Known or Archive.</p>
       <div id="review-summary" style="margin-bottom:16px"></div>
       <div id="review-list"><p class="loading">Loading...</p></div>
       <div id="review-card" style="display:none;margin-top:16px;padding:20px;background:rgba(0,0,0,0.02);border-radius:8px;max-width:500px">
@@ -81,235 +125,235 @@
         <div id="review-note" style="color:#666;font-size:13px;margin-bottom:12px;padding:8px 12px;background:rgba(0,0,0,0.02);border-radius:4px;display:none;border-left:3px solid #f57c00"></div>
         <div id="review-answer" style="color:#555;margin-bottom:16px;padding:12px;background:rgba(0,0,0,0.03);border-radius:4px;display:none"></div>
         <div style="display:flex;gap:8px">
-          <button class="btn" id="review-show-btn" style="padding:8px 16px">Show answer</button>
-          <button class="btn" id="review-known-btn" style="padding:8px 16px;display:none;background:#2e7d32;color:white;border-color:#2e7d32">Known</button>
-          <button class="btn" id="review-later-btn" style="padding:8px 16px;display:none;background:#f57c00;color:white;border-color:#f57c00">Keep Later</button>
-          <button class="btn" id="review-archive-btn" style="padding:8px 16px;display:none;background:#616161;color:white;border-color:#616161">Archive</button>
-            <button class="btn" id="review-undo-btn" style="padding:8px 16px;display:none;background:#1976d2;color:white;border-color:#1976d2" title="Undo last action (Ctrl+Z)">Undo</button>
+          <button class="btn" id="review-show-btn" style="padding:8px 16px" data-i18n="review.show.answer">Show answer</button>
+          <button class="btn" id="review-known-btn" style="padding:8px 16px;display:none;background:#2e7d32;color:white;border-color:#2e7d32" data-i18n="review.known">Known</button>
+          <button class="btn" id="review-later-btn" style="padding:8px 16px;display:none;background:#f57c00;color:white;border-color:#f57c00" data-i18n="review.later">Keep Later</button>
+          <button class="btn" id="review-archive-btn" style="padding:8px 16px;display:none;background:#616161;color:white;border-color:#616161" data-i18n="review.archive">Archive</button>
+            <button class="btn" id="review-undo-btn" style="padding:8px 16px;display:none;background:#1976d2;color:white;border-color:#1976d2" title="Undo last action (Ctrl+Z)" data-i18n="review.undo" data-i18n-title="review.undo.tooltip">Undo</button>
         </div>
       </div>
     </div>
     <!-- Recent -->
     <div class="section" id="section-recent">
-      <h1>Recent</h1>
-      <p style="color:#888;font-size:12px;margin-bottom:16px">Session only · cleared when Mori Lens quits.</p>
-      <div id="recent-list"><p style="color:#888;font-size:13px">No recent cards.</p></div>
+      <h1 data-i18n="recent.title">Recent</h1>
+      <p style="color:#888;font-size:12px;margin-bottom:16px" data-i18n="recent.description">Session only · cleared when Mori Lens quits.</p>
+      <div id="recent-list"><p style="color:#888;font-size:13px" data-i18n="recent.empty">No recent cards.</p></div>
     </div>
     <!-- History -->
     <div class="section" id="section-history">
-      <h1>History</h1>
-      <p id="history-description" style="color:#888;font-size:12px;margin-bottom:16px">Persistent record of cards when History is enabled. Turn it on in General settings.</p>
+      <h1 data-i18n="history.title">History</h1>
+      <p id="history-description" style="color:#888;font-size:12px;margin-bottom:16px" data-i18n="history.description">Persistent record of cards when History is enabled. Turn it on in General settings.</p>
       <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
         <span id="history-count" style="color:#888;font-size:12px"></span>
-        <button class="btn" id="history-prune-btn" style="padding:4px 12px;font-size:12px;margin-left:auto">Prune old entries</button>
+        <button class="btn" id="history-prune-btn" style="padding:4px 12px;font-size:12px;margin-left:auto" data-i18n="history.prune">Prune old entries</button>
       </div>
       <div id="history-list"><p class="loading">Loading...</p></div>
     </div>
     <!-- General -->
     <div class="section" id="section-general">
-      <h1>General</h1>
+      <h1 data-i18n="general.title">General</h1>
       <div class="field">
-        <label>Language</label>
+        <label data-i18n="general.language">Language</label>
         <input type="text" id="f-language">
       </div>
       <div class="field">
-        <label>Dwell (ms)</label>
+        <label data-i18n="general.dwell">Dwell (ms)</label>
         <input type="number" id="f-dwell" min="80" max="3000">
       </div>
       <div class="field">
-        <label>Theme</label>
+        <label data-i18n="general.theme">Theme</label>
         <select id="f-theme">
-          <option value="system">System</option>
-          <option value="forest">Forest</option>
-          <option value="night-lake">Night Lake</option>
-          <option value="paper">Paper</option>
+          <option value="system" data-i18n="general.theme.system">System</option>
+          <option value="forest" data-i18n="general.theme.forest">Forest</option>
+          <option value="night-lake" data-i18n="general.theme.night-lake">Night Lake</option>
+          <option value="paper" data-i18n="general.theme.paper">Paper</option>
         </select>
       </div>
       <div class="field">
-        <label>Text size</label>
+        <label data-i18n="general.text.size">Text size</label>
         <select id="f-text-size">
-          <option value="small">Small</option>
-          <option value="normal">Normal</option>
-          <option value="large">Large</option>
-          <option value="larger">Larger</option>
+          <option value="small" data-i18n="general.text.size.small">Small</option>
+          <option value="normal" data-i18n="general.text.size.normal">Normal</option>
+          <option value="large" data-i18n="general.text.size.large">Large</option>
+          <option value="larger" data-i18n="general.text.size.larger">Larger</option>
         </select>
       </div>
       <div class="field">
-        <label>Translucency</label>
+        <label data-i18n="general.translucency">Translucency</label>
         <select id="f-translucency">
-          <option value="clear">Clear</option>
-          <option value="balanced">Balanced</option>
-          <option value="solid">Solid</option>
+          <option value="clear" data-i18n="general.translucency.clear">Clear</option>
+          <option value="balanced" data-i18n="general.translucency.balanced">Balanced</option>
+          <option value="solid" data-i18n="general.translucency.solid">Solid</option>
         </select>
       </div>
       <div class="field">
-        <label>OCR mode</label>
+        <label data-i18n="general.ocr.mode">OCR mode</label>
         <select id="f-ocr">
-          <option value="off">Off</option>
-          <option value="manual">Manual (Ctrl+Alt+O)</option>
-          <option value="automatic">Automatic</option>
+          <option value="off" data-i18n="general.ocr.mode.off">Off</option>
+          <option value="manual" data-i18n="general.ocr.mode.manual">Manual (Ctrl+Alt+O)</option>
+          <option value="automatic" data-i18n="general.ocr.mode.automatic">Automatic</option>
         </select>
       </div>
       <div class="field">
-        <label>Profile</label>
+        <label data-i18n="general.profile">Profile</label>
         <select id="f-profile">
-          <option value="reader">Reader</option>
-          <option value="developer">Developer</option>
-          <option value="exam">Exam</option>
+          <option value="reader" data-i18n="general.profile.reader">Reader</option>
+          <option value="developer" data-i18n="general.profile.developer">Developer</option>
+          <option value="exam" data-i18n="general.profile.exam">Exam</option>
         </select>
       </div>
       <div class="field">
-        <label>Hover scope</label>
+        <label data-i18n="general.hover.scope">Hover scope</label>
         <select id="f-hover-scope">
-          <option value="sentence">Sentence</option>
-          <option value="word">Word</option>
+          <option value="sentence" data-i18n="general.hover.scope.sentence">Sentence</option>
+          <option value="word" data-i18n="general.hover.scope.word">Word</option>
         </select>
-        <p class="hint">What the card answers about. Hold Ctrl to toggle.</p>
+        <p class="hint" data-i18n="general.hover.scope.hint">What the card answers about. Hold Ctrl to toggle.</p>
       </div>
       <div class="field">
-        <label>Default tier</label>
+        <label data-i18n="general.default.tier">Default tier</label>
         <select id="f-default-tier">
-          <option value="allow">Allow</option>
-          <option value="modifier">Modifier</option>
-          <option value="deny">Deny</option>
+          <option value="allow" data-i18n="general.default.tier.allow">Allow</option>
+          <option value="modifier" data-i18n="general.default.tier.modifier">Modifier</option>
+          <option value="deny" data-i18n="general.default.tier.deny">Deny</option>
         </select>
       </div>
-      <h2>History</h2>
+      <h2 data-i18n="general.history.title">History</h2>
       <div class="field">
-        <label><input type="checkbox" id="f-history" style="margin-right:8px">Enable persistent history</label>
-        <p class="hint">Stores all cards in a database. Disabled by default for privacy.</p>
+        <label><input type="checkbox" id="f-history" style="margin-right:8px"><span data-i18n="general.history.enable">Enable persistent history</span></label>
+        <p class="hint" data-i18n="general.history.enable.hint">Stores all cards in a database. Disabled by default for privacy.</p>
       </div>
       <div class="field">
-        <label>Retention period</label>
+        <label data-i18n="general.history.retention">Retention period</label>
         <select id="f-history-days">
-          <option value="1">1 day</option>
-          <option value="7">7 days</option>
-          <option value="30" selected>30 days (default)</option>
-          <option value="90">90 days</option>
-          <option value="0">Forever</option>
+          <option value="1" data-i18n="general.history.retention.1day">1 day</option>
+          <option value="7" data-i18n="general.history.retention.7days">7 days</option>
+          <option value="30" selected data-i18n="general.history.retention.30days">30 days (default)</option>
+          <option value="90" data-i18n="general.history.retention.90days">90 days</option>
+          <option value="0" data-i18n="general.history.retention.forever">Forever</option>
         </select>
       </div>
       <div class="field">
-        <label><input type="checkbox" id="f-history-store-app" style="margin-right:8px">Store application name</label>
-        <p class="hint">Records which app the card came from. Disable for more privacy.</p>
+        <label><input type="checkbox" id="f-history-store-app" style="margin-right:8px"><span data-i18n="general.history.store.app">Store application name</span></label>
+        <p class="hint" data-i18n="general.history.store.app.hint">Records which app the card came from. Disable for more privacy.</p>
       </div>
       <div class="field">
-        <label>Excluded applications (comma-separated)</label>
-        <input type="text" id="f-history-excluded" placeholder="e.g. keepass,password">
-        <p class="hint">Cards from these apps are never recorded in history.</p>
+        <label data-i18n="general.history.excluded">Excluded applications (comma-separated)</label>
+        <input type="text" id="f-history-excluded" data-i18n="general.history.excluded.placeholder" placeholder="e.g. keepass,password">
+        <p class="hint" data-i18n="general.history.excluded.hint">Cards from these apps are never recorded in history.</p>
       </div>
       <div class="btn-row">
-        <button class="btn btn-primary" id="general-save-btn">Save</button>
-        <button class="btn" id="general-reset-btn">Reset</button>
+        <button class="btn btn-primary" id="general-save-btn" data-i18n="common.save">Save</button>
+        <button class="btn" id="general-reset-btn" data-i18n="common.reset">Reset</button>
       </div>
       <div id="general-status" class="status-line"></div>
     </div>
     <!-- Shortcuts -->
     <div class="section" id="section-shortcuts">
-      <h1>Shortcuts</h1>
-      <p style="color:#666;margin-bottom:12px">Global keyboard shortcuts. Changes require restart.</p>
+      <h1 data-i18n="shortcuts.title">Shortcuts</h1>
+      <p style="color:#666;margin-bottom:12px" data-i18n="shortcuts.description">Global keyboard shortcuts. Changes require restart.</p>
       <div id="shortcuts-list"></div>
       <div class="btn-row">
-        <button class="btn btn-primary" id="shortcuts-save-btn">Save</button>
-        <button class="btn" id="shortcuts-revert-btn">Revert</button>
-        <button class="btn" id="shortcuts-defaults-btn">Restore defaults</button>
+        <button class="btn btn-primary" id="shortcuts-save-btn" data-i18n="common.save">Save</button>
+        <button class="btn" id="shortcuts-revert-btn" data-i18n="shortcuts.revert">Revert</button>
+        <button class="btn" id="shortcuts-defaults-btn" data-i18n="shortcuts.defaults">Restore defaults</button>
       </div>
       <div id="shortcuts-status" class="status-line"></div>
     </div>
     <!-- Models -->
     <div class="section" id="section-models">
-      <h1>Models</h1>
+      <h1 data-i18n="models.title">Models</h1>
       <div id="provider-status" style="margin-bottom:16px">
         <span id="provider-dot" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#888;margin-right:8px"></span>
-        <span id="provider-label">Checking...</span>
+        <span id="provider-label" data-i18n="models.checking">Checking...</span>
         <span id="provider-endpoint" style="color:#888;font-size:12px;margin-left:8px"></span>
       </div>
-      <h2>Installed models</h2>
-      <div id="models-list"><p class="loading">Loading...</p></div>
+      <h2 data-i18n="models.installed">Installed models</h2>
+      <div id="models-list"><p class="loading" data-i18n="common.loading">Loading...</p></div>
       <div style="margin-top:8px">
-        <button class="btn" id="models-refresh-btn" style="padding:4px 12px;font-size:12px">Refresh</button>
+        <button class="btn" id="models-refresh-btn" style="padding:4px 12px;font-size:12px" data-i18n="common.refresh">Refresh</button>
       </div>
-      <h2 style="margin-top:24px">Quick translation</h2>
+      <h2 style="margin-top:24px" data-i18n="models.quick.title">Quick translation</h2>
       <div class="field">
-        <label>Engine</label>
+        <label data-i18n="models.quick.engine">Engine</label>
         <select id="f-quick-engine">
           <option value="ollama">Ollama</option>
           <option value="lmstudio">LM Studio</option>
         </select>
       </div>
       <div class="field">
-        <label>Model</label>
+        <label data-i18n="models.quick.model">Model</label>
         <select id="f-quick-model-select">
-          <option value="">Auto (best available)</option>
+          <option value="" data-i18n="models.quick.model.auto">Auto (best available)</option>
         </select>
       </div>
       <div class="field">
-        <label>Endpoint</label>
+        <label data-i18n="models.quick.endpoint">Endpoint</label>
         <input type="text" id="f-quick-endpoint">
       </div>
-      <h2>Deep analysis</h2>
+      <h2 data-i18n="models.deep.title">Deep analysis</h2>
       <div class="field">
-        <label>Engine</label>
+        <label data-i18n="models.deep.engine">Engine</label>
         <select id="f-deep-engine">
           <option value="ollama">Ollama</option>
         </select>
       </div>
       <div class="field">
-        <label>Model (empty = auto)</label>
-        <input type="text" id="f-deep-model" placeholder="auto">
+        <label data-i18n="models.deep.model">Model (empty = auto)</label>
+        <input type="text" id="f-deep-model" data-i18n="models.deep.model.placeholder" placeholder="auto">
       </div>
       <div class="field">
-        <label>Endpoint</label>
+        <label data-i18n="models.deep.endpoint">Endpoint</label>
         <input type="text" id="f-deep-endpoint">
       </div>
       <div style="margin-top:16px;padding:12px;background:rgba(0,0,0,0.04);border-radius:6px;max-width:500px">
-        <div style="font-size:12px;color:#666;margin-bottom:8px">Test translation</div>
-        <div style="font-size:13px;color:#444;margin-bottom:8px">"The output files came back empty."</div>
-        <button class="btn" id="test-btn">Test</button>
+        <div style="font-size:12px;color:#666;margin-bottom:8px" data-i18n="models.test.title">Test translation</div>
+        <div style="font-size:13px;color:#444;margin-bottom:8px" data-i18n="models.test.sample">"The output files came back empty."</div>
+        <button class="btn" id="test-btn" data-i18n="common.test">Test</button>
         <div id="test-result" style="margin-top:8px;font-size:13px"></div>
       </div>
       <div class="btn-row">
-        <button class="btn btn-primary" id="models-save-btn">Save</button>
-        <button class="btn" id="models-reset-btn">Reset</button>
+        <button class="btn btn-primary" id="models-save-btn" data-i18n="common.save">Save</button>
+        <button class="btn" id="models-reset-btn" data-i18n="common.reset">Reset</button>
       </div>
       <div id="models-status" class="status-line"></div>
     </div>
     <!-- Apps -->
     <div class="section" id="section-apps">
-      <h1>Applications</h1>
-      <p style="color:#666;margin-bottom:12px">Per-application rules override the default tier.</p>
+      <h1 data-i18n="apps.title">Applications</h1>
+      <p style="color:#666;margin-bottom:12px" data-i18n="apps.description">Per-application rules override the default tier.</p>
       <div id="apps-list"></div>
       <div style="margin-top:12px">
-        <label for="new-app-name" class="sr-only">Application process name</label>
-        <input type="text" id="new-app-name" placeholder="Process name" aria-label="Application process name" style="width:150px;padding:4px 8px;border:1px solid #ccc;border-radius:4px">
-        <label for="new-app-tier" class="sr-only">Application tier</label>
+        <label for="new-app-name" class="sr-only" data-i18n="apps.process.name">Application process name</label>
+        <input type="text" id="new-app-name" data-i18n="apps.process.name.placeholder" placeholder="Process name" aria-label="Application process name" style="width:150px;padding:4px 8px;border:1px solid #ccc;border-radius:4px">
+        <label for="new-app-tier" class="sr-only" data-i18n="apps.tier">Application tier</label>
         <select id="new-app-tier" aria-label="Application tier" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px">
           <option value="allow">Allow</option>
           <option value="modifier">Modifier</option>
           <option value="deny">Deny</option>
         </select>
-        <label for="new-app-ocr" class="sr-only">Application OCR behavior</label>
+        <label for="new-app-ocr" class="sr-only" data-i18n="apps.ocr">Application OCR behavior</label>
         <select id="new-app-ocr" aria-label="Application OCR behavior" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px">
-          <option value="inherit">OCR: Inherit global</option>
-          <option value="off">OCR: Off</option>
-          <option value="manual">OCR: Manual</option>
-          <option value="automatic">OCR: Automatic</option>
+          <option value="inherit" data-i18n="apps.ocr.inherit">OCR: Inherit global</option>
+          <option value="off" data-i18n="apps.ocr.off">OCR: Off</option>
+          <option value="manual" data-i18n="apps.ocr.manual">OCR: Manual</option>
+          <option value="automatic" data-i18n="apps.ocr.automatic">OCR: Automatic</option>
         </select>
-        <button class="btn" id="add-app-btn" style="margin-left:8px">Add</button>
+        <button class="btn" id="add-app-btn" style="margin-left:8px" data-i18n="common.add">Add</button>
       </div>
       <div class="btn-row">
-        <button class="btn btn-primary" id="apps-save-btn">Save</button>
-        <button class="btn" id="apps-reset-btn">Reset</button>
+        <button class="btn btn-primary" id="apps-save-btn" data-i18n="common.save">Save</button>
+        <button class="btn" id="apps-reset-btn" data-i18n="common.reset">Reset</button>
       </div>
       <div id="apps-status" class="status-line"></div>
     </div>
     <!-- About -->
     <div class="section" id="section-about">
-      <h1>About</h1>
-      <div id="about-content"><p class="loading">Loading...</p></div>
-      <h2 style="margin-top:32px;color:#c00">Danger zone</h2>
-      <p style="font-size:12px;color:#888;margin-bottom:12px">Permanently delete all library and history data. This runs a secure wipe (WAL checkpoint, secure_delete, DELETE, VACUUM). Library items and persistent history are removed. saved.md and exports you have made are not affected. This does not reach filesystem snapshots, drive controller remapped blocks, or backups.</p>
-      <button class="btn" id="secure-wipe-btn" style="padding:6px 16px;border-color:#c00;color:#c00">Delete all library and history data</button>
+      <h1 data-i18n="about.title">About</h1>
+      <div id="about-content"><p class="loading" data-i18n="common.loading">Loading...</p></div>
+      <h2 style="margin-top:32px;color:#c00" data-i18n="about.danger.zone">Danger zone</h2>
+      <p style="font-size:12px;color:#888;margin-bottom:12px" data-i18n="about.danger.zone.description">Permanently delete all library and history data. This runs a secure wipe (WAL checkpoint, secure_delete, DELETE, VACUUM). Library items and persistent history are removed. saved.md and exports you have made are not affected. This does not reach filesystem snapshots, drive controller remapped blocks, or backups.</p>
+      <button class="btn" id="secure-wipe-btn" style="padding:6px 16px;border-color:#c00;color:#c00" data-i18n="about.danger.zone.button">Delete all library and history data</button>
     </div>
   </div>
   <script type="module" src="js/app.js"></script>
