@@ -50,6 +50,10 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci --prefix apps/lens/web
       - run: bash scripts/check.sh --full
         shell: bash
 
@@ -62,5 +66,9 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci --prefix apps/lens/web
       - run: bash scripts/check.sh --full
         shell: bash

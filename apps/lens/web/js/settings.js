@@ -11,6 +11,10 @@ const PROVIDER_DEFAULT_ENDPOINTS = {
   lmstudio: '127.0.0.1:1234'
 };
 
+function getDefaultEndpoint(provider) {
+  return PROVIDER_DEFAULT_ENDPOINTS[provider] || PROVIDER_DEFAULT_ENDPOINTS.ollama;
+}
+
 export async function loadSettings() {
   state.currentSettings = await invoke('get_settings');
   applySettingsToForm(state.currentSettings);

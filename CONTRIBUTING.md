@@ -1,128 +1,164 @@
 # Contributing to Mori Lens
 
-## Quick start
+This document supplements the project-specific guidance in `CLAUDE.md` and
+`docs/git-workflow.md`. It covers environment setup and the testing contract
+for the Control Center frontend.
 
-1. Find or open an [issue](https://github.com/swarea/mori-lens/issues).
-2. Branch from an up-to-date `main`: `<type>/<area>-<slug>`.
-3. Commit per [commit format](docs/commit-format.md).
-4. Run `scripts/check.sh` before pushing.
-5. Open a pull request linking the issue with `Closes #N`.
+## Node.js environment
 
-## Branches
+The Control Center frontend uses Node.js for the test harness (Vitest + jsdom).
+The production frontend runs in Tauri's WebView and does not require Node at
+runtime.
 
-Branch naming:
+### Supported version
 
-```
-<type>/<area>-<slug>
-```
+Node 20.x LTS is the supported version for development and CI. This aligns
+with the GitHub Actions runner environment and Vitest 1.6 / jsdom 24
+requirements.
 
-`<type>` is one of: `feat`, `fix`, `perf`, `refactor`, `test`, `docs`,
-`chore`. Use `spike/` for throwaway investigation branches that are
-never merged.
-
-`<area>` is the code identifier: `hover`, `acquire`, `segmentation`,
-`overlay`, `translation`, `ocr`, `probe`, `platform-windows`,
-`platform-macos`.
-
-Branches are short-lived, hours to a few days. A branch that cannot
-merge within a few days is a sign the unit of work is too large.
-
-## Commits
-
-Follow [docs/commit-format.md](docs/commit-format.md). Summary:
-
-```
-<type>: <imperative lower-case summary>
-
-- <what changed / why>
-- <what changed / why>
-- <what changed / why>
-```
-
-The body is a bullet list only. No prose paragraphs. No AI footer, no
-`Co-Authored-By:`, no emoji.
-
-The pull request title follows the same format.
-
-## Merging
-
-Pull requests merge with `--no-ff` (a merge commit, not squash). Commit
-SHAs are cited in agent memory files, issue bodies, and hand-off notes;
-rebase-merge replays them as new SHAs and silently breaks every
-reference.
-
-Self-merge is normal. The review step is the author re-reading the diff
-against the issue plus a green verification run.
-
-After merge, delete the branch on the remote and prune locally:
+### Installation
 
 ```bash
-gh pr merge <n> --merge --delete-branch
-git checkout main && git pull && git remote prune origin
+npm ci --prefix apps/lens/web
 ```
 
-## Verification
+Use `npm ci` (not `npm install`) to ensure the lockfile is respected and
+dependencies are reproducible. The lockfile (`package-lock.json`) is committed
+and must be kept up to date.
 
-One script defines "verified":
+### Running tests
 
 ```bash
-scripts/check.sh           # fmt · clippy · tests
-scripts/check.sh --full    # plus a release build of the probe
+npm test --prefix apps/lens/web
 ```
 
-A green `cargo test` does not verify a platform adapter. A change to
-`crates/platform-windows/` is verified by running `apps/hover-probe`
-against named applications and recording the result. A pull request
-that changes the adapter and shows only a green test run has not been
-verified.
+This runs the Vitest suite in headless jsdom. The canonical gate
+(`scripts/check.sh`) invokes this automatically.
 
-Never report an application as supported without a probe line for it.
+### Watch mode
 
-## What "shipped" means
+```bash
+npm run test:watch --prefix apps/lens/web
+```
 
-This repository is a measurement instrument before it is a product.
+## Frontend test architecture
 
-- A change to `crates/lens-core/` is verified by `cargo test`. It is
-  pure code with no OS types.
-- A change to `crates/platform-windows/` is verified by a live probe
-  run against named applications, recorded in the pull request and
-  transcribed into
-  [`docs/compatibility/windows-app-matrix.md`](docs/compatibility/windows-app-matrix.md).
-- Failure reasons are distinct: `unsupported`, `empty`, `timeout`,
-  `stale`, `protected`, `element-gone`. Collapsing them into "did not
-  work" destroys the data.
+### Production-seam behavioral tests
 
-State which of code, test, or a live run is the basis for each claim.
+Frontend tests import actual production modules and mock only the Tauri IPC
+boundary (`./tauri.js`). This ensures tests verify real behavior, not mock
+responses.
 
-## Language
+Example pattern:
 
-Repository artifacts are English: commits, issues, pull requests, code
-comments, and documentation. The product's own UI copy will be
-Korean-first.
+```javascript
+import { describe, it, expect, vi } from 'vitest';
 
-Refer to a surface by its code identifier, not a UI label.
+const mocks = vi.hoisted(() => ({
+  invoke: vi.fn(),
+}));
 
-## Direct-to-`main`
+vi.mock('./tauri.js', () => ({
+  invoke: mocks.invoke,
+}));
 
-Direct commits to `main` are allowed only for:
+import { loadSettings } from './settings.js';
 
-- A non-executing documentation fix: a typo, a broken link, a stale path.
-- Restoring an already-broken `main`, where a pull request would leave
-  the branch broken for longer.
+describe('Settings module', () => {
+  it('loads settings through production loadSettings function', async () => {
+    mocks.invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'get_settings') {
+        return { language: 'ko', dwell_ms: 320, /* ... */ };
+      }
+      throw new Error(`Unexpected command: ${cmd}`);
+    });
 
-Everything else goes through a pull request, including work by an
-autonomous agent.
+    await loadSettings();
+    // Assert real DOM state, real state updates, real side effects
+  });
+});
+```
 
-## More detail
+### What to mock
 
-The full workflow, with reasons for every rule:
-[docs/git-workflow.md](docs/git-workflow.md).
+- **Mock:** `./tauri.js` (IPC boundary), adjacent modules that are not the
+  subject of the test (`./ui.js`, `./i18n.js`, `./state.js`, etc.)
+- **Do not mock:** The production module under test, the DOM (jsdom provides
+  the real DOM API), or business logic.
 
-The commit message spec:
-[docs/commit-format.md](docs/commit-format.md).
+### Strict IPC command contract
 
-The architecture:
-[docs/architecture.md](docs/architecture.md).
+The test infrastructure (`js/test-infrastructure.js`) validates IPC command
+names. Unknown commands fail immediately to catch frontend/backend drift.
 
-The privacy model:
-[docs/privacy-model.md](docs/privacy-model.md).
+When adding a new IPC command:
+
+1. Add it to `knownCommands` in `test-infrastructure.js`
+2. Use the exact command name from the Rust backend
+3. Write a test that exercises the command through production code
+
+### Test file naming
+
+Test files follow the pattern `<module>.vitest.test.js` and live alongside
+the production modules in `apps/lens/web/js/`.
+
+### DOM fixtures
+
+Tests use `createControlCenterFixture()` from `test-infrastructure.js` to
+create a minimal DOM structure matching the actual Control Center markup.
+Fixtures include all form elements, buttons, and containers needed by the
+production code.
+
+## Canonical validation gate
+
+`scripts/check.sh` is the single source of truth for "verified". It runs:
+
+- `cargo fmt --check`
+- `cargo clippy -D warnings`
+- `cargo test`
+- `node apps/lens/web/js/i18n.test.js` (legacy i18n tests)
+- `node apps/lens/web/js/i18n-key-checker.js` (key reference integrity)
+- `(cd apps/lens/web && npm test)` (Vitest behavioral tests)
+- `python3 scripts/check_capability_matrix.py` (capability matrix integrity)
+
+Add `--full` to also build the probe in release mode.
+
+CI workflows (`.github/workflows/ci.yml`, `package-smoke.yml`, `release.yml`)
+provision Node and run `npm ci` before invoking `scripts/check.sh`. Local
+developers must do the same on a clean checkout.
+
+## What the tests prove
+
+Frontend behavioral tests provide **AUTOMATED BEHAVIORAL CONTRACT** evidence.
+They verify:
+
+- Production modules perform the expected actions
+- IPC commands are invoked with correct payloads
+- DOM state is updated correctly
+- Error paths are handled gracefully
+- UI reflects backend truth
+
+They do **not** prove:
+
+- Tauri WebView integration (requires P19B E2E)
+- Screen reader compatibility (requires P19C axe-core)
+- Real IPC transport (mocked at boundary)
+- Backend correctness (backend has its own Rust tests)
+
+## Adding new tests
+
+1. Identify the production module to test
+2. Create `<module>.vitest.test.js` in `apps/lens/web/js/`
+3. Mock only `./tauri.js` and adjacent non-subject modules
+4. Import the production module
+5. Use `createControlCenterFixture()` for DOM setup
+6. Test actual behavior, not mock responses
+7. Cover success paths, error paths, and edge cases
+8. Add new IPC commands to `knownCommands` in `test-infrastructure.js`
+9. Run `npm test` to verify
+10. Run `scripts/check.sh` to ensure canonical gate passes
+
+## Questions?
+
+See `CLAUDE.md` for project-wide conventions, `docs/git-workflow.md` for
+branch/PR workflow, and `docs/decisions/` for architectural decisions.

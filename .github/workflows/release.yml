@@ -39,6 +39,13 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Node dependencies
+        run: npm ci --prefix apps/lens/web
+
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2"
 
@@ -113,6 +120,13 @@ jobs:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Node dependencies
+        run: npm ci --prefix apps/lens/web
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2"
