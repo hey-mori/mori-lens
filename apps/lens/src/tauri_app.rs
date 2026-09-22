@@ -1573,6 +1573,17 @@ pub fn build(
         Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     let app = tauri::Builder::default()
+        .plugin({
+            #[cfg(feature = "e2e-testing")]
+            {
+                tauri_plugin_wdio_webdriver::init()
+            }
+            #[cfg(not(feature = "e2e-testing"))]
+            {
+                tauri::plugin::Builder::new("wdio-webdriver-stub")
+                    .build()
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             get_diagnostics,
             get_runtime_status,
