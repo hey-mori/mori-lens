@@ -2,6 +2,7 @@
 
 import { invoke } from './tauri.js';
 import { escapeHtml } from './ui.js';
+import { t } from './i18n.js';
 
 export async function loadAbout() {
   try {
@@ -28,7 +29,7 @@ export async function exportDiagnostics() {
     }
   } catch (e) {
     console.error('exportDiagnostics failed:', e);
-    alert('진단 정보 내보내기 실패: ' + e);
+    alert(t('diagnostics.export.error', { error: e }));
   }
 }
 
@@ -41,11 +42,11 @@ export async function copyDiagnostics(btn) {
     var copied = document.execCommand('copy');
     var originalText = btn.textContent;
     if (copied) {
-      btn.textContent = '복사됨!';
+      btn.textContent = t('diagnostics.copy.success');
       btn.style.background = '#2e7d32';
       btn.style.color = 'white';
     } else {
-      btn.textContent = '복사 실패';
+      btn.textContent = t('diagnostics.copy.failure');
       btn.style.background = '#c62828';
       btn.style.color = 'white';
     }
@@ -56,7 +57,7 @@ export async function copyDiagnostics(btn) {
     }, 2000);
   } catch (e) {
     console.error('copyDiagnostics failed:', e);
-    alert('클립보드 복사 실패: ' + e);
+    alert(t('diagnostics.clipboard.failure', { error: e }));
   }
 }
 
@@ -64,7 +65,7 @@ export async function copyPullCommand(button, command) {
   try {
     await navigator.clipboard.writeText(command);
     const originalText = button.textContent;
-    button.textContent = '복사됨';
+    button.textContent = t('diagnostics.copied.short');
     button.style.background = '#2e7d32';
     button.style.color = 'white';
     setTimeout(() => {
@@ -74,9 +75,9 @@ export async function copyPullCommand(button, command) {
     }, 1500);
   } catch (e) {
     console.error('Copy failed:', e);
-    button.textContent = '실패';
+    button.textContent = t('diagnostics.failed.short');
     setTimeout(() => {
-      button.textContent = '복사';
+      button.textContent = t('diagnostics.copy.button');
     }, 1500);
   }
 }
@@ -91,17 +92,17 @@ export function attachPullCommandHandlers() {
 }
 
 export async function secureWipe() {
-  if (!confirm('Delete ALL library and history data? This cannot be undone.\n\nThis securely wipes the database (WAL checkpoint, secure_delete, DELETE, VACUUM). Library items and persistent history are removed. saved.md and exports are not affected. This does not reach filesystem snapshots, backups, or exports you have made.')) {
+  if (!confirm(t('diagnostics.delete.confirm.1'))) {
     return;
   }
-  if (!confirm('Are you absolutely sure? All saved items, notes, tags, review progress, and persistent history will be permanently deleted.')) {
+  if (!confirm(t('diagnostics.delete.confirm.2'))) {
     return;
   }
   try {
     await invoke('library_secure_wipe');
-    alert('All library data has been deleted.');
+    alert(t('diagnostics.delete.success'));
     import('./library.js').then(m => m.loadLibrary());
   } catch (e) {
-    alert('Secure wipe failed: ' + e);
+    alert(t('diagnostics.delete.error', { error: e }));
   }
 }

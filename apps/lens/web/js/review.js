@@ -9,6 +9,7 @@
 
 import { invoke } from './tauri.js';
 import { escapeHtml } from './ui.js';
+import { t } from './i18n.js';
 
 let sessionItems = [];
 let seenActions = new Map();
@@ -32,7 +33,7 @@ export async function loadReview() {
 
     if (sessionItems.length === 0) {
       summary.innerHTML = '';
-      list.innerHTML = '<p style="color:#888;padding:20px 0">No items for later review. Save items to see them here.</p>';
+      list.innerHTML = '<p style="color:#888;padding:20px 0">' + escapeHtml(t('review.empty')) + '</p>';
       card.style.display = 'none';
       return;
     }
@@ -41,14 +42,14 @@ export async function loadReview() {
     list.innerHTML = '';
     showNextReviewCard();
   } catch (e) {
-    list.innerHTML = `<p class="error">Failed to load review list: ${escapeHtml(String(e))}</p>`;
+    list.innerHTML = `<p class="error">${escapeHtml(t('review.load.error', { error: String(e) }))}</p>`;
   }
 }
 
 async function updateSummaryFromDb() {
   const count = await invoke('library_later_count');
   const summary = document.getElementById('review-summary');
-  summary.innerHTML = `<span style="font-size:24px;font-weight:600">${escapeHtml(String(count))}</span> <span style="color:#888;font-size:12px">items for later review</span>`;
+  summary.innerHTML = `<span style="font-size:24px;font-weight:600">${escapeHtml(String(count))}</span> <span style="color:#888;font-size:12px">${escapeHtml(t('review.summary.items', { count }).replace(/^\d+\s*/, ''))}</span>`;
 }
 
 function findNextUnseenIndex() {
@@ -89,7 +90,7 @@ function showNextReviewCard() {
   document.getElementById('review-archive-btn').style.display = 'none';
   document.getElementById('review-undo-btn').style.display = historyStack.length > 0 ? '' : 'none';
   setReviewButtonsEnabled(true);
-  list.innerHTML = `<p style="color:#888;font-size:12px">Reviewed ${escapeHtml(String(reviewedCount))} of ${escapeHtml(String(sessionSize))} this round</p>`;
+  list.innerHTML = `<p style="color:#888;font-size:12px">${escapeHtml(t('review.progress', { reviewed: reviewedCount, total: sessionSize }))}</p>`;
 }
 
 async function showSessionComplete() {
@@ -97,15 +98,15 @@ async function showSessionComplete() {
   const count = await invoke('library_later_count');
   let message;
   if (count === 0) {
-    message = '<p style="color:#2e7d32;padding:20px 0">All reviewed. No items for later review.</p>';
+    message = '<p style="color:#2e7d32;padding:20px 0">' + escapeHtml(t('review.all.reviewed')) + '</p>';
   } else {
-    message = `<p style="color:#2e7d32;padding:20px 0">Review round complete. ${escapeHtml(String(count))} items remain for later.</p>`;
+    message = `<p style="color:#2e7d32;padding:20px 0">${escapeHtml(t('review.round.complete', { count }))}</p>`;
   }
 
   // Show undo button if there's history
   if (historyStack.length > 0) {
     message += `<div style="padding:20px 0;text-align:center">
-      <button id="review-undo-btn-completion" class="btn" style="padding:8px 16px;background:#1976d2;color:white;border-color:#1976d2">Undo last action</button>
+      <button id="review-undo-btn-completion" class="btn" style="padding:8px 16px;background:#1976d2;color:white;border-color:#1976d2">${escapeHtml(t('review.undo.button'))}</button>
     </div>`;
   }
 
@@ -156,7 +157,7 @@ export async function setReviewState(newState) {
     await updateSummaryFromDb();
     showNextReviewCard();
   } catch (e) {
-    alert('Failed to update review state: ' + e);
+    alert(t('review.update.error', { error: e }));
     setReviewButtonsEnabled(true);
   } finally {
     actionInFlight = false;
@@ -243,7 +244,7 @@ export async function undoLastAction() {
     await updateSummaryFromDb();
     showNextReviewCard();
   } catch (e) {
-    alert('Failed to undo: ' + e);
+    alert(t('review.undo.error', { error: e }));
     // Re-add to history on failure
     historyStack.push(last);
     setReviewButtonsEnabled(true);
@@ -251,3 +252,10 @@ export async function undoLastAction() {
     actionInFlight = false;
   }
 }
+
+// Re-render on locale change
+document.addEventListener('locale-changed', () => {
+  if (document.getElementById('section-review')?.classList.contains('active')) {
+    loadReview();
+  }
+});
