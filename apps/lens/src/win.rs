@@ -428,10 +428,36 @@ fn parse_flags() -> Result<Flags, String> {
 /// access to wherever they unzipped this, and a settings file next to a binary
 /// is lost the first time the binary is replaced.
 fn default_settings_path() -> std::path::PathBuf {
+    // E2E testing override: use isolated data root to avoid polluting user's real settings.
+    // Only active when the e2e-testing feature is enabled.
+    #[cfg(feature = "e2e-testing")]
+    if let Ok(e2e_root) = std::env::var("MORI_LENS_E2E_DATA_ROOT") {
+        let path = std::path::PathBuf::from(e2e_root);
+        // Safety check: ensure the path is absolute and not a system directory
+        if path.is_absolute() && !is_system_directory(&path) {
+            return path.join("settings.toml");
+        }
+        // If validation fails, fall through to default behavior
+        eprintln!("warning: MORI_LENS_E2E_DATA_ROOT is invalid, using default path");
+    }
+
     let base = std::env::var("APPDATA")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::path::PathBuf::from("."));
     base.join("Mori Lens").join("settings.toml")
+}
+
+/// Safety check: reject paths that look like system directories.
+#[cfg(feature = "e2e-testing")]
+fn is_system_directory(path: &std::path::Path) -> bool {
+    let path_str = path.to_string_lossy();
+    let lower = path_str.to_lowercase();
+    // Reject Windows system directories
+    lower.contains("windows") ||
+    lower.contains("program files") ||
+    lower.contains("programdata") ||
+    // Reject user profile root (but allow subdirectories)
+    (lower.contains("users") && path.components().count() <= 3)
 }
 
 /// Read the settings file, writing the template the first time.
