@@ -189,9 +189,9 @@
 | Capability | Status | Evidence | Notes |
 |------------|--------|----------|-------|
 | Two-speed runtime (Quick/Deep) | AUTOMATED CONTRACT PASS | ADR-0005, separate translators | Independent models/endpoints |
-| Provider capability model | AUTOMATED CONTRACT PASS | ProviderRuntime trait | can_quick, can_deep, etc. |
+| Provider capability model | NOT IMPLEMENTED | — | P20 deliverable |
 | Model discovery | AUTOMATED CONTRACT PASS | Ollama/LM Studio runtime | Health checks, state tracking |
-| Provider switching | RUNTIME VERIFIED | Control Center UI | Restart required for some changes |
+| Provider switching | SOURCE VERIFIED | Control Center UI | Restart required for some changes |
 
 ### Testing infrastructure
 
@@ -226,9 +226,9 @@
 |------------|--------|----------|-------|
 | CI workflow configured | SOURCE VERIFIED | .github/workflows/ci.yml | Manual-only trigger |
 | Package smoke workflow configured | SOURCE VERIFIED | .github/workflows/package-smoke.yml | Manual-only trigger |
-| Release workflow configured | SOURCE VERIFIED | .github/workflows/release.yml | Manual-only trigger |
-| CI run on current main | EXTERNAL BLOCKED | GitHub Actions billing | Cannot start jobs |
-| Package smoke on current main | EXTERNAL BLOCKED | GitHub Actions billing | Cannot start jobs |
+| Release workflow configured | SOURCE VERIFIED | .github/workflows/release.yml | Tag-triggered |
+| CI run on current main | NOT RUN ON CURRENT MAIN | — | Historical success on old SHA (0cf3c47, 2026-09-06) |
+| Package smoke on current main | NOT RUN ON CURRENT MAIN | — | Historical failures on old SHAs (e6337d8, 2026-09-07) |
 
 ## Human-only evidence gates
 
@@ -255,13 +255,15 @@
 
 ## Summary statistics
 
-- **Total capabilities tracked:** 127
-- **AUTOMATED CONTRACT PASS:** 42
-- **RUNTIME VERIFIED:** 31
-- **SOURCE VERIFIED:** 34
-- **PLATFORM BUILD VERIFIED:** 16
-- **NOT IMPLEMENTED:** 2
+- **Total capabilities tracked:** 110
+- **AUTOMATED CONTRACT PASS:** 33
+- **RUNTIME VERIFIED:** 27
+- **SOURCE VERIFIED:** 26
+- **PLATFORM BUILD VERIFIED:** 15
+- **NOT IMPLEMENTED:** 3
 - **EXTERNAL BLOCKED:** 4
+- **NOT RUN ON CURRENT MAIN:** 2
+- **HUMAN VERIFIED:** 0
 - **Human-only gates:** 6
 - **External blockers:** 7
 
@@ -271,7 +273,7 @@
 
 1. Code signing (Windows/macOS) - EXTERNAL BLOCKED
 2. Store/Developer accounts - EXTERNAL BLOCKED
-3. CI/package-smoke on current main - EXTERNAL BLOCKED
+3. CI/package-smoke on current main - NOT RUN ON CURRENT MAIN
 
 ### High (blocks product readiness)
 
@@ -336,12 +338,16 @@
 
 **Date:** 2026-09-22
 **Total open issues:** 7
-**Total open PRs:** 0
+**Total open PRs:** 1
 
 ### Active roadmap
 
 - **#622** Post-v1 product hardening and next-roadmap program (P18-P28)
 - **#527** Post-v1 product evolution (P1-P17 tracker, all COMPLETE except P13)
+
+### Active PRs
+
+- **#623** P18: Product completeness audit and capability matrix
 
 ### Human evidence gates
 
@@ -364,6 +370,8 @@ All 7 open issues fall into one of:
 - HUMAN EVIDENCE: #610, #140
 - DEFERRED BY DECISION: #533
 - PRODUCT LIMITATION: #14, #34
+
+1 open PR: #623 (P18 product completeness audit)
 
 No stale issues identified. No issues recommended for closure.
 
