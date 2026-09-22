@@ -304,3 +304,66 @@
 10. **P26**: Performance budget, deterministic regression tests
 11. **P27**: Library/Review audit, schema migration tests
 12. **P28**: Documentation reconciliation, handoff.md update
+
+## CI/CD evidence status
+
+**Date:** 2026-09-22
+**Audited against SHA:** de85537296d778d83ac9e645b5114d1b4c61fc79
+
+### Workflow configuration
+
+| Workflow | Trigger | Status |
+|----------|---------|--------|
+| ci.yml | workflow_dispatch (manual) | CONFIGURED, MANUAL-ONLY |
+| package-smoke.yml | workflow_dispatch (manual) | CONFIGURED, MANUAL-ONLY |
+| release.yml | tag push (v*.*.*) | CONFIGURED, TAG-TRIGGERED |
+
+### Current main verification status
+
+- **CI (current main):** NOT REMOTELY VERIFIED
+- **Package smoke (current main):** NOT REMOTELY VERIFIED
+- **Release (current main):** NOT REMOTELY VERIFIED (no tags yet)
+
+### Historical evidence
+
+- **CI success:** SHA 0cf3c470408009c69ce24399a0e113474c286fc5, 2026-09-06, conclusion: success
+- **Package smoke failures:** SHA e6337d82fcb9326ae06dc56ed44818a6d7f091c4, 2026-09-07, Windows packages failure, macOS .app bundle failure
+
+**Note:** Historical evidence is from older SHAs, not current main. Current main CI/package-smoke status is NOT REMOTELY VERIFIED.
+
+
+## Open issues and PRs inventory
+
+**Date:** 2026-09-22
+**Total open issues:** 7
+**Total open PRs:** 0
+
+### Active roadmap
+
+- **#622** Post-v1 product hardening and next-roadmap program (P18-P28)
+- **#527** Post-v1 product evolution (P1-P17 tracker, all COMPLETE except P13)
+
+### Human evidence gates
+
+- **#610** P13: Quick/Deep quality benchmark continuation (human review pending)
+- **#140** docs: measure unzip to first card on a machine with neither Ollama nor a model
+
+### Deferred by decision
+
+- **#533** Defer axe-core integration until behavioral testing infrastructure exists
+
+### Product limitations (compatibility)
+
+- **#14** VS Code editor text containers are too coarse for point resolution
+- **#34** KakaoTalk is one text region, so Lens cannot tell which message you are on
+
+### Issue classification
+
+All 7 open issues fall into one of:
+- ACTIVE ROADMAP: #622, #527
+- HUMAN EVIDENCE: #610, #140
+- DEFERRED BY DECISION: #533
+- PRODUCT LIMITATION: #14, #34
+
+No stale issues identified. No issues recommended for closure.
+
