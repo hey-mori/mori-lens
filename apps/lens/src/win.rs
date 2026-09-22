@@ -1907,12 +1907,12 @@ pub fn main() -> std::process::ExitCode {
         while !pointer::stopping() && !quitting {
             let mut pause_changed = false;
             // Check for pause toggle requests from the Control Center.
-            if loop_pause_request.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            if loop_pause_request.take() {
                 pause.toggle();
                 pause_changed = true;
             }
             // Check for quit requests from the Control Center.
-            if loop_quit_request.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            if loop_quit_request.take() {
                 break;
             }
             // Check for activation requests from a second instance.
