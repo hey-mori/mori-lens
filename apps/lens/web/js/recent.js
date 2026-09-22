@@ -2,13 +2,14 @@
 
 import { invoke } from './tauri.js';
 import { escapeHtml } from './ui.js';
+import { t } from './i18n.js';
 
 export async function loadRecent() {
   const el = document.getElementById('recent-list');
   try {
     const cards = await invoke('recent_list');
     if (!cards || cards.length === 0) {
-      el.innerHTML = '<p style="color:#888;font-size:13px">No recent cards.</p>';
+      el.innerHTML = '<p style="color:#888;font-size:13px">' + escapeHtml(t('recent.empty.state')) + '</p>';
       return;
     }
     let html = '<table style="max-width:100%">';
@@ -26,6 +27,13 @@ export async function loadRecent() {
     html += '</table>';
     el.innerHTML = html;
   } catch (e) {
-    el.innerHTML = '<p class="error">Error: ' + escapeHtml(String(e)) + '</p>';
+    el.innerHTML = '<p class="error">' + escapeHtml(t('recent.error', { error: String(e) })) + '</p>';
   }
 }
+
+// Re-render on locale change
+document.addEventListener('locale-changed', () => {
+  if (document.getElementById('section-recent')?.classList.contains('active')) {
+    loadRecent();
+  }
+});

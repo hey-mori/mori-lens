@@ -4,6 +4,7 @@ import { invoke } from './tauri.js';
 import { escapeHtml, formatAiStatus, setStatus } from './ui.js';
 import { state } from './state.js';
 import { refreshLocalAiStatus } from './local_ai.js';
+import { t } from './i18n.js';
 
 export async function loadStatus() {
   try {
@@ -15,36 +16,36 @@ export async function loadStatus() {
     const localAi = state.cachedLocalAiStatus;
     const el = document.getElementById('status-content');
     const paused = diag && diag.paused;
-    const pauseLabel = paused ? '다시 시작' : '일시정지';
+    const pauseLabel = paused ? t('status.pause.resume') : t('status.pause.button');
     const pauseStyle = paused
       ? 'background:#2e7d32;color:white;border-color:#2e7d32'
       : 'background:#f57c00;color:white;border-color:#f57c00';
     let html = '<div style="margin-bottom:20px">';
-    html += '<div style="font-size:12px;color:#888;margin-bottom:8px">상태</div>';
+    html += '<div style="font-size:12px;color:#888;margin-bottom:8px">' + escapeHtml(t('status.title')) + '</div>';
     html += '<div style="display:flex;gap:8px;align-items:center">';
     if (paused) {
       html += '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f57c00"></span>';
-      html += '<span style="color:#f57c00;font-size:13px">일시정지됨</span>';
+      html += '<span style="color:#f57c00;font-size:13px">' + escapeHtml(t('status.paused')) + '</span>';
     } else {
       html += '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2e7d32"></span>';
-      html += '<span style="color:#2e7d32;font-size:13px">실행 중</span>';
+      html += '<span style="color:#2e7d32;font-size:13px">' + escapeHtml(t('status.running')) + '</span>';
     }
     html += '</div>';
     html += '<div style="display:flex;gap:8px;margin-top:12px">';
-    html += '<button class="btn" id="pause-btn" style="padding:8px 20px;' + pauseStyle + '">' + pauseLabel + '</button>';
-    html += '<button class="btn" id="quit-btn" style="padding:8px 20px;color:#c00;border-color:#c00">Mori Lens 종료</button>';
+    html += '<button class="btn" id="pause-btn" style="padding:8px 20px;' + pauseStyle + '">' + escapeHtml(pauseLabel) + '</button>';
+    html += '<button class="btn" id="quit-btn" style="padding:8px 20px;color:#c00;border-color:#c00">' + escapeHtml(t('status.quit')) + '</button>';
     html += '</div>';
     html += '</div>';
 
     // Local AI readiness section
-    html += '<h2>로컬 AI</h2>';
+    html += '<h2>' + escapeHtml(t('status.local.ai')) + '</h2>';
     html += '<table>';
     if (localAi) {
       const quickIcon = localAi.quick_reachable
         ? '<span style="color:#2e7d32">✓</span>'
         : '<span style="color:#c00">✗</span>';
-      const quickEndpointText = localAi.quick_reachable ? '연결됨' : '연결 안 됨';
-      html += '<tr><td>Quick</td><td>' + quickIcon + ' ' + quickEndpointText + '</td></tr>';
+      const quickEndpointText = localAi.quick_reachable ? t('status.connected') : t('status.not.connected');
+      html += '<tr><td>Quick</td><td>' + quickIcon + ' ' + escapeHtml(quickEndpointText) + '</td></tr>';
 
       const quickModelStatus = formatAiStatus(localAi.quick_provider, localAi.quick_status, localAi.quick_model, localAi.quick_pull_command, 'quick');
       html += '<tr><td></td><td>' + quickModelStatus + '</td></tr>';
@@ -52,32 +53,32 @@ export async function loadStatus() {
       const deepIcon = localAi.deep_reachable
         ? '<span style="color:#2e7d32">✓</span>'
         : '<span style="color:#c00">✗</span>';
-      const deepEndpointText = localAi.deep_reachable ? '연결됨' : '연결 안 됨';
-      html += '<tr><td>Deep</td><td>' + deepIcon + ' ' + deepEndpointText + '</td></tr>';
+      const deepEndpointText = localAi.deep_reachable ? t('status.connected') : t('status.not.connected');
+      html += '<tr><td>Deep</td><td>' + deepIcon + ' ' + escapeHtml(deepEndpointText) + '</td></tr>';
 
       const deepModelStatus = formatAiStatus(localAi.deep_provider, localAi.deep_status, localAi.deep_model, localAi.deep_pull_command, 'deep');
       html += '<tr><td></td><td>' + deepModelStatus + '</td></tr>';
     } else if (state.localAiLoadState === 'ERROR') {
-      html += '<tr><td>Quick</td><td><span style="color:#c00">상태 확인 실패</span></td></tr>';
-      html += '<tr><td>Deep</td><td><span style="color:#c00">상태 확인 실패</span></td></tr>';
+      html += '<tr><td>Quick</td><td><span style="color:#c00">' + escapeHtml(t('status.check.failed')) + '</span></td></tr>';
+      html += '<tr><td>Deep</td><td><span style="color:#c00">' + escapeHtml(t('status.check.failed')) + '</span></td></tr>';
     } else {
-      html += '<tr><td>Quick</td><td>확인 중...</td></tr>';
-      html += '<tr><td>Deep</td><td>확인 중...</td></tr>';
+      html += '<tr><td>Quick</td><td>' + escapeHtml(t('status.checking')) + '</td></tr>';
+      html += '<tr><td>Deep</td><td>' + escapeHtml(t('status.checking')) + '</td></tr>';
     }
     html += '</table>';
     html += '<div style="margin-top:12px;display:flex;gap:8px">';
-    html += '<button class="btn" id="refresh-local-ai-btn" style="padding:6px 12px;font-size:12px">새로고침</button>';
-    html += '<button class="btn" id="run-health-check-btn" style="padding:6px 12px;font-size:12px">헬스체크 실행</button>';
+    html += '<button class="btn" id="refresh-local-ai-btn" style="padding:6px 12px;font-size:12px">' + escapeHtml(t('status.refresh')) + '</button>';
+    html += '<button class="btn" id="run-health-check-btn" style="padding:6px 12px;font-size:12px">' + escapeHtml(t('status.health.check')) + '</button>';
     html += '</div>';
     html += '<div id="health-check-result" style="margin-top:12px;display:none"></div>';
 
     // Cached health status from last health check
     if (health && (health.quick.state !== 'unknown' || health.deep.state !== 'unknown')) {
       html += '<div style="margin-top:12px;padding:12px;background:rgba(0,0,0,0.02);border-radius:4px;font-size:12px">';
-      html += '<div style="color:#888;font-size:11px;margin-bottom:8px">마지막 헬스체크</div>';
-      const quickLabel = health.quick.state === 'ready' ? '✓ 준비됨' :
-                         health.quick.state === 'degraded' ? '⚠ 성능 저하' :
-                         health.quick.state === 'running' ? '⟳ 실행 중' : '✗ 사용 불가';
+      html += '<div style="color:#888;font-size:11px;margin-bottom:8px">' + escapeHtml(t('status.last.health')) + '</div>';
+      const quickLabel = health.quick.state === 'ready' ? t('status.ready') :
+                         health.quick.state === 'degraded' ? t('status.degraded') :
+                         health.quick.state === 'running' ? '⟳ ' + t('status.running') : t('status.unavailable');
       const quickColor = health.quick.state === 'ready' ? '#2e7d32' :
                          health.quick.state === 'degraded' ? '#f57c00' :
                          health.quick.state === 'running' ? '#1976d2' : '#c00';
@@ -85,9 +86,9 @@ export async function loadStatus() {
       if (health.quick.failure) html += ' <span style="color:#888">(' + health.quick.failure + ')</span>';
       if (health.quick.latency_ms) html += ' <span style="color:#888">(' + health.quick.latency_ms + 'ms)</span>';
       html += '</div>';
-      const deepLabel = health.deep.state === 'ready' ? '✓ 준비됨' :
-                        health.deep.state === 'degraded' ? '⚠ 성능 저하' :
-                        health.deep.state === 'running' ? '⟳ 실행 중' : '✗ 사용 불가';
+      const deepLabel = health.deep.state === 'ready' ? t('status.ready') :
+                        health.deep.state === 'degraded' ? t('status.degraded') :
+                        health.deep.state === 'running' ? '⟳ ' + t('status.running') : t('status.unavailable');
       const deepColor = health.deep.state === 'ready' ? '#2e7d32' :
                         health.deep.state === 'degraded' ? '#f57c00' :
                         health.deep.state === 'running' ? '#1976d2' : '#c00';
@@ -96,58 +97,58 @@ export async function loadStatus() {
       if (health.deep.latency_ms) html += ' <span style="color:#888">(' + health.deep.latency_ms + 'ms)</span>';
       html += '</div>';
       if (health.stale) {
-        html += '<div style="color:#f57c00;font-size:11px;margin-top:8px">⚠ 설정 변경으로 인해 헬스체크가 필요함</div>';
+        html += '<div style="color:#f57c00;font-size:11px;margin-top:8px">' + escapeHtml(t('status.settings.changed')) + '</div>';
       }
       html += '</div>';
     }
 
     // Runtime configuration table
     if (runtime) {
-      html += '<h2>런타임</h2><table>';
-      html += '<tr><td>History</td><td>' + (runtime.history_enabled ? '사용 중 (' + runtime.history_days + '일)' : '사용 안 함') + '</td></tr>';
-      html += '<tr><td>Library</td><td>' + (runtime.library_persistent ? '저장됨' : '세션만') + '</td></tr>';
+      html += '<h2>' + escapeHtml(t('status.runtime')) + '</h2><table>';
+      html += '<tr><td>History</td><td>' + (runtime.history_enabled ? escapeHtml(t('status.history.enabled', { days: runtime.history_days })) : escapeHtml(t('status.history.disabled'))) + '</td></tr>';
+      html += '<tr><td>Library</td><td>' + (runtime.library_persistent ? escapeHtml(t('status.library.persistent')) : escapeHtml(t('status.library.session'))) + '</td></tr>';
       var autostartLabel;
       var autostartToggle = '';
       if (runtime.autostart_enabled === null) {
-        autostartLabel = '지원 안 함';
+        autostartLabel = t('status.autostart.not.supported');
       } else {
-        autostartLabel = runtime.autostart_enabled ? '사용' : '사용 안 함';
-        var nextLabel = runtime.autostart_enabled ? '사용' : '사용 안 함';
-        autostartToggle = ' <button class="btn" id="autostart-toggle-btn" style="padding:2px 10px;font-size:0.85em">' + nextLabel + '로 전환</button>';
+        autostartLabel = runtime.autostart_enabled ? t('status.autostart.enabled') : t('status.autostart.disabled');
+        var nextLabel = runtime.autostart_enabled ? t('status.autostart.enabled') : t('status.autostart.disabled');
+        autostartToggle = ' <button class="btn" id="autostart-toggle-btn" style="padding:2px 10px;font-size:0.85em">' + escapeHtml(t('status.autostart.toggle', { state: nextLabel })) + '</button>';
       }
-      html += '<tr><td>Windows 시작</td><td>' + autostartLabel + autostartToggle + '</td></tr>';
+      html += '<tr><td>' + escapeHtml(t('status.autostart.label')) + '</td><td>' + escapeHtml(autostartLabel) + autostartToggle + '</td></tr>';
       // Restart status
       if (runtime.restart_required) {
         var reasonLabels = {
-          'quick_engine': 'Quick 엔진',
-          'quick_model': 'Quick 모델',
-          'quick_endpoint': 'Quick 엔드포인트',
-          'deep_engine': 'Deep 엔진',
-          'deep_model': 'Deep 모델',
-          'deep_endpoint': 'Deep 엔드포인트',
-          'ocr_mode': 'OCR 모드'
+          'quick_engine': t('status.restart.reason.quick.engine'),
+          'quick_model': t('status.restart.reason.quick.model'),
+          'quick_endpoint': t('status.restart.reason.quick.endpoint'),
+          'deep_engine': t('status.restart.reason.deep.engine'),
+          'deep_model': t('status.restart.reason.deep.model'),
+          'deep_endpoint': t('status.restart.reason.deep.endpoint'),
+          'ocr_mode': t('status.restart.reason.ocr.mode')
         };
         var mappedReasons = runtime.restart_reasons.map(function(key) {
           return reasonLabels[key] || key;
         });
         var reasonText = mappedReasons.length > 0 ? ' (' + mappedReasons.join(', ') + ')' : '';
-        html += '<tr><td style="color:#f57c00;font-weight:500">재시작 필요' + reasonText + '</td><td style="color:#f57c00">변경사항을 적용하려면 Mori Lens를 다시 시작하세요</td></tr>';
+        html += '<tr><td style="color:#f57c00;font-weight:500">' + escapeHtml(t('status.restart.required')) + reasonText + '</td><td style="color:#f57c00">' + escapeHtml(t('status.restart.hint')) + '</td></tr>';
       } else {
-        html += '<tr><td>재시작 상태</td><td style="color:#2e7d32">필요 없음</td></tr>';
+        html += '<tr><td>' + escapeHtml(t('status.restart.required')) + '</td><td style="color:#2e7d32">' + escapeHtml(t('status.restart.not.required')) + '</td></tr>';
       }
       html += '</table>';
     }
     if (!diag || !diag.build) {
-      html += '<p class="loading">세션 데이터가 아직 없습니다.</p>';
+      html += '<p class="loading">' + escapeHtml(t('status.no.session.data')) + '</p>';
       el.innerHTML = html;
       return;
     }
     html += '<div style="margin-bottom:16px">';
-    html += '<span class="stat"><span class="stat-value">' + diag.cards + '</span> <span class="stat-label">cards</span></span>';
-    html += '<span class="stat"><span class="stat-value">' + diag.settled_hovers + '</span> <span class="stat-label">settled hovers</span></span>';
+    html += '<span class="stat"><span class="stat-value">' + diag.cards + '</span> <span class="stat-label">' + escapeHtml(t('status.cards')) + '</span></span>';
+    html += '<span class="stat"><span class="stat-value">' + diag.settled_hovers + '</span> <span class="stat-label">' + escapeHtml(t('status.settled.hovers')) + '</span></span>';
     html += '</div>';
     if (diag.refusals && diag.refusals.length > 0) {
-      html += '<h2>Refusals</h2><table>';
+      html += '<h2>' + escapeHtml(t('status.refusals')) + '</h2><table>';
       for (const [reason, count] of diag.refusals) {
         const pct = diag.settled_hovers > 0 ? Math.round(count / diag.settled_hovers * 100) : 0;
         html += '<tr class="refusal-row"><td>' + reason + '</td><td>' + count + ' (' + pct + '%)</td></tr>';
@@ -155,7 +156,7 @@ export async function loadStatus() {
       html += '</table>';
     }
     if (diag.configuration && diag.configuration.length > 0) {
-      html += '<h2>Configuration</h2><table>';
+      html += '<h2>' + escapeHtml(t('status.configuration')) + '</h2><table>';
       for (const [label, value] of diag.configuration) {
         html += '<tr><td>' + label + '</td><td>' + value + '</td></tr>';
       }
@@ -165,15 +166,15 @@ export async function loadStatus() {
     html += '<div id="recent-diagnostics-section" style="margin-top:16px"></div>';
     // Diagnostics export button
     html += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid #eee">';
-    html += '<button class="btn" id="export-diagnostics-btn" style="padding:8px 16px;font-size:12px">진단 정보 보기</button>';
-    html += '<p style="font-size:11px;color:#888;margin-top:8px">버그 보고용 진단 정보를 표시합니다. 캡처된 텍스트는 포함되지 않습니다.</p>';
+    html += '<button class="btn" id="export-diagnostics-btn" style="padding:8px 16px;font-size:12px">' + escapeHtml(t('status.view.diagnostics')) + '</button>';
+    html += '<p style="font-size:11px;color:#888;margin-top:8px">' + escapeHtml(t('status.diagnostics.hint')) + '</p>';
     html += '<div id="diagnostics-result" style="margin-top:12px;display:none">';
     html += '<textarea id="diagnostics-json" readonly style="width:100%;height:200px;font-family:monospace;font-size:11px;padding:8px;border:1px solid #ddd;border-radius:4px;resize:vertical"></textarea>';
-    html += '<button class="btn" id="copy-diagnostics-btn" style="margin-top:8px;padding:6px 12px;font-size:11px">클립보드에 복사</button>';
+    html += '<button class="btn" id="copy-diagnostics-btn" style="margin-top:8px;padding:6px 12px;font-size:11px">' + escapeHtml(t('status.copy.to.clipboard')) + '</button>';
     html += '</div>';
     html += '</div>';
     // Close hint
-    html += '<p style="font-size:11px;color:#999;margin-top:20px">이 창을 닫아도 Mori Lens는 시스템 트레이에서 계속 실행됩니다.</p>';
+    html += '<p style="font-size:11px;color:#999;margin-top:20px">' + escapeHtml(t('status.tray.hint')) + '</p>';
     el.innerHTML = html;
     // Attach event listeners after rendering
     attachStatusHandlers();
@@ -226,16 +227,16 @@ async function runHealthCheck() {
   if (!resultEl || !btn) return;
 
   btn.disabled = true;
-  btn.textContent = '실행 중...';
+  btn.textContent = t('status.health.running');
   resultEl.style.display = 'block';
-  resultEl.innerHTML = '<p style="color:#888;font-size:12px">헬스체크 실행 중...</p>';
+  resultEl.innerHTML = '<p style="color:#888;font-size:12px">' + escapeHtml(t('status.health.check.running')) + '</p>';
 
   try {
     const result = await invoke('run_health_check');
-    const quickLabel = result.quick_state === 'ready' ? '✓ 준비됨' :
-                       result.quick_state === 'degraded' ? '⚠ 성능 저하' : '✗ 사용 불가';
-    const deepLabel = result.deep_state === 'ready' ? '✓ 준비됨' :
-                      result.deep_state === 'degraded' ? '⚠ 성능 저하' : '✗ 사용 불가';
+    const quickLabel = result.quick_state === 'ready' ? t('status.ready') :
+                       result.quick_state === 'degraded' ? t('status.degraded') : t('status.unavailable');
+    const deepLabel = result.deep_state === 'ready' ? t('status.ready') :
+                      result.deep_state === 'degraded' ? t('status.degraded') : t('status.unavailable');
     const quickColor = result.quick_state === 'ready' ? '#2e7d32' :
                        result.quick_state === 'degraded' ? '#f57c00' : '#c00';
     const deepColor = result.deep_state === 'ready' ? '#2e7d32' :
@@ -245,20 +246,20 @@ async function runHealthCheck() {
     html += '<div style="margin-bottom:8px"><strong>Quick:</strong> <span style="color:' + quickColor + '">' + quickLabel + '</span>';
     if (result.quick_failure) html += ' <span style="color:#888">(' + result.quick_failure + ')</span>';
     html += '</div>';
-    html += '<div style="margin-bottom:8px"><strong>Deep:</strong> <span style="color:' + deepColor + '">' + deepLabel + '</span>';
-    if (result.deep_failure) html += ' <span style="color:#888">(' + result.deep_failure + ')</span>';
+    html += '<div style="margin-bottom:8px"><strong>Deep:</strong> <span style="color:' + deepColor + '">' + escapeHtml(deepLabel) + '</span>';
+    if (result.deep_failure) html += ' <span style="color:#888">(' + escapeHtml(result.deep_failure) + ')</span>';
     html += '</div>';
-    html += '<div style="color:#888;font-size:11px">소요 시간: ' + result.latency_ms + 'ms</div>';
+    html += '<div style="color:#888;font-size:11px">' + escapeHtml(t('status.health.check.elapsed', { ms: result.latency_ms })) + '</div>';
     html += '</div>';
     resultEl.innerHTML = html;
 
     // Refresh the status page to update the event ring display
     await loadRecentDiagnostics();
   } catch (e) {
-    resultEl.innerHTML = '<p style="color:#c00;font-size:12px">헬스체크 실패: ' + escapeHtml(String(e)) + '</p>';
+    resultEl.innerHTML = '<p style="color:#c00;font-size:12px">' + escapeHtml(t('status.health.failed', { error: String(e) })) + '</p>';
   } finally {
     btn.disabled = false;
-    btn.textContent = '헬스체크 실행';
+    btn.textContent = t('status.health.check');
   }
 }
 
