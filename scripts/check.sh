@@ -125,6 +125,10 @@ bash "$(dirname "$0")/verify-tauri-capabilities.sh"
 step "frontend module graph integrity"
 python3 "$(dirname "$0")/check_module_graph.py"
 
+# Run Control Center behavioral tests with Vitest.
+step "Control Center behavioral tests"
+(cd apps/lens/web && npm test)
+
 # Validate capability-evidence-matrix.md structure and counts: recognized
 # statuses, summary statistics match actual rows, no duplicate capability
 # names within a platform section.
