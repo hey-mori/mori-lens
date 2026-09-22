@@ -251,8 +251,8 @@ async function sendToMori(id) {
     const preview = truncateSafe(item.original, 100);
     const answer = truncateSafe(item.answer, 100);
     const msg = t('library.mori.confirm', { original: preview, answer, kind: item.kind }) +
-      (item.note ? '\nNote: ' + item.note : '') +
-      (item.tags && item.tags.length ? '\nTags: ' + item.tags.join(', ') : '');
+      (item.note ? t('library.note.prefix') + item.note : '') +
+      (item.tags && item.tags.length ? t('library.tags.prefix') + item.tags.join(', ') : '');
     if (!confirm(msg)) return;
     const transferId = await invoke('mori_send_item', { item_id: id });
     alert(t('library.transfer.success', { id: transferId }));
