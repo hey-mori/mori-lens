@@ -1714,11 +1714,19 @@ pub fn build(
         .manage(explain_flag)
         .manage(save_path)
         .setup(|app| {
-            // Hide the window at startup. The reader opens it from the tray;
-            // a product that opens a settings window on every launch is not
-            // a tray application.
+            // Window visibility at startup depends on build configuration.
+            // Production builds hide the window; it's opened from the tray.
+            // E2E builds show the window for WebDriver automation.
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.hide();
+                #[cfg(feature = "e2e-testing")]
+                {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+                #[cfg(not(feature = "e2e-testing"))]
+                {
+                    let _ = window.hide();
+                }
             }
             Ok(())
         })
