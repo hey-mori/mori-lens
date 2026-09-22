@@ -46,33 +46,40 @@ function stopStatusRefresh() {
 }
 
 async function init() {
-  // Initialize navigation
-  initNavigation();
+  // Expose showSection early for E2E testing (before any async work that might fail)
+  window.showSection = showSection;
 
-  // Initialize section-specific handlers
-  const libraryModule = await import('./library.js');
-  libraryModule.initLibraryHandlers();
+  try {
+    // Initialize navigation
+    initNavigation();
 
-  const reviewModule = await import('./review.js');
-  reviewModule.initReviewHandlers();
+    // Initialize section-specific handlers
+    const libraryModule = await import('./library.js');
+    libraryModule.initLibraryHandlers();
 
-  const historyModule = await import('./history.js');
-  historyModule.initHistoryHandlers();
+    const reviewModule = await import('./review.js');
+    reviewModule.initReviewHandlers();
 
-  // Wire up buttons with IDs
-  wireStaticButtons();
+    const historyModule = await import('./history.js');
+    historyModule.initHistoryHandlers();
 
-  // Listen for section navigation events from tray menu
-  listen('navigate-section', (event) => {
-    showSection(event.payload);
-  });
+    // Wire up buttons with IDs
+    wireStaticButtons();
 
-  // Start/stop status refresh on focus
-  window.addEventListener('focus', startStatusRefresh);
-  window.addEventListener('blur', stopStatusRefresh);
+    // Listen for section navigation events from tray menu
+    listen('navigate-section', (event) => {
+      showSection(event.payload);
+    });
 
-  // Load initial data
-  await loadAll();
+    // Start/stop status refresh on focus
+    window.addEventListener('focus', startStatusRefresh);
+    window.addEventListener('blur', stopStatusRefresh);
+
+    // Load initial data
+    await loadAll();
+  } catch (e) {
+    console.error('init() failed:', e);
+  }
 }
 
 function wireStaticButtons() {
