@@ -71,6 +71,9 @@ crates/lens-core/          no OS dependencies, no async runtime
   tally.rs                 session counts and what the numbers suggest
   diagnostics.rs           is this working for me, in a window rather than a console (#165)
   icon.rs                  the tray glyph, computed rather than shipped
+  shortcut.rs              keyboard shortcut definitions and handling
+  event_ring.rs            diagnostic event buffer and ring structure
+  health.rs                health status tracking and snapshot management
   contract_tests.rs        property-based tests for the acquisition contract
   stress_tests.rs          load and stress tests for concurrent acquisition
 
@@ -82,12 +85,16 @@ crates/lens-translate/     provider implementations and construction:
                            OllamaTranslator, LmStudioTranslator, OllamaRuntime,
                            LmStudioRuntime, provider factories, HTTP/parsing
   lib.rs                   provider factories (build_translator, build_provider_runtime)
-  ollama_translator.rs     OllamaTranslator: quick translation and streaming
   ollama_runtime.rs        OllamaRuntime: model discovery, reachability, state
   lmstudio_translator.rs   LmStudioTranslator: OpenAI-compatible inference
   lmstudio_runtime.rs      LmStudioRuntime: native v1 management, dual API
   analyse.rs               schema, prompt, and parse for deep analysis (Ollama only)
   deep_eval.rs             deep evaluation and linkage quality benchmarks
+  http.rs                  shared HTTP client and request handling
+  json.rs                  JSON parsing utilities and error handling
+  eval_corpus.rs           evaluation corpus loading and management
+  benchmark.rs             performance benchmarking infrastructure
+  lmstudio_fixtures.rs     test fixtures for LM Studio contract tests
   fake_server.rs           HTTP contract test harness for provider APIs
   live_tests.rs            integration tests against running provider instances
 
@@ -158,6 +165,7 @@ apps/lens/                 the product
   settings_service.rs      the Tauri-managed settings state
   tauri_app.rs             the Tauri webview surface and commands
   lesson.rs                the first-run interactive lesson
+  shared_orchestration.rs  cross-platform business logic shared between adapters
   macos.rs                 macOS-specific application setup and lifecycle
   main.rs                  the application entry point and platform dispatch
   mori_transfer.rs         Mori integration and text transfer protocol
