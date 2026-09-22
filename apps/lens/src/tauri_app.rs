@@ -1572,18 +1572,14 @@ pub fn build(
     let health_running: SharedHealthCheckRunning =
         Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    let app = tauri::Builder::default()
-        .plugin({
-            #[cfg(feature = "e2e-testing")]
-            {
-                tauri_plugin_wdio_webdriver::init()
-            }
-            #[cfg(not(feature = "e2e-testing"))]
-            {
-                tauri::plugin::Builder::new("wdio-webdriver-stub")
-                    .build()
-            }
-        })
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(feature = "e2e-testing")]
+    {
+        builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+    }
+
+    let app = builder
         .invoke_handler(tauri::generate_handler![
             get_diagnostics,
             get_runtime_status,
