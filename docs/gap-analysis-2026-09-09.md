@@ -3,7 +3,7 @@
 **HISTORICAL SNAPSHOT** — Created: 2026-09-09
 
 > This document identifies gaps as of the above date.
-> Many gaps have been addressed in P15 (shared orchestration) and subsequent work.
+> Many gaps have been addressed in P16 (shared orchestration) and subsequent work.
 > For current state, see:
 > - [Post-v1 product hardening roadmap](post-v1-product-hardening-roadmap.md)
 > - [Capability evidence matrix](capability-evidence-matrix.md)
