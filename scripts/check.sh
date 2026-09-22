@@ -125,6 +125,12 @@ bash "$(dirname "$0")/verify-tauri-capabilities.sh"
 step "frontend module graph integrity"
 python3 "$(dirname "$0")/check_module_graph.py"
 
+# Validate capability-evidence-matrix.md structure and counts: recognized
+# statuses, summary statistics match actual rows, no duplicate capability
+# names within a platform section.
+step "capability matrix integrity"
+python3 "$(dirname "$0")/check_capability_matrix.py"
+
 # DOM trust boundary: scan JS modules for innerHTML/outerHTML sinks where
 # untrusted data may flow without escapeHtml() wrapping. Catches template
 # literal interpolation and string concatenation patterns. This is a first

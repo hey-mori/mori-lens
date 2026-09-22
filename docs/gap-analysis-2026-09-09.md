@@ -1,5 +1,14 @@
 # Repository Gap Analysis — 2026-09-09
 
+**HISTORICAL SNAPSHOT** — Created: 2026-09-09
+
+> This document identifies gaps as of the above date.
+> Many gaps have been addressed in P16 (shared orchestration) and subsequent work.
+> For current state, see:
+> - [Post-v1 product hardening roadmap](post-v1-product-hardening-roadmap.md)
+> - [Capability evidence matrix](capability-evidence-matrix.md)
+> - Recent commits: `git log --oneline -20`
+
 ## Executive Summary
 
 Handoff claims "all repository-local implementation complete except hover_scope on macOS" is **FALSE**.
