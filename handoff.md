@@ -1,6 +1,12 @@
 # Mori Lens — Session Handoff
 
-Last updated: 2026-09-13
+**HISTORICAL SNAPSHOT** — Last updated: 2026-09-13
+
+> This document captures the product state as of the above date.
+> For current state, see:
+> - [Post-v1 product hardening roadmap](docs/post-v1-product-hardening-roadmap.md)
+> - [Capability evidence matrix](docs/capability-evidence-matrix.md)
+> - Recent commits: `git log --oneline -20`
 
 Repository HEAD:
 query at session start

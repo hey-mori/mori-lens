@@ -1,5 +1,12 @@
 # What finished means
 
+**HISTORICAL DESIGN DOCUMENT** — Last updated: 2026-09-13
+
+> This document describes the conceptual distance from "installable" to "finished".
+> For current engineering state, see:
+> - [Post-v1 product hardening roadmap](post-v1-product-hardening-roadmap.md)
+> - [Capability evidence matrix](capability-evidence-matrix.md)
+
 [`mori-lens-project-goal.md`](mori-lens-project-goal.md) says that what is
 still missing before this is something a person installs is **a signed
 binary**, and that it is the whole of the remaining list. That is true,
