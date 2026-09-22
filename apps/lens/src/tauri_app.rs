@@ -110,9 +110,44 @@ pub type SharedHealthSnapshot = Arc<Mutex<lens_core::health::HealthSnapshot>>;
 
 /// Backend concurrency guard for health checks.
 ///
-/// Prevents multiple simultaneous health check runs. True while a check is
-/// in progress, false otherwise.
-pub type SharedHealthCheckRunning = Arc<std::sync::atomic::AtomicBool>;
+/// Prevents multiple simultaneous health check runs. Provides a focused API
+/// for acquiring and releasing the guard, with RAII semantics.
+#[derive(Clone, Debug)]
+pub struct HealthCheckRunning(Arc<std::sync::atomic::AtomicBool>);
+
+impl HealthCheckRunning {
+    /// Create a new guard in the released (false) state.
+    pub fn new() -> Self {
+        Self(Arc::new(std::sync::atomic::AtomicBool::new(false)))
+    }
+
+    /// Try to acquire the guard. Returns `None` if already running.
+    pub fn try_acquire(&self) -> Option<HealthCheckGuard> {
+        use std::sync::atomic::Ordering;
+        if self.0.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+            Some(HealthCheckGuard(self.0.clone()))
+        } else {
+            None
+        }
+    }
+}
+
+impl Default for HealthCheckRunning {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// RAII guard for health check execution. Releases on drop.
+#[derive(Debug)]
+pub struct HealthCheckGuard(Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for HealthCheckGuard {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering;
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
 
 /// Result of a health check run, for the webview.
 ///
@@ -134,8 +169,66 @@ pub struct HealthCheckView {
 /// The polling loop checks this on each iteration and applies any pending toggle.
 /// This allows the Control Center (via Tauri commands) to request a pause/resume
 /// without directly owning the pause state, which remains on the polling loop thread.
-pub type SharedPauseRequest = Arc<std::sync::atomic::AtomicBool>;
-pub type SharedQuitRequest = Arc<std::sync::atomic::AtomicBool>;
+#[derive(Clone, Debug)]
+pub struct PauseRequest(Arc<std::sync::atomic::AtomicBool>);
+
+impl PauseRequest {
+    /// Create a new pause request in the unrequested (false) state.
+    pub fn new() -> Self {
+        Self(Arc::new(std::sync::atomic::AtomicBool::new(false)))
+    }
+
+    /// Request a pause toggle.
+    pub fn request(&self) {
+        use std::sync::atomic::Ordering;
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    /// Take the pending request, resetting to false. Returns true if a request was pending.
+    pub fn take(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        self.0.swap(false, Ordering::Relaxed)
+    }
+}
+
+impl Default for PauseRequest {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Shared quit request.
+///
+/// The polling loop checks this on each iteration and exits when set.
+/// This allows the Control Center (via Tauri commands) to request a quit
+/// without directly owning the quit state, which remains on the polling loop thread.
+#[derive(Clone, Debug)]
+pub struct QuitRequest(Arc<std::sync::atomic::AtomicBool>);
+
+impl QuitRequest {
+    /// Create a new quit request in the unrequested (false) state.
+    pub fn new() -> Self {
+        Self(Arc::new(std::sync::atomic::AtomicBool::new(false)))
+    }
+
+    /// Request a quit.
+    pub fn request(&self) {
+        use std::sync::atomic::Ordering;
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    /// Take the pending request, resetting to false. Returns true if a request was pending.
+    pub fn take(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        self.0.swap(false, Ordering::Relaxed)
+    }
+}
+
+impl Default for QuitRequest {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Mori availability status for the webview.
 ///
@@ -376,8 +469,8 @@ fn set_autostart_platform(_enabled: bool) -> Result<bool, String> {
 /// Sets a flag that the polling loop checks and applies. The actual pause state
 /// remains owned by the polling loop thread; this is just a request mechanism.
 #[tauri::command]
-fn request_pause_toggle(pause_request: tauri::State<'_, SharedPauseRequest>) {
-    pause_request.store(true, std::sync::atomic::Ordering::Relaxed);
+fn request_pause_toggle(pause_request: tauri::State<'_, PauseRequest>) {
+    pause_request.request();
 }
 
 /// Tauri command: request the application to quit.
@@ -385,8 +478,8 @@ fn request_pause_toggle(pause_request: tauri::State<'_, SharedPauseRequest>) {
 /// Sets a flag that the polling loop checks. The loop will exit cleanly,
 /// which triggers the normal shutdown sequence.
 #[tauri::command]
-fn request_quit(quit_request: tauri::State<'_, SharedQuitRequest>) {
-    quit_request.store(true, std::sync::atomic::Ordering::Relaxed);
+fn request_quit(quit_request: tauri::State<'_, QuitRequest>) {
+    quit_request.request();
 }
 
 /// Tauri command: return the current settings view.
@@ -760,7 +853,7 @@ async fn run_health_check(
     settings: tauri::State<'_, SharedSettings>,
     events: tauri::State<'_, SharedDiagnosticEvents>,
     health: tauri::State<'_, SharedHealthSnapshot>,
-    health_running: tauri::State<'_, SharedHealthCheckRunning>,
+    health_running: tauri::State<'_, HealthCheckRunning>,
 ) -> Result<HealthCheckView, String> {
     use lens_core::event_ring::{DiagnosticComponent, DiagnosticEventKind};
     use lens_core::health::HealthState;
@@ -768,31 +861,10 @@ async fn run_health_check(
     use std::time::Instant;
 
     // Backend concurrency guard: prevent multiple simultaneous health checks.
-    // Use atomic compare_exchange to avoid race condition.
-    if health_running
-        .compare_exchange(
-            false,
-            true,
-            std::sync::atomic::Ordering::SeqCst,
-            std::sync::atomic::Ordering::SeqCst,
-        )
-        .is_err()
-    {
-        return Err("health check already in progress".to_string());
-    }
-
-    // RAII guard to ensure the flag is always released, even on panic or early return.
-    struct HealthGuard<'a> {
-        flag: &'a std::sync::atomic::AtomicBool,
-    }
-    impl<'a> Drop for HealthGuard<'a> {
-        fn drop(&mut self) {
-            self.flag.store(false, std::sync::atomic::Ordering::SeqCst);
-        }
-    }
-    let _guard = HealthGuard {
-        flag: &health_running,
-    };
+    // The newtype provides a focused API with RAII semantics.
+    let _guard = health_running
+        .try_acquire()
+        .ok_or_else(|| "health check already in progress".to_string())?;
 
     let start = Instant::now();
 
@@ -1549,8 +1621,8 @@ pub fn build(
     (
         AppHandle,
         SharedDiagnostics,
-        SharedPauseRequest,
-        SharedQuitRequest,
+        PauseRequest,
+        QuitRequest,
         tauri::App,
     ),
     tauri::Error,
@@ -1564,14 +1636,14 @@ pub fn build(
         version: env!("CARGO_PKG_VERSION").to_owned(),
         ..Default::default()
     }));
-    let pause_request: SharedPauseRequest = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let quit_request: SharedQuitRequest = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let pause_request = PauseRequest::new();
+    let quit_request = QuitRequest::new();
     let diagnostic_events: SharedDiagnosticEvents = global_diagnostic_events();
     let health_snapshot: SharedHealthSnapshot =
         Arc::new(Mutex::new(lens_core::health::HealthSnapshot::default()));
-    let health_running: SharedHealthCheckRunning =
-        Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let health_running = HealthCheckRunning::new();
 
+    #[allow(unused_mut)]
     let mut builder = tauri::Builder::default();
 
     #[cfg(feature = "e2e-testing")]
