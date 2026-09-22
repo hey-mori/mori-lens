@@ -79,6 +79,12 @@ latency are measured and recorded in
 never appears attached to the previous target; source text already in the
 target language is skipped.
 
+**IMPLEMENTATION: complete.** Ollama and LM Studio discovery, health
+checks, model routing, script and language detection, quick translation,
+memory cache, stale result discard, loading states, and target language
+settings are all merged and verified. What remains is ongoing real-world
+measurement and model quality validation.
+
 ## M4 · Windows manual OCR
 
 **Swapped with deep analysis on 2026-08-05.** The reason is in this
@@ -190,7 +196,7 @@ measured; the product calls it; explanation quality is measured.
 | never called without a user action | held by construction: `lens-core::session` has no reference to an `Analyser` and there is no path from a settled hover to one. The only caller is a `Ctrl+Alt+D` press |
 | a schema violation degrades | built: a missing field is an empty field, an answer that was not JSON says nothing, and an analysis that says nothing is a typed error rather than a card of headings over blanks |
 | output labelled as an AI explanation | built and shown: `DeepAnalysis::LABEL`, first in the footer because a card cuts from the end |
-| the explanations are right | **open**, measured on 2026-09-01 ([`deep analysis evaluation`](benchmarks/2026-09-01-deep-analysis-evaluation.md), [`prompt A/B`](benchmarks/2026-09-01-prompt-ab-comparison.md), [`counterpart analysis`](benchmarks/2026-09-01-counterpart-ab-analysis.md), [`P1 full corpus validation`](benchmarks/2026-09-01-p1-full-corpus-validation.md), [`evaluation integrity audit`](benchmarks/2026-09-01-evaluation-integrity-audit.md), [`P3 prompt evaluation`](benchmarks/2026-09-01-p3-prompt-evaluation.md), [`Phase 13 final report`](benchmarks/2026-09-01-m5-phase13-final-report.md), [`Phase 14 final report`](benchmarks/2026-09-01-phase14-final-report.md), [`Phase 15 final report`](benchmarks/2026-09-01-phase15-final-report.md), [`Phase 16 final report`](benchmarks/2026-09-01-phase16-final-report.md)): P0 lemma 40%, P1 lemma 63%, P3 lemma 64%. No-word hallucination is a model capability limit. Phase 15: deterministic answerability projection (`only_answerable()`) enforces the Answerable contract on model output. Phase 16: verified production flow separates raw model quality from product-visible quality. Eliminates 3/6 misleading entries (C01, C02, E03 unanswerable field hallucination). Remaining 3/6 (A04, E02, B03) are model-dependent errors (M6 work). M5 pipeline correctness is closeable. M6 model quality remains open. Counterpart invariant satisfied: no model calls when `word=None`. Zero performance regression. The product label `AI 설명 · 사실 확인 필요` is doing the work it was designed to do |
+| the explanations are right | **pipeline complete, model quality open**. Measured on 2026-09-01 through 16 evaluation phases ([`deep analysis evaluation`](benchmarks/2026-09-01-deep-analysis-evaluation.md), [`prompt A/B`](benchmarks/2026-09-01-prompt-ab-comparison.md), [`counterpart analysis`](benchmarks/2026-09-01-counterpart-ab-analysis.md), [`P1 full corpus validation`](benchmarks/2026-09-01-p1-full-corpus-validation.md), [`evaluation integrity audit`](benchmarks/2026-09-01-evaluation-integrity-audit.md), [`P3 prompt evaluation`](benchmarks/2026-09-01-p3-prompt-evaluation.md), [`Phase 13 final report`](benchmarks/2026-09-01-m5-phase13-final-report.md), [`Phase 14 final report`](benchmarks/2026-09-01-phase14-final-report.md), [`Phase 15 final report`](benchmarks/2026-09-01-phase15-final-report.md), [`Phase 16 final report`](benchmarks/2026-09-01-phase16-final-report.md)): deterministic answerability projection (`only_answerable()`) enforces the Answerable contract. Production flow separates raw model quality from product-visible quality, eliminating 3/6 misleading field hallucinations (C01, C02, E03 unanswerable). Remaining 3/6 (A04, E02, B03) are model-dependent errors that belong to M6. M5 pipeline correctness is closeable. The product label `AI 설명 · 사실 확인 필요` is doing the work it was designed to do |
 
 The trigger and the card are built. `Ctrl+Alt+D`, not a button, because
 the overlay passes clicks through

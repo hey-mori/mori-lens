@@ -107,6 +107,7 @@ crates/lens-settings/      versioned TOML settings, round-trip preservation
 crates/lens-storage/       SQLite library for saved items
 crates/lens-translate/     provider-aware translation and runtime management
 crates/platform-windows/   UI Automation, the Direct2D card, tray, autostart
+crates/platform-macos/     AX text acquisition, AppKit overlay, menu bar
 apps/lens/                 the product
 apps/hover-probe/          the measurement instrument
 docs/decisions/            the decisions that constrain everything else
