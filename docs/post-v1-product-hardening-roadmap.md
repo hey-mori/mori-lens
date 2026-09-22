@@ -33,7 +33,7 @@ P13 human quality review is a human-only evidence gate. Do not fill human-review
 
 ## P18 — Product completeness audit + evidence reconciliation
 
-**Status:** IN PROGRESS
+**Status:** COMPLETE
 
 ### Goals
 
@@ -44,10 +44,10 @@ P13 human quality review is a human-only evidence gate. Do not fill human-review
 
 ### Deliverables
 
-- [ ] Capability matrix with evidence classification per capability
-- [ ] Stale document reconciliation (mark HISTORICAL, link to current truth)
-- [ ] CI/package-smoke evidence status corrected
-- [ ] Open issues/PRs inventoried and reconciled
+- [x] Capability matrix with evidence classification per capability (docs/capability-evidence-matrix.md)
+- [x] Stale document reconciliation (mark HISTORICAL, link to current truth)
+- [x] CI/package-smoke evidence status corrected
+- [x] Open issues/PRs inventoried and reconciled
 
 ### Evidence classification
 
