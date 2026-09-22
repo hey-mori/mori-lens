@@ -4,6 +4,7 @@ import { invoke } from './tauri.js';
 import { setStatus } from './ui.js';
 import { state } from './state.js';
 import { refreshLocalAiStatus } from './local_ai.js';
+import { getLocale, setLocale } from './i18n.js';
 
 const PROVIDER_DEFAULT_ENDPOINTS = {
   ollama: '127.0.0.1:11434',
@@ -14,9 +15,23 @@ export async function loadSettings() {
   state.currentSettings = await invoke('get_settings');
   applySettingsToForm(state.currentSettings);
   attachProviderChangeHandler();
+  initInterfaceLanguageSelector();
   import('./apps.js').then(m => m.renderApps());
   renderShortcuts(state.currentSettings.shortcuts);
   import('./models.js').then(m => m.refreshModels(state.currentSettings.quick_model));
+}
+
+export function initInterfaceLanguageSelector() {
+  const select = document.getElementById('interface-language-select');
+  if (!select) return;
+
+  // Set current locale
+  select.value = getLocale();
+
+  // Handle changes
+  select.addEventListener('change', (e) => {
+    setLocale(e.target.value);
+  });
 }
 
 export function applySettingsToForm(settings) {

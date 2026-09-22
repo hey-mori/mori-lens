@@ -1,7 +1,7 @@
 // i18n.js - Minimal internationalization module
 // Supports English and Korean with deterministic fallback
 
-const translations = {
+export const translations = {
   en: {
     // App
     'app.title': 'Mori Lens',
@@ -169,12 +169,85 @@ const translations = {
     'apps.ocr.off': 'OCR: Off',
     'apps.ocr.manual': 'OCR: Manual',
     'apps.ocr.automatic': 'OCR: Automatic',
+    'apps.empty': 'No per-application rules.',
+    'apps.remove': 'Remove',
 
     // About
     'about.title': 'About',
     'about.danger.zone': 'Danger zone',
     'about.danger.zone.description': 'Permanently delete all library and history data. This runs a secure wipe (WAL checkpoint, secure_delete, DELETE, VACUUM). Library items and persistent history are removed. saved.md and exports you have made are not affected. This does not reach filesystem snapshots, drive controller remapped blocks, or backups.',
     'about.danger.zone.button': 'Delete all library and history data',
+
+    // Interface language
+    'interface.language': 'Interface language',
+    'interface.language.en': 'English',
+    'interface.language.ko': '한국어',
+
+    // Dynamic strings - Apps
+    'apps.empty': 'No per-application rules.',
+
+    // Dynamic strings - History
+    'history.persistent.enabled': 'Persistent History enabled · Retention: {days} days',
+    'history.persistent.disabled': 'Persistent History is disabled. Turn it on in General settings.',
+    'history.entries.count': '{count} {count, plural, one {entry} other {entries}}',
+    'history.empty': 'No history entries yet.',
+    'history.delete.confirm': 'Delete this history entry?',
+    'history.save.success': 'Saved to library.',
+    'history.prune.confirm': 'Prune history entries older than {days} days?',
+    'history.prune.success': 'Pruned {count} entries.',
+    'history.error': 'Error: {error}',
+
+    // Dynamic strings - Review
+    'review.empty': 'No items for later review. Save items to see them here.',
+    'review.load.error': 'Failed to load review list: {error}',
+    'review.summary.items': '{count} items for later review',
+    'review.progress': 'Reviewed {reviewed} of {total} this round',
+    'review.update.error': 'Failed to update review state: {error}',
+    'review.undo.error': 'Failed to undo: {error}',
+
+    // Dynamic strings - Library
+    'library.items.count': '{count} {count, plural, one {item} other {items}}',
+    'library.empty': 'No items match your filters.',
+    'library.detail.not.found': 'Item not found.',
+    'library.save.success': 'Saved',
+    'library.save.error': 'Error: {error}',
+    'library.delete.confirm': 'Delete this item? This cannot be undone.',
+    'library.transfer.confirm': 'Send this item to Mori?\n\nTransfer ID: {id}',
+    'library.transfer.success': 'Sent to Mori.\nTransfer ID: {id}',
+    'library.transfer.error': 'Error sending to Mori: {error}',
+    'library.transfer.not.found': 'Item not found.',
+    'library.export.empty': 'Library is empty.',
+    'library.export.error': 'Export failed: {error}',
+    'library.import.success': 'Imported {count} item(s). Duplicates were skipped.',
+    'library.import.error': 'Import failed: {error}',
+
+    // Dynamic strings - Diagnostics
+    'diagnostics.copy.success': 'Copied!',
+    'diagnostics.copy.failure': 'Copy failed',
+    'diagnostics.copy.failure.ko': '복사 실패',
+    'diagnostics.export.error': 'Failed to export diagnostics: {error}',
+    'diagnostics.export.error.ko': '진단 정보 내보내기 실패: {error}',
+    'diagnostics.delete.confirm.1': 'Delete ALL library and history data? This cannot be undone.\n\nThis securely wipes the database (WAL checkpoint, secure_delete, DELETE, VACUUM). Library items and persistent history are removed. saved.md and exports are not affected. This does not reach filesystem snapshots, backups, or exports you have made.',
+    'diagnostics.delete.confirm.2': 'Are you absolutely sure? All saved items, notes, tags, review progress, and persistent history will be permanently deleted.',
+    'diagnostics.delete.success': 'All library data has been deleted.',
+    'diagnostics.delete.error': 'Secure wipe failed: {error}',
+    'diagnostics.clipboard.failure': '클립보드 복사 실패: {error}',
+
+    // Dynamic strings - Recent
+    'recent.empty.state': 'No recent cards.',
+
+    // Dynamic strings - Models
+    'models.not.reachable': '{provider} not reachable',
+    'models.start.and.refresh': 'Start {provider} and refresh.',
+    'models.auto.best': 'Auto (best available)',
+    'models.select.model': 'Select a model',
+    'models.running': '{provider} running',
+    'models.none.installed': 'No models installed.',
+    'models.selected': 'selected',
+    'models.select.first': 'Select a model first.',
+    'models.testing': 'Testing...',
+    'models.test.error': 'Error: {error}',
+    'models.test.button': 'Test',
   },
 
   ko: {
@@ -344,12 +417,85 @@ const translations = {
     'apps.ocr.off': 'OCR: 끔',
     'apps.ocr.manual': 'OCR: 수동',
     'apps.ocr.automatic': 'OCR: 자동',
+    'apps.empty': '앱별 규칙이 없습니다.',
+    'apps.remove': '제거',
 
     // About
     'about.title': '정보',
     'about.danger.zone': '위험 구역',
     'about.danger.zone.description': '모든 라이브러리 및 기록 데이터를 영구 삭제합니다. 안전한 삭제(WAL 체크포인트, secure_delete, DELETE, VACUUM)를 실행합니다. 라이브러리 항목과 영구 기록이 제거됩니다. saved.md와 만든 내보내기는 영향을 받지 않습니다. 파일시스템 스냅샷, 드라이브 컨트롤러 매핑 블록, 백업에는 영향을 주지 않습니다.',
     'about.danger.zone.button': '모든 라이브러리 및 기록 데이터 삭제',
+
+    // Interface language
+    'interface.language': '인터페이스 언어',
+    'interface.language.en': 'English',
+    'interface.language.ko': '한국어',
+
+    // Dynamic strings - Apps
+    'apps.empty': '앱별 규칙이 없습니다.',
+
+    // Dynamic strings - History
+    'history.persistent.enabled': '영구 기록 사용 중 · 보관 기간: {days}일',
+    'history.persistent.disabled': '영구 기록이 꺼져 있습니다. 일반 설정에서 켤 수 있습니다.',
+    'history.entries.count': '{count}개 항목',
+    'history.empty': '아직 기록 항목이 없습니다.',
+    'history.delete.confirm': '이 기록 항목을 삭제하시겠습니까?',
+    'history.save.success': '라이브러리에 저장되었습니다.',
+    'history.prune.confirm': '{days}일보다 오래된 기록 항목을 정리하시겠습니까?',
+    'history.prune.success': '{count}개 항목을 정리했습니다.',
+    'history.error': '오류: {error}',
+
+    // Dynamic strings - Review
+    'review.empty': '나중에 검토할 항목이 없습니다. 여기에 표시하려면 항목을 저장하세요.',
+    'review.load.error': '검토 목록을 로드하지 못했습니다: {error}',
+    'review.summary.items': '나중에 검토할 항목 {count}개',
+    'review.progress': '이번 라운드에 {total}개 중 {reviewed}개 검토 완료',
+    'review.update.error': '검토 상태를 업데이트하지 못했습니다: {error}',
+    'review.undo.error': '실행 취소에 실패했습니다: {error}',
+
+    // Dynamic strings - Library
+    'library.items.count': '{count}개 항목',
+    'library.empty': '필터와 일치하는 항목이 없습니다.',
+    'library.detail.not.found': '항목을 찾을 수 없습니다.',
+    'library.save.success': '저장됨',
+    'library.save.error': '오류: {error}',
+    'library.delete.confirm': '이 항목을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.',
+    'library.transfer.confirm': '이 항목을 Mori로 전송하시겠습니까?\n\n전송 ID: {id}',
+    'library.transfer.success': 'Mori로 전송되었습니다.\n전송 ID: {id}',
+    'library.transfer.error': 'Mori로 전송 중 오류: {error}',
+    'library.transfer.not.found': '항목을 찾을 수 없습니다.',
+    'library.export.empty': '라이브러리가 비어 있습니다.',
+    'library.export.error': '내보내기 실패: {error}',
+    'library.import.success': '{count}개 항목을 가져왔습니다. 중복은 건너뛰었습니다.',
+    'library.import.error': '가져오기 실패: {error}',
+
+    // Dynamic strings - Diagnostics
+    'diagnostics.copy.success': '복사됨!',
+    'diagnostics.copy.failure': '복사 실패',
+    'diagnostics.copy.failure.ko': '복사 실패',
+    'diagnostics.export.error': '진단 정보 내보내기 실패: {error}',
+    'diagnostics.export.error.ko': '진단 정보 내보내기 실패: {error}',
+    'diagnostics.delete.confirm.1': '모든 라이브러리 및 기록 데이터를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.\n\n데이터베이스를 안전하게 삭제합니다(WAL 체크포인트, secure_delete, DELETE, VACUUM). 라이브러리 항목과 영구 기록이 제거됩니다. saved.md와 내보내기는 영향을 받지 않습니다. 파일시스템 스냅샷, 백업 또는 만든 내보내기에는 영향을 주지 않습니다.',
+    'diagnostics.delete.confirm.2': '정말 확실하신가요? 저장된 모든 항목, 노트, 태그, 검토 진행 상황, 영구 기록이 영구 삭제됩니다.',
+    'diagnostics.delete.success': '모든 라이브러리 데이터가 삭제되었습니다.',
+    'diagnostics.delete.error': '안전한 삭제 실패: {error}',
+    'diagnostics.clipboard.failure': '클립보드 복사 실패: {error}',
+
+    // Dynamic strings - Recent
+    'recent.empty.state': '최근 카드 없음.',
+
+    // Dynamic strings - Models
+    'models.not.reachable': '{provider}에 연결할 수 없습니다',
+    'models.start.and.refresh': '{provider}을(를) 시작하고 새로고침하세요.',
+    'models.auto.best': '자동 (최적)',
+    'models.select.model': '모델 선택',
+    'models.running': '{provider} 실행 중',
+    'models.none.installed': '설치된 모델이 없습니다.',
+    'models.selected': '선택됨',
+    'models.select.first': '먼저 모델을 선택하세요.',
+    'models.testing': '테스트 중...',
+    'models.test.error': '오류: {error}',
+    'models.test.button': '테스트',
   },
 };
 
@@ -410,6 +556,19 @@ export function t(key, params = {}) {
     console.warn(`Missing translation key: ${key}`);
     return key;
   }
+
+  // Handle pluralization: {count, plural, one {singular} other {plural}}
+  text = text.replace(/\{(\w+),\s*plural,\s*one\s*\{([^}]+)\}\s*other\s*\{([^}]+)\}\}/g,
+    (match, paramKey, singular, plural) => {
+      const value = params[paramKey];
+      if (value === undefined) return match;
+      // For Korean, plural form is typically the same as singular
+      // For English, use singular for 1, plural otherwise
+      if (currentLocale === 'ko') {
+        return singular;
+      }
+      return value === 1 ? singular : plural;
+    });
 
   // Simple interpolation: replace {param} with value
   return text.replace(/\{(\w+)\}/g, (match, paramKey) => {
