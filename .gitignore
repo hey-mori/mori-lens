@@ -21,3 +21,4 @@ apps/lens/Cargo.lock
 .git-rewrite/
 __pycache__/
 *.pyc
+.e2e-data/
