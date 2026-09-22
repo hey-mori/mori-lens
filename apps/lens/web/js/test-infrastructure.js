@@ -120,7 +120,10 @@ export function createControlCenterFixture() {
 
     <section id="settings-section" class="section">
       <form id="settings-form">
-        <select id="f-language"></select>
+        <select id="f-language">
+          <option value="ko">한국어</option>
+          <option value="en">English</option>
+        </select>
         <select id="interface-language-select">
           <option value="en">English</option>
           <option value="ko">한국어</option>
@@ -158,7 +161,9 @@ export function createControlCenterFixture() {
           <option value="lmstudio">LM Studio</option>
         </select>
         <input id="f-quick-endpoint" type="text">
-        <select id="f-quick-model-select"></select>
+        <select id="f-quick-model-select">
+          <option value="">Select model</option>
+        </select>
         <select id="f-deep-engine">
           <option value="ollama">Ollama</option>
           <option value="lmstudio">LM Studio</option>
@@ -167,6 +172,7 @@ export function createControlCenterFixture() {
         <input id="f-deep-endpoint" type="text">
         <button id="save-settings" type="button">Save</button>
       </form>
+      <div id="shortcuts-list"></div>
       <div id="settings-status"></div>
     </section>
 
