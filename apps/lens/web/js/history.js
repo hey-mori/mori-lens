@@ -2,6 +2,7 @@
 
 import { invoke } from './tauri.js';
 import { escapeHtml } from './ui.js';
+import { t, getLocale } from './i18n.js';
 
 let historyOffset = 0;
 
@@ -12,11 +13,11 @@ export async function loadHistory() {
     const descEl = document.getElementById('history-description');
     if (descEl && runtime) {
       if (runtime.history_enabled) {
-        const days = runtime.history_days === 0 ? 'forever' : runtime.history_days + '일';
-        descEl.textContent = 'Persistent History 사용 중 · 보관 기간: ' + days;
+        const days = runtime.history_days === 0 ? 'forever' : runtime.history_days;
+        descEl.textContent = t('history.persistent.enabled', { days });
         descEl.style.color = '#2e7d32';
       } else {
-        descEl.textContent = 'Persistent History는 꺼져 있습니다. General 설정에서 켤 수 있습니다.';
+        descEl.textContent = t('history.persistent.disabled');
         descEl.style.color = '#888';
       }
     }
@@ -34,9 +35,9 @@ async function fetchHistoryPage() {
       invoke('history_list', { offset: historyOffset }),
       invoke('history_count')
     ]);
-    countEl.textContent = count + ' entr' + (count !== 1 ? 'ies' : 'y');
+    countEl.textContent = t('history.entries.count', { count });
     if (!page.entries || page.entries.length === 0) {
-      listEl.innerHTML = '<p style="color:#888;font-size:13px">No history entries yet.</p>';
+      listEl.innerHTML = '<p style="color:#888;font-size:13px">' + escapeHtml(t('history.empty')) + '</p>';
       return;
     }
     let html = '<table style="max-width:100%">';
@@ -45,9 +46,9 @@ async function fetchHistoryPage() {
       const preview = entry.original.length > 60 ? entry.original.slice(0, 60) + '...' : entry.original;
       const answer = entry.answer.length > 60 ? entry.answer.slice(0, 60) + '...' : entry.answer;
       const provenanceLabel = entry.provenance === 'ocr' ? '📷' : entry.provenance === 'accessibility' ? '♿' : entry.provenance || '?';
-      const provenanceTitle = entry.provenance === 'ocr' ? 'OCR (screen reading)' : entry.provenance === 'accessibility' ? 'Accessibility API' : entry.provenance || 'Unknown';
+      const provenanceTitle = entry.provenance === 'ocr' ? t('history.provenance.ocr') : entry.provenance === 'accessibility' ? t('history.provenance.accessibility') : t('history.provenance.unknown');
       const providerLabel = entry.provider_scope === 'external' ? '🌐' : entry.provider_scope === 'local' ? '' : entry.provider_scope || '?';
-      const providerTitle = entry.provider_scope === 'external' ? 'External provider (text left machine)' : entry.provider_scope === 'local' ? 'Local inference' : entry.provider_scope || 'Unknown provider';
+      const providerTitle = entry.provider_scope === 'external' ? t('history.provider.external') : entry.provider_scope === 'local' ? t('history.provider.local') : t('history.provider.unknown');
       html += '<tr>';
       html += '<td style="width:40%;color:#333">' + escapeHtml(preview) + '</td>';
       html += '<td style="width:35%;color:#666">' + escapeHtml(answer) + '</td>';
@@ -56,19 +57,19 @@ async function fetchHistoryPage() {
       html += '<td style="width:10%;color:#888;font-size:12px">' + escapeHtml(entry.app || '') + '</td>';
       html += '<td style="width:5%;color:#888;font-size:12px">' + date + '</td>';
       html += '<td style="width:5%;text-align:right">';
-      html += '<button class="btn history-promote-btn" data-id="' + entry.id + '" style="padding:2px 6px;font-size:11px" title="Save to library">Save</button> ';
-      html += '<button class="btn history-delete-btn" data-id="' + entry.id + '" style="padding:2px 6px;font-size:11px;color:#c00;border-color:#c00" title="Delete">✕</button>';
+      html += '<button class="btn history-promote-btn" data-id="' + entry.id + '" style="padding:2px 6px;font-size:11px" title="' + escapeHtml(t('history.promote.title')) + '">' + escapeHtml(t('history.promote.button')) + '</button> ';
+      html += '<button class="btn history-delete-btn" data-id="' + entry.id + '" style="padding:2px 6px;font-size:11px;color:#c00;border-color:#c00" title="' + escapeHtml(t('history.delete.title')) + '">✕</button>';
       html += '</td>';
       html += '</tr>';
     }
     html += '</table>';
     if (page.has_more) {
-      html += '<button class="btn" id="load-more-history-btn" style="margin-top:8px;padding:4px 12px;font-size:12px">Load more</button>';
+      html += '<button class="btn" id="load-more-history-btn" style="margin-top:8px;padding:4px 12px;font-size:12px">' + escapeHtml(t('history.load.more')) + '</button>';
     }
     listEl.innerHTML = html;
     attachHistoryHandlers();
   } catch (e) {
-    listEl.innerHTML = '<p class="error">Error: ' + escapeHtml(String(e)) + '</p>';
+    listEl.innerHTML = '<p class="error">' + escapeHtml(t('history.error', { error: String(e) })) + '</p>';
   }
 }
 
@@ -89,34 +90,34 @@ function loadMoreHistory() {
 }
 
 async function deleteHistoryEntry(id) {
-  if (!confirm('Delete this history entry?')) return;
+  if (!confirm(t('history.delete.confirm'))) return;
   try {
     await invoke('history_delete', { id });
     await fetchHistoryPage();
   } catch (e) {
-    alert('Error: ' + e);
+    alert(t('history.error', { error: e }));
   }
 }
 
 async function promoteHistoryEntry(id) {
   try {
     await invoke('history_promote', { id });
-    alert('Saved to library.');
+    alert(t('history.save.success'));
   } catch (e) {
-    alert('Error: ' + e);
+    alert(t('history.error', { error: e }));
   }
 }
 
 export async function pruneHistory() {
   const retentionDays = 30;
   const retentionSecs = retentionDays * 24 * 60 * 60;
-  if (!confirm(`Prune history entries older than ${retentionDays} days?`)) return;
+  if (!confirm(t('history.prune.confirm', { days: retentionDays }))) return;
   try {
     const count = await invoke('history_prune', { retentionSecs });
-    alert('Pruned ' + count + ' entries.');
+    alert(t('history.prune.success', { count }));
     await fetchHistoryPage();
   } catch (e) {
-    alert('Error: ' + e);
+    alert(t('history.error', { error: e }));
   }
 }
 
@@ -124,3 +125,10 @@ export function initHistoryHandlers() {
   const pruneBtn = document.getElementById('history-prune-btn');
   if (pruneBtn) pruneBtn.addEventListener('click', pruneHistory);
 }
+
+// Re-render on locale change
+document.addEventListener('locale-changed', () => {
+  if (document.getElementById('section-history')?.classList.contains('active')) {
+    loadHistory();
+  }
+});

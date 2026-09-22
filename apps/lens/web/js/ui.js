@@ -1,5 +1,7 @@
 // Shared UI helpers used across all sections
 
+import { t } from './i18n.js';
+
 export function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
@@ -61,7 +63,7 @@ export function populateSelect(id, values) {
   const sel = document.getElementById(id);
   if (!sel) return;
   const current = sel.value;
-  sel.innerHTML = '<option value="">All</option>';
+  sel.innerHTML = '<option value="">' + escapeHtml(t('common.filter.all')) + '</option>';
   for (const v of values) {
     sel.innerHTML += '<option value="' + escapeHtml(v) + '"' + (v === current ? ' selected' : '') + '>' + escapeHtml(v) + '</option>';
   }

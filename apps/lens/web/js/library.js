@@ -2,6 +2,7 @@
 
 import { invoke } from './tauri.js';
 import { escapeHtml, populateSelect } from './ui.js';
+import { t } from './i18n.js';
 
 let libraryOffset = 0;
 let libraryQuery = '';
@@ -86,10 +87,10 @@ async function fetchLibraryPage() {
       tag: libraryFilters.tag,
       offset: libraryOffset
     });
-    countEl.textContent = page.total + ' item' + (page.total !== 1 ? 's' : '');
+    countEl.textContent = t('library.items.count', { count: page.total });
     if (page.items.length === 0) {
       listEl.innerHTML = '<p style="color:#888;font-size:13px">' +
-        (libraryQuery ? 'No items match "' + escapeHtml(libraryQuery) + '".' : 'No saved items yet.') + '</p>';
+        (libraryQuery ? escapeHtml(t('library.items.match', { query: libraryQuery })) : escapeHtml(t('library.empty.default'))) + '</p>';
       return;
     }
     let html = '<table style="max-width:100%">';
@@ -97,10 +98,10 @@ async function fetchLibraryPage() {
       const date = new Date(item.created_at * 1000).toLocaleDateString();
       const kind = item.kind === 'analysis' ? 'analysis' : 'translation';
       const review = item.review_state || 'later';
-      const reviewBadge = review === 'known' ? '<span style="color:#2e7d32;font-size:11px" title="Known"> ✓</span>'
-        : review === 'later' ? '<span style="color:#f57c00;font-size:11px" title="Later"> ◐</span>'
-        : review === 'archive' ? '<span style="color:#888;font-size:11px" title="Archive"> ▣</span>'
-        : '<span style="color:#888;font-size:11px" title="Unknown"> ○</span>';
+      const reviewBadge = review === 'known' ? '<span style="color:#2e7d32;font-size:11px" title="' + escapeHtml(t('library.review.known')) + '"> ✓</span>'
+        : review === 'later' ? '<span style="color:#f57c00;font-size:11px" title="' + escapeHtml(t('library.review.later')) + '"> ◐</span>'
+        : review === 'archive' ? '<span style="color:#888;font-size:11px" title="' + escapeHtml(t('library.review.archive')) + '"> ▣</span>'
+        : '<span style="color:#888;font-size:11px" title="' + escapeHtml(t('library.review.unknown')) + '"> ○</span>';
       const preview = item.original.length > 60 ? item.original.slice(0, 60) + '...' : item.original;
       html += '<tr style="cursor:pointer" data-lib-item-id="' + item.id + '" class="lib-item-row">';
       html += '<td style="width:60%;color:#333">' + escapeHtml(preview) + '</td>';
@@ -111,13 +112,13 @@ async function fetchLibraryPage() {
     }
     html += '</table>';
     if (page.has_more) {
-      html += '<button class="btn" id="load-more-lib-btn" style="margin-top:8px;padding:4px 12px;font-size:12px">Load more</button>';
+      html += '<button class="btn" id="load-more-lib-btn" style="margin-top:8px;padding:4px 12px;font-size:12px">' + escapeHtml(t('library.load.more')) + '</button>';
     }
     listEl.innerHTML = html;
     // Attach handlers for library item rows and load more
     attachLibraryPageHandlers();
   } catch (e) {
-    listEl.innerHTML = '<p class="error">Error: ' + escapeHtml(String(e)) + '</p>';
+    listEl.innerHTML = '<p class="error">' + escapeHtml(t('library.save.error', { error: String(e) })) + '</p>';
   }
 }
 
@@ -141,7 +142,7 @@ export async function showLibraryItem(id) {
   try {
     const item = await invoke('library_get', { id });
     if (!item) {
-      detailEl.innerHTML = '<p class="error">Item not found.</p>';
+      detailEl.innerHTML = '<p class="error">' + escapeHtml(t('library.detail.not.found')) + '</p>';
       detailEl.style.display = 'block';
       return;
     }
@@ -151,8 +152,8 @@ export async function showLibraryItem(id) {
     html += '<div style="font-size:12px;color:#888;margin-bottom:4px">' + item.kind + ' · ' + escapeHtml(item.app || 'unknown') + ' · ' + date + '</div>';
     if (item.model) html += '<div style="font-size:11px;color:#aaa">' + escapeHtml(item.model) + '</div>';
     html += '</div>';
-    html += '<button class="btn lib-delete-btn" data-id="' + item.id + '" style="padding:4px 10px;font-size:12px;color:#c00;border-color:#c00">Delete</button>';
-    html += '<button class="btn mori-send-btn" data-id="' + item.id + '" id="mori-send-btn-' + item.id + '" style="padding:4px 10px;font-size:12px;margin-left:8px;display:none">Send to Mori</button>';
+    html += '<button class="btn lib-delete-btn" data-id="' + item.id + '" style="padding:4px 10px;font-size:12px;color:#c00;border-color:#c00">' + escapeHtml(t('common.delete')) + '</button>';
+    html += '<button class="btn mori-send-btn" data-id="' + item.id + '" id="mori-send-btn-' + item.id + '" style="padding:4px 10px;font-size:12px;margin-left:8px;display:none">' + escapeHtml(t('library.send.to.mori')) + '</button>';
     html += '</div>';
     html += '<div style="margin-bottom:12px;padding:12px;background:white;border-radius:4px;border:1px solid #eee">';
     html += '<div style="font-size:13px;color:#333;line-height:1.5">' + escapeHtml(item.original) + '</div>';
@@ -162,15 +163,15 @@ export async function showLibraryItem(id) {
     if (item.caveat) html += '<div style="font-size:12px;color:#888;margin-top:8px;font-style:italic">' + escapeHtml(item.caveat) + '</div>';
     html += '</div>';
     html += '<div style="margin-top:12px">';
-    html += '<label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Note</label>';
+    html += '<label style="font-size:12px;color:#666;display:block;margin-bottom:4px">' + escapeHtml(t('library.note')) + '</label>';
     html += '<textarea id="lib-note-' + item.id + '" style="width:100%;min-height:60px;padding:8px;border:1px solid #ccc;border-radius:4px;font:inherit;resize:vertical;background:white">' + escapeHtml(item.note || '') + '</textarea>';
-    html += '<button class="btn btn-primary lib-save-note-btn" data-id="' + item.id + '" style="margin-top:8px;padding:4px 12px;font-size:12px">Save note</button>';
+    html += '<button class="btn btn-primary lib-save-note-btn" data-id="' + item.id + '" style="margin-top:8px;padding:4px 12px;font-size:12px">' + escapeHtml(t('library.save.note')) + '</button>';
     html += '<span id="lib-note-status-' + item.id + '" style="margin-left:8px;font-size:12px;color:#888"></span>';
     html += '</div>';
     html += '<div style="margin-top:16px">';
-    html += '<label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Tags</label>';
-    html += '<input type="text" id="lib-tags-' + item.id + '" placeholder="comma, separated, tags" style="width:100%;max-width:300px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;background:white">';
-    html += '<button class="btn btn-primary lib-save-tags-btn" data-id="' + item.id + '" style="margin-top:8px;padding:4px 12px;font-size:12px">Save tags</button>';
+    html += '<label style="font-size:12px;color:#666;display:block;margin-bottom:4px">' + escapeHtml(t('library.tags')) + '</label>';
+    html += '<input type="text" id="lib-tags-' + item.id + '" placeholder="' + escapeHtml(t('library.tags.placeholder')) + '" style="width:100%;max-width:300px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font:inherit;background:white">';
+    html += '<button class="btn btn-primary lib-save-tags-btn" data-id="' + item.id + '" style="margin-top:8px;padding:4px 12px;font-size:12px">' + escapeHtml(t('library.save.tags')) + '</button>';
     html += '<span id="lib-tags-status-' + item.id + '" style="margin-left:8px;font-size:12px;color:#888"></span>';
     html += '</div>';
     detailEl.innerHTML = html;
@@ -197,7 +198,7 @@ export async function showLibraryItem(id) {
       // Ignore availability check errors.
     }
   } catch (e) {
-    detailEl.innerHTML = '<p class="error">Error: ' + escapeHtml(String(e)) + '</p>';
+    detailEl.innerHTML = '<p class="error">' + escapeHtml(t('library.save.error', { error: String(e) })) + '</p>';
     detailEl.style.display = 'block';
   }
 }
@@ -222,13 +223,13 @@ function detailEl_query(selector) {
 }
 
 async function deleteLibraryItem(id) {
-  if (!confirm('Delete this item? This cannot be undone.')) return;
+  if (!confirm(t('library.delete.confirm'))) return;
   try {
     await invoke('library_delete', { id });
     document.getElementById('lib-detail').style.display = 'none';
     await fetchLibraryPage();
   } catch (e) {
-    alert('Error: ' + e);
+    alert(t('library.save.error', { error: e }));
   }
 }
 
@@ -246,17 +247,17 @@ async function sendToMori(id) {
   const { truncateSafe } = await import('./ui.js');
   try {
     const item = await invoke('library_get', { id });
-    if (!item) { alert('Item not found.'); return; }
+    if (!item) { alert(t('library.transfer.not.found')); return; }
     const preview = truncateSafe(item.original, 100);
     const answer = truncateSafe(item.answer, 100);
-    const msg = 'Send to Mori?\n\nOriginal: ' + preview + '\n\nAnswer: ' + answer + '\n\nKind: ' + item.kind +
-      (item.note ? '\nNote: ' + item.note : '') +
-      (item.tags && item.tags.length ? '\nTags: ' + item.tags.join(', ') : '');
+    const msg = t('library.mori.confirm', { original: preview, answer, kind: item.kind }) +
+      (item.note ? t('library.note.prefix') + item.note : '') +
+      (item.tags && item.tags.length ? t('library.tags.prefix') + item.tags.join(', ') : '');
     if (!confirm(msg)) return;
     const transferId = await invoke('mori_send_item', { item_id: id });
-    alert('Sent to Mori.\nTransfer ID: ' + transferId);
+    alert(t('library.transfer.success', { id: transferId }));
   } catch (e) {
-    alert('Error sending to Mori: ' + e);
+    alert(t('library.transfer.error', { error: e }));
   }
 }
 
@@ -266,10 +267,10 @@ async function saveLibraryNote(id) {
   if (!textarea || !statusEl) return;
   try {
     await invoke('library_update_note', { id, note: textarea.value });
-    statusEl.textContent = 'Saved';
+    statusEl.textContent = t('library.save.success');
     setTimeout(() => { statusEl.textContent = ''; }, 2000);
   } catch (e) {
-    statusEl.textContent = 'Error: ' + e;
+    statusEl.textContent = t('library.save.error', { error: e });
     statusEl.style.color = '#c00';
   }
 }
@@ -281,10 +282,10 @@ async function saveLibraryTags(id) {
   try {
     const tags = input.value.split(',').map(t => t.trim()).filter(t => t.length > 0);
     await invoke('library_set_tags', { id, tags });
-    statusEl.textContent = 'Saved';
+    statusEl.textContent = t('library.save.success');
     setTimeout(() => { statusEl.textContent = ''; }, 2000);
   } catch (e) {
-    statusEl.textContent = 'Error: ' + e;
+    statusEl.textContent = t('library.save.error', { error: e });
     statusEl.style.color = '#c00';
   }
 }
@@ -292,30 +293,30 @@ async function saveLibraryTags(id) {
 export async function exportLibrary() {
   try {
     const markdown = await invoke('library_export');
-    if (!markdown) { alert('Library is empty.'); return; }
+    if (!markdown) { alert(t('library.export.empty')); return; }
     downloadBlob(markdown, 'text/markdown', 'saved.md');
   } catch (e) {
-    alert('Export failed: ' + e);
+    alert(t('library.export.error', { error: e }));
   }
 }
 
 export async function exportLibraryJson() {
   try {
     const json = await invoke('library_export_json');
-    if (!json || json === '[]') { alert('Library is empty.'); return; }
+    if (!json || json === '[]') { alert(t('library.export.empty')); return; }
     downloadBlob(json, 'application/json', 'library.json');
   } catch (e) {
-    alert('Export failed: ' + e);
+    alert(t('library.export.error', { error: e }));
   }
 }
 
 export async function exportLibraryJsonl() {
   try {
     const jsonl = await invoke('library_export_jsonl');
-    if (!jsonl || jsonl.trim().split('\n').length <= 1) { alert('Library is empty.'); return; }
+    if (!jsonl || jsonl.trim().split('\n').length <= 1) { alert(t('library.export.empty')); return; }
     downloadBlob(jsonl, 'application/x-ndjson', 'library.jsonl');
   } catch (e) {
-    alert('Export failed: ' + e);
+    alert(t('library.export.error', { error: e }));
   }
 }
 
@@ -329,10 +330,10 @@ export async function importLibraryJsonl() {
     try {
       const text = await file.text();
       const count = await invoke('library_import_jsonl', { jsonl: text });
-      alert(`Imported ${count} item(s). Duplicates were skipped.`);
+      alert(t('library.import.success', { count }));
       loadLibrary();
     } catch (e) {
-      alert('Import failed: ' + e);
+      alert(t('library.import.error', { error: e }));
     }
   };
   input.click();
@@ -394,3 +395,10 @@ export function initLibraryHandlers() {
     });
   });
 }
+
+// Re-render on locale change
+document.addEventListener('locale-changed', () => {
+  if (document.getElementById('section-library')?.classList.contains('active')) {
+    loadLibrary();
+  }
+});

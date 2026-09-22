@@ -4,6 +4,7 @@ import { invoke } from './tauri.js';
 import { formatSize } from './ui.js';
 import { state } from './state.js';
 import { refreshLocalAiStatus } from './local_ai.js';
+import { t } from './i18n.js';
 
 const PROVIDER_DEFAULT_ENDPOINTS = {
   ollama: '127.0.0.1:11434',
@@ -35,24 +36,24 @@ export async function refreshModels(selectedModel) {
   const reachable = await invoke('check_provider', { provider, endpoint });
   if (!reachable) {
     dot.style.background = '#c00';
-    label.textContent = providerName + ' not reachable';
+    label.textContent = t('models.not.reachable', { provider: providerName });
     label.style.color = '#c00';
     listEl.textContent = '';
     const p = document.createElement('p');
     p.style.color = '#888';
     p.style.fontSize = '13px';
-    p.textContent = 'Start ' + providerName + ' and refresh.';
+    p.textContent = t('models.start.and.refresh', { provider: providerName });
     listEl.appendChild(p);
     selectEl.textContent = '';
     const autoOption = document.createElement('option');
     autoOption.value = '';
-    autoOption.textContent = provider === 'ollama' ? 'Auto (best available)' : 'Select a model';
+    autoOption.textContent = provider === 'ollama' ? t('models.auto.best') : t('models.select.model');
     selectEl.appendChild(autoOption);
     return;
   }
 
   dot.style.background = '#2a2';
-  label.textContent = providerName + ' running';
+  label.textContent = t('models.running', { provider: providerName });
   label.style.color = '#2a2';
 
   try {
@@ -62,12 +63,12 @@ export async function refreshModels(selectedModel) {
       const p = document.createElement('p');
       p.style.color = '#888';
       p.style.fontSize = '13px';
-      p.textContent = 'No models installed.';
+      p.textContent = t('models.none.installed');
       listEl.appendChild(p);
       selectEl.textContent = '';
       const autoOption = document.createElement('option');
       autoOption.value = '';
-      autoOption.textContent = provider === 'ollama' ? 'Auto (best available)' : 'Select a model';
+      autoOption.textContent = provider === 'ollama' ? t('models.auto.best') : t('models.select.model');
       selectEl.appendChild(autoOption);
       return;
     }
@@ -94,7 +95,7 @@ export async function refreshModels(selectedModel) {
         const span = document.createElement('span');
         span.style.color = '#0066cc';
         span.style.fontSize = '12px';
-        span.textContent = 'selected';
+        span.textContent = t('models.selected');
         tdStatus.appendChild(span);
       }
       tr.appendChild(tdStatus);
@@ -108,7 +109,7 @@ export async function refreshModels(selectedModel) {
     const autoOption = document.createElement('option');
     autoOption.value = '';
     // Ollama supports auto-selection; LM Studio requires explicit model selection
-    autoOption.textContent = provider === 'ollama' ? 'Auto (best available)' : 'Select a model';
+    autoOption.textContent = provider === 'ollama' ? t('models.auto.best') : t('models.select.model');
     selectEl.appendChild(autoOption);
 
     for (const m of models) {
@@ -124,7 +125,7 @@ export async function refreshModels(selectedModel) {
     listEl.textContent = '';
     const p = document.createElement('p');
     p.className = 'error';
-    p.textContent = 'Error: ' + String(e);
+    p.textContent = t('models.test.error', { error: String(e) });
     listEl.appendChild(p);
   }
 }
@@ -139,12 +140,12 @@ export async function testModel() {
     resultEl.textContent = '';
     const span = document.createElement('span');
     span.className = 'error';
-    span.textContent = 'Select a model first.';
+    span.textContent = t('models.select.first');
     resultEl.appendChild(span);
     return;
   }
   btn.disabled = true;
-  btn.textContent = 'Testing...';
+  btn.textContent = t('models.testing');
   resultEl.textContent = '';
   try {
     const result = await invoke('test_model', { provider, endpoint, model });
@@ -157,11 +158,11 @@ export async function testModel() {
   } catch (e) {
     const span = document.createElement('span');
     span.className = 'error';
-    span.textContent = 'Error: ' + String(e);
+    span.textContent = t('models.test.error', { error: String(e) });
     resultEl.appendChild(span);
   }
   btn.disabled = false;
-  btn.textContent = 'Test';
+  btn.textContent = t('models.test.button');
 }
 
 // Re-export for backward compatibility
