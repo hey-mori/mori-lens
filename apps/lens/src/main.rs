@@ -16,6 +16,7 @@ mod keeping;
 mod library_service;
 mod mori_transfer;
 mod settings_service;
+mod shared_orchestration;
 mod tauri_app;
 
 // -- Windows: the full product loop, in win.rs. --

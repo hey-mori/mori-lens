@@ -3510,7 +3510,8 @@ enum PresentationKind {
 /// Render a card on the overlay and update the on-screen state.
 ///
 /// This function handles rendering only. Callers that want to record the
-/// reading to history should call `record_presented_reading()` separately.
+/// reading to history should call `crate::shared_orchestration::record_presented_reading()`
+/// separately.
 ///
 /// `target_language` is the language the reading was produced for, bound at
 /// dispatch time. Feedback cards (which are not new readings) pass the
@@ -3535,105 +3536,6 @@ fn render_card(
         });
     }
     drawn
-}
-
-/// Record a presented reading to session-recent and persistent history.
-///
-/// Called explicitly by callers when `PresentationKind::Reading`. Feedback
-/// cards (copy/save confirmations, error messages) should not call this.
-///
-/// `target_language` is the language the reading was produced for, bound at
-/// dispatch time. History records this rather than the current settings
-/// language, so a later settings change cannot retroactively relabel a
-/// reading that was already shown.
-#[allow(clippy::too_many_arguments)]
-fn record_presented_reading(
-    card: &Card,
-    source_app: Option<&str>,
-    target_language: &str,
-    recent: &tauri_app::SharedRecent,
-    library: &library_service::SharedLibrary,
-    settings: &settings_service::SharedSettings,
-) {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    let app_name = source_app.map(str::to_owned);
-    let answer_text = match &card.body {
-        lens_core::card::CardBody::Translation(t) => t.clone(),
-        lens_core::card::CardBody::Analysis { translation, .. } => {
-            translation.clone().unwrap_or_default()
-        }
-        _ => String::new(),
-    };
-    if !answer_text.is_empty() {
-        let recent_card = lens_core::recent::RecentCard {
-            original: card.original.clone(),
-            answer: answer_text.clone(),
-            shown_at: now,
-            app: app_name.clone(),
-        };
-        recent.lock().unwrap().record(recent_card);
-    }
-
-    // Record to persistent history (ADR-0014 Tier 3).
-    // Only when the reader has turned it on; off means nothing is written.
-    {
-        let current = settings.lock().unwrap().current().clone();
-        if current.history {
-            let excluded = app_name
-                .as_ref()
-                .map(|name| {
-                    current
-                        .history_excluded
-                        .iter()
-                        .any(|ex| name.to_lowercase().contains(&ex.to_lowercase()))
-                })
-                .unwrap_or(false);
-            if !excluded && !answer_text.is_empty() {
-                let kind = match &card.body {
-                    lens_core::card::CardBody::Analysis { .. } => "analysis",
-                    _ => "translation",
-                };
-                let meta = card.metadata();
-                let provenance = match meta.map(|m| m.provenance) {
-                    Some(lens_core::card::CardProvenance::Ocr) => "ocr",
-                    _ => "accessibility",
-                };
-                let provider_scope = match meta.and_then(|m| m.provider_scope) {
-                    Some(lens_core::card::CardProviderScope::External) => "external",
-                    Some(lens_core::card::CardProviderScope::Local) => "local",
-                    None => "unknown",
-                };
-                let model = meta.and_then(|m| m.model.clone());
-                let provider = meta.and_then(|m| m.provider.map(|p| p.as_str().to_owned()));
-                let stored_app = if current.history_store_app {
-                    app_name
-                } else {
-                    None
-                };
-                let entry = lens_storage::HistoryEntry {
-                    id: 0,
-                    original: card.original.clone(),
-                    answer: answer_text,
-                    kind: kind.to_owned(),
-                    source_language: None,
-                    target_language: Some(target_language.to_owned()),
-                    model,
-                    provider,
-                    app: stored_app,
-                    provenance: provenance.to_owned(),
-                    provider_scope: provider_scope.to_owned(),
-                    created_at: now,
-                };
-                let lib = library.lock().unwrap();
-                if let Err(e) = lib.library().record_history(&entry) {
-                    eprintln!("  history   record failed: {e}");
-                }
-            }
-        }
-    }
 }
 
 /// Show a card on the overlay with the specified presentation kind.
@@ -3676,7 +3578,7 @@ fn show_card(
     if drawn {
         match kind {
             PresentationKind::Reading => {
-                record_presented_reading(
+                crate::shared_orchestration::record_presented_reading(
                     &card,
                     source_app,
                     target_language,
