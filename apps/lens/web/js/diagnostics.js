@@ -9,9 +9,9 @@ export async function loadAbout() {
     const diag = await invoke('get_diagnostics');
     const el = document.getElementById('about-content');
     el.innerHTML = '<table>' +
-      '<tr><td>Version</td><td>' + (diag.version || 'unknown') + '</td></tr>' +
-      '<tr><td>Build</td><td>' + (diag.build || 'unknown') + '</td></tr>' +
-      '<tr><td>Data location</td><td>%APPDATA%\\Mori Lens\\</td></tr>' +
+      '<tr><td>' + escapeHtml(t('about.version')) + '</td><td>' + escapeHtml(diag.version || t('about.unknown')) + '</td></tr>' +
+      '<tr><td>' + escapeHtml(t('about.build')) + '</td><td>' + escapeHtml(diag.build || t('about.unknown')) + '</td></tr>' +
+      '<tr><td>' + escapeHtml(t('about.data.location')) + '</td><td>%APPDATA%\\Mori Lens\\</td></tr>' +
       '</table>';
   } catch (e) {
     console.error('loadAbout failed:', e);

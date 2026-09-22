@@ -62,6 +62,7 @@ export const translations = {
     'common.search': 'Search',
     'common.clear': 'Clear',
     'common.all': 'All',
+    'common.filter.all': 'All',
     'common.test': 'Test',
 
     // Review
@@ -174,6 +175,10 @@ export const translations = {
 
     // About
     'about.title': 'About',
+    'about.version': 'Version',
+    'about.build': 'Build',
+    'about.data.location': 'Data location',
+    'about.unknown': 'unknown',
     'about.danger.zone': 'Danger zone',
     'about.danger.zone.description': 'Permanently delete all library and history data. This runs a secure wipe (WAL checkpoint, secure_delete, DELETE, VACUUM). Library items and persistent history are removed. saved.md and exports you have made are not affected. This does not reach filesystem snapshots, drive controller remapped blocks, or backups.',
     'about.danger.zone.button': 'Delete all library and history data',
@@ -182,9 +187,6 @@ export const translations = {
     'interface.language': 'Interface language',
     'interface.language.en': 'English',
     'interface.language.ko': '한국어',
-
-    // Dynamic strings - Apps
-    'apps.empty': 'No per-application rules.',
 
     // Dynamic strings - History
     'history.persistent.enabled': 'Persistent History enabled · Retention: {days} days',
@@ -196,6 +198,16 @@ export const translations = {
     'history.prune.confirm': 'Prune history entries older than {days} days?',
     'history.prune.success': 'Pruned {count} entries.',
     'history.error': 'Error: {error}',
+    'history.promote.title': 'Save to library',
+    'history.promote.button': 'Save',
+    'history.delete.title': 'Delete',
+    'history.load.more': 'Load more',
+    'history.provenance.ocr': 'OCR (screen reading)',
+    'history.provenance.accessibility': 'Accessibility API',
+    'history.provenance.unknown': 'Unknown',
+    'history.provider.external': 'External provider (text left machine)',
+    'history.provider.local': 'Local inference',
+    'history.provider.unknown': 'Unknown provider',
 
     // Dynamic strings - Review
     'review.empty': 'No items for later review. Save items to see them here.',
@@ -224,6 +236,8 @@ export const translations = {
     'library.tags.placeholder': 'comma, separated, tags',
     'library.save.tags': 'Save tags',
     'library.mori.confirm': 'Send to Mori?\n\nOriginal: {original}\n\nAnswer: {answer}\n\nKind: {kind}',
+    'library.note.prefix': '\nNote: ',
+    'library.tags.prefix': '\nTags: ',
     'library.detail.not.found': 'Item not found.',
     'library.save.success': 'Saved',
     'library.save.error': 'Error: {error}',
@@ -249,13 +263,10 @@ export const translations = {
     'diagnostics.delete.confirm.2': 'Are you absolutely sure? All saved items, notes, tags, review progress, and persistent history will be permanently deleted.',
     'diagnostics.delete.success': 'All library data has been deleted.',
     'diagnostics.delete.error': 'Secure wipe failed: {error}',
-    'diagnostics.clipboard.failure': '클립보드 복사 실패: {error}',
+    'diagnostics.clipboard.failure': 'Clipboard copy failed: {error}',
     'diagnostics.copied.short': 'Copied',
     'diagnostics.failed.short': 'Failed',
     'diagnostics.copy.button': 'Copy',
-
-    // Dynamic strings - Recent
-    'recent.empty.state': 'No recent cards.',
 
     // Dynamic strings - Models
     'models.not.reachable': '{provider} not reachable',
@@ -354,6 +365,8 @@ export const translations = {
     'settings.shortcuts.pin': 'Pin Card',
     'settings.shortcuts.optional': '(optional)',
     'settings.shortcuts.default.restored': 'Defaults restored · Click Save to apply',
+    'settings.shortcuts.default.prefix': 'Default: {shortcut}',
+    'settings.shortcuts.example': 'e.g. Ctrl+Alt+P',
   },
 
   ko: {
@@ -416,6 +429,7 @@ export const translations = {
     'common.search': '검색',
     'common.clear': '지우기',
     'common.all': '전체',
+    'common.filter.all': '전체',
     'common.test': '테스트',
 
     // Review
@@ -528,6 +542,10 @@ export const translations = {
 
     // About
     'about.title': '정보',
+    'about.version': '버전',
+    'about.build': '빌드',
+    'about.data.location': '데이터 위치',
+    'about.unknown': '알 수 없음',
     'about.danger.zone': '위험 구역',
     'about.danger.zone.description': '모든 라이브러리 및 기록 데이터를 영구 삭제합니다. 안전한 삭제(WAL 체크포인트, secure_delete, DELETE, VACUUM)를 실행합니다. 라이브러리 항목과 영구 기록이 제거됩니다. saved.md와 만든 내보내기는 영향을 받지 않습니다. 파일시스템 스냅샷, 드라이브 컨트롤러 매핑 블록, 백업에는 영향을 주지 않습니다.',
     'about.danger.zone.button': '모든 라이브러리 및 기록 데이터 삭제',
@@ -536,9 +554,6 @@ export const translations = {
     'interface.language': '인터페이스 언어',
     'interface.language.en': 'English',
     'interface.language.ko': '한국어',
-
-    // Dynamic strings - Apps
-    'apps.empty': '앱별 규칙이 없습니다.',
 
     // Dynamic strings - History
     'history.persistent.enabled': '영구 기록 사용 중 · 보관 기간: {days}일',
@@ -550,6 +565,16 @@ export const translations = {
     'history.prune.confirm': '{days}일보다 오래된 기록 항목을 정리하시겠습니까?',
     'history.prune.success': '{count}개 항목을 정리했습니다.',
     'history.error': '오류: {error}',
+    'history.promote.title': '라이브러리에 저장',
+    'history.promote.button': '저장',
+    'history.delete.title': '삭제',
+    'history.load.more': '더 불러오기',
+    'history.provenance.ocr': 'OCR (화면 읽기)',
+    'history.provenance.accessibility': '접근성 API',
+    'history.provenance.unknown': '알 수 없음',
+    'history.provider.external': '외부 제공자 (텍스트가 기기를 떠남)',
+    'history.provider.local': '로컬 추론',
+    'history.provider.unknown': '알 수 없는 제공자',
 
     // Dynamic strings - Review
     'review.empty': '나중에 검토할 항목이 없습니다. 여기에 표시하려면 항목을 저장하세요.',
@@ -578,6 +603,8 @@ export const translations = {
     'library.tags.placeholder': '쉼표로 구분된 태그',
     'library.save.tags': '태그 저장',
     'library.mori.confirm': 'Mori로 전송하시겠습니까?\n\n원본: {original}\n\n답변: {answer}\n\n유형: {kind}',
+    'library.note.prefix': '\n노트: ',
+    'library.tags.prefix': '\n태그: ',
     'library.detail.not.found': '항목을 찾을 수 없습니다.',
     'library.save.success': '저장됨',
     'library.save.error': '오류: {error}',
@@ -605,15 +632,7 @@ export const translations = {
     'recent.empty.state': '최근 카드 없음.',
     'recent.error': '오류: {error}',
 
-    // Dynamic strings - Diagnostics
-    'diagnostics.copy.success': '복사됨!',
-    'diagnostics.copy.failure': '복사 실패',
-    'diagnostics.export.error': '진단 정보 내보내기 실패: {error}',
-    'diagnostics.delete.confirm.1': '모든 라이브러리 및 기록 데이터를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.\n\n데이터베이스를 안전하게 삭제합니다(WAL 체크포인트, secure_delete, DELETE, VACUUM). 라이브러리 항목과 영구 기록이 제거됩니다. saved.md와 내보내기는 영향을 받지 않습니다. 파일시스템 스냅샷, 백업 또는 만든 내보내기에는 영향을 주지 않습니다.',
-    'diagnostics.delete.confirm.2': '정말 확실하신가요? 저장된 모든 항목, 노트, 태그, 검토 진행 상황, 영구 기록이 영구 삭제됩니다.',
-    'diagnostics.delete.success': '모든 라이브러리 데이터가 삭제되었습니다.',
-    'diagnostics.delete.error': '안전한 삭제 실패: {error}',
-    'diagnostics.clipboard.failure': '클립보드 복사 실패: {error}',
+    // Dynamic strings - Diagnostics (additional)
     'diagnostics.copied.short': '복사됨',
     'diagnostics.failed.short': '실패',
     'diagnostics.copy.button': '복사',
@@ -715,6 +734,8 @@ export const translations = {
     'settings.shortcuts.pin': '카드 고정',
     'settings.shortcuts.optional': '(선택사항)',
     'settings.shortcuts.default.restored': '기본값 복원됨 · 적용하려면 저장을 클릭하세요',
+    'settings.shortcuts.default.prefix': '기본값: {shortcut}',
+    'settings.shortcuts.example': '예: Ctrl+Alt+P',
   },
 };
 

@@ -179,7 +179,7 @@ function renderShortcuts(shortcuts) {
     input.id = inputId;
     input.dataset.shortcutAction = action;
     input.value = shortcut || '';
-    input.placeholder = default_shortcut ? `Default: ${default_shortcut}` : 'e.g. Ctrl+Alt+P';
+    input.placeholder = default_shortcut ? t('settings.shortcuts.default.prefix', { shortcut: default_shortcut }) : t('settings.shortcuts.example');
     input.style.fontFamily = 'monospace';
 
     // Add hint for unbindable actions
