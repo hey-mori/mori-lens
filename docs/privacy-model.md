@@ -393,7 +393,7 @@ Claims are worth what a user can check.
 
 ## 6. Current state
 
-Updated 2026-08-04, when `apps/lens` began to exist. The previous
+Updated 2026-09-22. The previous
 version of this section described the probe and said "makes no network
 call", which stopped being true the moment the app called a local provider. A
 privacy document that has gone stale is worse than none, because it is
