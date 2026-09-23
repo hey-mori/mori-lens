@@ -263,6 +263,113 @@ impl LmStudioRuntime {
             _ => Err(ManagementError::InvalidResponse),
         }
     }
+
+    /// Load a model into memory for inference.
+    ///
+    /// Sends POST /api/v1/models/load with the model identifier.
+    /// Returns the instance_id assigned by LM Studio, which must be used
+    /// for unloading. Mori Lens becomes the owner of this instance.
+    pub fn load_model(&self, model: &str) -> Result<String, ManagementError> {
+        let body = crate::json::object(&[("model", crate::json::Value::Str(model))]);
+
+        let (status, response_body) = if let Some(token) = &self.api_token {
+            match crate::http::post_with_auth(
+                &self.endpoint,
+                "/api/v1/models/load",
+                &body,
+                std::time::Duration::from_secs(60),
+                token,
+            ) {
+                Ok(result) => result,
+                Err(e) => return Err(map_translate_error(e)),
+            }
+        } else {
+            match crate::http::post(
+                &self.endpoint,
+                "/api/v1/models/load",
+                &body,
+                std::time::Duration::from_secs(60),
+            ) {
+                Ok(result) => result,
+                Err(e) => return Err(map_translate_error(e)),
+            }
+        };
+
+        // Map HTTP errors to ManagementError.
+        if status == 401 || status == 403 {
+            return Err(ManagementError::Unauthorized);
+        }
+        if status == 404 {
+            return Err(ManagementError::ModelNotFound);
+        }
+        if !(200..=299).contains(&status) {
+            return Err(ManagementError::LoadFailed);
+        }
+
+        // Parse the response to extract instance_id.
+        let response: LoadResponse =
+            serde_json::from_str(&response_body).map_err(|_| ManagementError::InvalidResponse)?;
+
+        // instance_id is required for unloading.
+        response
+            .instance_id
+            .filter(|id| !id.is_empty())
+            .ok_or(ManagementError::InvalidResponse)
+    }
+
+    /// Unload a model from memory.
+    ///
+    /// Sends POST /api/v1/models/unload with the instance_id.
+    /// Only instances created by Mori Lens should be unloaded.
+    /// Never unload instances that existed before Mori started.
+    pub fn unload_model(&self, instance_id: &str) -> Result<(), ManagementError> {
+        // Validate instance_id to prevent path injection.
+        // LM Studio instance IDs are opaque strings; permit only safe characters.
+        if !instance_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(ManagementError::InvalidResponse);
+        }
+
+        let body = crate::json::object(&[("instance_id", crate::json::Value::Str(instance_id))]);
+
+        let (status, _response_body) = if let Some(token) = &self.api_token {
+            match crate::http::post_with_auth(
+                &self.endpoint,
+                "/api/v1/models/unload",
+                &body,
+                std::time::Duration::from_secs(30),
+                token,
+            ) {
+                Ok(result) => result,
+                Err(e) => return Err(map_translate_error(e)),
+            }
+        } else {
+            match crate::http::post(
+                &self.endpoint,
+                "/api/v1/models/unload",
+                &body,
+                std::time::Duration::from_secs(30),
+            ) {
+                Ok(result) => result,
+                Err(e) => return Err(map_translate_error(e)),
+            }
+        };
+
+        // Map HTTP errors.
+        if status == 401 || status == 403 {
+            return Err(ManagementError::Unauthorized);
+        }
+        if status == 404 {
+            return Err(ManagementError::ModelNotFound);
+        }
+        if !(200..=299).contains(&status) {
+            return Err(ManagementError::UnloadFailed);
+        }
+
+        Ok(())
+    }
 }
 
 /// Map a TranslateError to a ManagementError.
@@ -316,6 +423,13 @@ struct DownloadStatusResponse {
     total_size_bytes: Option<u64>,
     #[serde(rename = "bytes_per_second")]
     bytes_per_second: Option<f64>,
+}
+
+/// LM Studio load response.
+#[derive(Debug, Deserialize)]
+struct LoadResponse {
+    #[serde(rename = "model_instance_id")]
+    instance_id: Option<String>,
 }
 
 impl ProviderRuntime for LmStudioRuntime {
@@ -1432,5 +1546,158 @@ mod tests {
         let result = runtime.download_status("dl-auth").unwrap();
 
         assert_eq!(result, DownloadStatus::Completed);
+    }
+
+    // ========== Load/unload operations contract tests ==========
+
+    #[test]
+    fn load_model_returns_instance_id_on_success() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            r#"{"model_instance_id": "inst_abc123"}"#,
+        )
+        .expect_post("/api/v1/models/load")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.load_model("llama-3.1-8b").unwrap();
+
+        assert_eq!(result, "inst_abc123");
+    }
+
+    #[test]
+    fn load_model_returns_error_when_unauthorized() {
+        let server = FakeServer::start(vec![
+            FakeResponse::status(401).expect_post("/api/v1/models/load")
+        ]);
+
+        let runtime = LmStudioRuntime::with_token(server.address(), "bad-token");
+        let result = runtime.load_model("llama-3.1-8b");
+
+        assert_eq!(result, Err(ManagementError::Unauthorized));
+    }
+
+    #[test]
+    fn load_model_returns_error_when_model_not_found() {
+        let server = FakeServer::start(vec![
+            FakeResponse::status(404).expect_post("/api/v1/models/load")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.load_model("nonexistent-model");
+
+        assert_eq!(result, Err(ManagementError::ModelNotFound));
+    }
+
+    #[test]
+    fn load_model_returns_error_when_missing_instance_id() {
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(r#"{"success": true}"#).expect_post("/api/v1/models/load")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.load_model("llama-3.1-8b");
+
+        assert_eq!(result, Err(ManagementError::InvalidResponse));
+    }
+
+    #[test]
+    fn load_model_returns_error_when_empty_instance_id() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(r#"{"model_instance_id": ""}"#)
+            .expect_post("/api/v1/models/load")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.load_model("llama-3.1-8b");
+
+        assert_eq!(result, Err(ManagementError::InvalidResponse));
+    }
+
+    #[test]
+    fn load_model_returns_error_when_unreachable() {
+        let runtime = LmStudioRuntime::new("127.0.0.1:1");
+        let result = runtime.load_model("llama-3.1-8b");
+
+        assert_eq!(result, Err(ManagementError::EndpointUnreachable));
+    }
+
+    #[test]
+    fn load_model_sends_auth_header_when_token_configured() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            r#"{"model_instance_id": "inst_auth"}"#,
+        )
+        .expect_post("/api/v1/models/load")
+        .expect_header("Authorization", "Bearer secret-token")]);
+
+        let runtime = LmStudioRuntime::with_token(server.address(), "secret-token");
+        let result = runtime.load_model("llama-3.1-8b").unwrap();
+
+        assert_eq!(result, "inst_auth");
+    }
+
+    #[test]
+    fn unload_model_succeeds_on_2xx() {
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(r#"{"success": true}"#).expect_post("/api/v1/models/unload")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.unload_model("inst_abc123");
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn unload_model_returns_error_when_unauthorized() {
+        let server = FakeServer::start(vec![
+            FakeResponse::status(403).expect_post("/api/v1/models/unload")
+        ]);
+
+        let runtime = LmStudioRuntime::with_token(server.address(), "bad-token");
+        let result = runtime.unload_model("inst_abc123");
+
+        assert_eq!(result, Err(ManagementError::Unauthorized));
+    }
+
+    #[test]
+    fn unload_model_returns_error_when_instance_not_found() {
+        let server = FakeServer::start(vec![
+            FakeResponse::status(404).expect_post("/api/v1/models/unload")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.unload_model("nonexistent");
+
+        assert_eq!(result, Err(ManagementError::ModelNotFound));
+    }
+
+    #[test]
+    fn unload_model_rejects_invalid_instance_id_characters() {
+        let runtime = LmStudioRuntime::new("127.0.0.1:1");
+        // Path injection attempt must be rejected before any HTTP call.
+        let result = runtime.unload_model("../etc/passwd");
+
+        assert_eq!(result, Err(ManagementError::InvalidResponse));
+    }
+
+    #[test]
+    fn unload_model_accepts_safe_instance_id_characters() {
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(r#"{"success": true}"#).expect_post("/api/v1/models/unload")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.unload_model("inst-abc_123_DEF");
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn unload_model_sends_auth_header_when_token_configured() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(r#"{"success": true}"#)
+            .expect_post("/api/v1/models/unload")
+            .expect_header("Authorization", "Bearer my-token")]);
+
+        let runtime = LmStudioRuntime::with_token(server.address(), "my-token");
+        let result = runtime.unload_model("inst_auth");
+
+        assert!(result.is_ok());
     }
 }
