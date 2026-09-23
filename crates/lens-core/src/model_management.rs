@@ -1,0 +1,296 @@
+//! Model management types for provider setup.
+//!
+//! Types for tracking model download progress and managing download operations.
+//! P20 first-card/provider readiness.
+//!
+//! These types are provider-neutral. The platform adapter converts provider-specific
+//! JSON shapes (Ollama streaming progress, LM Studio job status) into these types.
+//!
+//! For installed model inventory, use `lens_core::translate::ModelInfo` which is
+//! returned by `ProviderRuntime::list_models()`.
+
+use serde::{Deserialize, Serialize};
+
+/// Progress of a model download operation.
+///
+/// Provider-neutral representation. Adapters convert provider-specific
+/// progress fields into this shape.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DownloadProgress {
+    /// Bytes downloaded so far.
+    pub bytes_downloaded: u64,
+    /// Total bytes to download (None if unknown).
+    pub total_bytes: Option<u64>,
+    /// Download rate in bytes per second (provider-computed or adapter-computed).
+    /// None if rate cannot be determined.
+    pub bytes_per_second: Option<f64>,
+    /// Estimated seconds until completion.
+    /// Derived from bytes_per_second and remaining bytes.
+    /// None if ETA cannot be determined.
+    pub estimated_completion_seconds: Option<f64>,
+}
+
+impl DownloadProgress {
+    /// Create a new download progress with known total.
+    pub fn new(bytes_downloaded: u64, total_bytes: u64) -> Self {
+        Self {
+            bytes_downloaded,
+            total_bytes: Some(total_bytes),
+            bytes_per_second: None,
+            estimated_completion_seconds: None,
+        }
+    }
+
+    /// Create a new download progress with unknown total.
+    pub fn unknown_total(bytes_downloaded: u64) -> Self {
+        Self {
+            bytes_downloaded,
+            total_bytes: None,
+            bytes_per_second: None,
+            estimated_completion_seconds: None,
+        }
+    }
+
+    /// Set the download rate.
+    pub fn with_rate(mut self, bytes_per_second: f64) -> Self {
+        self.bytes_per_second = Some(bytes_per_second);
+        // Compute ETA if we have total.
+        if let Some(total) = self.total_bytes {
+            let remaining = total.saturating_sub(self.bytes_downloaded);
+            if bytes_per_second > 0.0 && bytes_per_second.is_finite() {
+                self.estimated_completion_seconds = Some(remaining as f64 / bytes_per_second);
+            }
+        }
+        self
+    }
+
+    /// Calculate the download percentage (0.0 to 100.0).
+    /// Returns None if total_bytes is unknown or zero (malformed).
+    /// Clamped to 0..=100 for presentation safety.
+    pub fn percentage(&self) -> Option<f64> {
+        self.total_bytes.and_then(|total| {
+            if total == 0 {
+                None // Malformed or incomplete provider progress
+            } else {
+                let pct = (self.bytes_downloaded as f64 / total as f64) * 100.0;
+                Some(pct.clamp(0.0, 100.0))
+            }
+        })
+    }
+
+    /// Check if the download is complete.
+    /// Only returns true when status is terminal Completed, not from byte arithmetic alone.
+    pub fn is_complete(&self) -> bool {
+        match self.total_bytes {
+            Some(total) if total > 0 => self.bytes_downloaded >= total,
+            _ => false,
+        }
+    }
+}
+
+/// Normalized download status.
+///
+/// Provider-neutral states that cover both Ollama and LM Studio download flows.
+/// Adapters map provider-specific states into these variants.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DownloadStatus {
+    /// Download request has been submitted but no data received yet.
+    Starting,
+    /// Download is in progress.
+    Downloading(DownloadProgress),
+    /// Download is paused (provider supports pause/resume).
+    /// LM Studio may report this state.
+    Paused(DownloadProgress),
+    /// Download completed successfully.
+    Completed,
+    /// Model was already present locally before the download request.
+    /// Ollama returns this when POST /api/pull is called for an existing model.
+    /// LM Studio: already_downloaded.
+    AlreadyPresent,
+    /// Download failed with a typed error.
+    Failed(ManagementError),
+}
+
+impl Default for DownloadStatus {
+    fn default() -> Self {
+        Self::Starting
+    }
+}
+
+/// Typed management operation error.
+///
+/// Closed enum to prevent raw provider error bodies from leaking into
+/// privacy-sensitive surfaces.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagementError {
+    /// Provider endpoint is not reachable.
+    EndpointUnreachable,
+    /// Provider requires authentication but none was provided or it was invalid.
+    Unauthorized,
+    /// Requested model was not found.
+    ModelNotFound,
+    /// Provider returned an invalid or malformed response.
+    InvalidResponse,
+    /// Download operation failed.
+    DownloadFailed,
+    /// Load operation failed.
+    LoadFailed,
+    /// Unload operation failed.
+    UnloadFailed,
+    /// Operation is not supported by this provider.
+    UnsupportedOperation,
+    /// Provider is busy or rate-limited.
+    ProviderBusy,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn download_progress_percentage_known_total() {
+        let progress = DownloadProgress::new(50, 100);
+        assert_eq!(progress.percentage(), Some(50.0));
+    }
+
+    #[test]
+    fn download_progress_percentage_unknown_total() {
+        let progress = DownloadProgress::unknown_total(50);
+        assert_eq!(progress.percentage(), None);
+    }
+
+    #[test]
+    fn download_progress_percentage_zero_total_is_none() {
+        // Zero total is malformed, not 100%
+        let progress = DownloadProgress::new(0, 0);
+        assert_eq!(progress.percentage(), None);
+    }
+
+    #[test]
+    fn download_progress_percentage_clamped_to_100() {
+        // bytes_downloaded > total (malformed or in-flight) clamps to 100
+        let progress = DownloadProgress::new(150, 100);
+        assert_eq!(progress.percentage(), Some(100.0));
+    }
+
+    #[test]
+    fn download_progress_percentage_clamped_to_0() {
+        // Negative would be impossible with u64, but test the clamp
+        let progress = DownloadProgress::new(0, 100);
+        assert_eq!(progress.percentage(), Some(0.0));
+    }
+
+    #[test]
+    fn download_progress_is_complete_only_with_positive_total() {
+        let progress = DownloadProgress::new(100, 100);
+        assert!(progress.is_complete());
+
+        let incomplete = DownloadProgress::new(50, 100);
+        assert!(!incomplete.is_complete());
+
+        let unknown = DownloadProgress::unknown_total(50);
+        assert!(!unknown.is_complete());
+
+        // Zero total is not complete
+        let zero_total = DownloadProgress::new(0, 0);
+        assert!(!zero_total.is_complete());
+    }
+
+    #[test]
+    fn download_progress_with_rate_computes_eta() {
+        let progress = DownloadProgress::new(50, 100).with_rate(10.0);
+        assert_eq!(progress.bytes_per_second, Some(10.0));
+        assert_eq!(progress.estimated_completion_seconds, Some(5.0));
+    }
+
+    #[test]
+    fn download_progress_with_rate_unknown_total_no_eta() {
+        let progress = DownloadProgress::unknown_total(50).with_rate(10.0);
+        assert_eq!(progress.bytes_per_second, Some(10.0));
+        assert_eq!(progress.estimated_completion_seconds, None);
+    }
+
+    #[test]
+    fn download_progress_with_rate_rejects_nan() {
+        let progress = DownloadProgress::new(50, 100).with_rate(f64::NAN);
+        assert!(progress.bytes_per_second.unwrap().is_nan());
+        assert_eq!(progress.estimated_completion_seconds, None);
+    }
+
+    #[test]
+    fn download_progress_with_rate_rejects_infinity() {
+        let progress = DownloadProgress::new(50, 100).with_rate(f64::INFINITY);
+        assert_eq!(progress.bytes_per_second, Some(f64::INFINITY));
+        assert_eq!(progress.estimated_completion_seconds, None);
+    }
+
+    #[test]
+    fn download_progress_with_rate_rejects_zero() {
+        let progress = DownloadProgress::new(50, 100).with_rate(0.0);
+        assert_eq!(progress.bytes_per_second, Some(0.0));
+        assert_eq!(progress.estimated_completion_seconds, None);
+    }
+
+    #[test]
+    fn download_progress_with_rate_rejects_negative() {
+        let progress = DownloadProgress::new(50, 100).with_rate(-10.0);
+        assert_eq!(progress.bytes_per_second, Some(-10.0));
+        assert_eq!(progress.estimated_completion_seconds, None);
+    }
+
+    #[test]
+    fn download_status_default_is_starting() {
+        let status = DownloadStatus::default();
+        assert_eq!(status, DownloadStatus::Starting);
+    }
+
+    #[test]
+    fn download_status_all_variants_exist() {
+        // Verify all normalized states exist.
+        let _starting = DownloadStatus::Starting;
+        let _downloading = DownloadStatus::Downloading(DownloadProgress::new(50, 100));
+        let _paused = DownloadStatus::Paused(DownloadProgress::new(50, 100));
+        let _completed = DownloadStatus::Completed;
+        let _already_present = DownloadStatus::AlreadyPresent;
+        let _failed = DownloadStatus::Failed(ManagementError::DownloadFailed);
+    }
+
+    #[test]
+    fn management_error_variants_are_closed() {
+        // Verify all error variants exist and serialize.
+        let errors = vec![
+            ManagementError::EndpointUnreachable,
+            ManagementError::Unauthorized,
+            ManagementError::ModelNotFound,
+            ManagementError::InvalidResponse,
+            ManagementError::DownloadFailed,
+            ManagementError::LoadFailed,
+            ManagementError::UnloadFailed,
+            ManagementError::UnsupportedOperation,
+            ManagementError::ProviderBusy,
+        ];
+        for error in errors {
+            let json = serde_json::to_string(&error).unwrap();
+            assert!(!json.is_empty());
+        }
+    }
+
+    #[test]
+    fn download_status_serializes_to_snake_case() {
+        let status = DownloadStatus::Downloading(DownloadProgress::new(50, 100));
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(json.contains("downloading"));
+    }
+
+    #[test]
+    fn download_progress_serializes_all_fields() {
+        let progress = DownloadProgress::new(50, 100).with_rate(10.0);
+        let json = serde_json::to_string(&progress).unwrap();
+        assert!(json.contains("\"bytes_downloaded\":50"));
+        assert!(json.contains("\"total_bytes\":100"));
+        assert!(json.contains("\"bytes_per_second\":10.0"));
+        assert!(json.contains("\"estimated_completion_seconds\":5.0"));
+    }
+}
