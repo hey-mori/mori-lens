@@ -23,22 +23,6 @@ pub enum HealthState {
     Degraded,
     /// Engine could not be reached or failed.
     Unavailable,
-    /// Provider runtime not installed on the system.
-    RuntimeNotInstalled,
-    /// Provider runtime installed but not running.
-    RuntimeInstalledButStopped,
-    /// Provider endpoint unreachable (network error or not listening).
-    EndpointUnreachable,
-    /// Provider reachable but no compatible model available.
-    NoCompatibleModel,
-    /// Model is currently downloading.
-    ModelDownloading,
-    /// Model downloaded but not yet loaded into memory.
-    ModelPresent,
-    /// Model is loading into memory.
-    ModelLoading,
-    /// Model is loaded and ready for inference.
-    ModelReady,
 }
 
 /// Health information for a single engine lane.
