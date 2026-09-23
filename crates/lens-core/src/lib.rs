@@ -41,6 +41,7 @@ pub mod panel;
 pub mod policy;
 pub mod provider_capability;
 pub mod reach;
+pub mod readiness;
 pub mod recent;
 pub mod session;
 pub mod settings;
