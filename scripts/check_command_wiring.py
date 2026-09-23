@@ -216,6 +216,11 @@ def check_command_wiring(root: Path) -> list[str]:
     # Allowlist: commands intentionally not invoked from main webviews
     # Each entry must have a reason
     allowlist = {
+        # P20B backend commands (UI integration in later milestone)
+        "get_model_download_status",
+        "start_quick_model_download",
+        "load_lmstudio_instance",
+        "unload_lmstudio_instance",
         # Add commands here if they're invoked from external tools,
         # test harnesses, or other non-webview contexts
     }
