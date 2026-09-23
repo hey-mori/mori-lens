@@ -45,6 +45,7 @@ pub mod lmstudio_fixtures;
 pub mod lmstudio_runtime;
 pub mod lmstudio_translator;
 pub mod ollama_runtime;
+pub mod operation_manager;
 
 #[cfg(test)]
 mod deep_eval;
