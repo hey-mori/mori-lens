@@ -25,6 +25,22 @@
 //! `Authorization: Bearer <token>` header. When configured, the token is sent
 //! with every request. When not configured, requests are sent without
 //! authentication (suitable for loopback-only usage).
+//!
+//! # Model Loading
+//!
+//! LM Studio supports Just-In-Time (JIT) model loading, where downloaded models
+//! are loaded on demand when inference is requested. Whether explicit loading
+//! via `load_model()` is required depends on the server's JIT configuration:
+//!
+//! - **JIT enabled** (default): Downloaded models are loaded automatically when
+//!   inference is requested. Explicit `load_model()` is optional but can be used
+//!   to pre-load models for faster first inference.
+//! - **JIT disabled**: Models must be explicitly loaded via `load_model()` before
+//!   inference. Unloaded models will not be available for inference.
+//!
+//! The `load_model()` method returns an `instance_id` that must be used for
+//! unloading. Only instances created by Mori should be unloaded (ownership
+//! tracking is enforced by the operation manager, not this low-level runtime).
 
 use lens_core::model_management::{DownloadProgress, DownloadStatus, ManagementError};
 use lens_core::translate::{
@@ -269,6 +285,12 @@ impl LmStudioRuntime {
     /// Sends POST /api/v1/models/load with the model identifier.
     /// Returns the instance_id assigned by LM Studio, which must be used
     /// for unloading. Mori Lens becomes the owner of this instance.
+    ///
+    /// LM Studio load response includes:
+    /// - instance_id: the assigned instance identifier
+    /// - status: must be "loaded" for success
+    /// - type: model type (e.g., "llm")
+    /// - load_time_seconds: time taken to load
     pub fn load_model(&self, model: &str) -> Result<String, ManagementError> {
         let body = crate::json::object(&[("model", crate::json::Value::Str(model))]);
 
@@ -306,9 +328,14 @@ impl LmStudioRuntime {
             return Err(ManagementError::LoadFailed);
         }
 
-        // Parse the response to extract instance_id.
+        // Parse the response to extract instance_id and validate status.
         let response: LoadResponse =
             serde_json::from_str(&response_body).map_err(|_| ManagementError::InvalidResponse)?;
+
+        // Validate status is "loaded".
+        if response.status.as_deref() != Some("loaded") {
+            return Err(ManagementError::InvalidResponse);
+        }
 
         // instance_id is required for unloading.
         response
@@ -322,13 +349,14 @@ impl LmStudioRuntime {
     /// Sends POST /api/v1/models/unload with the instance_id.
     /// Only instances created by Mori Lens should be unloaded.
     /// Never unload instances that existed before Mori started.
+    ///
+    /// Note: instance_id is sent in JSON body, not URL path, so
+    /// path-injection validation is not required. We still validate
+    /// that it's non-empty for safety.
     pub fn unload_model(&self, instance_id: &str) -> Result<(), ManagementError> {
-        // Validate instance_id to prevent path injection.
-        // LM Studio instance IDs are opaque strings; permit only safe characters.
-        if !instance_id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        {
+        // Validate that instance_id is non-empty.
+        // Character validation is not needed since it's in JSON body, not URL path.
+        if instance_id.is_empty() {
             return Err(ManagementError::InvalidResponse);
         }
 
@@ -426,10 +454,20 @@ struct DownloadStatusResponse {
 }
 
 /// LM Studio load response.
+///
+/// Official v1 API response shape includes:
+/// - instance_id: the assigned instance identifier
+/// - status: "loaded" on success
+/// - type: model type (e.g., "llm")
+/// - load_time_seconds: time taken to load
 #[derive(Debug, Deserialize)]
 struct LoadResponse {
-    #[serde(rename = "model_instance_id")]
     instance_id: Option<String>,
+    status: Option<String>,
+    #[serde(rename = "type")]
+    _model_type: Option<String>,
+    #[allow(dead_code)]
+    load_time_seconds: Option<f64>,
 }
 
 impl ProviderRuntime for LmStudioRuntime {
@@ -1553,7 +1591,7 @@ mod tests {
     #[test]
     fn load_model_returns_instance_id_on_success() {
         let server = FakeServer::start(vec![FakeResponse::ok_json(
-            r#"{"model_instance_id": "inst_abc123"}"#,
+            r#"{"instance_id": "inst_abc123", "status": "loaded", "type": "llm", "load_time_seconds": 1.5}"#,
         )
         .expect_post("/api/v1/models/load")]);
 
@@ -1561,6 +1599,19 @@ mod tests {
         let result = runtime.load_model("llama-3.1-8b").unwrap();
 
         assert_eq!(result, "inst_abc123");
+    }
+
+    #[test]
+    fn load_model_returns_error_when_status_not_loaded() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            r#"{"instance_id": "inst_abc123", "status": "loading"}"#,
+        )
+        .expect_post("/api/v1/models/load")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.load_model("llama-3.1-8b");
+
+        assert_eq!(result, Err(ManagementError::InvalidResponse));
     }
 
     #[test]
@@ -1589,9 +1640,10 @@ mod tests {
 
     #[test]
     fn load_model_returns_error_when_missing_instance_id() {
-        let server = FakeServer::start(vec![
-            FakeResponse::ok_json(r#"{"success": true}"#).expect_post("/api/v1/models/load")
-        ]);
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            r#"{"status": "loaded", "type": "llm"}"#,
+        )
+        .expect_post("/api/v1/models/load")]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let result = runtime.load_model("llama-3.1-8b");
@@ -1601,8 +1653,10 @@ mod tests {
 
     #[test]
     fn load_model_returns_error_when_empty_instance_id() {
-        let server = FakeServer::start(vec![FakeResponse::ok_json(r#"{"model_instance_id": ""}"#)
-            .expect_post("/api/v1/models/load")]);
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            r#"{"instance_id": "", "status": "loaded", "type": "llm"}"#,
+        )
+        .expect_post("/api/v1/models/load")]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let result = runtime.load_model("llama-3.1-8b");
@@ -1621,7 +1675,7 @@ mod tests {
     #[test]
     fn load_model_sends_auth_header_when_token_configured() {
         let server = FakeServer::start(vec![FakeResponse::ok_json(
-            r#"{"model_instance_id": "inst_auth"}"#,
+            r#"{"instance_id": "inst_auth", "status": "loaded", "type": "llm", "load_time_seconds": 1.0}"#,
         )
         .expect_post("/api/v1/models/load")
         .expect_header("Authorization", "Bearer secret-token")]);
@@ -1669,22 +1723,24 @@ mod tests {
     }
 
     #[test]
-    fn unload_model_rejects_invalid_instance_id_characters() {
+    fn unload_model_rejects_empty_instance_id() {
         let runtime = LmStudioRuntime::new("127.0.0.1:1");
-        // Path injection attempt must be rejected before any HTTP call.
-        let result = runtime.unload_model("../etc/passwd");
+        // Empty instance_id must be rejected before any HTTP call.
+        let result = runtime.unload_model("");
 
         assert_eq!(result, Err(ManagementError::InvalidResponse));
     }
 
     #[test]
-    fn unload_model_accepts_safe_instance_id_characters() {
+    fn unload_model_accepts_opaque_instance_ids() {
+        // instance_id is in JSON body, not URL path, so we accept opaque provider IDs.
         let server = FakeServer::start(vec![
             FakeResponse::ok_json(r#"{"success": true}"#).expect_post("/api/v1/models/unload")
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
-        let result = runtime.unload_model("inst-abc_123_DEF");
+        // LM Studio may use various formats for instance IDs.
+        let result = runtime.unload_model("inst-abc_123_DEF/xyz");
 
         assert!(result.is_ok());
     }

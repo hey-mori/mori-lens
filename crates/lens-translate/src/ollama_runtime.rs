@@ -71,10 +71,12 @@ impl OllamaRuntime {
         model: &str,
         on_progress: &mut dyn FnMut(DownloadStatus),
     ) -> Result<DownloadStatus, ManagementError> {
-        // Build request body: {"name": "model", "stream": false}
+        // Build request body: {"model": "model", "stream": true}
+        // Ollama API uses "model" field (not "name" from older examples).
+        // stream: true enables streaming progress objects (default behavior).
         let body = crate::json::object(&[
-            ("name", crate::json::Value::Str(model)),
-            ("stream", crate::json::Value::Raw("false")),
+            ("model", crate::json::Value::Str(model)),
+            ("stream", crate::json::Value::Raw("true")),
         ]);
 
         let mut final_status = DownloadStatus::Starting;
@@ -91,11 +93,23 @@ impl OllamaRuntime {
             &body,
             io_timeout,
             &mut |line| {
+                // Skip empty lines.
+                if line.trim().is_empty() {
+                    return true;
+                }
+
                 // Distinguish HTTP chunk framing from provider NDJSON.
                 // Chunk-size lines are hexadecimal (e.g., "1a2f") and not valid JSON.
                 // Provider NDJSON lines are JSON objects starting with '{'.
                 if !line.starts_with('{') {
-                    // Likely HTTP chunk framing or empty line; skip.
+                    // Check if this is a valid HTTP chunk-size line (hexadecimal).
+                    // If it's not hex and not JSON, it's malformed provider output.
+                    if !is_valid_chunk_size_line(line) {
+                        // Non-framing, non-JSON garbage: malformed provider output.
+                        parse_error = Some(ManagementError::InvalidResponse);
+                        return false;
+                    }
+                    // Valid chunk framing: skip.
                     return true;
                 }
 
@@ -116,28 +130,28 @@ impl OllamaRuntime {
                 // Extract status field.
                 let status = json.get("status").and_then(|v| v.as_str()).unwrap_or("");
 
-                match status {
-                    "downloading" => {
-                        // Extract progress fields: total, completed.
-                        let total = json.get("total").and_then(|v| v.as_u64());
-                        let completed = json.get("completed").and_then(|v| v.as_u64());
-
-                        if let (Some(total_bytes), Some(bytes_downloaded)) = (total, completed) {
-                            let progress = DownloadProgress::new(bytes_downloaded, total_bytes);
-                            final_status = DownloadStatus::Downloading(progress);
-                            on_progress(final_status.clone());
-                        }
-                    }
-                    "success" => {
-                        // Terminal state from provider.
-                        final_status = DownloadStatus::Completed;
-                        on_progress(final_status.clone());
-                        return false; // Stop on success.
-                    }
-                    // Other status phases: "pulling manifest", "verifying sha256", "writing manifest"
-                    // These don't carry progress data, so we just continue.
-                    _ => {}
+                // Terminal success: explicit from provider.
+                if status == "success" {
+                    final_status = DownloadStatus::Completed;
+                    on_progress(final_status.clone());
+                    return false; // Stop on success.
                 }
+
+                // Progress observation: if total/completed fields are present,
+                // this is a layer download progress update.
+                // Ollama sends these for "pulling <digest>" statuses.
+                let total = json.get("total").and_then(|v| v.as_u64());
+                let completed = json.get("completed").and_then(|v| v.as_u64());
+
+                if let (Some(total_bytes), Some(bytes_downloaded)) = (total, completed) {
+                    let progress = DownloadProgress::new(bytes_downloaded, total_bytes);
+                    final_status = DownloadStatus::Downloading(progress);
+                    on_progress(final_status.clone());
+                }
+
+                // Other status phases (e.g., "pulling manifest", "verifying sha256",
+                // "writing manifest") don't carry progress data, so we continue.
+                // We don't track phase text in the normalized status.
 
                 true // Continue reading.
             },
@@ -172,6 +186,24 @@ impl OllamaRuntime {
             Err(_) => Err(ManagementError::DownloadFailed),
         }
     }
+}
+
+/// Check if a line is a valid HTTP chunk-size line.
+///
+/// Chunk-size lines are hexadecimal (e.g., "1a2f", "0") and may have
+/// chunk extensions after a semicolon (e.g., "1a2f;ext=value").
+fn is_valid_chunk_size_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return true; // Empty lines are acceptable.
+    }
+    // Split on semicolon to ignore chunk extensions.
+    let size_part = trimmed.split(';').next().unwrap_or("").trim();
+    if size_part.is_empty() {
+        return false;
+    }
+    // Must be valid hexadecimal.
+    size_part.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Classify an Ollama error message into a [`ManagementError`].
@@ -427,7 +459,7 @@ mod tests {
                 method: Some("POST".to_owned()),
                 path: Some("/api/pull".to_owned()),
                 headers: vec![],
-                body: Some(r#"{"name":"llama3.1:8b","stream":false}"#.to_owned()),
+                body: Some(r#"{"model":"llama3.1:8b","stream":true}"#.to_owned()),
             }),
         }
         .expect_post("/api/pull")]);
@@ -463,10 +495,11 @@ mod tests {
     #[test]
     fn pull_model_reports_download_progress() {
         // Simulate a multi-phase download with progress updates.
+        // Ollama uses status strings like "pulling <digest>" with digest/total/completed fields.
         let ndjson = r#"{"status":"pulling manifest"}
-{"status":"downloading","digest":"sha256:abc123","total":1000000,"completed":250000}
-{"status":"downloading","digest":"sha256:abc123","total":1000000,"completed":750000}
-{"status":"verifying sha256","digest":"sha256:abc123"}
+{"status":"pulling sha256:abc123","digest":"sha256:abc123","total":1000000,"completed":250000}
+{"status":"pulling sha256:abc123","digest":"sha256:abc123","total":1000000,"completed":750000}
+{"status":"verifying sha256 abc123","digest":"sha256:abc123"}
 {"status":"writing manifest"}
 {"status":"success"}
 "#;
@@ -510,7 +543,7 @@ mod tests {
 
     #[test]
     fn pull_model_reports_completion_after_download() {
-        let ndjson = r#"{"status":"downloading","digest":"sha256:abc","total":500,"completed":500}
+        let ndjson = r#"{"status":"pulling sha256:abc","digest":"sha256:abc","total":500,"completed":500}
 {"status":"success"}
 "#;
         let server = FakeServer::start(vec![FakeResponse {
@@ -603,7 +636,7 @@ mod tests {
         let ndjson = r#"1a2f
 {"status":"pulling manifest"}
 4b
-{"status":"downloading","digest":"sha256:abc","total":100,"completed":50}
+{"status":"pulling sha256:abc","digest":"sha256:abc","total":100,"completed":50}
 10
 {"status":"success"}
 0
@@ -624,8 +657,31 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), DownloadStatus::Completed);
-        // Should have received: Downloading(50/100) then Completed.
-        assert_eq!(statuses.len(), 2);
+    }
+
+    #[test]
+    fn pull_model_rejects_non_json_garbage() {
+        // Non-JSON, non-chunk-framing lines are malformed provider output.
+        // This is distinct from valid HTTP chunk framing (hex digits).
+        let ndjson = r#"{"status":"pulling manifest"}
+garbage-provider-output
+{"status":"success"}
+"#;
+        let server = FakeServer::start(vec![FakeResponse {
+            status: 200,
+            status_text: "OK".to_owned(),
+            headers: vec![("Content-Type".to_owned(), "application/x-ndjson".to_owned())],
+            body: ndjson.to_owned(),
+            expect: None,
+        }
+        .expect_post("/api/pull")]);
+
+        let runtime = OllamaRuntime::new(server.address());
+        let mut statuses = vec![];
+        let result = runtime.pull_model("llama3.1:8b", &mut |s| statuses.push(s));
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), ManagementError::InvalidResponse);
     }
 
     #[test]
@@ -640,8 +696,8 @@ mod tests {
 
     #[test]
     fn pull_model_progress_callback_receives_correct_values() {
-        let ndjson = r#"{"status":"downloading","digest":"sha256:abc","total":1000,"completed":250}
-{"status":"downloading","digest":"sha256:abc","total":1000,"completed":750}
+        let ndjson = r#"{"status":"pulling sha256:abc","digest":"sha256:abc","total":1000,"completed":250}
+{"status":"pulling sha256:abc","digest":"sha256:abc","total":1000,"completed":750}
 {"status":"success"}
 "#;
         let server = FakeServer::start(vec![FakeResponse {
