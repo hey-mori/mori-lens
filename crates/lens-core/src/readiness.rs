@@ -7,12 +7,22 @@
 //! The evaluator is pure: no network, no filesystem, no platform calls. It takes
 //! observed inputs and returns a readiness assessment. The platform adapter provides
 //! the inputs; this module classifies them.
+//!
+//! # Vocabulary mapping
+//!
+//! The readiness domain uses different terms than the provider runtime:
+//! - `ProviderRuntime::model_state()` returns `ModelState::Available` or `ModelState::Loaded`
+//! - This readiness domain derives `ModelLifecycle` from those observations
+//! - `ModelState::Available` maps to `ModelLifecycle::Present` (downloaded but not necessarily loaded)
+//! - `ModelState::Loaded` maps to `ModelLifecycle::Ready` (in memory, ready for inference)
+//! - Additional lifecycle states (Missing, Downloading, Loading, Failed) come from setup operations
 
 use serde::{Deserialize, Serialize};
 
 /// Whether the provider runtime is present on the system.
 ///
 /// This is about installation, not about whether it is currently running.
+/// Evidence may come from PATH detection, registry, or service enumeration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimePresence {
@@ -32,16 +42,20 @@ impl Default for RuntimePresence {
 
 /// Whether the provider endpoint is reachable.
 ///
-/// This is a network-level check (TCP connect or HTTP HEAD), independent of
-/// whether models are present.
+/// This is validated by a provider-specific management probe:
+/// - Ollama: GET /api/tags
+/// - LM Studio: GET /api/v1/models
+///
+/// A random process listening on the port is not sufficient; the probe must
+/// return provider-identity evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EndpointState {
-    /// Have not checked yet or check failed in a way that does not distinguish.
+    /// Have not checked yet or check is in progress.
     Unknown,
-    /// Endpoint is not reachable (connection refused, timeout, DNS failure).
+    /// Provider probe failed (connection refused, timeout, DNS failure, or non-provider response).
     Unreachable,
-    /// Endpoint is reachable and responding.
+    /// Provider probe succeeded with provider-identity evidence.
     Reachable,
 }
 
@@ -53,8 +67,8 @@ impl Default for EndpointState {
 
 /// Lifecycle state of a model relative to a provider.
 ///
-/// This tracks the model's presence and readiness for inference, independent
-/// of whether inference has been tested.
+/// Derived from `ProviderRuntime::model_state()` observations plus setup operations.
+/// This tracks the model's presence and readiness for inference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelLifecycle {
@@ -64,8 +78,15 @@ pub enum ModelLifecycle {
     Missing,
     /// Model is currently being downloaded.
     Downloading,
-    /// Model is present locally but not currently loaded (for providers with
-    /// explicit load/unload, e.g., LM Studio).
+    /// Model is present locally but not currently loaded.
+    /// For Ollama: installed but not in /api/ps
+    /// For LM Studio: downloaded but not in loaded_instances
+    ///
+    /// Whether this is sufficient for inference depends on provider semantics:
+    /// - Ollama supports JIT loading, so Present may be sufficient for first card
+    /// - LM Studio may require explicit load before inference
+    ///
+    /// The readiness evaluator receives a capability flag to distinguish these cases.
     Present,
     /// Model is currently being loaded into memory (LM Studio load in progress).
     Loading,
@@ -88,27 +109,29 @@ impl Default for ModelLifecycle {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LaneReadiness {
-    /// Runtime presence is not yet known.
-    RuntimeUnknown,
+    /// Runtime presence and endpoint state are not yet known.
+    Unknown,
     /// Runtime is not installed. User needs to install the provider.
     RuntimeNotInstalled,
-    /// Runtime is installed but endpoint is not reachable. User needs to start the provider.
+    /// Endpoint probe failed. User needs to start the provider or check endpoint configuration.
     EndpointUnreachable,
     /// Endpoint is reachable but no compatible model is present. User needs to download a model.
     NoCompatibleModel,
-    /// Model is present and ready for inference. Lane is ready.
-    Ready,
+    /// Model is downloaded but not loaded. For providers requiring explicit load, user needs to load it.
+    ModelPresent,
     /// Model is being downloaded.
     ModelDownloading,
     /// Model is being loaded (LM Studio).
     ModelLoading,
     /// Model download or load failed.
     ModelFailed,
+    /// Model is present and ready for inference. Lane is ready for first card.
+    Ready,
 }
 
 impl Default for LaneReadiness {
     fn default() -> Self {
-        Self::RuntimeUnknown
+        Self::Unknown
     }
 }
 
@@ -137,41 +160,75 @@ pub struct SetupReadinessState {
     pub endpoint_state: EndpointState,
     /// Lifecycle state of the configured model.
     pub model_lifecycle: ModelLifecycle,
+    /// Whether a Present model is sufficient for inference without explicit load.
+    /// - Ollama: true (supports JIT loading)
+    /// - LM Studio: false (may require explicit load)
+    ///
+    /// This flag allows the readiness evaluator to treat Present as Ready for
+    /// providers that support JIT, while requiring explicit Ready state for others.
+    pub can_infer_from_present_model: bool,
 }
 
 /// Pure readiness evaluator.
 ///
-/// Takes the three observed dimensions and returns a LaneReadiness assessment.
+/// Takes the observed dimensions and returns a LaneReadiness assessment.
 /// This function is pure: no network, no filesystem, no platform calls.
 ///
-/// The evaluation logic:
-/// 1. If runtime presence is Unknown or NotInstalled, report RuntimeUnknown/NotInstalled.
-/// 2. If endpoint is Unknown or Unreachable, report EndpointUnreachable.
-/// 3. If model lifecycle is Unknown, Missing, Downloading, Loading, or Failed, report accordingly.
-/// 4. If model is Present or Ready, report Ready.
+/// # Precedence rules
+///
+/// 1. If endpoint is Reachable, continue model evaluation (runtime presence Unknown does not block).
+///    Direct validated reachability is stronger evidence than installation detection.
+/// 2. If endpoint is Unreachable:
+///    - If runtime presence is NotInstalled, report RuntimeNotInstalled
+///    - Otherwise, report EndpointUnreachable
+/// 3. If endpoint is Unknown:
+///    - If runtime presence is NotInstalled, report RuntimeNotInstalled
+///    - Otherwise, report Unknown (not EndpointUnreachable, which would be evidence inflation)
+/// 4. If endpoint is Reachable and model lifecycle is Present:
+///    - If can_infer_from_present_model is true, report Ready (JIT-capable provider)
+///    - Otherwise, report ModelPresent (explicit load required)
 pub fn evaluate_lane_readiness(state: &SetupReadinessState) -> LaneReadiness {
-    // Step 1: Check runtime presence.
-    match state.runtime_presence {
-        RuntimePresence::Unknown => return LaneReadiness::RuntimeUnknown,
-        RuntimePresence::NotInstalled => return LaneReadiness::RuntimeNotInstalled,
-        RuntimePresence::Installed => {} // Continue to next check.
-    }
-
-    // Step 2: Check endpoint reachability.
+    // Step 1: Check endpoint reachability with evidence precedence.
     match state.endpoint_state {
-        EndpointState::Unknown | EndpointState::Unreachable => {
-            return LaneReadiness::EndpointUnreachable
+        EndpointState::Reachable => {
+            // Endpoint is reachable; continue to model evaluation.
+            // Runtime presence Unknown does not block here because direct
+            // validated reachability is stronger evidence.
         }
-        EndpointState::Reachable => {} // Continue to next check.
+        EndpointState::Unreachable => {
+            // Endpoint probe failed.
+            // Check if we have strong installation evidence.
+            if state.runtime_presence == RuntimePresence::NotInstalled {
+                return LaneReadiness::RuntimeNotInstalled;
+            }
+            return LaneReadiness::EndpointUnreachable;
+        }
+        EndpointState::Unknown => {
+            // Endpoint not yet checked or check in progress.
+            // Check if we have strong installation evidence.
+            if state.runtime_presence == RuntimePresence::NotInstalled {
+                return LaneReadiness::RuntimeNotInstalled;
+            }
+            // Do not report EndpointUnreachable (evidence inflation).
+            return LaneReadiness::Unknown;
+        }
     }
 
-    // Step 3: Check model lifecycle.
+    // Step 2: Check model lifecycle (endpoint is Reachable).
     match state.model_lifecycle {
-        ModelLifecycle::Unknown => LaneReadiness::RuntimeUnknown, // Should not happen if we got this far, but safe fallback.
+        ModelLifecycle::Unknown => LaneReadiness::Unknown,
         ModelLifecycle::Missing => LaneReadiness::NoCompatibleModel,
         ModelLifecycle::Downloading => LaneReadiness::ModelDownloading,
-        ModelLifecycle::Present | ModelLifecycle::Ready => LaneReadiness::Ready,
+        ModelLifecycle::Present => {
+            // Whether Present is sufficient depends on provider capability.
+            if state.can_infer_from_present_model {
+                LaneReadiness::Ready // JIT-capable provider (Ollama)
+            } else {
+                LaneReadiness::ModelPresent // Explicit load required (LM Studio)
+            }
+        }
         ModelLifecycle::Loading => LaneReadiness::ModelLoading,
+        ModelLifecycle::Ready => LaneReadiness::Ready,
         ModelLifecycle::Failed => LaneReadiness::ModelFailed,
     }
 }
@@ -190,29 +247,38 @@ pub fn evaluate_readiness(
     }
 }
 
+/// Map provider runtime ModelState to readiness ModelLifecycle.
+///
+/// This is a pure mapping function with no side effects.
+pub fn model_state_to_lifecycle(model_state: crate::translate::ModelState) -> ModelLifecycle {
+    match model_state {
+        crate::translate::ModelState::Available { .. } => ModelLifecycle::Present,
+        crate::translate::ModelState::Loaded { .. } => ModelLifecycle::Ready,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn runtime_unknown_produces_runtime_unknown() {
+    fn endpoint_unknown_runtime_unknown_produces_unknown() {
         let state = SetupReadinessState {
             runtime_presence: RuntimePresence::Unknown,
             endpoint_state: EndpointState::Unknown,
             model_lifecycle: ModelLifecycle::Unknown,
+            can_infer_from_present_model: false,
         };
-        assert_eq!(
-            evaluate_lane_readiness(&state),
-            LaneReadiness::RuntimeUnknown
-        );
+        assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::Unknown);
     }
 
     #[test]
-    fn runtime_not_installed_produces_runtime_not_installed() {
+    fn endpoint_unknown_runtime_not_installed_produces_not_installed() {
         let state = SetupReadinessState {
             runtime_presence: RuntimePresence::NotInstalled,
             endpoint_state: EndpointState::Unknown,
             model_lifecycle: ModelLifecycle::Unknown,
+            can_infer_from_present_model: false,
         };
         assert_eq!(
             evaluate_lane_readiness(&state),
@@ -221,38 +287,53 @@ mod tests {
     }
 
     #[test]
-    fn runtime_installed_but_endpoint_unreachable() {
+    fn endpoint_unreachable_runtime_unknown_produces_unreachable() {
         let state = SetupReadinessState {
-            runtime_presence: RuntimePresence::Installed,
+            runtime_presence: RuntimePresence::Unknown,
             endpoint_state: EndpointState::Unreachable,
             model_lifecycle: ModelLifecycle::Unknown,
+            can_infer_from_present_model: false,
         };
         assert_eq!(
             evaluate_lane_readiness(&state),
             LaneReadiness::EndpointUnreachable
         );
+        // Note: does NOT claim NotInstalled because runtime evidence is Unknown
     }
 
     #[test]
-    fn runtime_installed_but_endpoint_unknown() {
+    fn endpoint_unreachable_runtime_not_installed_produces_not_installed() {
         let state = SetupReadinessState {
-            runtime_presence: RuntimePresence::Installed,
-            endpoint_state: EndpointState::Unknown,
-            model_lifecycle: ModelLifecycle::Present,
+            runtime_presence: RuntimePresence::NotInstalled,
+            endpoint_state: EndpointState::Unreachable,
+            model_lifecycle: ModelLifecycle::Unknown,
+            can_infer_from_present_model: false,
         };
-        // Endpoint Unknown should block, even if model is present.
         assert_eq!(
             evaluate_lane_readiness(&state),
-            LaneReadiness::EndpointUnreachable
+            LaneReadiness::RuntimeNotInstalled
         );
     }
 
     #[test]
-    fn endpoint_reachable_but_no_model() {
+    fn endpoint_reachable_runtime_unknown_model_ready_produces_ready() {
+        // Direct validated reachability overrides installation uncertainty.
+        let state = SetupReadinessState {
+            runtime_presence: RuntimePresence::Unknown,
+            endpoint_state: EndpointState::Reachable,
+            model_lifecycle: ModelLifecycle::Ready,
+            can_infer_from_present_model: false,
+        };
+        assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::Ready);
+    }
+
+    #[test]
+    fn endpoint_reachable_model_missing_produces_no_compatible_model() {
         let state = SetupReadinessState {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Missing,
+            can_infer_from_present_model: false,
         };
         assert_eq!(
             evaluate_lane_readiness(&state),
@@ -261,11 +342,12 @@ mod tests {
     }
 
     #[test]
-    fn model_downloading() {
+    fn endpoint_reachable_model_downloading_produces_model_downloading() {
         let state = SetupReadinessState {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Downloading,
+            can_infer_from_present_model: false,
         };
         assert_eq!(
             evaluate_lane_readiness(&state),
@@ -274,56 +356,76 @@ mod tests {
     }
 
     #[test]
-    fn model_present_produces_ready() {
+    fn endpoint_reachable_model_present_with_jit_produces_ready() {
+        // Ollama: Present is sufficient because JIT loading is supported.
         let state = SetupReadinessState {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Present,
+            can_infer_from_present_model: true, // Ollama
         };
         assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::Ready);
     }
 
     #[test]
-    fn model_ready_produces_ready() {
+    fn endpoint_reachable_model_present_without_jit_produces_model_present() {
+        // LM Studio: Present requires explicit load.
         let state = SetupReadinessState {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
-            model_lifecycle: ModelLifecycle::Ready,
+            model_lifecycle: ModelLifecycle::Present,
+            can_infer_from_present_model: false, // LM Studio
         };
-        assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::Ready);
+        assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::ModelPresent);
     }
 
     #[test]
-    fn model_loading() {
+    fn endpoint_reachable_model_loading_produces_model_loading() {
         let state = SetupReadinessState {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Loading,
+            can_infer_from_present_model: false,
         };
         assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::ModelLoading);
     }
 
     #[test]
-    fn model_failed() {
+    fn endpoint_reachable_model_ready_produces_ready() {
+        let state = SetupReadinessState {
+            runtime_presence: RuntimePresence::Installed,
+            endpoint_state: EndpointState::Reachable,
+            model_lifecycle: ModelLifecycle::Ready,
+            can_infer_from_present_model: false,
+        };
+        assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::Ready);
+    }
+
+    #[test]
+    fn endpoint_reachable_model_failed_produces_model_failed() {
         let state = SetupReadinessState {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Failed,
+            can_infer_from_present_model: false,
         };
         assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::ModelFailed);
     }
 
     #[test]
-    fn quick_ready_deep_not_ready() {
+    fn quick_ready_deep_not_ready_is_valid_state() {
+        // Quick ready + Deep not ready is a usable first-card state.
         let quick_state = SetupReadinessState {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
+            can_infer_from_present_model: true,
         };
         let deep_state = SetupReadinessState {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Missing,
+            can_infer_from_present_model: true,
         };
         let snapshot = evaluate_readiness(&quick_state, &deep_state);
         assert_eq!(snapshot.quick, LaneReadiness::Ready);
@@ -336,15 +438,29 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
+            can_infer_from_present_model: true,
         };
         let deep_state = SetupReadinessState {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
+            can_infer_from_present_model: true,
         };
         let snapshot = evaluate_readiness(&quick_state, &deep_state);
         assert_eq!(snapshot.quick, LaneReadiness::Ready);
         assert_eq!(snapshot.deep, LaneReadiness::Ready);
+    }
+
+    #[test]
+    fn contradictory_evidence_not_installed_but_reachable() {
+        // Direct validated reachability wins over installation detection failure.
+        let state = SetupReadinessState {
+            runtime_presence: RuntimePresence::NotInstalled,
+            endpoint_state: EndpointState::Reachable,
+            model_lifecycle: ModelLifecycle::Ready,
+            can_infer_from_present_model: true,
+        };
+        assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::Ready);
     }
 
     #[test]
@@ -359,87 +475,152 @@ mod tests {
     }
 
     #[test]
-    fn readiness_serialization_contains_no_user_content() {
-        // Privacy check: readiness snapshot must not contain user content,
-        // model output, URLs, or paths.
+    fn readiness_serialization_contains_no_canaries() {
+        // Privacy check using the same canary pattern as other core modules.
+        let canaries = [
+            "SUPER_SECRET_ORIGINAL_CANARY",
+            "SUPER_SECRET_TRANSLATION_CANARY",
+            "SUPER_SECRET_ANALYSIS_CANARY",
+            "SUPER_SECRET_NOTE_CANARY",
+            "SUPER_SECRET_HISTORY_CANARY",
+            "SUPER_SECRET_RECENT_CANARY",
+            "SUPER_SECRET_WINDOW_TITLE_CANARY",
+            "SUPER_SECRET_APP_NAME_CANARY",
+            "SUPER_SECRET_PATH_CANARY",
+            "SUPER_SECRET_TOKEN_CANARY",
+            "SUPER_SECRET_ERROR_BODY_CANARY",
+        ];
+
         let snapshot = ReadinessSnapshot {
             quick: LaneReadiness::Ready,
             deep: LaneReadiness::Ready,
         };
         let json = serde_json::to_string(&snapshot).unwrap();
-        let banned = [
-            "user",
-            "content",
-            "output",
-            "http",
-            "https",
-            "path",
-            "file",
-            "directory",
-        ];
-        for word in &banned {
+        for canary in &canaries {
             assert!(
-                !json.contains(word),
-                "readiness snapshot contains banned word: {word}"
+                !json.contains(canary),
+                "readiness snapshot contains canary: {canary}"
             );
         }
     }
 
     #[test]
-    fn default_snapshot_is_all_runtime_unknown() {
+    fn default_snapshot_is_all_unknown() {
         let snapshot = ReadinessSnapshot::default();
-        assert_eq!(snapshot.quick, LaneReadiness::RuntimeUnknown);
-        assert_eq!(snapshot.deep, LaneReadiness::RuntimeUnknown);
+        assert_eq!(snapshot.quick, LaneReadiness::Unknown);
+        assert_eq!(snapshot.deep, LaneReadiness::Unknown);
     }
 
     #[test]
-    fn truth_table_exhaustive_coverage() {
-        // Verify that the evaluator covers all meaningful combinations.
-        // This is a sampling of the truth table, not exhaustive enumeration.
+    fn representative_truth_table_cases() {
+        // Representative sampling of the truth table (not exhaustive).
         let cases = vec![
             (
                 RuntimePresence::Unknown,
                 EndpointState::Unknown,
                 ModelLifecycle::Unknown,
-                LaneReadiness::RuntimeUnknown,
+                false,
+                LaneReadiness::Unknown,
             ),
             (
                 RuntimePresence::NotInstalled,
                 EndpointState::Unreachable,
                 ModelLifecycle::Missing,
+                false,
                 LaneReadiness::RuntimeNotInstalled,
             ),
             (
                 RuntimePresence::Installed,
                 EndpointState::Unreachable,
                 ModelLifecycle::Present,
+                false,
                 LaneReadiness::EndpointUnreachable,
             ),
             (
                 RuntimePresence::Installed,
                 EndpointState::Reachable,
                 ModelLifecycle::Missing,
+                false,
                 LaneReadiness::NoCompatibleModel,
             ),
             (
                 RuntimePresence::Installed,
                 EndpointState::Reachable,
                 ModelLifecycle::Ready,
+                false,
                 LaneReadiness::Ready,
+            ),
+            (
+                RuntimePresence::Unknown,
+                EndpointState::Reachable,
+                ModelLifecycle::Ready,
+                false,
+                LaneReadiness::Ready,
+            ),
+            (
+                RuntimePresence::Installed,
+                EndpointState::Reachable,
+                ModelLifecycle::Present,
+                true, // JIT-capable
+                LaneReadiness::Ready,
+            ),
+            (
+                RuntimePresence::Installed,
+                EndpointState::Reachable,
+                ModelLifecycle::Present,
+                false, // JIT not capable
+                LaneReadiness::ModelPresent,
             ),
         ];
 
-        for (runtime, endpoint, model, expected) in cases {
+        for (runtime, endpoint, model, can_infer, expected) in cases {
             let state = SetupReadinessState {
                 runtime_presence: runtime,
                 endpoint_state: endpoint,
                 model_lifecycle: model,
+                can_infer_from_present_model: can_infer,
             };
             assert_eq!(
                 evaluate_lane_readiness(&state),
                 expected,
-                "Failed for runtime={runtime:?}, endpoint={endpoint:?}, model={model:?}",
+                "Failed for runtime={runtime:?}, endpoint={endpoint:?}, model={model:?}, can_infer={can_infer}",
             );
         }
+    }
+
+    #[test]
+    fn unknown_does_not_become_unreachable_or_not_installed() {
+        // Ensure serialization/UI mapping cannot turn Unknown into stronger claims.
+        let state = SetupReadinessState {
+            runtime_presence: RuntimePresence::Unknown,
+            endpoint_state: EndpointState::Unknown,
+            model_lifecycle: ModelLifecycle::Unknown,
+            can_infer_from_present_model: false,
+        };
+        let readiness = evaluate_lane_readiness(&state);
+        assert_eq!(readiness, LaneReadiness::Unknown);
+        assert_ne!(readiness, LaneReadiness::EndpointUnreachable);
+        assert_ne!(readiness, LaneReadiness::RuntimeNotInstalled);
+        assert_ne!(readiness, LaneReadiness::NoCompatibleModel);
+    }
+
+    #[test]
+    fn model_state_available_maps_to_present() {
+        let model_state = crate::translate::ModelState::Available {
+            name: "llama3.2".to_string(),
+            size: 4_000_000_000,
+        };
+        assert_eq!(
+            model_state_to_lifecycle(model_state),
+            ModelLifecycle::Present
+        );
+    }
+
+    #[test]
+    fn model_state_loaded_maps_to_ready() {
+        let model_state = crate::translate::ModelState::Loaded {
+            name: "llama3.2".to_string(),
+        };
+        assert_eq!(model_state_to_lifecycle(model_state), ModelLifecycle::Ready);
     }
 }
