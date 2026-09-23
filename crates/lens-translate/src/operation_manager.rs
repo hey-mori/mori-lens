@@ -8,10 +8,10 @@
 //! The manager owns:
 //! - Active download state (one at a time, globally)
 //! - Duplicate download prevention
-//! - LM Studio job IDs for in-progress downloads
-//! - Mori-owned LM Studio load instance IDs
+//! - Terminal download snapshot (bounded, last operation only)
+//! - LM Studio job IDs for in-progress downloads (internal only)
+//! - Mori-owned LM Studio instance IDs, keyed by model
 //! - Provider/model association for active operations
-//! - Terminal results and error states
 //!
 //! The manager does NOT own:
 //! - Provider installation or lifecycle
@@ -22,37 +22,77 @@
 //! # Ownership Model
 //!
 //! Mori Lens may only unload LM Studio instances it created. The manager
-//! tracks which instance_ids were created by `load_model_for_mori()` and
-//! refuses to unload instances that existed before Mori started or were
-//! created by other tools.
+//! tracks which (model, instance_id) pairs were created by `load_model()`
+//! and resolves ownership by model, not by frontend-supplied instance ID.
 //!
 //! After a process restart, the manager has no memory of prior operations.
 //! This is intentional: the manager state is process-local, not serialized
 //! to settings. On restart, refresh actual provider state from the runtime.
+//!
+//! # Lifecycle
+//!
+//! ```text
+//! Idle
+//! → start_download() → Starting
+//! → update_download_status() → Downloading / Paused
+//! → finish_download(terminal_status) → Completed / AlreadyPresent / Failed
+//! → terminal snapshot remains readable via operation_snapshot()
+//! → next start_download() replaces/clears the old terminal snapshot
+//! ```
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use lens_core::model_management::{DownloadStatus, ManagementError};
 use lens_core::translate::Provider;
+use serde::Serialize;
 
-/// Tracks active operations and owned resources.
+/// A snapshot of the current or most recent download operation.
+///
+/// Suitable for frontend consumption. Does not expose provider internals
+/// such as job IDs.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DownloadOperationSnapshot {
+    /// Which provider is running the operation (as "ollama" or "lmstudio").
+    pub provider: String,
+    /// Which model is being downloaded.
+    pub model: String,
+    /// Current or terminal status.
+    pub status: DownloadStatus,
+    /// Whether the operation is still active (non-terminal).
+    pub active: bool,
+}
+
+/// Internal active download state. Includes provider job ID for backend use.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub(crate) struct ActiveDownload {
+    provider: Provider,
+    model: String,
+    status: DownloadStatus,
+    /// LM Studio job ID, if applicable. Not exposed to frontend.
+    job_id: Option<String>,
+}
+
+/// A Mori-owned LM Studio instance, keyed by model.
+#[derive(Debug, Clone)]
+struct OwnedInstance {
+    model: String,
+    instance_id: String,
+}
+
+/// Internal operation state.
 #[derive(Debug, Default)]
 struct OperationState {
     /// Active download, if any. Only one download at a time is allowed.
     active_download: Option<ActiveDownload>,
-    /// LM Studio instances created by Mori (safe to unload).
-    mori_owned_instances: HashSet<String>,
-}
-
-/// An active download operation.
-#[derive(Debug, Clone)]
-struct ActiveDownload {
-    provider: Provider,
-    model: String,
-    status: DownloadStatus,
-    /// LM Studio job ID, if applicable.
-    job_id: Option<String>,
+    /// Terminal snapshot of the last completed/failed download.
+    /// Remains readable after `finish_download()` until the next operation starts.
+    last_download: Option<DownloadOperationSnapshot>,
+    /// Mori-owned LM Studio instances, keyed by model.
+    /// At most one Mori-owned instance per model.
+    owned_instances: HashMap<String, OwnedInstance>,
 }
 
 /// Process-local operation manager for provider model management.
@@ -77,27 +117,47 @@ impl OperationManager {
         }
     }
 
-    /// Check if a download is currently active.
+    /// Atomic snapshot of the current download operation.
     ///
-    /// Returns true if any download is in progress, regardless of provider or model.
+    /// Returns the active download if one is in progress, or the terminal
+    /// snapshot of the last completed/failed download, or `None` if idle
+    /// with no prior operation.
+    ///
+    /// This is the primary accessor for frontend status queries. It does
+    /// not expose provider internals such as job IDs.
+    pub fn operation_snapshot(&self) -> Option<DownloadOperationSnapshot> {
+        let state = self.state.lock().unwrap();
+        if let Some(active) = &state.active_download {
+            Some(DownloadOperationSnapshot {
+                provider: active.provider.as_str().to_string(),
+                model: active.model.clone(),
+                status: active.status.clone(),
+                active: true,
+            })
+        } else {
+            state.last_download.clone()
+        }
+    }
+
+    /// Internal snapshot including job ID, for backend worker use.
+    #[allow(dead_code)]
+    pub(crate) fn internal_snapshot(&self) -> Option<ActiveDownload> {
+        let state = self.state.lock().unwrap();
+        state.active_download.clone()
+    }
+
+    /// Check if a download is currently active.
     pub fn is_download_active(&self) -> bool {
         let state = self.state.lock().unwrap();
         state.active_download.is_some()
-    }
-
-    /// Get the status of the active download, if any.
-    pub fn active_download_status(&self) -> Option<(Provider, String, DownloadStatus)> {
-        let state = self.state.lock().unwrap();
-        state
-            .active_download
-            .as_ref()
-            .map(|d| (d.provider, d.model.clone(), d.status.clone()))
     }
 
     /// Start tracking a new download operation.
     ///
     /// Returns an error if a download is already active (duplicate prevention).
     /// The manager enforces one active download globally.
+    ///
+    /// Starting a new operation clears any prior terminal snapshot.
     pub fn start_download(
         &self,
         provider: Provider,
@@ -110,6 +170,14 @@ impl OperationManager {
         if state.active_download.is_some() {
             return Err(ManagementError::ProviderBusy);
         }
+
+        // Reject non-terminal initial status.
+        if initial_status.is_terminal() {
+            return Err(ManagementError::InvalidResponse);
+        }
+
+        // Clear prior terminal snapshot when a new operation starts.
+        state.last_download = None;
 
         state.active_download = Some(ActiveDownload {
             provider,
@@ -124,6 +192,7 @@ impl OperationManager {
     /// Update the status of the active download.
     ///
     /// Returns an error if no download is active.
+    /// Does not accept terminal statuses; use `finish_download()` for those.
     pub fn update_download_status(&self, status: DownloadStatus) -> Result<(), ManagementError> {
         let mut state = self.state.lock().unwrap();
 
@@ -132,26 +201,28 @@ impl OperationManager {
             .as_mut()
             .ok_or(ManagementError::DownloadFailed)?;
 
+        // Reject terminal statuses here; they belong in finish_download().
+        if status.is_terminal() {
+            return Err(ManagementError::InvalidResponse);
+        }
+
         download.status = status;
         Ok(())
     }
 
-    /// Get the job ID of the active download, if any.
+    /// Finish the active download with a terminal status.
     ///
-    /// Only LM Studio downloads have job IDs. Ollama uses streaming progress.
-    pub fn active_download_job_id(&self) -> Option<String> {
-        let state = self.state.lock().unwrap();
-        state
-            .active_download
-            .as_ref()
-            .and_then(|d| d.job_id.clone())
-    }
+    /// The `final_status` must be terminal: `Completed`, `AlreadyPresent`,
+    /// or `Failed(_)`. Non-terminal statuses are rejected.
+    ///
+    /// On success, the active download is removed from tracking and a
+    /// terminal snapshot is stored for frontend observation. The snapshot
+    /// remains readable until the next `start_download()` call.
+    pub fn finish_download(&self, final_status: DownloadStatus) -> Result<(), ManagementError> {
+        if !final_status.is_terminal() {
+            return Err(ManagementError::InvalidResponse);
+        }
 
-    /// Complete the active download (success or failure).
-    ///
-    /// Removes the download from active tracking. Returns the final status.
-    /// Returns an error if no download is active.
-    pub fn complete_download(&self) -> Result<DownloadStatus, ManagementError> {
         let mut state = self.state.lock().unwrap();
 
         let download = state
@@ -159,50 +230,96 @@ impl OperationManager {
             .take()
             .ok_or(ManagementError::DownloadFailed)?;
 
-        Ok(download.status)
+        state.last_download = Some(DownloadOperationSnapshot {
+            provider: download.provider.as_str().to_string(),
+            model: download.model,
+            status: final_status,
+            active: false,
+        });
+
+        Ok(())
     }
 
-    /// Register a Mori-owned LM Studio instance.
+    /// Register a Mori-owned LM Studio instance for a model.
     ///
-    /// Call this after successfully loading a model via LM Studio.
-    /// The instance_id can later be unloaded via `unregister_mori_instance()`.
-    pub fn register_mori_instance(&self, instance_id: String) {
+    /// Call this only after successfully loading a model via LM Studio
+    /// (POST /api/v1/models/load with valid `instance_id` in response).
+    ///
+    /// If Mori already owns an instance for this model, the registration
+    /// is rejected to prevent duplicate VRAM use.
+    pub fn register_mori_instance(
+        &self,
+        model: String,
+        instance_id: String,
+    ) -> Result<(), ManagementError> {
         let mut state = self.state.lock().unwrap();
-        state.mori_owned_instances.insert(instance_id);
+
+        if state.owned_instances.contains_key(&model) {
+            return Err(ManagementError::ProviderBusy);
+        }
+
+        state
+            .owned_instances
+            .insert(model.clone(), OwnedInstance { model, instance_id });
+
+        Ok(())
     }
 
-    /// Check if an instance is owned by Mori (safe to unload).
-    pub fn is_mori_owned_instance(&self, instance_id: &str) -> bool {
+    /// Look up the Mori-owned instance ID for a model.
+    ///
+    /// Returns `Some(instance_id)` if Mori owns an instance for this model,
+    /// `None` otherwise. Does not remove the ownership entry.
+    pub fn owned_instance_for_model(&self, model: &str) -> Option<String> {
         let state = self.state.lock().unwrap();
-        state.mori_owned_instances.contains(instance_id)
+        state
+            .owned_instances
+            .get(model)
+            .map(|owned| owned.instance_id.clone())
     }
 
-    /// Unregister a Mori-owned LM Studio instance.
+    /// Check if Mori owns an instance for a given model.
+    pub fn owns_model_instance(&self, model: &str) -> bool {
+        let state = self.state.lock().unwrap();
+        state.owned_instances.contains_key(model)
+    }
+
+    /// Take (remove) the Mori-owned instance for a model.
     ///
-    /// Call this after successfully unloading a Mori-owned instance.
-    /// Returns true if the instance was registered (and has now been removed).
-    /// Returns false if the instance was not registered (not owned by Mori).
-    pub fn unregister_mori_instance(&self, instance_id: &str) -> bool {
+    /// Returns the instance_id if Mori owned an instance for this model.
+    /// The ownership entry is removed. Call this only after a successful
+    /// unload HTTP call to the provider.
+    ///
+    /// If the unload fails, do not call this method; the ownership entry
+    /// remains for retry.
+    pub fn take_owned_instance_for_model(&self, model: &str) -> Option<String> {
         let mut state = self.state.lock().unwrap();
-        state.mori_owned_instances.remove(instance_id)
+        state
+            .owned_instances
+            .remove(model)
+            .map(|owned| owned.instance_id)
     }
 
-    /// Get all Mori-owned instance IDs.
+    /// Get all Mori-owned (model, instance_id) pairs.
     ///
     /// Useful for cleanup on shutdown or for diagnostic purposes.
-    pub fn mori_owned_instances(&self) -> Vec<String> {
+    pub fn mori_owned_instances(&self) -> Vec<(String, String)> {
         let state = self.state.lock().unwrap();
-        state.mori_owned_instances.iter().cloned().collect()
+        state
+            .owned_instances
+            .values()
+            .map(|owned| (owned.model.clone(), owned.instance_id.clone()))
+            .collect()
     }
 
     /// Clear all tracked state.
     ///
-    /// Removes active download tracking and all owned instances.
-    /// Useful for testing or when resetting after a provider restart.
+    /// Removes active download tracking, terminal snapshot, and all owned
+    /// instances. Useful for testing or when resetting after a provider restart.
     pub fn clear(&self) {
         let mut state = self.state.lock().unwrap();
         state.active_download = None;
-        state.mori_owned_instances.clear();
+        state.last_download = None;
+        state.owned_instances.clear();
     }
 }
 
@@ -212,11 +329,10 @@ mod tests {
     use lens_core::model_management::{DownloadProgress, ManagementError};
 
     #[test]
-    fn new_manager_has_no_active_download() {
+    fn new_manager_is_idle() {
         let manager = OperationManager::new();
         assert!(!manager.is_download_active());
-        assert_eq!(manager.active_download_status(), None);
-        assert_eq!(manager.active_download_job_id(), None);
+        assert_eq!(manager.operation_snapshot(), None);
     }
 
     #[test]
@@ -231,14 +347,15 @@ mod tests {
         assert!(result.is_ok());
         assert!(manager.is_download_active());
 
-        let (provider, model, status) = manager.active_download_status().unwrap();
-        assert_eq!(provider, Provider::Ollama);
-        assert_eq!(model, "llama3.1:8b");
-        assert_eq!(status, DownloadStatus::Starting);
+        let snapshot = manager.operation_snapshot().unwrap();
+        assert_eq!(snapshot.provider, "ollama");
+        assert_eq!(snapshot.model, "llama3.1:8b");
+        assert_eq!(snapshot.status, DownloadStatus::Starting);
+        assert!(snapshot.active);
     }
 
     #[test]
-    fn duplicate_download_is_rejected() {
+    fn second_download_is_blocked() {
         let manager = OperationManager::new();
         let _ = manager.start_download(
             Provider::Ollama,
@@ -271,25 +388,19 @@ mod tests {
         let result = manager.update_download_status(DownloadStatus::Downloading(progress));
         assert!(result.is_ok());
 
-        let (_, _, status) = manager.active_download_status().unwrap();
-        match status {
+        let snapshot = manager.operation_snapshot().unwrap();
+        match snapshot.status {
             DownloadStatus::Downloading(p) => {
                 assert_eq!(p.bytes_downloaded, 50);
                 assert_eq!(p.total_bytes, Some(100));
             }
             _ => panic!("Expected Downloading status"),
         }
+        assert!(snapshot.active);
     }
 
     #[test]
-    fn update_without_active_download_fails() {
-        let manager = OperationManager::new();
-        let result = manager.update_download_status(DownloadStatus::Completed);
-        assert_eq!(result, Err(ManagementError::DownloadFailed));
-    }
-
-    #[test]
-    fn complete_download_removes_tracking() {
+    fn update_rejects_terminal_status() {
         let manager = OperationManager::new();
         let _ = manager.start_download(
             Provider::Ollama,
@@ -298,21 +409,155 @@ mod tests {
             None,
         );
 
-        let result = manager.complete_download();
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), DownloadStatus::Starting);
-        assert!(!manager.is_download_active());
+        let result = manager.update_download_status(DownloadStatus::Completed);
+        assert_eq!(result, Err(ManagementError::InvalidResponse));
     }
 
     #[test]
-    fn complete_without_active_download_fails() {
+    fn finish_download_retains_completed_snapshot() {
         let manager = OperationManager::new();
-        let result = manager.complete_download();
-        assert_eq!(result, Err(ManagementError::DownloadFailed));
+        let _ = manager.start_download(
+            Provider::Ollama,
+            "llama3.1:8b".to_string(),
+            DownloadStatus::Starting,
+            None,
+        );
+
+        let result = manager.finish_download(DownloadStatus::Completed);
+        assert!(result.is_ok());
+        assert!(!manager.is_download_active());
+
+        let snapshot = manager.operation_snapshot().unwrap();
+        assert_eq!(snapshot.status, DownloadStatus::Completed);
+        assert!(!snapshot.active);
+        assert_eq!(snapshot.model, "llama3.1:8b");
     }
 
     #[test]
-    fn lmstudio_job_id_is_tracked() {
+    fn finish_download_retains_failed_snapshot() {
+        let manager = OperationManager::new();
+        let _ = manager.start_download(
+            Provider::Ollama,
+            "llama3.1:8b".to_string(),
+            DownloadStatus::Starting,
+            None,
+        );
+
+        let result =
+            manager.finish_download(DownloadStatus::Failed(ManagementError::DownloadFailed));
+        assert!(result.is_ok());
+
+        let snapshot = manager.operation_snapshot().unwrap();
+        assert_eq!(
+            snapshot.status,
+            DownloadStatus::Failed(ManagementError::DownloadFailed)
+        );
+        assert!(!snapshot.active);
+    }
+
+    #[test]
+    fn finish_download_retains_already_present_snapshot() {
+        let manager = OperationManager::new();
+        let _ = manager.start_download(
+            Provider::LmStudio,
+            "mistral-7b".to_string(),
+            DownloadStatus::Starting,
+            None,
+        );
+
+        let result = manager.finish_download(DownloadStatus::AlreadyPresent);
+        assert!(result.is_ok());
+
+        let snapshot = manager.operation_snapshot().unwrap();
+        assert_eq!(snapshot.status, DownloadStatus::AlreadyPresent);
+        assert!(!snapshot.active);
+    }
+
+    #[test]
+    fn finish_download_rejects_starting() {
+        let manager = OperationManager::new();
+        let _ = manager.start_download(
+            Provider::Ollama,
+            "llama3.1:8b".to_string(),
+            DownloadStatus::Starting,
+            None,
+        );
+
+        let result = manager.finish_download(DownloadStatus::Starting);
+        assert_eq!(result, Err(ManagementError::InvalidResponse));
+    }
+
+    #[test]
+    fn finish_download_rejects_downloading() {
+        let manager = OperationManager::new();
+        let _ = manager.start_download(
+            Provider::Ollama,
+            "llama3.1:8b".to_string(),
+            DownloadStatus::Starting,
+            None,
+        );
+
+        let result =
+            manager.finish_download(DownloadStatus::Downloading(DownloadProgress::new(50, 100)));
+        assert_eq!(result, Err(ManagementError::InvalidResponse));
+    }
+
+    #[test]
+    fn finish_download_rejects_paused() {
+        let manager = OperationManager::new();
+        let _ = manager.start_download(
+            Provider::LmStudio,
+            "mistral-7b".to_string(),
+            DownloadStatus::Starting,
+            None,
+        );
+
+        let result =
+            manager.finish_download(DownloadStatus::Paused(DownloadProgress::new(50, 100)));
+        assert_eq!(result, Err(ManagementError::InvalidResponse));
+    }
+
+    #[test]
+    fn next_operation_clears_prior_terminal_snapshot() {
+        let manager = OperationManager::new();
+        let _ = manager.start_download(
+            Provider::Ollama,
+            "llama3.1:8b".to_string(),
+            DownloadStatus::Starting,
+            None,
+        );
+        let _ = manager.finish_download(DownloadStatus::Completed);
+
+        // Terminal snapshot is visible.
+        assert!(manager.operation_snapshot().is_some());
+
+        // Starting a new operation clears the old terminal snapshot.
+        let _ = manager.start_download(
+            Provider::LmStudio,
+            "mistral-7b".to_string(),
+            DownloadStatus::Starting,
+            None,
+        );
+
+        let snapshot = manager.operation_snapshot().unwrap();
+        assert_eq!(snapshot.model, "mistral-7b");
+        assert!(snapshot.active);
+    }
+
+    #[test]
+    fn start_download_rejects_terminal_initial_status() {
+        let manager = OperationManager::new();
+        let result = manager.start_download(
+            Provider::Ollama,
+            "llama3.1:8b".to_string(),
+            DownloadStatus::Completed,
+            None,
+        );
+        assert_eq!(result, Err(ManagementError::InvalidResponse));
+    }
+
+    #[test]
+    fn lmstudio_job_id_tracked_internally() {
         let manager = OperationManager::new();
         let _ = manager.start_download(
             Provider::LmStudio,
@@ -321,57 +566,72 @@ mod tests {
             Some("job_abc123".to_string()),
         );
 
+        // Job ID is available via internal snapshot.
+        let internal = manager.internal_snapshot().unwrap();
+        assert_eq!(internal.job_id, Some("job_abc123".to_string()));
+
+        // Job ID is NOT exposed via frontend snapshot.
+        let snapshot = manager.operation_snapshot().unwrap();
+        assert_eq!(snapshot.provider, "lmstudio");
+        assert_eq!(snapshot.model, "mistral-7b");
+        // No job_id field on DownloadOperationSnapshot.
+    }
+
+    #[test]
+    fn register_mori_owned_instance_by_model() {
+        let manager = OperationManager::new();
+        let result =
+            manager.register_mori_instance("mistral-7b".to_string(), "inst_abc123".to_string());
+        assert!(result.is_ok());
+
+        assert!(manager.owns_model_instance("mistral-7b"));
+        assert!(!manager.owns_model_instance("other-model"));
         assert_eq!(
-            manager.active_download_job_id(),
-            Some("job_abc123".to_string())
+            manager.owned_instance_for_model("mistral-7b"),
+            Some("inst_abc123".to_string())
         );
     }
 
     #[test]
-    fn ollama_has_no_job_id() {
+    fn duplicate_registration_rejected() {
         let manager = OperationManager::new();
-        let _ = manager.start_download(
-            Provider::Ollama,
-            "llama3.1:8b".to_string(),
-            DownloadStatus::Starting,
-            None,
-        );
+        let _ = manager.register_mori_instance("mistral-7b".to_string(), "inst_abc123".to_string());
 
-        assert_eq!(manager.active_download_job_id(), None);
+        let result =
+            manager.register_mori_instance("mistral-7b".to_string(), "inst_other".to_string());
+        assert_eq!(result, Err(ManagementError::ProviderBusy));
     }
 
     #[test]
-    fn register_and_check_mori_instance() {
+    fn non_owned_model_returns_none() {
         let manager = OperationManager::new();
-        manager.register_mori_instance("inst_abc123".to_string());
-
-        assert!(manager.is_mori_owned_instance("inst_abc123"));
-        assert!(!manager.is_mori_owned_instance("inst_other"));
+        assert_eq!(manager.owned_instance_for_model("mistral-7b"), None);
+        assert!(!manager.owns_model_instance("mistral-7b"));
     }
 
     #[test]
-    fn unregister_mori_instance() {
+    fn take_owned_instance_removes_entry() {
         let manager = OperationManager::new();
-        manager.register_mori_instance("inst_abc123".to_string());
+        let _ = manager.register_mori_instance("mistral-7b".to_string(), "inst_abc123".to_string());
 
-        let removed = manager.unregister_mori_instance("inst_abc123");
-        assert!(removed);
-        assert!(!manager.is_mori_owned_instance("inst_abc123"));
-
-        let removed_again = manager.unregister_mori_instance("inst_abc123");
-        assert!(!removed_again);
+        let taken = manager.take_owned_instance_for_model("mistral-7b");
+        assert_eq!(taken, Some("inst_abc123".to_string()));
+        assert!(!manager.owns_model_instance("mistral-7b"));
+        assert_eq!(manager.owned_instance_for_model("mistral-7b"), None);
     }
 
     #[test]
-    fn list_mori_owned_instances() {
+    fn take_nonexistent_returns_none() {
         let manager = OperationManager::new();
-        manager.register_mori_instance("inst_1".to_string());
-        manager.register_mori_instance("inst_2".to_string());
+        let taken = manager.take_owned_instance_for_model("nonexistent");
+        assert_eq!(taken, None);
+    }
 
-        let instances = manager.mori_owned_instances();
-        assert_eq!(instances.len(), 2);
-        assert!(instances.contains(&"inst_1".to_string()));
-        assert!(instances.contains(&"inst_2".to_string()));
+    #[test]
+    fn new_manager_owns_nothing() {
+        let manager = OperationManager::new();
+        assert!(manager.mori_owned_instances().is_empty());
+        assert!(!manager.owns_model_instance("anything"));
     }
 
     #[test]
@@ -383,17 +643,18 @@ mod tests {
             DownloadStatus::Starting,
             None,
         );
-        manager.register_mori_instance("inst_abc123".to_string());
+        let _ = manager.finish_download(DownloadStatus::Completed);
+        let _ = manager.register_mori_instance("mistral-7b".to_string(), "inst_abc123".to_string());
 
         manager.clear();
 
         assert!(!manager.is_download_active());
-        assert!(!manager.is_mori_owned_instance("inst_abc123"));
+        assert_eq!(manager.operation_snapshot(), None);
         assert!(manager.mori_owned_instances().is_empty());
     }
 
     #[test]
-    fn manager_is_cloneable() {
+    fn clone_sees_same_state() {
         let manager1 = OperationManager::new();
         let manager2 = manager1.clone();
 
@@ -404,12 +665,11 @@ mod tests {
             None,
         );
 
-        // Both clones see the same state.
         assert!(manager2.is_download_active());
     }
 
     #[test]
-    fn manager_is_thread_safe() {
+    fn thread_access() {
         use std::thread;
 
         let manager = OperationManager::new();
@@ -426,5 +686,19 @@ mod tests {
 
         handle.join().unwrap();
         assert!(manager.is_download_active());
+    }
+
+    #[test]
+    fn snapshot_serializes_to_json() {
+        let snapshot = DownloadOperationSnapshot {
+            provider: "ollama".to_string(),
+            model: "llama3.1:8b".to_string(),
+            status: DownloadStatus::Downloading(DownloadProgress::new(50, 100)),
+            active: true,
+        };
+        let json = serde_json::to_string(&snapshot).unwrap();
+        assert!(json.contains("\"provider\":\"ollama\""));
+        assert!(json.contains("\"model\":\"llama3.1:8b\""));
+        assert!(json.contains("\"active\":true"));
     }
 }

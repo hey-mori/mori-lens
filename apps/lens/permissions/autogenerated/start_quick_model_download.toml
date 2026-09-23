@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-start-quick-model-download"
+description = "Enables the start_quick_model_download command without any pre-configured scope."
+commands.allow = ["start_quick_model_download"]
+
+[[permission]]
+identifier = "deny-start-quick-model-download"
+description = "Denies the start_quick_model_download command without any pre-configured scope."
+commands.deny = ["start_quick_model_download"]

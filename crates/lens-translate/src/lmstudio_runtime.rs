@@ -236,7 +236,7 @@ impl LmStudioRuntime {
             return Err(ManagementError::Unauthorized);
         }
         if status == 404 {
-            return Err(ManagementError::ModelNotFound);
+            return Err(ManagementError::OperationNotFound);
         }
         if !(200..=299).contains(&status) {
             return Err(ManagementError::DownloadFailed);
@@ -344,7 +344,7 @@ impl LmStudioRuntime {
             .ok_or(ManagementError::InvalidResponse)
     }
 
-    /// Unload a model from memory.
+    /// Unload a model instance from memory.
     ///
     /// Sends POST /api/v1/models/unload with the instance_id.
     /// Only instances created by Mori Lens should be unloaded.
@@ -353,7 +353,7 @@ impl LmStudioRuntime {
     /// Note: instance_id is sent in JSON body, not URL path, so
     /// path-injection validation is not required. We still validate
     /// that it's non-empty for safety.
-    pub fn unload_model(&self, instance_id: &str) -> Result<(), ManagementError> {
+    pub fn unload_instance(&self, instance_id: &str) -> Result<(), ManagementError> {
         // Validate that instance_id is non-empty.
         // Character validation is not needed since it's in JSON body, not URL path.
         if instance_id.is_empty() {
@@ -390,7 +390,7 @@ impl LmStudioRuntime {
             return Err(ManagementError::Unauthorized);
         }
         if status == 404 {
-            return Err(ManagementError::ModelNotFound);
+            return Err(ManagementError::OperationNotFound);
         }
         if !(200..=299).contains(&status) {
             return Err(ManagementError::UnloadFailed);
@@ -1539,7 +1539,7 @@ mod tests {
         let runtime = LmStudioRuntime::new(server.address());
         let result = runtime.download_status("nonexistent");
 
-        assert_eq!(result, Err(ManagementError::ModelNotFound));
+        assert_eq!(result, Err(ManagementError::OperationNotFound));
     }
 
     #[test]
@@ -1687,52 +1687,52 @@ mod tests {
     }
 
     #[test]
-    fn unload_model_succeeds_on_2xx() {
+    fn unload_instance_succeeds_on_2xx() {
         let server = FakeServer::start(vec![
             FakeResponse::ok_json(r#"{"success": true}"#).expect_post("/api/v1/models/unload")
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
-        let result = runtime.unload_model("inst_abc123");
+        let result = runtime.unload_instance("inst_abc123");
 
         assert!(result.is_ok());
     }
 
     #[test]
-    fn unload_model_returns_error_when_unauthorized() {
+    fn unload_instance_returns_error_when_unauthorized() {
         let server = FakeServer::start(vec![
             FakeResponse::status(403).expect_post("/api/v1/models/unload")
         ]);
 
         let runtime = LmStudioRuntime::with_token(server.address(), "bad-token");
-        let result = runtime.unload_model("inst_abc123");
+        let result = runtime.unload_instance("inst_abc123");
 
         assert_eq!(result, Err(ManagementError::Unauthorized));
     }
 
     #[test]
-    fn unload_model_returns_error_when_instance_not_found() {
+    fn unload_instance_returns_error_when_instance_not_found() {
         let server = FakeServer::start(vec![
             FakeResponse::status(404).expect_post("/api/v1/models/unload")
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
-        let result = runtime.unload_model("nonexistent");
+        let result = runtime.unload_instance("nonexistent");
 
-        assert_eq!(result, Err(ManagementError::ModelNotFound));
+        assert_eq!(result, Err(ManagementError::OperationNotFound));
     }
 
     #[test]
-    fn unload_model_rejects_empty_instance_id() {
+    fn unload_instance_rejects_empty_instance_id() {
         let runtime = LmStudioRuntime::new("127.0.0.1:1");
         // Empty instance_id must be rejected before any HTTP call.
-        let result = runtime.unload_model("");
+        let result = runtime.unload_instance("");
 
         assert_eq!(result, Err(ManagementError::InvalidResponse));
     }
 
     #[test]
-    fn unload_model_accepts_opaque_instance_ids() {
+    fn unload_instance_accepts_opaque_instance_ids() {
         // instance_id is in JSON body, not URL path, so we accept opaque provider IDs.
         let server = FakeServer::start(vec![
             FakeResponse::ok_json(r#"{"success": true}"#).expect_post("/api/v1/models/unload")
@@ -1740,19 +1740,19 @@ mod tests {
 
         let runtime = LmStudioRuntime::new(server.address());
         // LM Studio may use various formats for instance IDs.
-        let result = runtime.unload_model("inst-abc_123_DEF/xyz");
+        let result = runtime.unload_instance("inst-abc_123_DEF/xyz");
 
         assert!(result.is_ok());
     }
 
     #[test]
-    fn unload_model_sends_auth_header_when_token_configured() {
+    fn unload_instance_sends_auth_header_when_token_configured() {
         let server = FakeServer::start(vec![FakeResponse::ok_json(r#"{"success": true}"#)
             .expect_post("/api/v1/models/unload")
             .expect_header("Authorization", "Bearer my-token")]);
 
         let runtime = LmStudioRuntime::with_token(server.address(), "my-token");
-        let result = runtime.unload_model("inst_auth");
+        let result = runtime.unload_instance("inst_auth");
 
         assert!(result.is_ok());
     }

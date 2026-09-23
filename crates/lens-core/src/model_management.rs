@@ -52,14 +52,22 @@ impl DownloadProgress {
     }
 
     /// Set the download rate.
+    ///
+    /// Normalizes invalid values: NaN, Infinity, negative, and zero rates are
+    /// rejected and stored as `None`. Only finite positive rates are preserved.
+    /// ETA is computed only from a valid rate.
     pub fn with_rate(mut self, bytes_per_second: f64) -> Self {
-        self.bytes_per_second = Some(bytes_per_second);
-        // Compute ETA if we have total.
-        if let Some(total) = self.total_bytes {
-            let remaining = total.saturating_sub(self.bytes_downloaded);
-            if bytes_per_second > 0.0 && bytes_per_second.is_finite() {
+        // Normalize: only finite positive rates are valid.
+        if bytes_per_second.is_finite() && bytes_per_second > 0.0 {
+            self.bytes_per_second = Some(bytes_per_second);
+            // Compute ETA if we have total.
+            if let Some(total) = self.total_bytes {
+                let remaining = total.saturating_sub(self.bytes_downloaded);
                 self.estimated_completion_seconds = Some(remaining as f64 / bytes_per_second);
             }
+        } else {
+            self.bytes_per_second = None;
+            self.estimated_completion_seconds = None;
         }
         self
     }
@@ -78,9 +86,12 @@ impl DownloadProgress {
         })
     }
 
-    /// Check if the download is complete.
-    /// Only returns true when status is terminal Completed, not from byte arithmetic alone.
-    pub fn is_complete(&self) -> bool {
+    /// Check if bytes downloaded has reached or exceeded total bytes.
+    ///
+    /// This is byte-level arithmetic only, not provider operation completion.
+    /// For terminal operation status, use `DownloadStatus::is_terminal()`.
+    /// Returns false if total_bytes is unknown or zero (malformed).
+    pub fn bytes_reached_total(&self) -> bool {
         match self.total_bytes {
             Some(total) if total > 0 => self.bytes_downloaded >= total,
             _ => false,
@@ -104,12 +115,28 @@ pub enum DownloadStatus {
     Paused(DownloadProgress),
     /// Download completed successfully.
     Completed,
-    /// Model was already present locally before the download request.
-    /// Ollama returns this when POST /api/pull is called for an existing model.
-    /// LM Studio: already_downloaded.
+    /// Provider explicitly indicated the requested model was already local.
+    /// Currently used by LM Studio `already_downloaded` response.
     AlreadyPresent,
     /// Download failed with a typed error.
     Failed(ManagementError),
+}
+
+impl DownloadStatus {
+    /// Whether this status represents a terminal operation state.
+    ///
+    /// Terminal: `Completed`, `AlreadyPresent`, `Failed(_)`.
+    /// Non-terminal: `Starting`, `Downloading(_)`, `Paused(_)`.
+    ///
+    /// Terminality is determined by provider operation semantics, not byte
+    /// arithmetic. A download where bytes_reached_total() is true but the
+    /// provider has not confirmed completion is still non-terminal.
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            DownloadStatus::Completed | DownloadStatus::AlreadyPresent | DownloadStatus::Failed(_)
+        )
+    }
 }
 
 impl Default for DownloadStatus {
@@ -129,7 +156,7 @@ pub enum ManagementError {
     EndpointUnreachable,
     /// Provider requires authentication but none was provided or it was invalid.
     Unauthorized,
-    /// Requested model was not found.
+    /// Requested model was not found (model lookup/load 404).
     ModelNotFound,
     /// Provider returned an invalid or malformed response.
     InvalidResponse,
@@ -143,6 +170,8 @@ pub enum ManagementError {
     UnsupportedOperation,
     /// Provider is busy or rate-limited.
     ProviderBusy,
+    /// Referenced operation or resource was not found (download job 404, instance 404).
+    OperationNotFound,
 }
 
 #[cfg(test)]
@@ -185,17 +214,17 @@ mod tests {
     #[test]
     fn download_progress_is_complete_only_with_positive_total() {
         let progress = DownloadProgress::new(100, 100);
-        assert!(progress.is_complete());
+        assert!(progress.bytes_reached_total());
 
         let incomplete = DownloadProgress::new(50, 100);
-        assert!(!incomplete.is_complete());
+        assert!(!incomplete.bytes_reached_total());
 
         let unknown = DownloadProgress::unknown_total(50);
-        assert!(!unknown.is_complete());
+        assert!(!unknown.bytes_reached_total());
 
         // Zero total is not complete
         let zero_total = DownloadProgress::new(0, 0);
-        assert!(!zero_total.is_complete());
+        assert!(!zero_total.bytes_reached_total());
     }
 
     #[test]
@@ -215,29 +244,40 @@ mod tests {
     #[test]
     fn download_progress_with_rate_rejects_nan() {
         let progress = DownloadProgress::new(50, 100).with_rate(f64::NAN);
-        assert!(progress.bytes_per_second.unwrap().is_nan());
+        assert_eq!(progress.bytes_per_second, None);
         assert_eq!(progress.estimated_completion_seconds, None);
     }
 
     #[test]
     fn download_progress_with_rate_rejects_infinity() {
         let progress = DownloadProgress::new(50, 100).with_rate(f64::INFINITY);
-        assert_eq!(progress.bytes_per_second, Some(f64::INFINITY));
+        assert_eq!(progress.bytes_per_second, None);
         assert_eq!(progress.estimated_completion_seconds, None);
     }
 
     #[test]
     fn download_progress_with_rate_rejects_zero() {
         let progress = DownloadProgress::new(50, 100).with_rate(0.0);
-        assert_eq!(progress.bytes_per_second, Some(0.0));
+        assert_eq!(progress.bytes_per_second, None);
         assert_eq!(progress.estimated_completion_seconds, None);
     }
 
     #[test]
     fn download_progress_with_rate_rejects_negative() {
         let progress = DownloadProgress::new(50, 100).with_rate(-10.0);
-        assert_eq!(progress.bytes_per_second, Some(-10.0));
+        assert_eq!(progress.bytes_per_second, None);
         assert_eq!(progress.estimated_completion_seconds, None);
+    }
+
+    #[test]
+    fn download_progress_invalid_rate_serializes_cleanly() {
+        // A rate that was invalid should serialize with null bytes_per_second,
+        // not with NaN or Infinity which would break JSON.
+        let progress = DownloadProgress::new(50, 100).with_rate(f64::NAN);
+        let json = serde_json::to_string(&progress).unwrap();
+        assert!(!json.contains("NaN"));
+        assert!(!json.contains("Infinity"));
+        assert!(json.contains("\"bytes_per_second\":null"));
     }
 
     #[test]
@@ -270,11 +310,23 @@ mod tests {
             ManagementError::UnloadFailed,
             ManagementError::UnsupportedOperation,
             ManagementError::ProviderBusy,
+            ManagementError::OperationNotFound,
         ];
         for error in errors {
             let json = serde_json::to_string(&error).unwrap();
             assert!(!json.is_empty());
         }
+    }
+
+    #[test]
+    fn download_status_terminal_states() {
+        assert!(DownloadStatus::Completed.is_terminal());
+        assert!(DownloadStatus::AlreadyPresent.is_terminal());
+        assert!(DownloadStatus::Failed(ManagementError::DownloadFailed).is_terminal());
+
+        assert!(!DownloadStatus::Starting.is_terminal());
+        assert!(!DownloadStatus::Downloading(DownloadProgress::new(50, 100)).is_terminal());
+        assert!(!DownloadStatus::Paused(DownloadProgress::new(50, 100)).is_terminal());
     }
 
     #[test]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-unload-lmstudio-instance"
+description = "Enables the unload_lmstudio_instance command without any pre-configured scope."
+commands.allow = ["unload_lmstudio_instance"]
+
+[[permission]]
+identifier = "deny-unload-lmstudio-instance"
+description = "Denies the unload_lmstudio_instance command without any pre-configured scope."
+commands.deny = ["unload_lmstudio_instance"]
