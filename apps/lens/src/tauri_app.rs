@@ -969,14 +969,28 @@ async fn run_health_check(
         let kind = DiagnosticEventKind::HealthCheck;
 
         // Typed comparison: no stringly-typed state checks.
+        // Record diagnostics for all non-operational states.
         if matches!(
             quick_state,
-            HealthState::Unavailable | HealthState::Degraded
+            HealthState::Unavailable
+                | HealthState::Degraded
+                | HealthState::EndpointUnreachable
+                | HealthState::NoCompatibleModel
+                | HealthState::RuntimeNotInstalled
+                | HealthState::RuntimeInstalledButStopped
         ) {
             ring.record(DiagnosticComponent::Quick, kind, quick_failure_class);
         }
 
-        if matches!(deep_state, HealthState::Unavailable | HealthState::Degraded) {
+        if matches!(
+            deep_state,
+            HealthState::Unavailable
+                | HealthState::Degraded
+                | HealthState::EndpointUnreachable
+                | HealthState::NoCompatibleModel
+                | HealthState::RuntimeNotInstalled
+                | HealthState::RuntimeInstalledButStopped
+        ) {
             ring.record(DiagnosticComponent::Deep, kind, deep_failure_class);
         }
     }
@@ -1024,7 +1038,12 @@ fn check_quick_engine_health(
     if let Err(error) = reachability {
         let failure_class = DiagnosticFailureClass::from_translate_error(&error)
             .unwrap_or(DiagnosticFailureClass::ConnectionFailed);
-        return (HealthState::Unavailable, Some(failure_class));
+        // Map ConnectionFailed to EndpointUnreachable for more granular health states.
+        let health_state = match failure_class {
+            DiagnosticFailureClass::ConnectionFailed => HealthState::EndpointUnreachable,
+            _ => HealthState::Unavailable,
+        };
+        return (health_state, Some(failure_class));
     }
 
     // Step 2: Resolve a model provider-aware. Ollama honours the configured
@@ -1037,7 +1056,12 @@ fn check_quick_engine_health(
             // Model resolution failed. Map to appropriate failure class.
             let failure_class = DiagnosticFailureClass::from_translate_error(&e)
                 .unwrap_or(DiagnosticFailureClass::ModelMissing);
-            return (HealthState::Unavailable, Some(failure_class));
+            // Map ModelMissing to NoCompatibleModel for more granular health states.
+            let health_state = match failure_class {
+                DiagnosticFailureClass::ModelMissing => HealthState::NoCompatibleModel,
+                _ => HealthState::Unavailable,
+            };
+            return (health_state, Some(failure_class));
         }
     };
 
@@ -1109,7 +1133,12 @@ fn check_deep_engine_health(
     if let Err(error) = reachability {
         let failure_class = DiagnosticFailureClass::from_translate_error(&error)
             .unwrap_or(DiagnosticFailureClass::ConnectionFailed);
-        return (HealthState::Unavailable, Some(failure_class));
+        // Map ConnectionFailed to EndpointUnreachable for more granular health states.
+        let health_state = match failure_class {
+            DiagnosticFailureClass::ConnectionFailed => HealthState::EndpointUnreachable,
+            _ => HealthState::Unavailable,
+        };
+        return (health_state, Some(failure_class));
     }
 
     // Step 2: Resolve a model using the same provider-aware path the Quick
@@ -1125,7 +1154,12 @@ fn check_deep_engine_health(
             // Model resolution failed. Map to appropriate failure class.
             let failure_class = DiagnosticFailureClass::from_translate_error(&e)
                 .unwrap_or(DiagnosticFailureClass::ModelMissing);
-            return (HealthState::Unavailable, Some(failure_class));
+            // Map ModelMissing to NoCompatibleModel for more granular health states.
+            let health_state = match failure_class {
+                DiagnosticFailureClass::ModelMissing => HealthState::NoCompatibleModel,
+                _ => HealthState::Unavailable,
+            };
+            return (health_state, Some(failure_class));
         }
     };
 
