@@ -63,7 +63,7 @@ EXTERNAL BLOCKED
 
 ## P19 — Control Center behavioral/E2E test foundation
 
-**Status:** NOT STARTED
+**Status:** COMPLETE (P19A behavioral tests, P19B Tauri E2E, P19C axe-core accessibility automation all merged)
 
 ### Goals
 
@@ -114,7 +114,7 @@ Preserve SCREEN READER RUNTIME VERIFIED = NO until real screen-reader run.
 
 ## P20 — First-card/provider readiness and setup experience
 
-**Status:** NOT STARTED
+**Status:** IN PROGRESS (P20A domain separation: health vs readiness, provider capability model, model management types)
 
 ### Goals
 
