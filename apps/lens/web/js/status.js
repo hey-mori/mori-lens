@@ -154,7 +154,15 @@ export async function loadStatus() {
     html += '</div>';
     // Close hint
     html += '<p style="font-size:11px;color:#999;margin-top:20px">' + escapeHtml(t('status.tray.hint')) + '</p>';
+    // P20C: preserve focus across 1-second re-render
+    const activeId = document.activeElement && document.activeElement.id
+      ? document.activeElement.id
+      : null;
     el.innerHTML = html;
+    if (activeId) {
+      const restored = document.getElementById(activeId);
+      if (restored) restored.focus();
+    }
     // Attach event listeners after rendering
     attachStatusHandlers();
     attachReadinessActionHandlers();
