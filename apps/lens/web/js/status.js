@@ -20,13 +20,22 @@ let cachedReadinessData = null;
  * Load and render the status page.
  *
  * Uses cached provider readiness (state.cachedProviderReadiness).
- * Does NOT make provider network calls. The 1-second status refresh
- * calls this function, so it must be cheap.
+ * When a download is active, fetches fresh readiness data to update progress.
+ * Otherwise, only re-renders from cache (cheap).
  *
- * For a fresh provider readiness fetch, use refreshReadinessAndRender().
+ * For a manual fresh provider readiness fetch, use refreshReadinessAndRender().
  */
 export async function loadStatus() {
   try {
+    // Check if a download is active in the cached readiness data
+    const cachedReadiness = state.cachedProviderReadiness;
+    const hasActiveDownload = cachedReadiness && cachedReadiness.download && cachedReadiness.download.active;
+
+    // If a download is active, fetch fresh readiness data to update progress
+    if (hasActiveDownload) {
+      await refreshProviderReadiness();
+    }
+
     const [diag, runtime, health] = await Promise.all([
       invoke('get_diagnostics'),
       invoke('get_runtime_status'),
