@@ -5,7 +5,7 @@ import { escapeHtml, setStatus } from './ui.js';
 import { state } from './state.js';
 import { refreshProviderReadiness, renderReadinessSection, attachReadinessActionHandlers } from './readiness.js';
 import { t } from './i18n.js';
-import { observeExisting, stopPolling, dispose } from './operation-controller.js';
+import { observeExisting, startOperationPolling, stopPolling, dispose } from './operation-controller.js';
 
 // Stable region IDs for DOM identity preservation (Task #16)
 const REGION_IDS = {
@@ -19,6 +19,36 @@ const REGION_IDS = {
 // Cache for readiness section to avoid unnecessary re-renders
 let cachedReadinessHtml = null;
 let cachedReadinessData = null;
+
+// Track whether handlers have been attached to prevent duplicates
+let statusHandlersAttached = false;
+
+/**
+ * Create action callbacks for readiness handlers.
+ *
+ * Returns explicit callbacks for action orchestration, ensuring
+ * single-owner semantics without global events.
+ */
+function createActionCallbacks() {
+  return {
+    onDownloadStarted: () => {
+      // Start operation controller polling immediately after download starts
+      // Do NOT call refreshProviderReadiness here
+      startOperationPolling(handleOperationUpdate);
+    },
+    onLoadStarted: () => {
+      // Load completed and readiness was reconciled; update the readiness region
+      updateReadinessRegion();
+    },
+    onRefreshCompleted: () => {
+      // Refresh completed; update readiness region
+      updateReadinessRegion();
+    },
+    onConfigureModel: () => {
+      // Navigation only; no readiness refresh needed
+    },
+  };
+}
 
 /**
  * Initialize stable DOM regions on first load.
@@ -70,7 +100,6 @@ function handleOperationUpdate(snapshot, isTerminal) {
     // Operation completed; trigger one final readiness reconciliation
     refreshProviderReadiness().then(() => {
       updateReadinessRegion();
-      attachReadinessActionHandlers();
     });
   } else if (snapshot) {
     // Update the readiness region with the new operation snapshot
@@ -81,7 +110,6 @@ function handleOperationUpdate(snapshot, isTerminal) {
         download: snapshot,
       };
       updateReadinessRegion();
-      attachReadinessActionHandlers();
     }
   }
 }
@@ -108,6 +136,28 @@ function updateReadinessRegion() {
 export function _resetCaches() {
   cachedReadinessHtml = null;
   cachedReadinessData = null;
+  statusHandlersAttached = false;
+}
+
+/**
+ * Activate Status page (called when navigating to Status).
+ *
+ * Starts operation observation if there's an active operation.
+ * This is the entry point for the Status page lifecycle.
+ */
+export function activateStatus() {
+  // Start observing existing operations (if any)
+  observeExisting(handleOperationUpdate);
+}
+
+/**
+ * Deactivate Status page (called when navigating away from Status).
+ *
+ * Stops operation polling to prevent invisible background work.
+ * Backend download continues independently; frontend observation pauses.
+ */
+export function deactivateStatus() {
+  stopPolling();
 }
 
 /**
@@ -123,6 +173,9 @@ export async function loadStatus() {
     // Ensure stable regions exist
     ensureStableRegions();
 
+    // Attach readiness delegated listener (idempotent, updates callbacks each call)
+    attachReadinessActionHandlers(createActionCallbacks());
+
     // Fetch fresh data for non-readiness regions
     const [diag, runtime, health] = await Promise.all([
       invoke('get_diagnostics'),
@@ -135,7 +188,6 @@ export async function loadStatus() {
 
     // Update readiness region (only if data changed)
     updateReadinessRegion();
-    attachReadinessActionHandlers();
 
     // Update health region
     updateHealthRegion(health);
@@ -146,12 +198,13 @@ export async function loadStatus() {
     // Update diagnostics region
     updateDiagnosticsRegion(diag);
 
-    // Attach event handlers after all regions are rendered
-    attachStatusHandlers();
-    attachReadinessActionHandlers();
+    // Attach event handlers after all regions are rendered (only once)
+    if (!statusHandlersAttached) {
+      attachStatusHandlers();
+      statusHandlersAttached = true;
+    }
 
-    // Start operation controller if not already polling
-    observeExisting(handleOperationUpdate);
+    // Note: Operation observation is started by activateStatus() from navigation
   } catch (e) {
     console.error('loadStatus failed:', e);
   }
@@ -332,30 +385,40 @@ export async function refreshReadinessAndRender() {
 }
 
 function attachStatusHandlers() {
-  const pauseBtn = document.getElementById('pause-btn');
-  if (pauseBtn) pauseBtn.addEventListener('click', togglePause);
+  const statusContent = document.getElementById('status-content');
+  if (!statusContent) return;
 
-  const quitBtn = document.getElementById('quit-btn');
-  if (quitBtn) quitBtn.addEventListener('click', quitApp);
+  // Single delegated listener for all status actions
+  statusContent.addEventListener('click', async (e) => {
+    const target = e.target.closest('button');
+    if (!target) return;
 
-  const refreshBtn = document.getElementById('refresh-local-ai-btn');
-  if (refreshBtn) refreshBtn.addEventListener('click', refreshReadinessAndRender);
+    const buttonId = target.id;
 
-  const autostartBtn = document.getElementById('autostart-toggle-btn');
-  if (autostartBtn) autostartBtn.addEventListener('click', toggleAutostart);
-
-  const exportBtn = document.getElementById('export-diagnostics-btn');
-  if (exportBtn) exportBtn.addEventListener('click', () => {
-    import('./diagnostics.js').then(m => m.exportDiagnostics());
+    // Dispatch based on button ID
+    if (buttonId === 'pause-btn') {
+      e.preventDefault();
+      await togglePause();
+    } else if (buttonId === 'quit-btn') {
+      e.preventDefault();
+      await quitApp();
+    } else if (buttonId === 'refresh-local-ai-btn') {
+      e.preventDefault();
+      await refreshReadinessAndRender();
+    } else if (buttonId === 'autostart-toggle-btn') {
+      e.preventDefault();
+      await toggleAutostart();
+    } else if (buttonId === 'export-diagnostics-btn') {
+      e.preventDefault();
+      import('./diagnostics.js').then(m => m.exportDiagnostics());
+    } else if (buttonId === 'copy-diagnostics-btn') {
+      e.preventDefault();
+      import('./diagnostics.js').then(m => m.copyDiagnostics(target));
+    } else if (buttonId === 'run-health-check-btn') {
+      e.preventDefault();
+      await runHealthCheck();
+    }
   });
-
-  const copyBtn = document.getElementById('copy-diagnostics-btn');
-  if (copyBtn) copyBtn.addEventListener('click', function() {
-    import('./diagnostics.js').then(m => m.copyDiagnostics(this));
-  });
-
-  const healthCheckBtn = document.getElementById('run-health-check-btn');
-  if (healthCheckBtn) healthCheckBtn.addEventListener('click', runHealthCheck);
 
   // Load recent diagnostic events
   loadRecentDiagnostics();
