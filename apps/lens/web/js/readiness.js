@@ -91,12 +91,8 @@ export function renderReadinessSection(readiness) {
       readiness.download, readiness.quick_can_download, readiness.quick_can_load,
       readiness.quick_supports_progress, readiness.quick_download_target);
     // Deep lane: status-only in P20C. No action button rendered.
-    html += renderLaneRow('Deep', readiness.deep_lane, readiness.deep_provider,
-      readiness.deep_model, null,
-      readiness.deep_provider_access,
-      readiness.deep_model_inventory, readiness.deep_next_action,
-      null, readiness.deep_can_download, readiness.deep_can_load,
-      readiness.deep_supports_progress, null);
+    // If deep_provider is null, the configuration is unsupported.
+    html += renderDeepLaneRow(readiness);
   }
   html += '</table>';
 
@@ -107,6 +103,40 @@ export function renderReadinessSection(readiness) {
   html += '<div id="health-check-result" style="margin-top:12px;display:none"></div>';
 
   return html;
+}
+
+/**
+ * Render the Deep lane row, handling unsupported configuration.
+ *
+ * P20C: Deep is Ollama-only. If the user configured LM Studio or an invalid
+ * token for Deep, deep_provider is null and deep_configuration_valid is false.
+ * In that case, show "Unsupported configuration" instead of a fake provider name.
+ */
+function renderDeepLaneRow(readiness) {
+  if (!readiness.deep_configuration_valid || !readiness.deep_provider) {
+    // Unsupported configuration
+    let html = '<tr>';
+    html += '<td>Deep</td>';
+    html += '<td>';
+    html += '<span style="color:#c00">✗</span> ';
+    html += '<span style="color:#c00">' + escapeHtml(t('status.readiness.unsupported.config')) + '</span>';
+    html += '</td>';
+    html += '</tr>';
+    html += '<tr>';
+    html += '<td></td>';
+    html += '<td style="font-size:12px;color:#555">';
+    html += escapeHtml(t('status.readiness.deep.ollama.only'));
+    html += '</td>';
+    html += '</tr>';
+    return html;
+  }
+  // Valid configuration: use standard lane rendering
+  return renderLaneRow('Deep', readiness.deep_lane, readiness.deep_provider,
+    readiness.deep_model, null,
+    readiness.deep_provider_access,
+    readiness.deep_model_inventory, readiness.deep_next_action,
+    null, readiness.deep_can_download, readiness.deep_can_load,
+    readiness.deep_supports_progress, null);
 }
 
 /**
