@@ -797,7 +797,9 @@ async fn get_provider_readiness(
     let deep_endpoint_state = access_to_endpoint(&deep_access);
 
     let quick_can_infer_from_present = match quick_provider {
-        lens_core::translate::Provider::Ollama => true,
+        lens_core::translate::Provider::Ollama => {
+            lens_core::readiness::InferenceVisibilityObservation::Visible
+        }
         lens_core::translate::Provider::LmStudio => {
             // Check if the effective model is inference-visible (JIT semantics)
             if let Some(model) = &quick_effective.effective_model {
@@ -811,15 +813,17 @@ async fn get_provider_readiness(
                         None, // P20C: no API token support yet
                     )
                 } else {
-                    false
+                    lens_core::readiness::InferenceVisibilityObservation::NotVisible
                 }
             } else {
-                false
+                lens_core::readiness::InferenceVisibilityObservation::NotVisible
             }
         }
     };
     let deep_can_infer_from_present = match deep_provider {
-        lens_core::translate::Provider::Ollama => true,
+        lens_core::translate::Provider::Ollama => {
+            lens_core::readiness::InferenceVisibilityObservation::Visible
+        }
         lens_core::translate::Provider::LmStudio => {
             // Check if the effective model is inference-visible (JIT semantics)
             if let Some(model) = &deep_effective.effective_model {
@@ -833,10 +837,10 @@ async fn get_provider_readiness(
                         None, // P20C: no API token support yet
                     )
                 } else {
-                    false
+                    lens_core::readiness::InferenceVisibilityObservation::NotVisible
                 }
             } else {
-                false
+                lens_core::readiness::InferenceVisibilityObservation::NotVisible
             }
         }
     };
@@ -1065,23 +1069,41 @@ fn get_model_state(
 
 /// Check if a model is inference-visible for LM Studio (JIT semantics).
 ///
-/// Returns true if the model is visible in /v1/models (can be loaded on demand).
-/// Returns false if not visible or on any error (fail closed).
+/// Returns an observation result distinguishing three cases:
+/// - Visible: successfully observed in /v1/models
+/// - NotVisible: successfully observed but not in /v1/models
+/// - ObservationFailed: HTTP error, transport failure, or malformed response
+///
+/// Offloads the HTTP call to a thread to avoid blocking the async command path.
 fn check_lmstudio_inference_visibility(
     endpoint: &str,
     model: &str,
     api_token: Option<&str>,
-) -> bool {
+) -> lens_core::readiness::InferenceVisibilityObservation {
+    use lens_core::readiness::InferenceVisibilityObservation;
     use lens_translate::lmstudio_runtime::LmStudioRuntime;
 
-    let runtime = if let Some(token) = api_token {
-        LmStudioRuntime::with_token(endpoint, token)
-    } else {
-        LmStudioRuntime::new(endpoint)
-    };
+    let ep = endpoint.to_owned();
+    let m = model.to_owned();
+    let token = api_token.map(|t| t.to_owned());
+    let (tx, rx) = std::sync::mpsc::channel();
 
-    // Fail closed: any error means we cannot confirm visibility
-    runtime.is_inference_visible(model).unwrap_or(false)
+    std::thread::spawn(move || {
+        let runtime = if let Some(tok) = token {
+            LmStudioRuntime::with_token(&ep, &tok)
+        } else {
+            LmStudioRuntime::new(&ep)
+        };
+        let result = runtime.is_inference_visible(&m);
+        let _ = tx.send(result);
+    });
+
+    match rx.recv() {
+        Ok(Ok(true)) => InferenceVisibilityObservation::Visible,
+        Ok(Ok(false)) => InferenceVisibilityObservation::NotVisible,
+        Ok(Err(_)) => InferenceVisibilityObservation::ObservationFailed,
+        Err(_) => InferenceVisibilityObservation::ObservationFailed,
+    }
 }
 
 /// Map ProviderAccessState to RuntimePresence.
