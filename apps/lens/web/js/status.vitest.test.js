@@ -42,8 +42,15 @@ vi.mock('./local_ai.js', () => ({
   refreshLocalAiStatus: mocks.refreshLocalAiStatus,
 }));
 
+// Mock operation-controller module
+vi.mock('./operation-controller.js', () => ({
+  observeExisting: vi.fn(),
+  stopPolling: vi.fn(),
+  dispose: vi.fn(),
+}));
+
 // Import production module after mocking
-import { loadStatus } from './status.js';
+import { loadStatus, _resetCaches } from './status.js';
 
 const SAMPLE_DIAGNOSTICS = {
   version: '0.11.0',
@@ -75,6 +82,7 @@ describe('Status module', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    _resetCaches();
     fixture = createControlCenterFixture();
 
     // Add status-specific elements
