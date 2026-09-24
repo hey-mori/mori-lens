@@ -31,11 +31,7 @@ const PAUSED_POLL_INTERVAL: Duration = Duration::from_secs(15);
 /// Calls `pull_model()` with a progress callback that updates the manager.
 /// On terminal success, calls `finish_download(Completed)` or
 /// `finish_download(AlreadyPresent)`. On error, calls `finish_download(Failed)`.
-pub fn run_ollama_download(
-    manager: OperationManager,
-    endpoint: String,
-    model: String,
-) {
+pub fn run_ollama_download(manager: OperationManager, endpoint: String, model: String) {
     let runtime = OllamaRuntime::new(&endpoint);
 
     // pull_model blocks and streams progress via callback.
@@ -83,11 +79,7 @@ pub fn run_ollama_download(
 /// - Downloading/Starting → poll every 2 seconds
 /// - Paused → poll every 15 seconds (Mori does not implement resume)
 /// - Terminal → worker exits
-pub fn run_lmstudio_download(
-    manager: OperationManager,
-    endpoint: String,
-    model: String,
-) {
+pub fn run_lmstudio_download(manager: OperationManager, endpoint: String, model: String) {
     let runtime = LmStudioRuntime::new(&endpoint);
 
     // Start the download.
