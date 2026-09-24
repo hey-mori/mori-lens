@@ -591,10 +591,15 @@ pub struct ProviderReadinessView {
     /// Provider name for Quick lane (for display).
     pub quick_provider: String,
     /// Provider name for Deep lane (for display).
-    pub deep_provider: String,
+    /// None if the Deep configuration is unsupported (e.g., LM Studio or invalid token).
+    /// This separates the configured provider identity from the internal runtime provider.
+    pub deep_provider: Option<String>,
+    /// Whether the Deep configuration is valid and supported.
+    /// False when the user configured LM Studio or an invalid token for Deep (Ollama-only).
+    pub deep_configuration_valid: bool,
     /// Configured Quick model (None if auto/unset).
     pub quick_model: Option<String>,
-    /// Configured Deep model (None if auto/unset).
+    /// Configured Deep model (None if auto/unset or configuration invalid).
     pub deep_model: Option<String>,
     /// Why the Quick provider is or is not usable.
     pub quick_provider_access: lens_core::readiness::ProviderAccessState,
@@ -823,7 +828,12 @@ async fn get_provider_readiness(
         quick_lane: snapshot.quick,
         deep_lane: snapshot.deep,
         quick_provider: quick_provider.as_str().to_owned(),
-        deep_provider: deep_provider.as_str().to_owned(),
+        deep_provider: if deep_config_valid {
+            Some(deep_provider.as_str().to_owned())
+        } else {
+            None
+        },
+        deep_configuration_valid: deep_config_valid,
         quick_model,
         deep_model,
         quick_provider_access: quick_access,
@@ -1005,18 +1015,18 @@ fn get_model_state(
 /// A reachable HTTP endpoint proves the provider is answering, but does not
 /// prove installation in the domain's defined sense (PATH, registry, service
 /// enumeration). Use Unknown until real installation detection exists.
-/// Only Available is strong enough evidence to claim Installed.
+///
+/// P20C: All access states map to Unknown because no installation detection
+/// has been implemented yet. The endpoint probe only proves reachability,
+/// not installation.
 fn endpoint_to_runtime(
     access: &lens_core::readiness::ProviderAccessState,
 ) -> lens_core::readiness::RuntimePresence {
-    use lens_core::readiness::{ProviderAccessState, RuntimePresence};
-    match access {
-        ProviderAccessState::Available => RuntimePresence::Installed,
-        ProviderAccessState::Unknown => RuntimePresence::Unknown,
-        ProviderAccessState::Unreachable { .. } => RuntimePresence::Unknown,
-        ProviderAccessState::AuthenticationRequired => RuntimePresence::Unknown,
-        ProviderAccessState::ProviderError { .. } => RuntimePresence::Unknown,
-    }
+    use lens_core::readiness::RuntimePresence;
+    // P20C: No installation detection implemented; endpoint evidence is insufficient.
+    // All states map to Unknown until PATH/registry/service detection exists.
+    let _ = access;
+    RuntimePresence::Unknown
 }
 
 /// Map ProviderAccessState to EndpointState.
@@ -1095,7 +1105,8 @@ struct EffectiveModelResult {
 /// selection as actual inference.
 ///
 /// For Ollama auto mode:
-/// - If inventory has models: effective = first model (matches runtime auto-select)
+/// - Uses `choose_model(None, installed)` which applies preference policy
+///   (largest suitable model from preferred families, not just first listed)
 /// - If inventory is empty: effective = None, download_target = DEFAULT_MODEL
 ///
 /// For LM Studio auto mode:
@@ -1130,10 +1141,24 @@ fn derive_effective_model_and_target(
     };
 
     if !models.is_empty() {
-        // Production resolver picks first available model for both Ollama and LM Studio.
-        EffectiveModelResult {
-            effective_model: Some(models[0].clone()),
-            download_target: None,
+        match provider {
+            lens_core::translate::Provider::Ollama => {
+                // Ollama auto: use choose_model which applies preference policy
+                // (largest suitable model from preferred families).
+                // This matches OllamaTranslator::resolve_model production behavior.
+                let chosen = lens_core::translate::choose_model(None, models);
+                EffectiveModelResult {
+                    effective_model: chosen,
+                    download_target: None,
+                }
+            }
+            lens_core::translate::Provider::LmStudio => {
+                // LM Studio auto: first available model (matches production).
+                EffectiveModelResult {
+                    effective_model: Some(models[0].clone()),
+                    download_target: None,
+                }
+            }
         }
     } else {
         // No models installed.
