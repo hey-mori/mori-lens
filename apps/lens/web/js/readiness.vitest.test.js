@@ -290,4 +290,198 @@ describe('renderReadinessSection', () => {
 
     expect(html).toContain('status.readiness.inventory.error');
   });
+
+  it('renders download starting state', () => {
+    const readiness = {
+      quick_lane: 'model_downloading',
+      quick_provider: 'ollama',
+      quick_model: null,
+      quick_effective_model: null,
+      quick_provider_access: 'available',
+      quick_model_inventory: { available: { models: [] } },
+      quick_next_action: 'none',
+      quick_can_download: true,
+      quick_can_load: false,
+      quick_supports_progress: true,
+      quick_download_target: 'qwen2.5:7b',
+      deep_lane: 'unknown',
+      deep_provider: 'ollama',
+      deep_model: null,
+      deep_provider_access: 'unknown',
+      deep_model_inventory: 'not_attempted',
+      deep_next_action: 'none',
+      deep_can_download: false,
+      deep_can_load: false,
+      deep_supports_progress: false,
+      download: {
+        provider: 'ollama',
+        model: 'qwen2.5:7b',
+        status: 'starting',
+        active: true,
+      },
+    };
+
+    const html = renderReadinessSection(readiness);
+
+    expect(html).toContain('status.readiness.starting');
+  });
+
+  it('renders download progress with percentage', () => {
+    const readiness = {
+      quick_lane: 'model_downloading',
+      quick_provider: 'ollama',
+      quick_model: null,
+      quick_effective_model: null,
+      quick_provider_access: 'available',
+      quick_model_inventory: { available: { models: [] } },
+      quick_next_action: 'none',
+      quick_can_download: true,
+      quick_can_load: false,
+      quick_supports_progress: true,
+      quick_download_target: 'qwen2.5:7b',
+      deep_lane: 'unknown',
+      deep_provider: 'ollama',
+      deep_model: null,
+      deep_provider_access: 'unknown',
+      deep_model_inventory: 'not_attempted',
+      deep_next_action: 'none',
+      deep_can_download: false,
+      deep_can_load: false,
+      deep_supports_progress: false,
+      download: {
+        provider: 'ollama',
+        model: 'qwen2.5:7b',
+        status: {
+          downloading: {
+            bytes_downloaded: 500000000,
+            total_bytes: 1000000000,
+            bytes_per_second: 10000000,
+            estimated_completion_seconds: 50,
+          },
+        },
+        active: true,
+      },
+    };
+
+    const html = renderReadinessSection(readiness);
+
+    expect(html).toContain('status.readiness.downloading');
+    expect(html).toContain('50%');
+    expect(html).toContain('476.8 MB');
+    expect(html).toContain('953.7 MB');
+  });
+
+  it('renders paused download state', () => {
+    const readiness = {
+      quick_lane: 'model_downloading',
+      quick_provider: 'lmstudio',
+      quick_model: null,
+      quick_effective_model: null,
+      quick_provider_access: 'available',
+      quick_model_inventory: { available: { models: [] } },
+      quick_next_action: 'none',
+      quick_can_download: true,
+      quick_can_load: false,
+      quick_supports_progress: true,
+      quick_download_target: 'my-model',
+      deep_lane: 'unknown',
+      deep_provider: 'lmstudio',
+      deep_model: null,
+      deep_provider_access: 'unknown',
+      deep_model_inventory: 'not_attempted',
+      deep_next_action: 'none',
+      deep_can_download: false,
+      deep_can_load: false,
+      deep_supports_progress: false,
+      download: {
+        provider: 'lmstudio',
+        model: 'my-model',
+        status: {
+          paused: {
+            bytes_downloaded: 250000000,
+            total_bytes: 1000000000,
+            bytes_per_second: null,
+            estimated_completion_seconds: null,
+          },
+        },
+        active: true,
+      },
+    };
+
+    const html = renderReadinessSection(readiness);
+
+    expect(html).toContain('status.readiness.paused');
+    expect(html).toContain('25%');
+    expect(html).toContain('238.4 MB');
+  });
+
+  it('renders completed download state', () => {
+    const readiness = {
+      quick_lane: 'model_present',
+      quick_provider: 'ollama',
+      quick_model: 'qwen2.5:7b',
+      quick_effective_model: 'qwen2.5:7b',
+      quick_provider_access: 'available',
+      quick_model_inventory: { available: { models: ['qwen2.5:7b'] } },
+      quick_next_action: 'load',
+      quick_can_download: false,
+      quick_can_load: true,
+      quick_supports_progress: false,
+      quick_download_target: null,
+      deep_lane: 'unknown',
+      deep_provider: 'ollama',
+      deep_model: null,
+      deep_provider_access: 'unknown',
+      deep_model_inventory: 'not_attempted',
+      deep_next_action: 'none',
+      deep_can_download: false,
+      deep_can_load: false,
+      deep_supports_progress: false,
+      download: {
+        provider: 'ollama',
+        model: 'qwen2.5:7b',
+        status: 'completed',
+        active: false,
+      },
+    };
+
+    const html = renderReadinessSection(readiness);
+
+    expect(html).toContain('status.readiness.completed');
+  });
+
+  it('renders failed download state', () => {
+    const readiness = {
+      quick_lane: 'model_failed',
+      quick_provider: 'ollama',
+      quick_model: null,
+      quick_effective_model: null,
+      quick_provider_access: 'available',
+      quick_model_inventory: { available: { models: [] } },
+      quick_next_action: 'refresh',
+      quick_can_download: true,
+      quick_can_load: false,
+      quick_supports_progress: true,
+      quick_download_target: 'qwen2.5:7b',
+      deep_lane: 'unknown',
+      deep_provider: 'ollama',
+      deep_model: null,
+      deep_provider_access: 'unknown',
+      deep_model_inventory: 'not_attempted',
+      deep_next_action: 'none',
+      deep_can_download: false,
+      deep_can_load: false,
+      deep_supports_progress: false,
+      download: {
+        provider: 'ollama',
+        model: 'qwen2.5:7b',
+        status: { failed: 'endpoint_unreachable' },
+        active: false,
+      },
+    };
+
+    const html = renderReadinessSection(readiness);
+
+    expect(html).toContain('status.readiness.failed');
+  });
 });
