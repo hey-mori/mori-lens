@@ -218,6 +218,7 @@ def check_command_wiring(root: Path) -> list[str]:
     allowlist = {
         # P20B backend commands (UI integration in later milestone)
         "get_model_download_status",
+        "get_provider_readiness",
         "start_quick_model_download",
         "load_lmstudio_instance",
         "unload_lmstudio_instance",

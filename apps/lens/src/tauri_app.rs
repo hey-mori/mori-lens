@@ -575,6 +575,450 @@ async fn get_model_download_status(
     Ok(manager.operation_snapshot())
 }
 
+/// Provider readiness view for the frontend.
+///
+/// Combines the readiness domain (LaneReadiness per lane), provider access
+/// state, model inventory, download state, and next-action into a single
+/// snapshot. The frontend uses this to decide what to show and what action
+/// to prompt.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ProviderReadinessView {
+    /// Readiness assessment for Quick lane.
+    pub quick_lane: lens_core::readiness::LaneReadiness,
+    /// Readiness assessment for Deep lane.
+    pub deep_lane: lens_core::readiness::LaneReadiness,
+    /// Provider name for Quick lane (for display).
+    pub quick_provider: String,
+    /// Provider name for Deep lane (for display).
+    pub deep_provider: String,
+    /// Configured Quick model (None if auto/unset).
+    pub quick_model: Option<String>,
+    /// Configured Deep model (None if auto/unset).
+    pub deep_model: Option<String>,
+    /// Why the Quick provider is or is not usable.
+    pub quick_provider_access: lens_core::readiness::ProviderAccessState,
+    /// Why the Deep provider is or is not usable.
+    pub deep_provider_access: lens_core::readiness::ProviderAccessState,
+    /// Model inventory on the Quick provider (or why it could not be retrieved).
+    pub quick_model_inventory: lens_core::readiness::ModelInventoryView,
+    /// Model inventory on the Deep provider (or why it could not be retrieved).
+    pub deep_model_inventory: lens_core::readiness::ModelInventoryView,
+    /// Whether Quick provider supports downloading models.
+    pub quick_can_download: bool,
+    /// Whether Quick provider supports progress reporting.
+    pub quick_supports_progress: bool,
+    /// Whether Quick provider supports explicit model loading.
+    pub quick_can_load: bool,
+    /// Whether Deep provider supports downloading models.
+    pub deep_can_download: bool,
+    /// Whether Deep provider supports progress reporting.
+    pub deep_supports_progress: bool,
+    /// Whether Deep provider supports explicit model loading.
+    pub deep_can_load: bool,
+    /// Active or terminal download snapshot (if any).
+    pub download: Option<lens_translate::operation_manager::DownloadOperationSnapshot>,
+    /// Semantic next action for Quick lane.
+    pub quick_next_action: lens_core::readiness::NextAction,
+    /// Semantic next action for Deep lane.
+    pub deep_next_action: lens_core::readiness::NextAction,
+}
+
+/// Tauri command: get provider readiness for the frontend.
+///
+/// Assembles a readiness snapshot by:
+/// 1. Reading settings to get configured provider/endpoint/model for each lane
+/// 2. Checking provider reachability with typed errors (preserves auth/timeout)
+/// 3. Getting model list (preserving errors instead of collapsing to empty)
+/// 4. Getting model state via ProviderRuntime (detects loaded_instances)
+/// 5. Getting download status from OperationManager (integrates into lifecycle)
+/// 6. Computing LaneReadiness and NextAction via the readiness evaluator
+/// 7. Returning capabilities for enabling/disabling frontend actions
+///
+/// This is the single source of truth for "can the user get a first card?"
+/// The frontend uses this instead of `get_local_ai_status` for the readiness UI.
+#[tauri::command]
+async fn get_provider_readiness(
+    manager: tauri::State<'_, SharedOperationManager>,
+    settings: tauri::State<'_, SharedSettings>,
+) -> Result<ProviderReadinessView, String> {
+    use lens_core::readiness::{compute_next_action, SetupReadinessState};
+
+    // Step 1: Read settings. Fail closed for invalid provider tokens.
+    let (quick_provider, deep_provider, quick_endpoint, deep_endpoint, quick_model, deep_model) = {
+        let s = settings.lock().unwrap();
+        let view = s.view();
+        let qp = lens_core::translate::Provider::from_token(&view.quick_engine)
+            .ok_or_else(|| format!("invalid quick engine: {}", view.quick_engine))?;
+
+        // Deep is Ollama-only per product constraint (ai_runtime::from_schema_deep).
+        // If the configured deep engine is not Ollama, report it but do not silently remap.
+        let dp = lens_core::translate::Provider::from_token(&view.deep_engine);
+
+        let (dp, deep_ep, deep_m) = match dp {
+            Some(lens_core::translate::Provider::Ollama) => (
+                lens_core::translate::Provider::Ollama,
+                view.deep_endpoint.clone(),
+                view.deep_model.clone(),
+            ),
+            Some(lens_core::translate::Provider::LmStudio) => {
+                // Deep is Ollama-only. LM Studio configured for deep is invalid.
+                // Report as Ollama with default endpoint; the readiness state will
+                // show this lane as not ready because the deep model won't match.
+                (
+                    lens_core::translate::Provider::Ollama,
+                    lens_core::translate::Provider::Ollama
+                        .default_endpoint()
+                        .to_owned(),
+                    None,
+                )
+            }
+            None => {
+                // Invalid deep engine token. Fall back to Ollama defaults.
+                (
+                    lens_core::translate::Provider::Ollama,
+                    lens_core::translate::Provider::Ollama
+                        .default_endpoint()
+                        .to_owned(),
+                    None,
+                )
+            }
+        };
+
+        (
+            qp,
+            dp,
+            view.quick_endpoint.clone(),
+            deep_ep,
+            view.quick_model.clone(),
+            deep_m,
+        )
+    };
+
+    // Step 2: Check reachability with typed errors.
+    // Run on a thread pool to avoid blocking the async runtime.
+    let quick_access = check_provider_access(quick_provider, quick_endpoint.clone());
+    let same_endpoint =
+        quick_provider == deep_provider && quick_endpoint == deep_endpoint;
+
+    let deep_access = if same_endpoint {
+        quick_access.clone()
+    } else {
+        check_provider_access(deep_provider, deep_endpoint.clone())
+    };
+
+    // Step 3: Get model inventory (preserving errors).
+    let quick_inventory = get_model_inventory(quick_provider, quick_endpoint.clone(), &quick_access);
+    let deep_inventory = if same_endpoint {
+        quick_inventory.clone()
+    } else {
+        get_model_inventory(deep_provider, deep_endpoint.clone(), &deep_access)
+    };
+
+    // Step 4: Determine model lifecycle for each lane.
+    // Uses model_state via ProviderRuntime to detect loaded_instances for LM Studio.
+    let quick_lifecycle = determine_model_lifecycle_v2(
+        quick_provider,
+        &quick_endpoint,
+        &quick_model,
+        &quick_access,
+        &quick_inventory,
+    );
+    let deep_lifecycle = determine_model_lifecycle_v2(
+        deep_provider,
+        &deep_endpoint,
+        &deep_model,
+        &deep_access,
+        &deep_inventory,
+    );
+
+    // Step 5: Integrate download state into lifecycle.
+    let download = manager.operation_snapshot();
+    let quick_lifecycle =
+        integrate_download_into_lifecycle(quick_lifecycle, &download, quick_provider, &quick_model);
+    let deep_lifecycle =
+        integrate_download_into_lifecycle(deep_lifecycle, &download, deep_provider, &deep_model);
+
+    // Step 6: Build SetupReadinessState and evaluate.
+    let quick_runtime = endpoint_to_runtime(&quick_access);
+    let deep_runtime = endpoint_to_runtime(&deep_access);
+
+    let quick_endpoint_state = access_to_endpoint(&quick_access);
+    let deep_endpoint_state = access_to_endpoint(&deep_access);
+
+    let quick_can_infer_from_present =
+        quick_provider == lens_core::translate::Provider::Ollama;
+    let deep_can_infer_from_present =
+        deep_provider == lens_core::translate::Provider::Ollama;
+
+    let quick_state = SetupReadinessState {
+        runtime_presence: quick_runtime,
+        endpoint_state: quick_endpoint_state,
+        model_lifecycle: quick_lifecycle,
+        can_infer_from_present_model: quick_can_infer_from_present,
+        provider_access: quick_access.clone(),
+        model_inventory: quick_inventory.clone(),
+    };
+    let deep_state = SetupReadinessState {
+        runtime_presence: deep_runtime,
+        endpoint_state: deep_endpoint_state,
+        model_lifecycle: deep_lifecycle,
+        can_infer_from_present_model: deep_can_infer_from_present,
+        provider_access: deep_access.clone(),
+        model_inventory: deep_inventory.clone(),
+    };
+
+    let snapshot = lens_core::readiness::evaluate_readiness(&quick_state, &deep_state);
+
+    // Step 7: Capabilities and next actions.
+    let quick_caps = lens_core::provider_capability::ProviderCapability::for_provider(
+        quick_provider,
+    );
+    let deep_caps = lens_core::provider_capability::ProviderCapability::for_provider(
+        deep_provider,
+    );
+
+    let quick_next = compute_next_action(&quick_state);
+    let deep_next = compute_next_action(&deep_state);
+
+    Ok(ProviderReadinessView {
+        quick_lane: snapshot.quick,
+        deep_lane: snapshot.deep,
+        quick_provider: quick_provider.as_str().to_owned(),
+        deep_provider: deep_provider.as_str().to_owned(),
+        quick_model,
+        deep_model,
+        quick_provider_access: quick_access,
+        deep_provider_access: deep_access,
+        quick_model_inventory: quick_inventory,
+        deep_model_inventory: deep_inventory,
+        quick_can_download: quick_caps.can_download_model,
+        quick_supports_progress: quick_caps.supports_progress,
+        quick_can_load: quick_caps.can_load_model,
+        deep_can_download: deep_caps.can_download_model,
+        deep_supports_progress: deep_caps.supports_progress,
+        deep_can_load: deep_caps.can_load_model,
+        download,
+        quick_next_action: quick_next,
+        deep_next_action: deep_next,
+    })
+}
+
+/// Check provider access with typed errors.
+///
+/// Maps TranslateError to ProviderAccessState. Runs the network call on a
+/// thread pool to avoid blocking the async runtime.
+fn check_provider_access(
+    provider: lens_core::translate::Provider,
+    endpoint: String,
+) -> lens_core::readiness::ProviderAccessState {
+    use lens_core::readiness::ProviderAccessState;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = lens_translate::check_provider_reachable_typed(provider, &endpoint);
+        let _ = tx.send(result);
+    });
+    match rx.recv() {
+        Ok(Ok(())) => ProviderAccessState::Available,
+        Ok(Err(e)) => map_translate_error_to_access(e),
+        Err(_) => ProviderAccessState::ProviderError {
+            reason: "thread join failed".into(),
+        },
+    }
+}
+
+/// Map a TranslateError to a ProviderAccessState.
+fn map_translate_error_to_access(
+    e: lens_core::translate::TranslateError,
+) -> lens_core::readiness::ProviderAccessState {
+    use lens_core::readiness::ProviderAccessState;
+    use lens_core::translate::TranslateError;
+    match e {
+        TranslateError::HttpFailed(401) | TranslateError::HttpFailed(403) => {
+            ProviderAccessState::AuthenticationRequired
+        }
+        TranslateError::Unavailable => ProviderAccessState::ProviderError {
+            reason: "unavailable".into(),
+        },
+        TranslateError::Timeout => ProviderAccessState::ProviderError {
+            reason: "timeout".into(),
+        },
+        TranslateError::HttpFailed(status) => ProviderAccessState::ProviderError {
+            reason: format!("http {status}"),
+        },
+        other => ProviderAccessState::ProviderError {
+            reason: other.reason().into(),
+        },
+    }
+}
+
+/// Get the model inventory for a provider.
+///
+/// Preserves errors as ModelInventoryView::LookupFailed instead of collapsing
+/// to an empty Vec.
+fn get_model_inventory(
+    provider: lens_core::translate::Provider,
+    endpoint: String,
+    access: &lens_core::readiness::ProviderAccessState,
+) -> lens_core::readiness::ModelInventoryView {
+    use lens_core::readiness::{ModelInventoryView, ProviderAccessState};
+    if *access != ProviderAccessState::Available {
+        return ModelInventoryView::NotAttempted;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = lens_translate::list_models_for_provider(provider, &endpoint);
+        let _ = tx.send(result);
+    });
+    match rx.recv() {
+        Ok(Ok(models)) => ModelInventoryView::Available {
+            models: models.into_iter().map(|m| m.id).collect(),
+        },
+        Ok(Err(e)) => ModelInventoryView::LookupFailed {
+            reason: e.reason().into(),
+        },
+        Err(_) => ModelInventoryView::LookupFailed {
+            reason: "thread join failed".into(),
+        },
+    }
+}
+
+/// Determine model lifecycle using ProviderRuntime::model_state.
+///
+/// For LM Studio, this detects loaded_instances to produce Ready directly.
+/// For Ollama, Present + can_infer_from_present_model handles JIT semantics.
+fn determine_model_lifecycle_v2(
+    provider: lens_core::translate::Provider,
+    endpoint: &str,
+    configured_model: &Option<String>,
+    access: &lens_core::readiness::ProviderAccessState,
+    inventory: &lens_core::readiness::ModelInventoryView,
+) -> lens_core::readiness::ModelLifecycle {
+    use lens_core::readiness::{ModelInventoryView, ModelLifecycle, ProviderAccessState};
+
+    if *access != ProviderAccessState::Available {
+        return ModelLifecycle::Unknown;
+    }
+
+    let model_list = match inventory {
+        ModelInventoryView::Available { models } => models,
+        ModelInventoryView::LookupFailed { .. } | ModelInventoryView::NotAttempted => {
+            return ModelLifecycle::Unknown;
+        }
+    };
+
+    match configured_model {
+        Some(model) => {
+            if !model_list.iter().any(|m| m == model) {
+                return ModelLifecycle::Missing;
+            }
+            let model_state = get_model_state(provider, endpoint, model);
+            lens_core::readiness::model_state_to_lifecycle(model_state)
+        }
+        None => match provider {
+            lens_core::translate::Provider::Ollama => {
+                if model_list.is_empty() {
+                    ModelLifecycle::Missing
+                } else {
+                    ModelLifecycle::Present
+                }
+            }
+            lens_core::translate::Provider::LmStudio => ModelLifecycle::Missing,
+        },
+    }
+}
+
+/// Get model state via ProviderRuntime.
+fn get_model_state(
+    provider: lens_core::translate::Provider,
+    endpoint: &str,
+    model: &str,
+) -> lens_core::translate::ModelState {
+    use lens_core::translate::ModelState;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let ep = endpoint.to_owned();
+    let m = model.to_owned();
+    std::thread::spawn(move || {
+        let runtime = lens_translate::build_provider_runtime(provider, &ep);
+        let result = runtime.model_state(&m);
+        let _ = tx.send(result);
+    });
+    match rx.recv() {
+        Ok(Ok(state)) => state,
+        _ => ModelState::Available {
+            name: model.to_owned(),
+            size: 0,
+        },
+    }
+}
+
+/// Map ProviderAccessState to RuntimePresence.
+fn endpoint_to_runtime(
+    access: &lens_core::readiness::ProviderAccessState,
+) -> lens_core::readiness::RuntimePresence {
+    use lens_core::readiness::{ProviderAccessState, RuntimePresence};
+    match access {
+        ProviderAccessState::Available => RuntimePresence::Installed,
+        ProviderAccessState::Unknown => RuntimePresence::Unknown,
+        ProviderAccessState::AuthenticationRequired => RuntimePresence::Installed,
+        ProviderAccessState::ProviderError { .. } => RuntimePresence::Unknown,
+    }
+}
+
+/// Map ProviderAccessState to EndpointState.
+fn access_to_endpoint(
+    access: &lens_core::readiness::ProviderAccessState,
+) -> lens_core::readiness::EndpointState {
+    use lens_core::readiness::{EndpointState, ProviderAccessState};
+    match access {
+        ProviderAccessState::Available => EndpointState::Reachable,
+        ProviderAccessState::Unknown => EndpointState::Unknown,
+        ProviderAccessState::AuthenticationRequired => EndpointState::Unreachable,
+        ProviderAccessState::ProviderError { .. } => EndpointState::Unreachable,
+    }
+}
+
+/// Integrate an active or terminal download into the model lifecycle.
+///
+/// If a download is active and matches this lane's provider+model, override
+/// the lifecycle to Downloading. If a terminal download failed for this lane's
+/// model, override to Failed.
+fn integrate_download_into_lifecycle(
+    lifecycle: lens_core::readiness::ModelLifecycle,
+    download: &Option<lens_translate::operation_manager::DownloadOperationSnapshot>,
+    provider: lens_core::translate::Provider,
+    configured_model: &Option<String>,
+) -> lens_core::readiness::ModelLifecycle {
+    use lens_core::model_management::DownloadStatus;
+    use lens_core::readiness::ModelLifecycle;
+
+    let Some(snap) = download else {
+        return lifecycle;
+    };
+
+    if snap.provider != provider.as_str() {
+        return lifecycle;
+    }
+
+    let matches_model = match configured_model {
+        Some(m) => snap.model == *m,
+        None => provider == lens_core::translate::Provider::Ollama,
+    };
+
+    if !matches_model {
+        return lifecycle;
+    }
+
+    if snap.active {
+        return ModelLifecycle::Downloading;
+    }
+
+    match &snap.status {
+        DownloadStatus::Failed(_) => ModelLifecycle::Failed,
+        _ => lifecycle,
+    }
+}
+
 /// Tauri command: start downloading the configured quick model.
 ///
 /// Reads the quick engine, endpoint, and model from saved settings. If no
@@ -1904,6 +2348,7 @@ pub fn build(
             crate::detail_view::detail_request_explain,
             crate::detail_view::detail_open_in_library,
             get_model_download_status,
+            get_provider_readiness,
             start_quick_model_download,
             load_lmstudio_instance,
             unload_lmstudio_instance,
