@@ -52,6 +52,29 @@ export const ProviderAccessState = {
 };
 
 /**
+ * Normalize provider access state from backend wire format.
+ *
+ * Backend serializes variants with fields as objects: {"variant": {fields}}.
+ * Simple variants serialize as strings. This function extracts the variant name.
+ *
+ * @param {string|object} accessState - Raw access state from backend
+ * @returns {string} Normalized variant name
+ */
+export function normalizeAccessState(accessState) {
+  if (typeof accessState === 'string') {
+    return accessState;
+  }
+  if (typeof accessState === 'object' && accessState !== null) {
+    // Object form: {"variant_name": {fields}}
+    const keys = Object.keys(accessState);
+    if (keys.length === 1) {
+      return keys[0];
+    }
+  }
+  return 'unknown';
+}
+
+/**
  * Fetch provider readiness from the backend.
  *
  * Returns the ProviderReadinessView or null on error.
@@ -168,9 +191,10 @@ function renderLaneRow(laneName, laneReadiness, provider, configuredModel,
   html += escapeHtml(modelText);
 
   // Show auth error if applicable
-  if (accessState === ProviderAccessState.AuthenticationRequired) {
+  const normalizedAccess = normalizeAccessState(accessState);
+  if (normalizedAccess === ProviderAccessState.AuthenticationRequired) {
     html += ' <span style="color:#c00">(' + escapeHtml(t('status.readiness.auth.required')) + ')</span>';
-  } else if (accessState === ProviderAccessState.ProviderError) {
+  } else if (normalizedAccess === ProviderAccessState.ProviderError) {
     html += ' <span style="color:#c00">(' + escapeHtml(t('status.readiness.error')) + ')</span>';
   }
 

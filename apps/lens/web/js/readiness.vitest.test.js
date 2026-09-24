@@ -27,6 +27,7 @@ import {
   LaneReadiness,
   NextAction,
   ProviderAccessState,
+  normalizeAccessState,
   refreshProviderReadiness,
   renderReadinessSection,
 } from './readiness.js';
@@ -62,6 +63,24 @@ describe('Readiness constants', () => {
     expect(ProviderAccessState.Unreachable).toBe('unreachable');
     expect(ProviderAccessState.AuthenticationRequired).toBe('authentication_required');
     expect(ProviderAccessState.ProviderError).toBe('provider_error');
+  });
+
+  it('normalizes string access states', () => {
+    expect(normalizeAccessState('available')).toBe('available');
+    expect(normalizeAccessState('unknown')).toBe('unknown');
+    expect(normalizeAccessState('authentication_required')).toBe('authentication_required');
+  });
+
+  it('normalizes object access states with fields', () => {
+    expect(normalizeAccessState({ unreachable: { reason: 'connection refused' } })).toBe('unreachable');
+    expect(normalizeAccessState({ provider_error: { reason: '500 Internal Server Error' } })).toBe('provider_error');
+  });
+
+  it('returns unknown for malformed access states', () => {
+    expect(normalizeAccessState(null)).toBe('unknown');
+    expect(normalizeAccessState(undefined)).toBe('unknown');
+    expect(normalizeAccessState({})).toBe('unknown');
+    expect(normalizeAccessState({ a: 1, b: 2 })).toBe('unknown');
   });
 });
 
