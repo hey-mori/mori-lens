@@ -801,21 +801,29 @@ async fn get_provider_readiness(
             lens_core::readiness::InferenceVisibilityObservation::Visible
         }
         lens_core::translate::Provider::LmStudio => {
-            // Check if the effective model is inference-visible (JIT semantics)
-            if let Some(model) = &quick_effective.effective_model {
-                if matches!(
-                    quick_access,
-                    lens_core::readiness::ProviderAccessState::Available
-                ) {
-                    check_lmstudio_inference_visibility(
-                        &quick_endpoint,
-                        model,
-                        None, // P20C: no API token support yet
-                    )
+            // Only query inference visibility when lifecycle is Present.
+            // When Ready (physically loaded), skip the JIT lookup entirely.
+            // When Missing/Downloading/Loading/Failed/Unknown, the result cannot
+            // affect classification, so skip to avoid speculative provider I/O.
+            if quick_lifecycle == lens_core::readiness::ModelLifecycle::Present {
+                if let Some(model) = &quick_effective.effective_model {
+                    if matches!(
+                        quick_access,
+                        lens_core::readiness::ProviderAccessState::Available
+                    ) {
+                        check_lmstudio_inference_visibility(
+                            &quick_endpoint,
+                            model,
+                            None, // P20C: no API token support yet
+                        )
+                    } else {
+                        lens_core::readiness::InferenceVisibilityObservation::NotVisible
+                    }
                 } else {
                     lens_core::readiness::InferenceVisibilityObservation::NotVisible
                 }
             } else {
+                // Lifecycle is not Present; inference visibility observation is irrelevant.
                 lens_core::readiness::InferenceVisibilityObservation::NotVisible
             }
         }
@@ -825,21 +833,27 @@ async fn get_provider_readiness(
             lens_core::readiness::InferenceVisibilityObservation::Visible
         }
         lens_core::translate::Provider::LmStudio => {
-            // Check if the effective model is inference-visible (JIT semantics)
-            if let Some(model) = &deep_effective.effective_model {
-                if matches!(
-                    deep_access,
-                    lens_core::readiness::ProviderAccessState::Available
-                ) {
-                    check_lmstudio_inference_visibility(
-                        &deep_endpoint,
-                        model,
-                        None, // P20C: no API token support yet
-                    )
+            // Only query inference visibility when lifecycle is Present.
+            // When Ready (physically loaded), skip the JIT lookup entirely.
+            if deep_lifecycle == lens_core::readiness::ModelLifecycle::Present {
+                if let Some(model) = &deep_effective.effective_model {
+                    if matches!(
+                        deep_access,
+                        lens_core::readiness::ProviderAccessState::Available
+                    ) {
+                        check_lmstudio_inference_visibility(
+                            &deep_endpoint,
+                            model,
+                            None, // P20C: no API token support yet
+                        )
+                    } else {
+                        lens_core::readiness::InferenceVisibilityObservation::NotVisible
+                    }
                 } else {
                     lens_core::readiness::InferenceVisibilityObservation::NotVisible
                 }
             } else {
+                // Lifecycle is not Present; inference visibility observation is irrelevant.
                 lens_core::readiness::InferenceVisibilityObservation::NotVisible
             }
         }
@@ -853,7 +867,7 @@ async fn get_provider_readiness(
         runtime_presence: quick_runtime,
         endpoint_state: quick_endpoint_state,
         model_lifecycle: quick_lifecycle,
-        can_infer_from_present_model: quick_can_infer_from_present,
+        inference_visibility: quick_can_infer_from_present,
         can_download_model: quick_caps.can_download_model,
         can_load_model: quick_caps.can_load_model,
         provider_access: quick_access.clone(),
@@ -865,7 +879,7 @@ async fn get_provider_readiness(
         runtime_presence: deep_runtime,
         endpoint_state: deep_endpoint_state,
         model_lifecycle: deep_lifecycle,
-        can_infer_from_present_model: deep_can_infer_from_present,
+        inference_visibility: deep_can_infer_from_present,
         can_download_model: deep_caps.can_download_model,
         can_load_model: deep_caps.can_load_model,
         provider_access: deep_access.clone(),
@@ -996,7 +1010,7 @@ fn get_model_inventory(
 /// Determine model lifecycle using ProviderRuntime::model_state.
 ///
 /// For LM Studio, this detects loaded_instances to produce Ready directly.
-/// For Ollama, Present + can_infer_from_present_model handles JIT semantics.
+/// For Ollama, Present + inference_visibility handles JIT semantics.
 ///
 /// If model-state lookup fails, returns Unknown instead of fabricating presence.
 /// A provider/model-state error is NOT evidence that the model is available.
@@ -1074,7 +1088,10 @@ fn get_model_state(
 /// - NotVisible: successfully observed but not in /v1/models
 /// - ObservationFailed: HTTP error, transport failure, or malformed response
 ///
-/// Offloads the HTTP call to a thread to avoid blocking the async command path.
+/// Executes the HTTP call on a separate OS thread, but the caller blocks on recv()
+/// waiting for the result. This matches the established pattern in get_model_state()
+/// and other provider probes in P20C. The thread offload isolates blocking I/O from
+/// the async executor's task queue, but does not make the command non-blocking.
 fn check_lmstudio_inference_visibility(
     endpoint: &str,
     model: &str,
