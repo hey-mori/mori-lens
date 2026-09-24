@@ -790,6 +790,8 @@ async fn get_provider_readiness(
         can_infer_from_present_model: quick_can_infer_from_present,
         provider_access: quick_access.clone(),
         model_inventory: quick_inventory.clone(),
+        configured_model: quick_model.clone(),
+        download_target: quick_effective.download_target.clone(),
     };
     let deep_state = SetupReadinessState {
         runtime_presence: deep_runtime,
@@ -798,6 +800,8 @@ async fn get_provider_readiness(
         can_infer_from_present_model: deep_can_infer_from_present,
         provider_access: deep_access.clone(),
         model_inventory: deep_inventory.clone(),
+        configured_model: deep_model.clone(),
+        download_target: None, // Deep is status-only in P20C
     };
 
     let snapshot = lens_core::readiness::evaluate_readiness(&quick_state, &deep_state);
@@ -811,13 +815,12 @@ async fn get_provider_readiness(
     );
 
     let quick_next_raw = compute_next_action(&quick_state);
-    // Override: if pure evaluator says ConfigureModel but we have a download target,
-    // the real action is Download (Ollama first-run with DEFAULT_MODEL).
-    let quick_next = if quick_next_raw == lens_core::readiness::NextAction::ConfigureModel
-        && quick_effective.download_target.is_some()
-        && quick_caps.can_download_model
+    // If the evaluator says Download but the provider doesn't support downloading,
+    // fall back to ConfigureModel (user must manually set up).
+    let quick_next = if quick_next_raw == lens_core::readiness::NextAction::Download
+        && !quick_caps.can_download_model
     {
-        lens_core::readiness::NextAction::Download
+        lens_core::readiness::NextAction::ConfigureModel
     } else {
         quick_next_raw
     };

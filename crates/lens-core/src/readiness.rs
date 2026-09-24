@@ -260,6 +260,12 @@ pub struct SetupReadinessState {
     pub provider_access: ProviderAccessState,
     /// The model inventory on the provider, or why it could not be retrieved.
     pub model_inventory: ModelInventoryView,
+    /// The explicitly configured model name, if any.
+    /// None means auto-selection mode.
+    pub configured_model: Option<String>,
+    /// The concrete download target, if one exists and is valid.
+    /// None means no valid download target is available.
+    pub download_target: Option<String>,
 }
 
 /// Pure readiness evaluator.
@@ -388,13 +394,16 @@ pub fn compute_next_action(state: &SetupReadinessState) -> NextAction {
             }
         }
         ModelLifecycle::Missing => {
-            // If no model is configured, user needs to configure one.
-            // If a model is configured but missing, user needs to download.
-            match &state.model_inventory {
-                ModelInventoryView::Available { models } if models.is_empty() => {
-                    NextAction::ConfigureModel
-                }
-                _ => NextAction::Download,
+            // If a model is explicitly configured, download that model.
+            if state.configured_model.is_some() {
+                NextAction::Download
+            } else if state.download_target.is_some() {
+                // Auto mode with a valid download target (e.g., Ollama DEFAULT_MODEL).
+                NextAction::Download
+            } else {
+                // No configured model and no valid download target.
+                // User needs to configure a model or provider has no default.
+                NextAction::ConfigureModel
             }
         }
         ModelLifecycle::Failed => NextAction::Refresh,
@@ -439,6 +448,8 @@ mod tests {
             can_infer_from_present_model: false,
             provider_access: ProviderAccessState::Unknown,
             model_inventory: ModelInventoryView::NotAttempted,
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::Unknown);
     }
@@ -452,6 +463,8 @@ mod tests {
             can_infer_from_present_model: false,
             provider_access: ProviderAccessState::Unknown,
             model_inventory: ModelInventoryView::NotAttempted,
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(
             evaluate_lane_readiness(&state),
@@ -470,6 +483,8 @@ mod tests {
                 reason: "connection refused".into(),
             },
             model_inventory: ModelInventoryView::NotAttempted,
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(
             evaluate_lane_readiness(&state),
@@ -481,6 +496,8 @@ mod tests {
     #[test]
     fn endpoint_unreachable_runtime_not_installed_produces_not_installed() {
         let state = SetupReadinessState {
+            configured_model: None,
+            download_target: None,
             runtime_presence: RuntimePresence::NotInstalled,
             endpoint_state: EndpointState::Unreachable,
             model_lifecycle: ModelLifecycle::Unknown,
@@ -507,6 +524,8 @@ mod tests {
             model_inventory: ModelInventoryView::Available {
                 models: vec!["llama3.2".into()],
             },
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::Ready);
     }
@@ -520,6 +539,8 @@ mod tests {
             can_infer_from_present_model: false,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::Available { models: vec![] },
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(
             evaluate_lane_readiness(&state),
@@ -536,6 +557,8 @@ mod tests {
             can_infer_from_present_model: false,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::NotAttempted,
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(
             evaluate_lane_readiness(&state),
@@ -554,6 +577,8 @@ mod tests {
             model_inventory: ModelInventoryView::Available {
                 models: vec!["qwen2.5:7b".into()],
             },
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::Ready);
     }
@@ -569,6 +594,8 @@ mod tests {
             model_inventory: ModelInventoryView::Available {
                 models: vec!["llama-3.1-8b".into()],
             },
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::ModelPresent);
     }
@@ -582,6 +609,8 @@ mod tests {
             can_infer_from_present_model: false,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::NotAttempted,
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::ModelLoading);
     }
@@ -597,6 +626,8 @@ mod tests {
             model_inventory: ModelInventoryView::Available {
                 models: vec!["qwen2.5-7b".into()],
             },
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::Ready);
     }
@@ -612,6 +643,8 @@ mod tests {
             model_inventory: ModelInventoryView::Available {
                 models: vec!["qwen2.5:7b".into()],
             },
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::ModelFailed);
     }
@@ -627,6 +660,8 @@ mod tests {
             model_inventory: ModelInventoryView::Available {
                 models: vec!["qwen2.5:7b".into()],
             },
+            configured_model: None,
+            download_target: None,
         };
         let deep_state = SetupReadinessState {
             runtime_presence: RuntimePresence::Installed,
@@ -635,6 +670,8 @@ mod tests {
             can_infer_from_present_model: true,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::Available { models: vec![] },
+            configured_model: None,
+            download_target: None,
         };
         let snapshot = evaluate_readiness(&quick_state, &deep_state);
         assert_eq!(snapshot.quick, LaneReadiness::Ready);
@@ -652,6 +689,8 @@ mod tests {
             model_inventory: ModelInventoryView::Available {
                 models: vec!["qwen2.5:7b".into()],
             },
+            configured_model: None,
+            download_target: None,
         };
         let deep_state = SetupReadinessState {
             runtime_presence: RuntimePresence::Installed,
@@ -662,6 +701,8 @@ mod tests {
             model_inventory: ModelInventoryView::Available {
                 models: vec!["qwen2.5:7b".into()],
             },
+            configured_model: None,
+            download_target: None,
         };
         let snapshot = evaluate_readiness(&quick_state, &deep_state);
         assert_eq!(snapshot.quick, LaneReadiness::Ready);
@@ -679,6 +720,8 @@ mod tests {
             model_inventory: ModelInventoryView::Available {
                 models: vec!["qwen2.5:7b".into()],
             },
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::Ready);
     }
@@ -808,7 +851,9 @@ mod tests {
                 can_infer_from_present_model: can_infer,
                 provider_access,
                 model_inventory: ModelInventoryView::NotAttempted,
-            };
+            configured_model: None,
+            download_target: None,
+        };
             assert_eq!(
                 evaluate_lane_readiness(&state),
                 expected,
@@ -826,6 +871,8 @@ mod tests {
             can_infer_from_present_model: false,
             provider_access: ProviderAccessState::Unknown,
             model_inventory: ModelInventoryView::NotAttempted,
+            configured_model: None,
+            download_target: None,
         };
         let readiness = evaluate_lane_readiness(&state);
         assert_eq!(readiness, LaneReadiness::Unknown);
@@ -843,6 +890,8 @@ mod tests {
             can_infer_from_present_model: true,
             provider_access: ProviderAccessState::AuthenticationRequired,
             model_inventory: ModelInventoryView::Available { models: vec![] },
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(
             evaluate_lane_readiness(&state),
@@ -861,6 +910,8 @@ mod tests {
                 reason: "500 internal server error".into(),
             },
             model_inventory: ModelInventoryView::Available { models: vec![] },
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(
             evaluate_lane_readiness(&state),
@@ -879,6 +930,8 @@ mod tests {
                 reason: "connection refused".into(),
             },
             model_inventory: ModelInventoryView::NotAttempted,
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(
             evaluate_lane_readiness(&state),
@@ -895,6 +948,8 @@ mod tests {
             can_infer_from_present_model: true,
             provider_access: ProviderAccessState::AuthenticationRequired,
             model_inventory: ModelInventoryView::Available { models: vec![] },
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(compute_next_action(&state), NextAction::ResolveAuth);
     }
@@ -910,6 +965,8 @@ mod tests {
             model_inventory: ModelInventoryView::Available {
                 models: vec!["m".into()],
             },
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(compute_next_action(&state), NextAction::None);
     }
@@ -925,12 +982,14 @@ mod tests {
             model_inventory: ModelInventoryView::Available {
                 models: vec!["m".into()],
             },
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(compute_next_action(&state), NextAction::Load);
     }
 
     #[test]
-    fn next_action_download_when_model_missing() {
+    fn next_action_download_when_model_missing_with_target() {
         let state = SetupReadinessState {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
@@ -940,6 +999,25 @@ mod tests {
             model_inventory: ModelInventoryView::Available {
                 models: vec!["other".into()],
             },
+            configured_model: None,
+            download_target: Some("llama3.2:latest".into()),
+        };
+        assert_eq!(compute_next_action(&state), NextAction::Download);
+    }
+
+    #[test]
+    fn next_action_download_when_explicit_model_missing() {
+        let state = SetupReadinessState {
+            runtime_presence: RuntimePresence::Installed,
+            endpoint_state: EndpointState::Reachable,
+            model_lifecycle: ModelLifecycle::Missing,
+            can_infer_from_present_model: false,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available {
+                models: vec!["other".into()],
+            },
+            configured_model: Some("my-model".into()),
+            download_target: None,
         };
         assert_eq!(compute_next_action(&state), NextAction::Download);
     }
@@ -953,6 +1031,8 @@ mod tests {
             can_infer_from_present_model: false,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::Available { models: vec![] },
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(compute_next_action(&state), NextAction::ConfigureModel);
     }
@@ -968,6 +1048,8 @@ mod tests {
                 reason: "connection refused".into(),
             },
             model_inventory: ModelInventoryView::NotAttempted,
+            configured_model: None,
+            download_target: None,
         };
         assert_eq!(compute_next_action(&state), NextAction::Refresh);
     }
