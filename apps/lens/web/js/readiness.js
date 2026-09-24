@@ -461,6 +461,9 @@ export function attachReadinessActionHandlers() {
         } else if (action === 'refresh') {
           // Refresh readiness from backend
           await refreshProviderReadiness();
+          // Notify the status page owner to re-render
+          document.dispatchEvent(new CustomEvent('readiness-state-changed'));
+          return; // Exactly-once: refresh action completes here
         } else if (action === 'configure-model') {
           // Navigate to the Models page
           if (window.showSection) {
@@ -468,7 +471,7 @@ export function attachReadinessActionHandlers() {
           }
           return; // Don't refresh readiness; models page has its own loading
         }
-        // Refresh readiness after action
+        // Refresh readiness after action (download, load)
         await refreshProviderReadiness();
         // Notify the status page owner to re-render
         document.dispatchEvent(new CustomEvent('readiness-state-changed'));
