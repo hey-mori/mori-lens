@@ -1087,8 +1087,18 @@ fn integrate_download_into_lifecycle(
         return ModelLifecycle::Downloading;
     }
 
+    // Stale failed operation: only override if current lifecycle is not already successful.
+    // A failed download from the past should not mask a current Ready or Loading state.
     match &snap.status {
-        DownloadStatus::Failed(_) => ModelLifecycle::Failed,
+        DownloadStatus::Failed(_) => {
+            // Only apply Failed if the current state is not already successful
+            match lifecycle {
+                ModelLifecycle::Ready | ModelLifecycle::Loading | ModelLifecycle::Downloading => {
+                    lifecycle
+                }
+                _ => ModelLifecycle::Failed,
+            }
+        }
         _ => lifecycle,
     }
 }
