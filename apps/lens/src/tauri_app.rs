@@ -578,9 +578,11 @@ async fn get_model_download_status(
 /// Tauri command: start downloading the configured quick model.
 ///
 /// Reads the quick engine, endpoint, and model from saved settings. If no
-/// quick model is configured, returns an error. If a download is already
-/// active, returns `ProviderBusy`. Otherwise, spawns a background worker
-/// to perform the download and returns immediately.
+/// quick model is configured and the provider is Ollama, uses the canonical
+/// DEFAULT_MODEL. If no quick model is configured for LM Studio, returns an
+/// error (LM Studio has no default recommendation). If a download is already
+/// active, returns `ProviderBusy`. Otherwise, reserves the operation atomically,
+/// then spawns a background worker.
 #[tauri::command]
 async fn start_quick_model_download(
     manager: tauri::State<'_, SharedOperationManager>,
@@ -592,29 +594,67 @@ async fn start_quick_model_download(
     let provider = lens_core::translate::Provider::from_token(&view.quick_engine)
         .ok_or("invalid quick engine")?;
     let endpoint = view.quick_endpoint.clone();
-    let model = view.quick_model.clone().ok_or("no quick model configured")?;
 
-    // Check if a download is already active.
-    if manager.is_download_active() {
-        return Err("download already in progress".to_string());
-    }
+    // Determine target model.
+    // Ollama auto-mode: use DEFAULT_MODEL if no model configured.
+    // LM Studio: require explicit model (no fabricated recommendation).
+    let model = match (&view.quick_model, provider) {
+        (Some(m), _) => m.clone(),
+        (None, lens_core::translate::Provider::Ollama) => {
+            lens_translate::DEFAULT_MODEL.to_string()
+        }
+        (None, lens_core::translate::Provider::LmStudio) => {
+            return Err("no quick model configured".to_string());
+        }
+    };
 
-    // Spawn the appropriate background worker.
-    match provider {
+    // Atomic reservation BEFORE spawning. Prevents race where two commands
+    // both check idle and both spawn. Second command gets ProviderBusy here.
+    // Job ID is always None at reservation time; LM Studio worker sets it
+    // later after the HTTP response returns the actual job ID.
+    manager
+        .start_download(provider, model.clone(), lens_core::model_management::DownloadStatus::Starting, None)
+        .map_err(|e| format!("{:?}", e))?;
+
+    // Reservation succeeded. Spawn worker. If spawn fails, finish with error
+    // to avoid permanent stale reservation.
+    let manager_clone = manager.inner().clone();
+    let model_clone = model.clone();
+    let endpoint_clone = endpoint.clone();
+
+    let spawn_result = match provider {
         lens_core::translate::Provider::Ollama => {
-            crate::download_worker::spawn_ollama_download_worker(
-                manager.inner().clone(),
-                endpoint,
-                model,
-            );
+            std::thread::Builder::new()
+                .name("ollama-download".into())
+                .spawn(move || {
+                    crate::download_worker::run_ollama_download(
+                        manager_clone,
+                        endpoint_clone,
+                        model_clone,
+                    );
+                })
         }
         lens_core::translate::Provider::LmStudio => {
-            crate::download_worker::spawn_lmstudio_download_worker(
-                manager.inner().clone(),
-                endpoint,
-                model,
-            );
+            std::thread::Builder::new()
+                .name("lmstudio-download".into())
+                .spawn(move || {
+                    crate::download_worker::run_lmstudio_download(
+                        manager_clone,
+                        endpoint_clone,
+                        model_clone,
+                    );
+                })
         }
+    };
+
+    if let Err(e) = spawn_result {
+        eprintln!("download worker spawn failed: {:?}", e);
+        let _ = manager.finish_download(
+            lens_core::model_management::DownloadStatus::Failed(
+                lens_core::model_management::ManagementError::DownloadFailed,
+            ),
+        );
+        return Err(format!("failed to spawn download worker: {:?}", e));
     }
 
     Ok(())
