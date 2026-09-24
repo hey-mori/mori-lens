@@ -5,7 +5,7 @@ import { escapeHtml, setStatus } from './ui.js';
 import { state } from './state.js';
 import { refreshProviderReadiness, renderReadinessSection, attachReadinessActionHandlers } from './readiness.js';
 import { t } from './i18n.js';
-import { observeExisting, stopPolling, dispose } from './operation-controller.js';
+import { observeExisting, startOperationPolling, stopPolling, dispose } from './operation-controller.js';
 
 // Stable region IDs for DOM identity preservation (Task #16)
 const REGION_IDS = {
@@ -19,6 +19,39 @@ const REGION_IDS = {
 // Cache for readiness section to avoid unnecessary re-renders
 let cachedReadinessHtml = null;
 let cachedReadinessData = null;
+
+// Track whether handlers have been attached to prevent duplicates
+let statusHandlersAttached = false;
+let readinessHandlersAttached = false;
+
+/**
+ * Create action callbacks for readiness handlers.
+ *
+ * Returns explicit callbacks for action orchestration, ensuring
+ * single-owner semantics without global events.
+ */
+function createActionCallbacks() {
+  return {
+    onDownloadStarted: () => {
+      // Start operation controller polling immediately after download starts
+      // Do NOT call refreshProviderReadiness here
+      startOperationPolling(handleOperationUpdate);
+    },
+    onLoadStarted: () => {
+      // Start operation controller polling for load operation
+      startOperationPolling(handleOperationUpdate);
+    },
+    onRefreshCompleted: () => {
+      // Refresh completed; update readiness region
+      updateReadinessRegion();
+      // Re-attach handlers with fresh callbacks
+      attachReadinessActionHandlers(createActionCallbacks());
+    },
+    onConfigureModel: () => {
+      // Navigation only; no readiness refresh needed
+    },
+  };
+}
 
 /**
  * Initialize stable DOM regions on first load.
@@ -70,7 +103,7 @@ function handleOperationUpdate(snapshot, isTerminal) {
     // Operation completed; trigger one final readiness reconciliation
     refreshProviderReadiness().then(() => {
       updateReadinessRegion();
-      attachReadinessActionHandlers();
+      attachReadinessActionHandlers(createActionCallbacks());
     });
   } else if (snapshot) {
     // Update the readiness region with the new operation snapshot
@@ -81,7 +114,7 @@ function handleOperationUpdate(snapshot, isTerminal) {
         download: snapshot,
       };
       updateReadinessRegion();
-      attachReadinessActionHandlers();
+      attachReadinessActionHandlers(createActionCallbacks());
     }
   }
 }
@@ -108,6 +141,8 @@ function updateReadinessRegion() {
 export function _resetCaches() {
   cachedReadinessHtml = null;
   cachedReadinessData = null;
+  statusHandlersAttached = false;
+  readinessHandlersAttached = false;
 }
 
 /**
@@ -135,7 +170,6 @@ export async function loadStatus() {
 
     // Update readiness region (only if data changed)
     updateReadinessRegion();
-    attachReadinessActionHandlers();
 
     // Update health region
     updateHealthRegion(health);
@@ -146,9 +180,15 @@ export async function loadStatus() {
     // Update diagnostics region
     updateDiagnosticsRegion(diag);
 
-    // Attach event handlers after all regions are rendered
-    attachStatusHandlers();
-    attachReadinessActionHandlers();
+    // Attach event handlers after all regions are rendered (only once)
+    if (!statusHandlersAttached) {
+      attachStatusHandlers();
+      statusHandlersAttached = true;
+    }
+    if (!readinessHandlersAttached) {
+      attachReadinessActionHandlers(createActionCallbacks());
+      readinessHandlersAttached = true;
+    }
 
     // Start operation controller if not already polling
     observeExisting(handleOperationUpdate);
