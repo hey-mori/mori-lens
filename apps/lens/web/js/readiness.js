@@ -17,6 +17,8 @@ export const LaneReadiness = {
   Unknown: 'unknown',
   RuntimeNotInstalled: 'runtime_not_installed',
   EndpointUnreachable: 'endpoint_unreachable',
+  AuthenticationRequired: 'authentication_required',
+  ProviderError: 'provider_error',
   NoCompatibleModel: 'no_compatible_model',
   ModelPresent: 'model_present',
   ModelDownloading: 'model_downloading',
@@ -44,6 +46,7 @@ export const NextAction = {
 export const ProviderAccessState = {
   Available: 'available',
   Unknown: 'unknown',
+  Unreachable: 'unreachable',
   AuthenticationRequired: 'authentication_required',
   ProviderError: 'provider_error',
 };
@@ -82,15 +85,18 @@ export function renderReadinessSection(readiness) {
     html += '<tr><td>Deep</td><td>' + escapeHtml(t('status.checking')) + '</td></tr>';
   } else {
     html += renderLaneRow('Quick', readiness.quick_lane, readiness.quick_provider,
-      readiness.quick_model, readiness.quick_provider_access,
+      readiness.quick_model, readiness.quick_effective_model,
+      readiness.quick_provider_access,
       readiness.quick_model_inventory, readiness.quick_next_action,
       readiness.download, readiness.quick_can_download, readiness.quick_can_load,
-      readiness.quick_supports_progress);
+      readiness.quick_supports_progress, readiness.quick_download_target);
+    // Deep lane: status-only in P20C. No action button rendered.
     html += renderLaneRow('Deep', readiness.deep_lane, readiness.deep_provider,
-      readiness.deep_model, readiness.deep_provider_access,
+      readiness.deep_model, null,
+      readiness.deep_provider_access,
       readiness.deep_model_inventory, readiness.deep_next_action,
-      readiness.download, readiness.deep_can_download, readiness.deep_can_load,
-      readiness.deep_supports_progress);
+      null, readiness.deep_can_download, readiness.deep_can_load,
+      readiness.deep_supports_progress, null);
   }
   html += '</table>';
 
@@ -107,11 +113,14 @@ export function renderReadinessSection(readiness) {
  * Render a single lane row with readiness, provider access, model info,
  * and action button.
  */
-function renderLaneRow(laneName, laneReadiness, provider, model, accessState,
-    inventory, nextAction, download, canDownload, canLoad, supportsProgress) {
+function renderLaneRow(laneName, laneReadiness, provider, configuredModel,
+    effectiveModel, accessState, inventory, nextAction, download,
+    canDownload, canLoad, supportsProgress, downloadTarget) {
   const providerLabel = provider === 'lmstudio' ? 'LM Studio' : 'Ollama';
   const { icon, label, color } = readinessDisplay(laneReadiness);
-  const modelText = model || (provider === 'ollama' ? t('models.auto.best') : t('models.select.model'));
+  // Display effective model if available, otherwise configured model, otherwise auto label
+  const displayModel = effectiveModel || configuredModel;
+  const modelText = displayModel || (provider === 'ollama' ? t('models.auto.best') : t('models.select.model'));
 
   let html = '<tr>';
   html += '<td>' + escapeHtml(laneName) + '</td>';
@@ -147,7 +156,7 @@ function renderLaneRow(laneName, laneReadiness, provider, model, accessState,
   html += '</tr>';
 
   // Download progress row (if active for this lane)
-  if (download && isDownloadForLane(download, provider, model)) {
+  if (download && isDownloadForLane(download, provider, configuredModel, laneName)) {
     html += renderDownloadProgressRow(download, supportsProgress);
   }
 
@@ -193,7 +202,7 @@ export function renderLaneReadiness(laneName, readiness, provider, model, action
   html += '<td style="font-size:12px;color:#555">' + escapeHtml(modelText) + '</td>';
   html += '</tr>';
 
-  if (download && isDownloadForLane(download, provider, model)) {
+  if (download && isDownloadForLane(download, provider, model, laneName)) {
     html += renderDownloadProgressRow(download, actions.supportsProgress);
   }
 
@@ -211,6 +220,10 @@ function readinessDisplay(readiness) {
       return { icon: '✗', label: t('status.readiness.not.installed'), color: '#c00' };
     case LaneReadiness.EndpointUnreachable:
       return { icon: '✗', label: t('status.readiness.unreachable'), color: '#c00' };
+    case LaneReadiness.AuthenticationRequired:
+      return { icon: '🔒', label: t('status.readiness.auth.required'), color: '#c00' };
+    case LaneReadiness.ProviderError:
+      return { icon: '✗', label: t('status.readiness.error'), color: '#c00' };
     case LaneReadiness.NoCompatibleModel:
       return { icon: '!', label: t('status.readiness.no.model'), color: '#f57c00' };
     case LaneReadiness.ModelPresent:
@@ -229,9 +242,14 @@ function readinessDisplay(readiness) {
 
 /**
  * Check if a download snapshot is for a specific lane.
+ *
+ * P20C: Download operations are Quick-only. Deep lane never shows download
+ * progress, even if the provider matches.
  */
-function isDownloadForLane(download, provider, model) {
+function isDownloadForLane(download, provider, model, laneName) {
   if (!download) return false;
+  // P20C: Deep lane never shows download progress
+  if (laneName === 'Deep') return false;
   if (download.provider !== provider) return false;
   if (model && download.model && download.model !== model) return false;
   return true;
@@ -239,6 +257,14 @@ function isDownloadForLane(download, provider, model) {
 
 /**
  * Render download progress row.
+ *
+ * DownloadStatus uses Rust's default externally-tagged serde representation:
+ * - Unit variants (Starting, Completed, AlreadyPresent) serialize as strings
+ * - Tuple variants (Downloading(progress), Paused(progress)) serialize as {"downloading": {...}}
+ * - Failed(error) serializes as {"failed": "..."}
+ *
+ * DownloadProgress fields: bytes_downloaded, total_bytes, bytes_per_second,
+ * estimated_completion_seconds. The percentage() method is NOT serialized.
  */
 function renderDownloadProgressRow(download, supportsProgress) {
   const status = download.status;
@@ -246,11 +272,16 @@ function renderDownloadProgressRow(download, supportsProgress) {
   html += '<td></td>';
   html += '<td style="font-size:12px">';
 
-  if (status && status.downloading) {
+  // Check for object variants first (Downloading, Paused, Failed)
+  if (status && typeof status === 'object' && status.downloading) {
     const dl = status.downloading;
-    const pct = dl.percentage != null ? Math.round(dl.percentage) : null;
-    const transferred = dl.bytes_downloaded != null ? formatBytes(dl.bytes_downloaded) : null;
-    const total = dl.bytes_total != null ? formatBytes(dl.bytes_total) : null;
+    const totalBytes = dl.total_bytes != null ? dl.total_bytes : null;
+    const bytesDownloaded = dl.bytes_downloaded != null ? dl.bytes_downloaded : null;
+    const pct = (bytesDownloaded != null && totalBytes && totalBytes > 0)
+      ? Math.round(bytesDownloaded / totalBytes * 100)
+      : null;
+    const transferred = bytesDownloaded != null ? formatBytes(bytesDownloaded) : null;
+    const total = totalBytes != null ? formatBytes(totalBytes) : null;
 
     html += '<div style="display:flex;align-items:center;gap:8px">';
     html += '<span style="color:#1976d2">↓ ' + escapeHtml(t('status.readiness.downloading')) + '</span>';
@@ -266,14 +297,18 @@ function renderDownloadProgressRow(download, supportsProgress) {
       html += '</span>';
     }
     html += '</div>';
-  } else if (status && status.starting) {
-    html += '<span style="color:#1976d2">⟳ ' + escapeHtml(t('status.readiness.starting')) + '</span>';
-  } else if (status && status.completed) {
-    html += '<span style="color:#2e7d32">✓ ' + escapeHtml(t('status.readiness.completed')) + '</span>';
-  } else if (status && status.already_present) {
-    html += '<span style="color:#2e7d32">✓ ' + escapeHtml(t('status.readiness.already.present')) + '</span>';
-  } else if (status && status.failed) {
+  } else if (status && typeof status === 'object' && status.paused) {
+    html += '<span style="color:#f57c00">⏸ ' + escapeHtml(t('status.readiness.paused')) + '</span>';
+  } else if (status && typeof status === 'object' && status.failed) {
     html += '<span style="color:#c00">✗ ' + escapeHtml(t('status.readiness.failed')) + '</span>';
+  }
+  // Unit variants serialize as plain strings
+  else if (status === 'starting') {
+    html += '<span style="color:#1976d2">⟳ ' + escapeHtml(t('status.readiness.starting')) + '</span>';
+  } else if (status === 'completed') {
+    html += '<span style="color:#2e7d32">✓ ' + escapeHtml(t('status.readiness.completed')) + '</span>';
+  } else if (status === 'already_present') {
+    html += '<span style="color:#2e7d32">✓ ' + escapeHtml(t('status.readiness.already.present')) + '</span>';
   } else {
     html += '<span style="color:#888">' + escapeHtml(t('status.checking')) + '</span>';
   }
@@ -288,6 +323,9 @@ function renderDownloadProgressRow(download, supportsProgress) {
  *
  * The backend computes what the user should do next; the frontend just
  * renders the appropriate button.
+ *
+ * P20C: ResolveAuth is rendered as guidance text (no credential UX yet).
+ * ConfigureModel navigates to the Models page.
  */
 function renderNextActionButton(nextAction, provider, canDownload, canLoad) {
   switch (nextAction) {
@@ -302,7 +340,8 @@ function renderNextActionButton(nextAction, provider, canDownload, canLoad) {
       }
       return '';
     case NextAction.ResolveAuth:
-      return '<button class="btn readiness-action-btn" data-action="resolve-auth" data-provider="' + provider + '" style="padding:4px 10px;font-size:11px">' + escapeHtml(t('status.readiness.action.resolve.auth')) + '</button>';
+      // No credential UX established yet. Show guidance, not a fake button.
+      return '<span style="font-size:11px;color:#c00">' + escapeHtml(t('status.readiness.auth.required')) + '</span>';
     case NextAction.ConfigureModel:
       return '<button class="btn readiness-action-btn" data-action="configure-model" style="padding:4px 10px;font-size:11px">' + escapeHtml(t('status.readiness.action.configure.model')) + '</button>';
     case NextAction.Refresh:
@@ -339,6 +378,10 @@ function escapeHtml(str) {
 /**
  * Attach event handlers for readiness action buttons.
  * Call this after rendering the readiness UI.
+ *
+ * After an action completes, dispatches a custom event so the status page
+ * owner can re-render. readiness.js does NOT import status.js (that would
+ * create a cycle).
  */
 export function attachReadinessActionHandlers() {
   document.querySelectorAll('.readiness-action-btn').forEach(btn => {
@@ -355,16 +398,19 @@ export function attachReadinessActionHandlers() {
         } else if (action === 'load') {
           await invoke('load_lmstudio_instance');
         } else if (action === 'refresh') {
-          // Fall through to readiness refresh below
-        } else if (action === 'resolve-auth') {
-          // TODO: Open settings to configure API token
-          console.log('resolve-auth not yet implemented for', provider);
+          // Refresh readiness from backend
+          await refreshProviderReadiness();
         } else if (action === 'configure-model') {
-          // TODO: Open model picker
-          console.log('configure-model not yet implemented');
+          // Navigate to the Models page
+          if (window.showSection) {
+            window.showSection('models');
+          }
+          return; // Don't refresh readiness; models page has its own loading
         }
         // Refresh readiness after action
         await refreshProviderReadiness();
+        // Notify the status page owner to re-render
+        document.dispatchEvent(new CustomEvent('readiness-state-changed'));
       } catch (e) {
         console.error('Readiness action failed:', e);
         btn.disabled = false;
