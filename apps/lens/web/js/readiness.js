@@ -359,7 +359,29 @@ function renderDownloadProgressRow(download, supportsProgress) {
     }
     html += '</div>';
   } else if (status && typeof status === 'object' && status.paused) {
+    const dl = status.paused;
+    const totalBytes = dl.total_bytes != null ? dl.total_bytes : null;
+    const bytesDownloaded = dl.bytes_downloaded != null ? dl.bytes_downloaded : null;
+    const pct = (bytesDownloaded != null && totalBytes && totalBytes > 0)
+      ? Math.round(bytesDownloaded / totalBytes * 100)
+      : null;
+    const transferred = bytesDownloaded != null ? formatBytes(bytesDownloaded) : null;
+    const total = totalBytes != null ? formatBytes(totalBytes) : null;
+
+    html += '<div style="display:flex;align-items:center;gap:8px">';
     html += '<span style="color:#f57c00">⏸ ' + escapeHtml(t('status.readiness.paused')) + '</span>';
+    if (pct != null) {
+      html += '<span style="color:#555">' + pct + '%</span>';
+      html += '<div style="flex:1;height:4px;background:#eee;border-radius:2px;max-width:100px">';
+      html += '<div style="width:' + pct + '%;height:100%;background:#f57c00;border-radius:2px"></div>';
+      html += '</div>';
+    }
+    if (transferred) {
+      html += '<span style="color:#888">' + transferred;
+      if (total) html += ' / ' + total;
+      html += '</span>';
+    }
+    html += '</div>';
   } else if (status && typeof status === 'object' && status.failed) {
     html += '<span style="color:#c00">✗ ' + escapeHtml(t('status.readiness.failed')) + '</span>';
   }
