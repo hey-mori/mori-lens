@@ -851,9 +851,9 @@ mod tests {
                 can_infer_from_present_model: can_infer,
                 provider_access,
                 model_inventory: ModelInventoryView::NotAttempted,
-            configured_model: None,
-            download_target: None,
-        };
+                configured_model: None,
+                download_target: None,
+            };
             assert_eq!(
                 evaluate_lane_readiness(&state),
                 expected,
