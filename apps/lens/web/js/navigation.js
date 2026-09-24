@@ -20,8 +20,8 @@ export function showSection(sectionName) {
     document.getElementById('section-' + sectionName).classList.add('active');
     // Dynamically import section modules to load their data
     if (sectionName === 'status') {
-      import('./status.js').then(s => {
-        s.refreshReadinessAndRender();
+      import('./status.js').then(async (s) => {
+        await s.refreshReadinessAndRender();
         s.activateStatus();
       });
     }

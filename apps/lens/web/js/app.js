@@ -20,7 +20,9 @@ async function loadAll() {
       diagnosticsModule.loadAbout(),
     ]);
     // Then perform ONE readiness refresh and re-render
-    statusModule.refreshReadinessAndRender();
+    await statusModule.refreshReadinessAndRender();
+    // Start operation observation after readiness is fresh
+    statusModule.activateStatus();
   } catch (e) {
     console.error('loadAll failed:', e);
   }
