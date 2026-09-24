@@ -1,9 +1,10 @@
 // Status page: loadStatus, togglePause, quitApp, toggleAutostart, refreshLocalAi
 
 import { invoke } from './tauri.js';
-import { escapeHtml, formatAiStatus, setStatus } from './ui.js';
+import { escapeHtml, setStatus } from './ui.js';
 import { state } from './state.js';
 import { refreshLocalAiStatus } from './local_ai.js';
+import { refreshProviderReadiness, renderReadinessSection, attachReadinessActionHandlers } from './readiness.js';
 import { t } from './i18n.js';
 
 export async function loadStatus() {
@@ -13,7 +14,8 @@ export async function loadStatus() {
       invoke('get_runtime_status'),
       invoke('get_health_status'),
     ]);
-    const localAi = state.cachedLocalAiStatus;
+    // P20C: fetch provider readiness
+    const readiness = await refreshProviderReadiness();
     const el = document.getElementById('status-content');
     const paused = diag && diag.paused;
     const pauseLabel = paused ? t('status.pause.resume') : t('status.pause.button');
@@ -37,40 +39,9 @@ export async function loadStatus() {
     html += '</div>';
     html += '</div>';
 
-    // Local AI readiness section
+    // P20C: Provider readiness section (replaces legacy localAi status)
     html += '<h2>' + escapeHtml(t('status.local.ai')) + '</h2>';
-    html += '<table>';
-    if (localAi) {
-      const quickIcon = localAi.quick_reachable
-        ? '<span style="color:#2e7d32">✓</span>'
-        : '<span style="color:#c00">✗</span>';
-      const quickEndpointText = localAi.quick_reachable ? t('status.connected') : t('status.not.connected');
-      html += '<tr><td>Quick</td><td>' + quickIcon + ' ' + escapeHtml(quickEndpointText) + '</td></tr>';
-
-      const quickModelStatus = formatAiStatus(localAi.quick_provider, localAi.quick_status, localAi.quick_model, localAi.quick_pull_command, 'quick');
-      html += '<tr><td></td><td>' + quickModelStatus + '</td></tr>';
-
-      const deepIcon = localAi.deep_reachable
-        ? '<span style="color:#2e7d32">✓</span>'
-        : '<span style="color:#c00">✗</span>';
-      const deepEndpointText = localAi.deep_reachable ? t('status.connected') : t('status.not.connected');
-      html += '<tr><td>Deep</td><td>' + deepIcon + ' ' + escapeHtml(deepEndpointText) + '</td></tr>';
-
-      const deepModelStatus = formatAiStatus(localAi.deep_provider, localAi.deep_status, localAi.deep_model, localAi.deep_pull_command, 'deep');
-      html += '<tr><td></td><td>' + deepModelStatus + '</td></tr>';
-    } else if (state.localAiLoadState === 'ERROR') {
-      html += '<tr><td>Quick</td><td><span style="color:#c00">' + escapeHtml(t('status.check.failed')) + '</span></td></tr>';
-      html += '<tr><td>Deep</td><td><span style="color:#c00">' + escapeHtml(t('status.check.failed')) + '</span></td></tr>';
-    } else {
-      html += '<tr><td>Quick</td><td>' + escapeHtml(t('status.checking')) + '</td></tr>';
-      html += '<tr><td>Deep</td><td>' + escapeHtml(t('status.checking')) + '</td></tr>';
-    }
-    html += '</table>';
-    html += '<div style="margin-top:12px;display:flex;gap:8px">';
-    html += '<button class="btn" id="refresh-local-ai-btn" style="padding:6px 12px;font-size:12px">' + escapeHtml(t('status.refresh')) + '</button>';
-    html += '<button class="btn" id="run-health-check-btn" style="padding:6px 12px;font-size:12px">' + escapeHtml(t('status.health.check')) + '</button>';
-    html += '</div>';
-    html += '<div id="health-check-result" style="margin-top:12px;display:none"></div>';
+    html += renderReadinessSection(readiness);
 
     // Cached health status from last health check
     if (health && (health.quick.state !== 'unknown' || health.deep.state !== 'unknown')) {
