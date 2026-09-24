@@ -33,8 +33,12 @@ const COMMANDS: &[&str] = &[
     "save_settings",
     "set_autostart",
     // Models/AI
+    "get_model_download_status",
     "list_models",
+    "load_lmstudio_instance",
+    "start_quick_model_download",
     "test_model",
+    "unload_lmstudio_instance",
     // Library
     "library_delete",
     "library_distinct_apps",
