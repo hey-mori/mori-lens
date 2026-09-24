@@ -10,7 +10,7 @@
 // - Polling uses get_model_download_status, not get_provider_readiness
 // - Terminal state stops polling
 // - Paused remains non-terminal (continues polling)
-// - Navigation away stops polling; navigation back reconnects
+// - Navigation away stops polling via deactivateStatus(); navigation back reconnects via activateStatus()
 
 import { invoke } from './tauri.js';
 import { state } from './state.js';
