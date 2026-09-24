@@ -462,11 +462,23 @@ function escapeHtml(str) {
  * Attach event handlers for readiness action buttons.
  * Call this after rendering the readiness UI.
  *
- * After an action completes, dispatches a custom event so the status page
- * owner can re-render. readiness.js does NOT import status.js (that would
- * create a cycle).
+ * Accepts explicit callbacks for action orchestration instead of using
+ * global events. This ensures single-owner semantics and prevents cycles.
+ *
+ * @param {object} callbacks - Action completion callbacks
+ * @param {function} callbacks.onDownloadStarted - Called after download starts (before polling)
+ * @param {function} callbacks.onLoadStarted - Called after load starts
+ * @param {function} callbacks.onRefreshCompleted - Called after manual refresh completes
+ * @param {function} callbacks.onConfigureModel - Called when configure-model action triggered
  */
-export function attachReadinessActionHandlers() {
+export function attachReadinessActionHandlers(callbacks = {}) {
+  const {
+    onDownloadStarted = () => {},
+    onLoadStarted = () => {},
+    onRefreshCompleted = () => {},
+    onConfigureModel = () => {},
+  } = callbacks;
+
   document.querySelectorAll('.readiness-action-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const action = btn.dataset.action;
@@ -478,25 +490,29 @@ export function attachReadinessActionHandlers() {
       try {
         if (action === 'download') {
           await invoke('start_quick_model_download');
+          // Start operation controller polling immediately, not refreshProviderReadiness
+          onDownloadStarted();
         } else if (action === 'load') {
           await invoke('load_lmstudio_instance');
+          // Start load observation
+          onLoadStarted();
         } else if (action === 'refresh') {
           // Refresh readiness from backend
           await refreshProviderReadiness();
-          // Notify the status page owner to re-render
-          document.dispatchEvent(new CustomEvent('readiness-state-changed'));
+          // Notify owner to re-render via explicit callback
+          onRefreshCompleted();
           return; // Exactly-once: refresh action completes here
         } else if (action === 'configure-model') {
           // Navigate to the Models page
           if (window.showSection) {
             window.showSection('models');
           }
+          onConfigureModel();
           return; // Don't refresh readiness; models page has its own loading
         }
-        // Refresh readiness after action (download, load)
-        await refreshProviderReadiness();
-        // Notify the status page owner to re-render
-        document.dispatchEvent(new CustomEvent('readiness-state-changed'));
+        // For download/load, do NOT immediately refreshProviderReadiness.
+        // The operation controller will poll get_model_download_status instead.
+        // Terminal state will trigger exactly one refreshProviderReadiness reconciliation.
       } catch (e) {
         console.error('Readiness action failed:', e);
         btn.disabled = false;

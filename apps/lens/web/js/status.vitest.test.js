@@ -10,9 +10,7 @@ const mocks = vi.hoisted(() => ({
     return key;
   }),
   escapeHtml: vi.fn((str) => str),
-  formatAiStatus: vi.fn(() => 'Model status'),
   setStatus: vi.fn(),
-  refreshLocalAiStatus: vi.fn(),
 }));
 
 // Mock the Tauri IPC boundary
@@ -28,7 +26,6 @@ vi.mock('./i18n.js', () => ({
 // Mock ui module
 vi.mock('./ui.js', () => ({
   escapeHtml: mocks.escapeHtml,
-  formatAiStatus: mocks.formatAiStatus,
   setStatus: mocks.setStatus,
 }));
 
@@ -37,14 +34,10 @@ vi.mock('./state.js', () => ({
   state: { cachedProviderReadiness: null, providerReadinessLoadState: 'LOADED' },
 }));
 
-// Mock local_ai module
-vi.mock('./local_ai.js', () => ({
-  refreshLocalAiStatus: mocks.refreshLocalAiStatus,
-}));
-
 // Mock operation-controller module
 vi.mock('./operation-controller.js', () => ({
   observeExisting: vi.fn(),
+  startOperationPolling: vi.fn(),
   stopPolling: vi.fn(),
   dispose: vi.fn(),
 }));
@@ -220,5 +213,38 @@ describe('Status module', () => {
     const refreshBtn = document.getElementById('refresh-local-ai-btn');
     expect(refreshBtn).toBeDefined();
     expect(refreshBtn.textContent).toContain('status.refresh');
+  });
+
+  it('maintains stable DOM region identity across updates', async () => {
+    // First load
+    await loadStatus();
+
+    // Capture initial DOM node references
+    const statusOverview1 = document.getElementById('status-overview-region');
+    const statusReadiness1 = document.getElementById('status-readiness-region');
+    const statusHealth1 = document.getElementById('status-health-region');
+    const statusContent1 = document.getElementById('status-content');
+
+    // Verify they exist
+    expect(statusOverview1).toBeDefined();
+    expect(statusReadiness1).toBeDefined();
+    expect(statusHealth1).toBeDefined();
+    expect(statusContent1).toBeDefined();
+
+    // Load status again (simulates a refresh)
+    _resetCaches();
+    await loadStatus();
+
+    // Capture DOM node references after update
+    const statusOverview2 = document.getElementById('status-overview-region');
+    const statusReadiness2 = document.getElementById('status-readiness-region');
+    const statusHealth2 = document.getElementById('status-health-region');
+    const statusContent2 = document.getElementById('status-content');
+
+    // Verify node identity is preserved (same object references)
+    expect(statusOverview1).toBe(statusOverview2);
+    expect(statusReadiness1).toBe(statusReadiness2);
+    expect(statusHealth1).toBe(statusHealth2);
+    expect(statusContent1).toBe(statusContent2);
   });
 });
