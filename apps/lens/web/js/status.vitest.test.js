@@ -34,7 +34,7 @@ vi.mock('./ui.js', () => ({
 
 // Mock state module
 vi.mock('./state.js', () => ({
-  state: { cachedLocalAiStatus: null, localAiLoadState: 'LOADED' },
+  state: { cachedProviderReadiness: null, providerReadinessLoadState: 'LOADED' },
 }));
 
 // Mock local_ai module
