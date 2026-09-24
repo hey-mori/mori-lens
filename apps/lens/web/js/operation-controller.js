@@ -24,6 +24,19 @@ let lastOperationSnapshot = null;
 let onOperationUpdate = null;
 
 /**
+ * Start polling for operation status updates.
+ *
+ * Uses setTimeout chaining to prevent duplicate timers.
+ * Each poll calls get_model_download_status (lightweight).
+ *
+ * Exported for explicit start from action handlers.
+ */
+export function startOperationPolling(updateCallback) {
+  onOperationUpdate = updateCallback;
+  startPolling();
+}
+
+/**
  * Start observing an existing operation (if any).
  *
  * Called when Status page loads. If an operation is active, begins polling.
