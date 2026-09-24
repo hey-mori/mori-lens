@@ -57,6 +57,21 @@ struct ModelsResponse {
     models: Vec<NativeModel>,
 }
 
+/// LM Studio OpenAI-compatible inference plane response.
+///
+/// Schema: `{"object": "list", "data": [...]}`
+/// This is the /v1/models endpoint used for inference visibility.
+#[derive(Debug, Deserialize)]
+struct InferenceModelsResponse {
+    data: Vec<InferenceModel>,
+}
+
+/// A model entry from LM Studio's inference plane /v1/models.
+#[derive(Debug, Deserialize)]
+struct InferenceModel {
+    id: String,
+}
+
 /// A model entry from LM Studio's native v1 API.
 ///
 /// Required fields for `type == "llm"`:
@@ -488,9 +503,7 @@ impl ProviderRuntime for LmStudioRuntime {
     }
 
     fn model_state(&self, model: &str) -> Result<ModelState, TranslateError> {
-        // Use the native v1 API response which includes loaded_instances.
-        // A model is "loaded" if its loaded_instances array is non-empty.
-        // Identity resolution uses canonical ID (key) only, not display_name.
+        // Query native management plane for inventory and loaded state
         let raw_models = list_models_with_loaded(&self.endpoint, self.api_token.as_deref())?;
 
         let raw_model = raw_models
@@ -498,15 +511,38 @@ impl ProviderRuntime for LmStudioRuntime {
             .find(|m| m.key == model)
             .ok_or_else(|| TranslateError::ModelMissing(model.to_owned()))?;
 
+        // If explicitly loaded, it's Ready
         if raw_model.is_loaded {
-            Ok(ModelState::Loaded {
+            return Ok(ModelState::Loaded {
                 name: raw_model.key.clone(),
-            })
-        } else {
-            Ok(ModelState::Available {
-                name: raw_model.key.clone(),
-                size: raw_model.size_bytes,
-            })
+            });
+        }
+
+        // Native present but not loaded. Check inference plane for JIT visibility.
+        // This queries /v1/models to see if the model is exposed to inference.
+        match list_inference_models(&self.endpoint, self.api_token.as_deref()) {
+            Ok(inference_models) => {
+                // Inference plane query succeeded
+                if inference_models.iter().any(|m| m == model) {
+                    // Model is visible in inference plane (JIT enabled)
+                    // This means inference requests can load it automatically
+                    Ok(ModelState::Loaded {
+                        name: raw_model.key.clone(),
+                    })
+                } else {
+                    // Model not in inference plane (JIT disabled or not visible)
+                    // It's present locally but needs explicit load
+                    Ok(ModelState::Available {
+                        name: raw_model.key.clone(),
+                        size: raw_model.size_bytes,
+                    })
+                }
+            }
+            Err(e) => {
+                // Inference plane query failed. Fail closed: do not interpret
+                // failure as "model not visible". Return the error.
+                Err(e)
+            }
         }
     }
 }
@@ -647,6 +683,51 @@ fn parse_model_objects(body: &str) -> Result<Vec<RawLmStudioModel>, TranslateErr
     Ok(models)
 }
 
+/// Query LM Studio's inference plane /v1/models endpoint.
+///
+/// Returns the list of model IDs visible to the inference interface.
+/// This is authoritative for whether a model can be used for inference,
+/// which depends on JIT configuration and loaded state.
+///
+/// Failures (transport, auth, malformed) are returned as errors and must
+/// not be interpreted as "model not visible".
+fn list_inference_models(
+    endpoint: &str,
+    api_token: Option<&str>,
+) -> Result<Vec<String>, TranslateError> {
+    let (status, body) = if let Some(token) = api_token {
+        crate::http::get_with_auth(
+            endpoint,
+            "/v1/models",
+            std::time::Duration::from_secs(3),
+            token,
+        )?
+    } else {
+        crate::http::get(
+            endpoint,
+            "/v1/models",
+            std::time::Duration::from_secs(3),
+        )?
+    };
+
+    // Check for authentication errors
+    if status == 401 || status == 403 {
+        return Err(TranslateError::HttpFailed(status));
+    }
+
+    // Any non-2xx status is an error
+    if !(200..=299).contains(&status) {
+        return Err(TranslateError::HttpFailed(status));
+    }
+
+    // Parse the response
+    let response: InferenceModelsResponse =
+        serde_json::from_str(&body).map_err(|_| TranslateError::Malformed)?;
+
+    // Extract model IDs
+    Ok(response.data.into_iter().map(|m| m.id).collect())
+}
+
 /// List models from LM Studio's /api/v1/models endpoint.
 ///
 /// Filters out embedding models and unknown types (only `type == "llm"` is
@@ -785,8 +866,11 @@ mod tests {
 
     #[test]
     fn model_state_returns_available_when_model_exists() {
+        // Model exists in native plane but not loaded.
+        // Inference plane also does not contain it (JIT disabled or not visible).
         let server = FakeServer::start(vec![
-            FakeResponse::ok_json(LM_STUDIO_LLM_MODELS_ONLY).expect_get("/api/v1/models")
+            FakeResponse::ok_json(LM_STUDIO_LLM_MODELS_ONLY).expect_get("/api/v1/models"),
+            FakeResponse::ok_json(LM_STUDIO_INFERENCE_MODELS_EMPTY).expect_get("/v1/models"),
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
@@ -855,8 +939,10 @@ mod tests {
     #[test]
     fn model_state_returns_available_when_model_has_no_loaded_instances() {
         // LM_STUDIO_MODELS_RESPONSE has llama-3.1-8b with empty loaded_instances
+        // Inference plane does not contain it (JIT disabled or not visible)
         let server = FakeServer::start(vec![
-            FakeResponse::ok_json(LM_STUDIO_MODELS_RESPONSE).expect_get("/api/v1/models")
+            FakeResponse::ok_json(LM_STUDIO_MODELS_RESPONSE).expect_get("/api/v1/models"),
+            FakeResponse::ok_json(LM_STUDIO_INFERENCE_MODELS_EMPTY).expect_get("/v1/models"),
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
@@ -869,6 +955,61 @@ mod tests {
             }
             _ => panic!("Expected ModelState::Available, got {:?}", state),
         }
+    }
+
+    #[test]
+    fn model_state_returns_loaded_when_inference_plane_contains_model() {
+        // Model exists in native plane but not explicitly loaded.
+        // Inference plane contains it (JIT enabled, model visible for inference).
+        // This means the model is usable for inference even without explicit load.
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_LLM_MODELS_ONLY).expect_get("/api/v1/models"),
+            FakeResponse::ok_json(LM_STUDIO_INFERENCE_MODELS_WITH_LLAMA).expect_get("/v1/models"),
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let state = runtime.model_state("llama-3.1-8b").unwrap();
+
+        match state {
+            ModelState::Loaded { name } => {
+                assert_eq!(name, "llama-3.1-8b");
+            }
+            _ => panic!("Expected ModelState::Loaded (JIT visible), got {:?}", state),
+        }
+    }
+
+    #[test]
+    fn model_state_returns_error_when_inference_plane_fails() {
+        // Model exists in native plane but not loaded.
+        // Inference plane query fails (server error, timeout, etc.).
+        // Fail closed: return error, do not interpret failure as "not visible".
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_LLM_MODELS_ONLY).expect_get("/api/v1/models"),
+            FakeResponse::status(500).expect_get("/v1/models"),
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.model_state("llama-3.1-8b");
+
+        // Should propagate the error, not return Available
+        assert!(matches!(result, Err(TranslateError::HttpFailed(500))));
+    }
+
+    #[test]
+    fn model_state_returns_error_when_inference_plane_malformed() {
+        // Model exists in native plane but not loaded.
+        // Inference plane returns malformed JSON (missing "data" key).
+        // Fail closed: return Malformed error.
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(LM_STUDIO_LLM_MODELS_ONLY).expect_get("/api/v1/models"),
+            FakeResponse::ok_json(r#"{"object": "list"}"#).expect_get("/v1/models"),
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.model_state("llama-3.1-8b");
+
+        // Should propagate Malformed error
+        assert!(matches!(result, Err(TranslateError::Malformed)));
     }
 
     #[test]
@@ -922,12 +1063,15 @@ mod tests {
     // model_state must resolve by key only.
     #[test]
     fn model_state_uses_canonical_key_not_display_name() {
-        // model_state calls list_models_with_loaded once per call.
+        // model_state calls list_models_with_loaded once and list_inference_models once per call.
         // Provide enough responses for all three model_state calls below.
         let server = FakeServer::start(vec![
             FakeResponse::ok_json(LM_STUDIO_AMBIGUOUS_DISPLAY_NAMES).expect_get("/api/v1/models"),
+            FakeResponse::ok_json(LM_STUDIO_INFERENCE_MODELS_EMPTY).expect_get("/v1/models"),
             FakeResponse::ok_json(LM_STUDIO_AMBIGUOUS_DISPLAY_NAMES).expect_get("/api/v1/models"),
+            FakeResponse::ok_json(LM_STUDIO_INFERENCE_MODELS_EMPTY).expect_get("/v1/models"),
             FakeResponse::ok_json(LM_STUDIO_AMBIGUOUS_DISPLAY_NAMES).expect_get("/api/v1/models"),
+            FakeResponse::ok_json(LM_STUDIO_INFERENCE_MODELS_EMPTY).expect_get("/v1/models"),
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
@@ -1290,7 +1434,9 @@ mod tests {
     fn model_state_detects_loaded_from_official_shape() {
         let server = FakeServer::start(vec![
             FakeResponse::ok_json(LM_STUDIO_OFFICIAL_SHAPE).expect_get("/api/v1/models"),
+            FakeResponse::ok_json(LM_STUDIO_INFERENCE_MODELS_EMPTY).expect_get("/v1/models"),
             FakeResponse::ok_json(LM_STUDIO_OFFICIAL_SHAPE).expect_get("/api/v1/models"),
+            FakeResponse::ok_json(LM_STUDIO_INFERENCE_MODELS_EMPTY).expect_get("/v1/models"),
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
@@ -1307,7 +1453,8 @@ mod tests {
     #[test]
     fn loaded_instances_whitespace_is_detected_as_empty() {
         let server = FakeServer::start(vec![
-            FakeResponse::ok_json(LM_STUDIO_LOADED_WHITESPACE).expect_get("/api/v1/models")
+            FakeResponse::ok_json(LM_STUDIO_LOADED_WHITESPACE).expect_get("/api/v1/models"),
+            FakeResponse::ok_json(LM_STUDIO_INFERENCE_MODELS_EMPTY).expect_get("/v1/models"),
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());

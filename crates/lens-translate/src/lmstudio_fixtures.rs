@@ -6,12 +6,18 @@
 //! LM Studio has two API surfaces:
 //! - Native v1: `GET /api/v1/models` (management plane)
 //! - OpenAI-compatible: `POST /v1/chat/completions` (inference plane)
+//! - OpenAI-compatible: `GET /v1/models` (inference plane model list)
 //!
 //! The native v1 model list uses top-level key `"models"` (not `"data"`):
 //! ```json
 //! {"models": [{"key": "...", "type": "llm", ...}]}
 //! ```
 //! A 2xx response missing the `"models"` key is malformed.
+//!
+//! The inference plane /v1/models uses OpenAI format:
+//! ```json
+//! {"object": "list", "data": [{"id": "...", ...}]}
+//! ```
 //!
 //! The native v1 model entry shape includes:
 //! - `type`: Model type ("llm" or "embedding")
@@ -25,6 +31,83 @@
 //! - `format`: Model format (e.g., "gguf")
 //!
 //! All tests using these fixtures are AUTOMATED CONTRACT PASS, not RUNTIME VERIFIED.
+
+/// A sample LM Studio inference plane /v1/models response.
+///
+/// This is the OpenAI-compatible format returned by `GET /v1/models`.
+/// Used to determine inference visibility (JIT state).
+pub const LM_STUDIO_INFERENCE_MODELS: &str = r#"{
+  "object": "list",
+  "data": [
+    {
+      "id": "llama-3.1-8b",
+      "object": "model",
+      "owned_by": "organization"
+    },
+    {
+      "id": "qwen2.5-7b",
+      "object": "model",
+      "owned_by": "organization"
+    }
+  ]
+}"#;
+
+/// Empty inference plane response (JIT disabled, no models loaded).
+pub const LM_STUDIO_INFERENCE_MODELS_EMPTY: &str = r#"{
+  "object": "list",
+  "data": []
+}"#;
+
+/// Inference plane response with only llama-3.1-8b visible.
+/// Used to test JIT semantics where only some models are exposed.
+pub const LM_STUDIO_INFERENCE_MODELS_WITH_LLAMA: &str = r#"{
+  "object": "list",
+  "data": [
+    {
+      "id": "llama-3.1-8b",
+      "object": "model",
+      "owned_by": "organization"
+    }
+  ]
+}"#;
+
+/// LM Studio native v1 model list fixture with two LLM models.
+///
+/// Schema per https://lmstudio.ai/docs/developer/rest/list:
+/// - `type`: "llm" for translation-capable models
+/// - `publisher`: publisher name
+/// - `key`: canonical model identifier
+/// - `display_name`: human-readable label
+/// - `size_bytes`: model size in bytes
+/// - `loaded_instances`: array of loaded instances (empty if not loaded)
+/// - `max_context_length`: maximum context window size
+/// - `format`: model format (e.g., "gguf")
+///
+/// Both models in this fixture have empty loaded_instances (not loaded).
+pub const LM_STUDIO_TWO_LLM_MODELS: &str = r#"{
+  "models": [
+    {
+      "type": "llm",
+      "publisher": "lmstudio-community",
+      "key": "llama-3.1-8b",
+      "display_name": "LLaMA 3.1 8B",
+      "size_bytes": 4294967296,
+      "loaded_instances": [],
+      "max_context_length": 131072,
+      "format": "gguf"
+    },
+    {
+      "type": "llm",
+      "publisher": "lmstudio-community",
+      "key": "qwen2.5-7b",
+      "display_name": "Qwen 2.5 7B",
+      "size_bytes": 3221225472,
+      "loaded_instances": [],
+      "max_context_length": 131072,
+      "format": "gguf"
+    }
+  ]
+}"#;
 
 /// A sample LM Studio native v1 models list response with mixed model types.
 ///
