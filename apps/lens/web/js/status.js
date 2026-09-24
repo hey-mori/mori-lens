@@ -1,186 +1,334 @@
-// Status page: loadStatus, togglePause, quitApp, toggleAutostart, refreshLocalAi
+// Status page: loadStatus, togglePause, quitApp, toggleAutostart, refreshReadiness
 
 import { invoke } from './tauri.js';
-import { escapeHtml, formatAiStatus, setStatus } from './ui.js';
+import { escapeHtml, setStatus } from './ui.js';
 import { state } from './state.js';
-import { refreshLocalAiStatus } from './local_ai.js';
+import { refreshProviderReadiness, renderReadinessSection, attachReadinessActionHandlers } from './readiness.js';
 import { t } from './i18n.js';
+import { observeExisting, stopPolling, dispose } from './operation-controller.js';
 
+// Stable region IDs for DOM identity preservation (Task #16)
+const REGION_IDS = {
+  OVERVIEW: 'status-overview-region',
+  READINESS: 'status-readiness-region',
+  HEALTH: 'status-health-region',
+  RUNTIME: 'status-runtime-region',
+  DIAGNOSTICS: 'status-diagnostics-region',
+};
+
+// Cache for readiness section to avoid unnecessary re-renders
+let cachedReadinessHtml = null;
+let cachedReadinessData = null;
+
+/**
+ * Initialize stable DOM regions on first load.
+ *
+ * Creates empty container divs for each region. Subsequent updates
+ * only modify the innerHTML of specific regions, preserving DOM identity.
+ */
+function ensureStableRegions() {
+  const el = document.getElementById('status-content');
+  if (!el) return;
+
+  // Check if regions already exist
+  if (document.getElementById(REGION_IDS.OVERVIEW)) return;
+
+  // Create stable region containers
+  el.innerHTML = `
+    <div id="${REGION_IDS.OVERVIEW}"></div>
+    <div id="${REGION_IDS.READINESS}"></div>
+    <div id="${REGION_IDS.HEALTH}"></div>
+    <div id="${REGION_IDS.RUNTIME}"></div>
+    <div id="${REGION_IDS.DIAGNOSTICS}"></div>
+  `;
+}
+
+/**
+ * Update a specific stable region without affecting others.
+ *
+ * @param {string} regionId - ID of the region to update
+ * @param {string} html - New HTML content for the region
+ */
+function updateRegion(regionId, html) {
+  const region = document.getElementById(regionId);
+  if (region) {
+    region.innerHTML = html;
+  }
+}
+
+/**
+ * Handle operation status updates from the operation controller.
+ *
+ * Called when get_model_download_status returns new data.
+ * Updates only the readiness region with the new operation snapshot.
+ *
+ * @param {object|null} snapshot - Operation snapshot from get_model_download_status
+ * @param {boolean} isTerminal - True if operation reached terminal state
+ */
+function handleOperationUpdate(snapshot, isTerminal) {
+  if (isTerminal) {
+    // Operation completed; trigger one final readiness reconciliation
+    refreshProviderReadiness().then(() => {
+      updateReadinessRegion();
+      attachReadinessActionHandlers();
+    });
+  } else if (snapshot) {
+    // Update the readiness region with the new operation snapshot
+    // We need to update the cached readiness data with the new operation snapshot
+    if (state.cachedProviderReadiness) {
+      state.cachedProviderReadiness = {
+        ...state.cachedProviderReadiness,
+        download: snapshot,
+      };
+      updateReadinessRegion();
+      attachReadinessActionHandlers();
+    }
+  }
+}
+
+/**
+ * Update only the readiness region.
+ *
+ * Re-renders the readiness section only if the data has changed.
+ */
+function updateReadinessRegion() {
+  const currentReadiness = state.cachedProviderReadiness;
+  const readinessDataKey = JSON.stringify(currentReadiness);
+
+  if (cachedReadinessData !== readinessDataKey) {
+    cachedReadinessHtml = renderReadinessSection(currentReadiness);
+    cachedReadinessData = readinessDataKey;
+    updateRegion(REGION_IDS.READINESS, cachedReadinessHtml);
+  }
+}
+
+/**
+ * Reset internal caches (for testing).
+ */
+export function _resetCaches() {
+  cachedReadinessHtml = null;
+  cachedReadinessData = null;
+}
+
+/**
+ * Load and render the status page.
+ *
+ * Uses stable DOM regions to preserve identity across updates.
+ * Only updates regions that have changed.
+ *
+ * For a manual fresh provider readiness fetch, use refreshReadinessAndRender().
+ */
 export async function loadStatus() {
   try {
+    // Ensure stable regions exist
+    ensureStableRegions();
+
+    // Fetch fresh data for non-readiness regions
     const [diag, runtime, health] = await Promise.all([
       invoke('get_diagnostics'),
       invoke('get_runtime_status'),
       invoke('get_health_status'),
     ]);
-    const localAi = state.cachedLocalAiStatus;
-    const el = document.getElementById('status-content');
-    const paused = diag && diag.paused;
-    const pauseLabel = paused ? t('status.pause.resume') : t('status.pause.button');
-    const pauseStyle = paused
-      ? 'background:#2e7d32;color:white;border-color:#2e7d32'
-      : 'background:#f57c00;color:white;border-color:#f57c00';
-    let html = '<div style="margin-bottom:20px">';
-    html += '<div style="font-size:12px;color:#888;margin-bottom:8px">' + escapeHtml(t('status.title')) + '</div>';
-    html += '<div style="display:flex;gap:8px;align-items:center">';
-    if (paused) {
-      html += '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f57c00"></span>';
-      html += '<span style="color:#f57c00;font-size:13px">' + escapeHtml(t('status.paused')) + '</span>';
-    } else {
-      html += '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2e7d32"></span>';
-      html += '<span style="color:#2e7d32;font-size:13px">' + escapeHtml(t('status.running')) + '</span>';
-    }
-    html += '</div>';
-    html += '<div style="display:flex;gap:8px;margin-top:12px">';
-    html += '<button class="btn" id="pause-btn" style="padding:8px 20px;' + pauseStyle + '">' + escapeHtml(pauseLabel) + '</button>';
-    html += '<button class="btn" id="quit-btn" style="padding:8px 20px;color:#c00;border-color:#c00">' + escapeHtml(t('status.quit')) + '</button>';
-    html += '</div>';
-    html += '</div>';
 
-    // Local AI readiness section
-    html += '<h2>' + escapeHtml(t('status.local.ai')) + '</h2>';
-    html += '<table>';
-    if (localAi) {
-      const quickIcon = localAi.quick_reachable
-        ? '<span style="color:#2e7d32">✓</span>'
-        : '<span style="color:#c00">✗</span>';
-      const quickEndpointText = localAi.quick_reachable ? t('status.connected') : t('status.not.connected');
-      html += '<tr><td>Quick</td><td>' + quickIcon + ' ' + escapeHtml(quickEndpointText) + '</td></tr>';
+    // Update overview region
+    updateOverviewRegion(diag);
 
-      const quickModelStatus = formatAiStatus(localAi.quick_provider, localAi.quick_status, localAi.quick_model, localAi.quick_pull_command, 'quick');
-      html += '<tr><td></td><td>' + quickModelStatus + '</td></tr>';
+    // Update readiness region (only if data changed)
+    updateReadinessRegion();
+    attachReadinessActionHandlers();
 
-      const deepIcon = localAi.deep_reachable
-        ? '<span style="color:#2e7d32">✓</span>'
-        : '<span style="color:#c00">✗</span>';
-      const deepEndpointText = localAi.deep_reachable ? t('status.connected') : t('status.not.connected');
-      html += '<tr><td>Deep</td><td>' + deepIcon + ' ' + escapeHtml(deepEndpointText) + '</td></tr>';
+    // Update health region
+    updateHealthRegion(health);
 
-      const deepModelStatus = formatAiStatus(localAi.deep_provider, localAi.deep_status, localAi.deep_model, localAi.deep_pull_command, 'deep');
-      html += '<tr><td></td><td>' + deepModelStatus + '</td></tr>';
-    } else if (state.localAiLoadState === 'ERROR') {
-      html += '<tr><td>Quick</td><td><span style="color:#c00">' + escapeHtml(t('status.check.failed')) + '</span></td></tr>';
-      html += '<tr><td>Deep</td><td><span style="color:#c00">' + escapeHtml(t('status.check.failed')) + '</span></td></tr>';
-    } else {
-      html += '<tr><td>Quick</td><td>' + escapeHtml(t('status.checking')) + '</td></tr>';
-      html += '<tr><td>Deep</td><td>' + escapeHtml(t('status.checking')) + '</td></tr>';
-    }
-    html += '</table>';
-    html += '<div style="margin-top:12px;display:flex;gap:8px">';
-    html += '<button class="btn" id="refresh-local-ai-btn" style="padding:6px 12px;font-size:12px">' + escapeHtml(t('status.refresh')) + '</button>';
-    html += '<button class="btn" id="run-health-check-btn" style="padding:6px 12px;font-size:12px">' + escapeHtml(t('status.health.check')) + '</button>';
-    html += '</div>';
-    html += '<div id="health-check-result" style="margin-top:12px;display:none"></div>';
+    // Update runtime region
+    updateRuntimeRegion(runtime);
 
-    // Cached health status from last health check
-    if (health && (health.quick.state !== 'unknown' || health.deep.state !== 'unknown')) {
-      html += '<div style="margin-top:12px;padding:12px;background:rgba(0,0,0,0.02);border-radius:4px;font-size:12px">';
-      html += '<div style="color:#888;font-size:11px;margin-bottom:8px">' + escapeHtml(t('status.last.health')) + '</div>';
-      const quickLabel = health.quick.state === 'ready' ? t('status.ready') :
-                         health.quick.state === 'degraded' ? t('status.degraded') :
-                         health.quick.state === 'running' ? '⟳ ' + t('status.running') : t('status.unavailable');
-      const quickColor = health.quick.state === 'ready' ? '#2e7d32' :
-                         health.quick.state === 'degraded' ? '#f57c00' :
-                         health.quick.state === 'running' ? '#1976d2' : '#c00';
-      html += '<div style="margin-bottom:4px"><strong>Quick:</strong> <span style="color:' + quickColor + '">' + quickLabel + '</span>';
-      if (health.quick.failure) html += ' <span style="color:#888">(' + health.quick.failure + ')</span>';
-      if (health.quick.latency_ms) html += ' <span style="color:#888">(' + health.quick.latency_ms + 'ms)</span>';
-      html += '</div>';
-      const deepLabel = health.deep.state === 'ready' ? t('status.ready') :
-                        health.deep.state === 'degraded' ? t('status.degraded') :
-                        health.deep.state === 'running' ? '⟳ ' + t('status.running') : t('status.unavailable');
-      const deepColor = health.deep.state === 'ready' ? '#2e7d32' :
-                        health.deep.state === 'degraded' ? '#f57c00' :
-                        health.deep.state === 'running' ? '#1976d2' : '#c00';
-      html += '<div><strong>Deep:</strong> <span style="color:' + deepColor + '">' + deepLabel + '</span>';
-      if (health.deep.failure) html += ' <span style="color:#888">(' + health.deep.failure + ')</span>';
-      if (health.deep.latency_ms) html += ' <span style="color:#888">(' + health.deep.latency_ms + 'ms)</span>';
-      html += '</div>';
-      if (health.stale) {
-        html += '<div style="color:#f57c00;font-size:11px;margin-top:8px">' + escapeHtml(t('status.settings.changed')) + '</div>';
-      }
-      html += '</div>';
-    }
+    // Update diagnostics region
+    updateDiagnosticsRegion(diag);
 
-    // Runtime configuration table
-    if (runtime) {
-      html += '<h2>' + escapeHtml(t('status.runtime')) + '</h2><table>';
-      html += '<tr><td>History</td><td>' + (runtime.history_enabled ? escapeHtml(t('status.history.enabled', { days: runtime.history_days })) : escapeHtml(t('status.history.disabled'))) + '</td></tr>';
-      html += '<tr><td>Library</td><td>' + (runtime.library_persistent ? escapeHtml(t('status.library.persistent')) : escapeHtml(t('status.library.session'))) + '</td></tr>';
-      var autostartLabel;
-      var autostartToggle = '';
-      if (runtime.autostart_enabled === null) {
-        autostartLabel = t('status.autostart.not.supported');
-      } else {
-        autostartLabel = runtime.autostart_enabled ? t('status.autostart.enabled') : t('status.autostart.disabled');
-        var nextLabel = runtime.autostart_enabled ? t('status.autostart.enabled') : t('status.autostart.disabled');
-        autostartToggle = ' <button class="btn" id="autostart-toggle-btn" style="padding:2px 10px;font-size:0.85em">' + escapeHtml(t('status.autostart.toggle', { state: nextLabel })) + '</button>';
-      }
-      html += '<tr><td>' + escapeHtml(t('status.autostart.label')) + '</td><td>' + escapeHtml(autostartLabel) + autostartToggle + '</td></tr>';
-      // Restart status
-      if (runtime.restart_required) {
-        var reasonLabels = {
-          'quick_engine': t('status.restart.reason.quick.engine'),
-          'quick_model': t('status.restart.reason.quick.model'),
-          'quick_endpoint': t('status.restart.reason.quick.endpoint'),
-          'deep_engine': t('status.restart.reason.deep.engine'),
-          'deep_model': t('status.restart.reason.deep.model'),
-          'deep_endpoint': t('status.restart.reason.deep.endpoint'),
-          'ocr_mode': t('status.restart.reason.ocr.mode')
-        };
-        var mappedReasons = runtime.restart_reasons.map(function(key) {
-          return reasonLabels[key] || key;
-        });
-        var reasonText = mappedReasons.length > 0 ? ' (' + mappedReasons.join(', ') + ')' : '';
-        html += '<tr><td style="color:#f57c00;font-weight:500">' + escapeHtml(t('status.restart.required')) + reasonText + '</td><td style="color:#f57c00">' + escapeHtml(t('status.restart.hint')) + '</td></tr>';
-      } else {
-        html += '<tr><td>' + escapeHtml(t('status.restart.required')) + '</td><td style="color:#2e7d32">' + escapeHtml(t('status.restart.not.required')) + '</td></tr>';
-      }
-      html += '</table>';
-    }
-    if (!diag || !diag.build) {
-      html += '<p class="loading">' + escapeHtml(t('status.no.session.data')) + '</p>';
-      el.innerHTML = html;
-      return;
-    }
-    html += '<div style="margin-bottom:16px">';
-    html += '<span class="stat"><span class="stat-value">' + diag.cards + '</span> <span class="stat-label">' + escapeHtml(t('status.cards')) + '</span></span>';
-    html += '<span class="stat"><span class="stat-value">' + diag.settled_hovers + '</span> <span class="stat-label">' + escapeHtml(t('status.settled.hovers')) + '</span></span>';
-    html += '</div>';
-    if (diag.refusals && diag.refusals.length > 0) {
-      html += '<h2>' + escapeHtml(t('status.refusals')) + '</h2><table>';
-      for (const [reason, count] of diag.refusals) {
-        const pct = diag.settled_hovers > 0 ? Math.round(count / diag.settled_hovers * 100) : 0;
-        html += '<tr class="refusal-row"><td>' + reason + '</td><td>' + count + ' (' + pct + '%)</td></tr>';
-      }
-      html += '</table>';
-    }
-    if (diag.configuration && diag.configuration.length > 0) {
-      html += '<h2>' + escapeHtml(t('status.configuration')) + '</h2><table>';
-      for (const [label, value] of diag.configuration) {
-        html += '<tr><td>' + label + '</td><td>' + value + '</td></tr>';
-      }
-      html += '</table>';
-    }
-    // Recent diagnostic events
-    html += '<div id="recent-diagnostics-section" style="margin-top:16px"></div>';
-    // Diagnostics export button
-    html += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid #eee">';
-    html += '<button class="btn" id="export-diagnostics-btn" style="padding:8px 16px;font-size:12px">' + escapeHtml(t('status.view.diagnostics')) + '</button>';
-    html += '<p style="font-size:11px;color:#888;margin-top:8px">' + escapeHtml(t('status.diagnostics.hint')) + '</p>';
-    html += '<div id="diagnostics-result" style="margin-top:12px;display:none">';
-    html += '<textarea id="diagnostics-json" readonly style="width:100%;height:200px;font-family:monospace;font-size:11px;padding:8px;border:1px solid #ddd;border-radius:4px;resize:vertical"></textarea>';
-    html += '<button class="btn" id="copy-diagnostics-btn" style="margin-top:8px;padding:6px 12px;font-size:11px">' + escapeHtml(t('status.copy.to.clipboard')) + '</button>';
-    html += '</div>';
-    html += '</div>';
-    // Close hint
-    html += '<p style="font-size:11px;color:#999;margin-top:20px">' + escapeHtml(t('status.tray.hint')) + '</p>';
-    el.innerHTML = html;
-    // Attach event listeners after rendering
+    // Attach event handlers after all regions are rendered
     attachStatusHandlers();
+    attachReadinessActionHandlers();
+
+    // Start operation controller if not already polling
+    observeExisting(handleOperationUpdate);
   } catch (e) {
     console.error('loadStatus failed:', e);
   }
+}
+
+/**
+ * Update the overview region (pause/quit buttons, status indicator).
+ */
+function updateOverviewRegion(diag) {
+  const paused = diag && diag.paused;
+  const pauseLabel = paused ? t('status.pause.resume') : t('status.pause.button');
+  const pauseStyle = paused
+    ? 'background:#2e7d32;color:white;border-color:#2e7d32'
+    : 'background:#f57c00;color:white;border-color:#f57c00';
+
+  let html = '<div style="margin-bottom:20px">';
+  html += '<div style="font-size:12px;color:#888;margin-bottom:8px">' + escapeHtml(t('status.title')) + '</div>';
+  html += '<div style="display:flex;gap:8px;align-items:center">';
+  if (paused) {
+    html += '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f57c00"></span>';
+    html += '<span style="color:#f57c00;font-size:13px">' + escapeHtml(t('status.paused')) + '</span>';
+  } else {
+    html += '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2e7d32"></span>';
+    html += '<span style="color:#2e7d32;font-size:13px">' + escapeHtml(t('status.running')) + '</span>';
+  }
+  html += '</div>';
+  html += '<div style="display:flex;gap:8px;margin-top:12px">';
+  html += '<button class="btn" id="pause-btn" style="padding:8px 20px;' + pauseStyle + '">' + escapeHtml(pauseLabel) + '</button>';
+  html += '<button class="btn" id="quit-btn" style="padding:8px 20px;color:#c00;border-color:#c00">' + escapeHtml(t('status.quit')) + '</button>';
+  html += '</div>';
+  html += '</div>';
+
+  updateRegion(REGION_IDS.OVERVIEW, html);
+}
+
+/**
+ * Update the health region.
+ */
+function updateHealthRegion(health) {
+  if (!health || (health.quick.state === 'unknown' && health.deep.state === 'unknown')) {
+    updateRegion(REGION_IDS.HEALTH, '');
+    return;
+  }
+
+  let html = '<div style="margin-top:12px;padding:12px;background:rgba(0,0,0,0.02);border-radius:4px;font-size:12px">';
+  html += '<div style="color:#888;font-size:11px;margin-bottom:8px">' + escapeHtml(t('status.last.health')) + '</div>';
+  const quickLabel = health.quick.state === 'ready' ? t('status.ready') :
+                     health.quick.state === 'degraded' ? t('status.degraded') :
+                     health.quick.state === 'running' ? '⟳ ' + t('status.running') : t('status.unavailable');
+  const quickColor = health.quick.state === 'ready' ? '#2e7d32' :
+                     health.quick.state === 'degraded' ? '#f57c00' :
+                     health.quick.state === 'running' ? '#1976d2' : '#c00';
+  html += '<div style="margin-bottom:4px"><strong>Quick:</strong> <span style="color:' + quickColor + '">' + quickLabel + '</span>';
+  if (health.quick.failure) html += ' <span style="color:#888">(' + health.quick.failure + ')</span>';
+  if (health.quick.latency_ms) html += ' <span style="color:#888">(' + health.quick.latency_ms + 'ms)</span>';
+  html += '</div>';
+  const deepLabel = health.deep.state === 'ready' ? t('status.ready') :
+                    health.deep.state === 'degraded' ? t('status.degraded') :
+                    health.deep.state === 'running' ? '⟳ ' + t('status.running') : t('status.unavailable');
+  const deepColor = health.deep.state === 'ready' ? '#2e7d32' :
+                    health.deep.state === 'degraded' ? '#f57c00' :
+                    health.deep.state === 'running' ? '#1976d2' : '#c00';
+  html += '<div><strong>Deep:</strong> <span style="color:' + deepColor + '">' + deepLabel + '</span>';
+  if (health.deep.failure) html += ' <span style="color:#888">(' + health.deep.failure + ')</span>';
+  if (health.deep.latency_ms) html += ' <span style="color:#888">(' + health.deep.latency_ms + 'ms)</span>';
+  html += '</div>';
+  if (health.stale) {
+    html += '<div style="color:#f57c00;font-size:11px;margin-top:8px">' + escapeHtml(t('status.settings.changed')) + '</div>';
+  }
+  html += '</div>';
+
+  updateRegion(REGION_IDS.HEALTH, html);
+}
+
+/**
+ * Update the runtime region.
+ */
+function updateRuntimeRegion(runtime) {
+  if (!runtime) {
+    updateRegion(REGION_IDS.RUNTIME, '');
+    return;
+  }
+
+  let html = '<h2>' + escapeHtml(t('status.runtime')) + '</h2><table>';
+  html += '<tr><td>History</td><td>' + (runtime.history_enabled ? escapeHtml(t('status.history.enabled', { days: runtime.history_days })) : escapeHtml(t('status.history.disabled'))) + '</td></tr>';
+  html += '<tr><td>Library</td><td>' + (runtime.library_persistent ? escapeHtml(t('status.library.persistent')) : escapeHtml(t('status.library.session'))) + '</td></tr>';
+  var autostartLabel;
+  var autostartToggle = '';
+  if (runtime.autostart_enabled === null) {
+    autostartLabel = t('status.autostart.not.supported');
+  } else {
+    autostartLabel = runtime.autostart_enabled ? t('status.autostart.enabled') : t('status.autostart.disabled');
+    var nextLabel = runtime.autostart_enabled ? t('status.autostart.enabled') : t('status.autostart.disabled');
+    autostartToggle = ' <button class="btn" id="autostart-toggle-btn" style="padding:2px 10px;font-size:0.85em">' + escapeHtml(t('status.autostart.toggle', { state: nextLabel })) + '</button>';
+  }
+  html += '<tr><td>' + escapeHtml(t('status.autostart.label')) + '</td><td>' + escapeHtml(autostartLabel) + autostartToggle + '</td></tr>';
+  if (runtime.restart_required) {
+    var reasonLabels = {
+      'quick_engine': t('status.restart.reason.quick.engine'),
+      'quick_model': t('status.restart.reason.quick.model'),
+      'quick_endpoint': t('status.restart.reason.quick.endpoint'),
+      'deep_engine': t('status.restart.reason.deep.engine'),
+      'deep_model': t('status.restart.reason.deep.model'),
+      'deep_endpoint': t('status.restart.reason.deep.endpoint'),
+      'ocr_mode': t('status.restart.reason.ocr.mode')
+    };
+    var mappedReasons = runtime.restart_reasons.map(function(key) {
+      return reasonLabels[key] || key;
+    });
+    var reasonText = mappedReasons.length > 0 ? ' (' + mappedReasons.join(', ') + ')' : '';
+    html += '<tr><td style="color:#f57c00;font-weight:500">' + escapeHtml(t('status.restart.required')) + reasonText + '</td><td style="color:#f57c00">' + escapeHtml(t('status.restart.hint')) + '</td></tr>';
+  } else {
+    html += '<tr><td>' + escapeHtml(t('status.restart.required')) + '</td><td style="color:#2e7d32">' + escapeHtml(t('status.restart.not.required')) + '</td></tr>';
+  }
+  html += '</table>';
+
+  updateRegion(REGION_IDS.RUNTIME, html);
+}
+
+/**
+ * Update the diagnostics region.
+ */
+function updateDiagnosticsRegion(diag) {
+  if (!diag || !diag.build) {
+    updateRegion(REGION_IDS.DIAGNOSTICS, '<p class="loading">' + escapeHtml(t('status.no.session.data')) + '</p>');
+    return;
+  }
+
+  let html = '<h2>' + escapeHtml(t('status.local.ai')) + '</h2>';
+  html += '<div style="margin-bottom:16px">';
+  html += '<span class="stat"><span class="stat-value">' + diag.cards + '</span> <span class="stat-label">' + escapeHtml(t('status.cards')) + '</span></span>';
+  html += '<span class="stat"><span class="stat-value">' + diag.settled_hovers + '</span> <span class="stat-label">' + escapeHtml(t('status.settled.hovers')) + '</span></span>';
+  html += '</div>';
+
+  if (diag.refusals && diag.refusals.length > 0) {
+    html += '<h2>' + escapeHtml(t('status.refusals')) + '</h2><table>';
+    for (const [reason, count] of diag.refusals) {
+      const pct = diag.settled_hovers > 0 ? Math.round(count / diag.settled_hovers * 100) : 0;
+      html += '<tr class="refusal-row"><td>' + reason + '</td><td>' + count + ' (' + pct + '%)</td></tr>';
+    }
+    html += '</table>';
+  }
+
+  if (diag.configuration && diag.configuration.length > 0) {
+    html += '<h2>' + escapeHtml(t('status.configuration')) + '</h2><table>';
+    for (const [label, value] of diag.configuration) {
+      html += '<tr><td>' + label + '</td><td>' + value + '</td></tr>';
+    }
+    html += '</table>';
+  }
+
+  html += '<div id="recent-diagnostics-section" style="margin-top:16px"></div>';
+
+  html += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid #eee">';
+  html += '<button class="btn" id="export-diagnostics-btn" style="padding:8px 16px;font-size:12px">' + escapeHtml(t('status.view.diagnostics')) + '</button>';
+  html += '<p style="font-size:11px;color:#888;margin-top:8px">' + escapeHtml(t('status.diagnostics.hint')) + '</p>';
+  html += '<div id="diagnostics-result" style="margin-top:12px;display:none">';
+  html += '<textarea id="diagnostics-json" readonly style="width:100%;height:200px;font-family:monospace;font-size:11px;padding:8px;border:1px solid #ddd;border-radius:4px;resize:vertical"></textarea>';
+  html += '<button class="btn" id="copy-diagnostics-btn" style="margin-top:8px;padding:6px 12px;font-size:11px">' + escapeHtml(t('status.copy.to.clipboard')) + '</button>';
+  html += '</div>';
+  html += '</div>';
+
+  html += '<p style="font-size:11px;color:#999;margin-top:20px">' + escapeHtml(t('status.tray.hint')) + '</p>';
+
+  updateRegion(REGION_IDS.DIAGNOSTICS, html);
+}
+
+/**
+ * Perform a fresh provider readiness fetch and re-render.
+ *
+ * This is the ONE place that calls get_provider_readiness for the Status page.
+ * Used by: initial load, navigation to status, manual refresh button.
+ * NOT used by the 1-second polling interval (which uses cached data).
+ */
+export async function refreshReadinessAndRender() {
+  await refreshProviderReadiness();
+  await loadStatus();
 }
 
 function attachStatusHandlers() {
@@ -191,7 +339,7 @@ function attachStatusHandlers() {
   if (quitBtn) quitBtn.addEventListener('click', quitApp);
 
   const refreshBtn = document.getElementById('refresh-local-ai-btn');
-  if (refreshBtn) refreshBtn.addEventListener('click', refreshLocalAi);
+  if (refreshBtn) refreshBtn.addEventListener('click', refreshReadinessAndRender);
 
   const autostartBtn = document.getElementById('autostart-toggle-btn');
   if (autostartBtn) autostartBtn.addEventListener('click', toggleAutostart);
@@ -214,11 +362,6 @@ function attachStatusHandlers() {
 
   // Pull command copy buttons
   import('./diagnostics.js').then(m => m.attachPullCommandHandlers());
-}
-
-export async function refreshLocalAi() {
-  await refreshLocalAiStatus();
-  await loadStatus();
 }
 
 async function runHealthCheck() {

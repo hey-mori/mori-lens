@@ -34,6 +34,7 @@ const COMMANDS: &[&str] = &[
     "set_autostart",
     // Models/AI
     "get_model_download_status",
+    "get_provider_readiness",
     "list_models",
     "load_lmstudio_instance",
     "start_quick_model_download",

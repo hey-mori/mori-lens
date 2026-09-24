@@ -134,6 +134,16 @@ impl ProviderCapability {
             can_cancel_download: false,
         }
     }
+
+    /// Return capabilities for a given provider.
+    ///
+    /// Convenience wrapper that dispatches to `ollama()` or `lm_studio()`.
+    pub fn for_provider(provider: crate::translate::Provider) -> Self {
+        match provider {
+            crate::translate::Provider::Ollama => Self::ollama(),
+            crate::translate::Provider::LmStudio => Self::lm_studio(),
+        }
+    }
 }
 
 #[cfg(test)]
