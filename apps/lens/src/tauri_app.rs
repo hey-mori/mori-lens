@@ -108,6 +108,12 @@ pub fn global_diagnostic_events() -> SharedDiagnosticEvents {
 /// and relative timestamps. No user content, no model output, no raw errors.
 pub type SharedHealthSnapshot = Arc<Mutex<lens_core::health::HealthSnapshot>>;
 
+/// Shared operation manager for provider model management.
+///
+/// Tracks active downloads, terminal snapshots, and Mori-owned LM Studio
+/// instances. Process-local, no persistence. See `operation_manager.rs`.
+pub type SharedOperationManager = lens_translate::operation_manager::OperationManager;
+
 /// Backend concurrency guard for health checks.
 ///
 /// Prevents multiple simultaneous health check runs. Provides a focused API
@@ -555,6 +561,202 @@ async fn check_provider(provider: String, endpoint: String) -> bool {
         ));
     });
     rx.recv().unwrap_or(false)
+}
+
+/// Tauri command: get the current download operation snapshot.
+///
+/// Returns the active download if one is in progress, or the terminal snapshot
+/// of the last completed/failed download, or `null` if idle with no prior
+/// operation. Does not hit the provider; reads from OperationManager only.
+#[tauri::command]
+async fn get_model_download_status(
+    manager: tauri::State<'_, SharedOperationManager>,
+) -> Result<Option<lens_translate::operation_manager::DownloadOperationSnapshot>, String> {
+    Ok(manager.operation_snapshot())
+}
+
+/// Tauri command: start downloading the configured quick model.
+///
+/// Reads the quick engine, endpoint, and model from saved settings. If no
+/// quick model is configured and the provider is Ollama, uses the canonical
+/// DEFAULT_MODEL. If no quick model is configured for LM Studio, returns an
+/// error (LM Studio has no default recommendation). If a download is already
+/// active, returns `ProviderBusy`. Otherwise, reserves the operation atomically,
+/// then spawns a background worker.
+#[tauri::command]
+async fn start_quick_model_download(
+    manager: tauri::State<'_, SharedOperationManager>,
+    settings: tauri::State<'_, SharedSettings>,
+) -> Result<(), String> {
+    let s = settings.lock().unwrap();
+    let view = s.view();
+
+    let provider = lens_core::translate::Provider::from_token(&view.quick_engine)
+        .ok_or("invalid quick engine")?;
+    let endpoint = view.quick_endpoint.clone();
+
+    // Determine target model.
+    // Ollama auto-mode: use DEFAULT_MODEL if no model configured.
+    // LM Studio: require explicit model (no fabricated recommendation).
+    let model = match (&view.quick_model, provider) {
+        (Some(m), _) => m.clone(),
+        (None, lens_core::translate::Provider::Ollama) => {
+            lens_translate::DEFAULT_MODEL.to_string()
+        }
+        (None, lens_core::translate::Provider::LmStudio) => {
+            return Err("no quick model configured".to_string());
+        }
+    };
+
+    // Atomic reservation BEFORE spawning. Prevents race where two commands
+    // both check idle and both spawn. Second command gets ProviderBusy here.
+    // Job ID is always None at reservation time; LM Studio worker sets it
+    // later after the HTTP response returns the actual job ID.
+    manager
+        .start_download(provider, model.clone(), lens_core::model_management::DownloadStatus::Starting, None)
+        .map_err(|e| format!("{:?}", e))?;
+
+    // Reservation succeeded. Spawn worker. If spawn fails, finish with error
+    // to avoid permanent stale reservation.
+    let manager_clone = manager.inner().clone();
+    let model_clone = model.clone();
+    let endpoint_clone = endpoint.clone();
+
+    let spawn_result = match provider {
+        lens_core::translate::Provider::Ollama => {
+            std::thread::Builder::new()
+                .name("ollama-download".into())
+                .spawn(move || {
+                    crate::download_worker::run_ollama_download(
+                        manager_clone,
+                        endpoint_clone,
+                        model_clone,
+                    );
+                })
+        }
+        lens_core::translate::Provider::LmStudio => {
+            std::thread::Builder::new()
+                .name("lmstudio-download".into())
+                .spawn(move || {
+                    crate::download_worker::run_lmstudio_download(
+                        manager_clone,
+                        endpoint_clone,
+                        model_clone,
+                    );
+                })
+        }
+    };
+
+    if let Err(e) = spawn_result {
+        eprintln!("download worker spawn failed: {:?}", e);
+        let _ = manager.finish_download(
+            lens_core::model_management::DownloadStatus::Failed(
+                lens_core::model_management::ManagementError::DownloadFailed,
+            ),
+        );
+        return Err(format!("failed to spawn download worker: {:?}", e));
+    }
+
+    Ok(())
+}
+
+/// Tauri command: load an LM Studio instance for the configured quick model.
+///
+/// Reads the quick engine and endpoint from saved settings. If not LM Studio,
+/// returns an error. If Mori already owns an instance for this model, returns
+/// the existing instance_id. Otherwise, calls LM Studio load_model and
+/// registers ownership in the manager.
+#[tauri::command]
+async fn load_lmstudio_instance(
+    manager: tauri::State<'_, SharedOperationManager>,
+    settings: tauri::State<'_, SharedSettings>,
+) -> Result<String, String> {
+    let s = settings.lock().unwrap();
+    let view = s.view();
+
+    let provider = lens_core::translate::Provider::from_token(&view.quick_engine)
+        .ok_or("invalid quick engine")?;
+    if provider != lens_core::translate::Provider::LmStudio {
+        return Err("quick engine is not LM Studio".to_string());
+    }
+
+    let endpoint = view.quick_endpoint.clone();
+    let model = view.quick_model.clone().ok_or("no quick model configured")?;
+
+    // Check if Mori already owns an instance for this model.
+    if let Some(instance_id) = manager.owned_instance_for_model(&model) {
+        return Ok(instance_id);
+    }
+
+    // Call LM Studio load_model in a background thread.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let endpoint_clone = endpoint.clone();
+    let model_clone = model.clone();
+    std::thread::spawn(move || {
+        let runtime = lens_translate::lmstudio_runtime::LmStudioRuntime::new(&endpoint_clone);
+        let result = runtime.load_model(&model_clone);
+        let _ = tx.send(result);
+    });
+
+    let instance_id = rx
+        .recv()
+        .map_err(|_| "thread error".to_string())?
+        .map_err(|e| format!("{:?}", e))?;
+
+    // Register ownership.
+    manager
+        .register_mori_instance(model, instance_id.clone())
+        .map_err(|e| format!("{:?}", e))?;
+
+    Ok(instance_id)
+}
+
+/// Tauri command: unload a Mori-owned LM Studio instance for the configured quick model.
+///
+/// Reads the quick engine and endpoint from saved settings. If not LM Studio,
+/// returns an error. If Mori does not own an instance for this model, returns
+/// an error. Otherwise, calls LM Studio unload_instance and removes ownership
+/// from the manager.
+#[tauri::command]
+async fn unload_lmstudio_instance(
+    manager: tauri::State<'_, SharedOperationManager>,
+    settings: tauri::State<'_, SharedSettings>,
+) -> Result<(), String> {
+    let s = settings.lock().unwrap();
+    let view = s.view();
+
+    let provider = lens_core::translate::Provider::from_token(&view.quick_engine)
+        .ok_or("invalid quick engine")?;
+    if provider != lens_core::translate::Provider::LmStudio {
+        return Err("quick engine is not LM Studio".to_string());
+    }
+
+    let endpoint = view.quick_endpoint.clone();
+    let model = view.quick_model.clone().ok_or("no quick model configured")?;
+
+    // Look up the owned instance for this model.
+    let instance_id = manager
+        .owned_instance_for_model(&model)
+        .ok_or("no Mori-owned instance for this model")?;
+
+    // Call LM Studio unload_instance in a background thread.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let endpoint_clone = endpoint.clone();
+    let instance_id_clone = instance_id.clone();
+    std::thread::spawn(move || {
+        let runtime = lens_translate::lmstudio_runtime::LmStudioRuntime::new(&endpoint_clone);
+        let result = runtime.unload_instance(&instance_id_clone);
+        let _ = tx.send(result);
+    });
+
+    rx.recv()
+        .map_err(|_| "thread error".to_string())?
+        .map_err(|e| format!("{:?}", e))?;
+
+    // Remove ownership after successful unload.
+    manager.take_owned_instance_for_model(&model);
+
+    Ok(())
 }
 
 /// Internal helper: list models for a given provider (not a Tauri command).
@@ -1642,6 +1844,7 @@ pub fn build(
     let health_snapshot: SharedHealthSnapshot =
         Arc::new(Mutex::new(lens_core::health::HealthSnapshot::default()));
     let health_running = HealthCheckRunning::new();
+    let operation_manager = lens_translate::operation_manager::OperationManager::new();
 
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default();
@@ -1700,11 +1903,16 @@ pub fn build(
             crate::detail_view::detail_save_note,
             crate::detail_view::detail_request_explain,
             crate::detail_view::detail_open_in_library,
+            get_model_download_status,
+            start_quick_model_download,
+            load_lmstudio_instance,
+            unload_lmstudio_instance,
         ])
         .manage(diagnostics.clone())
         .manage(diagnostic_events.clone())
         .manage(health_snapshot.clone())
         .manage(health_running.clone())
+        .manage(operation_manager)
         .manage(pause_request.clone())
         .manage(quit_request.clone())
         .manage(shared_settings)

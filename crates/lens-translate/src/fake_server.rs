@@ -50,6 +50,29 @@ impl FakeResponse {
         }
     }
 
+    /// Create a response with a custom status code.
+    ///
+    /// Used for tests that need specific status codes not covered by the
+    /// convenience constructors (e.g., 400, 500).
+    pub fn status(code: u16) -> Self {
+        let text = match code {
+            200 => "OK",
+            400 => "Bad Request",
+            401 => "Unauthorized",
+            403 => "Forbidden",
+            404 => "Not Found",
+            500 => "Internal Server Error",
+            _ => "Unknown",
+        };
+        Self {
+            status: code,
+            status_text: text.to_owned(),
+            headers: vec![],
+            body: String::new(),
+            expect: None,
+        }
+    }
+
     pub fn not_found() -> Self {
         Self {
             status: 404,

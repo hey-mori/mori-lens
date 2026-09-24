@@ -54,21 +54,22 @@ pub struct ProviderCapability {
     /// LM Studio: GET /api/v1/models (implemented)
     pub can_list_models: bool,
     /// Mori Lens adapter supports downloading models via native API.
-    /// Must be `false` until the download adapter is implemented and tested.
-    /// Will flip to `true` in P20B after adapter implementation.
+    /// Ollama: POST /api/pull with NDJSON streaming (implemented in P20B)
+    /// LM Studio: POST /api/v1/models/download with job polling (implemented in P20B)
     pub can_download_model: bool,
     /// Mori Lens adapter supports explicitly loading a model into memory.
-    /// Must be `false` until the load adapter is implemented and tested.
-    /// Will flip to `true` in P20B for LM Studio after adapter implementation.
+    /// LM Studio: POST /api/v1/models/load, returns instance_id (implemented in P20B)
+    /// Ollama: not applicable (auto-loads on inference)
     pub can_load_model: bool,
     /// Mori Lens adapter supports explicitly unloading a model from memory.
-    /// Must be `false` until the unload adapter is implemented and tested.
-    /// Will flip to `true` in P20B for LM Studio after adapter implementation.
+    /// LM Studio: POST /api/v1/models/unload, keyed by instance_id (implemented in P20B)
+    /// Ollama: not applicable (manages memory automatically)
     pub can_unload_model: bool,
     /// Provider authentication requirement.
     pub auth_requirement: AuthenticationRequirement,
     /// Mori Lens adapter supports progress reporting for downloads.
-    /// Must be `false` until download adapter with progress parsing is implemented.
+    /// Ollama: NDJSON streaming from /api/pull (implemented in P20B)
+    /// LM Studio: polling GET /api/v1/models/download/status (implemented in P20B)
     pub supports_progress: bool,
     /// Mori Lens adapter supports canceling an in-progress download.
     /// Currently `false` for both providers (no documented cancel endpoint).
@@ -82,25 +83,25 @@ impl ProviderCapability {
     /// - Quick (translation): YES
     /// - Deep (analysis): YES
     /// - List models: YES (GET /api/tags)
+    /// - Download model: YES (POST /api/pull with NDJSON progress streaming)
+    /// - Progress reporting: YES (NDJSON streaming from /api/pull)
     ///
-    /// Not yet implemented (P20B):
-    /// - Download model: NO (POST /api/pull not yet implemented)
-    /// - Load model: NO (Ollama auto-loads on inference anyway)
+    /// Not applicable:
+    /// - Load model: NO (Ollama auto-loads on inference)
     /// - Unload model: NO (Ollama manages memory automatically)
     ///
     /// Auth: None (Ollama runs locally without auth)
-    /// Progress: NO (not implemented yet; will flip after P20B)
     /// Cancel: NO (no documented cancel endpoint)
     pub fn ollama() -> Self {
         Self {
             can_quick: true,
             can_deep: true,
             can_list_models: true,
-            can_download_model: false, // Not implemented in P20A
+            can_download_model: true,
             can_load_model: false,
             can_unload_model: false,
             auth_requirement: AuthenticationRequirement::None,
-            supports_progress: false, // Not implemented in P20A
+            supports_progress: true,
             can_cancel_download: false,
         }
     }
@@ -110,26 +111,26 @@ impl ProviderCapability {
     /// Implemented:
     /// - Quick (translation): YES
     /// - List models: YES (GET /api/v1/models)
+    /// - Download model: YES (POST /api/v1/models/download with job polling)
+    /// - Load model: YES (POST /api/v1/models/load, returns instance_id)
+    /// - Unload model: YES (POST /api/v1/models/unload, keyed by instance_id)
+    /// - Progress reporting: YES (polling GET /api/v1/models/download/status)
     ///
-    /// Not yet implemented (P20B):
+    /// Not applicable:
     /// - Deep (analysis): NO (LM Studio does not support Deep)
-    /// - Download model: NO (POST /api/v1/models/download not yet implemented)
-    /// - Load model: NO (POST /api/v1/models/load not yet implemented)
-    /// - Unload model: NO (POST /api/v1/models/unload not yet implemented)
     ///
     /// Auth: Optional (LM Studio can be configured to require API token)
-    /// Progress: NO (not implemented yet; will flip after P20B)
     /// Cancel: NO (no documented cancel endpoint)
     pub fn lm_studio() -> Self {
         Self {
             can_quick: true,
             can_deep: false,
             can_list_models: true,
-            can_download_model: false, // Not implemented in P20A
-            can_load_model: false,     // Not implemented in P20A
-            can_unload_model: false,   // Not implemented in P20A
+            can_download_model: true,
+            can_load_model: true,
+            can_unload_model: true,
             auth_requirement: AuthenticationRequirement::Optional,
-            supports_progress: false, // Not implemented in P20A
+            supports_progress: true,
             can_cancel_download: false,
         }
     }
@@ -146,16 +147,16 @@ mod tests {
         assert!(caps.can_deep, "Mori supports Deep via Ollama");
         assert!(caps.can_list_models, "Mori supports listing Ollama models");
         assert!(
-            !caps.can_download_model,
-            "Mori has NOT implemented Ollama download in P20A"
+            caps.can_download_model,
+            "Mori implements Ollama download via POST /api/pull"
         );
         assert!(
             !caps.can_load_model,
-            "Mori has NOT implemented Ollama load (not needed anyway)"
+            "Ollama auto-loads on inference; explicit load not needed"
         );
         assert!(
             !caps.can_unload_model,
-            "Mori has NOT implemented Ollama unload (not needed anyway)"
+            "Ollama manages memory automatically; explicit unload not needed"
         );
         assert_eq!(
             caps.auth_requirement,
@@ -163,8 +164,8 @@ mod tests {
             "Ollama does not require auth"
         );
         assert!(
-            !caps.supports_progress,
-            "Mori has NOT implemented Ollama progress in P20A"
+            caps.supports_progress,
+            "Mori implements Ollama progress via NDJSON streaming"
         );
         assert!(
             !caps.can_cancel_download,
@@ -185,16 +186,16 @@ mod tests {
             "Mori supports listing LM Studio models"
         );
         assert!(
-            !caps.can_download_model,
-            "Mori has NOT implemented LM Studio download in P20A"
+            caps.can_download_model,
+            "Mori implements LM Studio download via POST /api/v1/models/download"
         );
         assert!(
-            !caps.can_load_model,
-            "Mori has NOT implemented LM Studio load in P20A"
+            caps.can_load_model,
+            "Mori implements LM Studio load via POST /api/v1/models/load"
         );
         assert!(
-            !caps.can_unload_model,
-            "Mori has NOT implemented LM Studio unload in P20A"
+            caps.can_unload_model,
+            "Mori implements LM Studio unload via POST /api/v1/models/unload"
         );
         assert_eq!(
             caps.auth_requirement,
@@ -202,8 +203,8 @@ mod tests {
             "LM Studio can be configured to require auth"
         );
         assert!(
-            !caps.supports_progress,
-            "Mori has NOT implemented LM Studio progress in P20A"
+            caps.supports_progress,
+            "Mori implements LM Studio progress via polling download status"
         );
         assert!(
             !caps.can_cancel_download,
@@ -229,7 +230,8 @@ mod tests {
         let json = serde_json::to_string(&caps).unwrap();
         assert!(json.contains("\"can_quick\":true"));
         assert!(json.contains("\"can_deep\":true"));
-        assert!(json.contains("\"can_download_model\":false"));
+        assert!(json.contains("\"can_download_model\":true"));
+        assert!(json.contains("\"supports_progress\":true"));
         assert!(json.contains("\"can_load_model\":false"));
         assert!(json.contains("\"can_unload_model\":false"));
     }
