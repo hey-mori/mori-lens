@@ -255,6 +255,18 @@ pub struct SetupReadinessState {
     /// This flag allows the readiness evaluator to treat Present as Ready for
     /// providers that support JIT, while requiring explicit Ready state for others.
     pub can_infer_from_present_model: bool,
+    /// Whether the provider supports downloading models.
+    /// - Ollama: true
+    /// - LM Studio: true
+    ///
+    /// When false, Download action becomes ConfigureModel (user must manually set up).
+    pub can_download_model: bool,
+    /// Whether the provider supports explicit model loading.
+    /// - Ollama: false (JIT loading)
+    /// - LM Studio: true
+    ///
+    /// When false, Load action is not offered.
+    pub can_load_model: bool,
     /// Why the provider endpoint is or is not usable.
     /// Extends endpoint_state with diagnostic detail (auth vs error vs unknown).
     pub provider_access: ProviderAccessState,
@@ -389,17 +401,31 @@ pub fn compute_next_action(state: &SetupReadinessState) -> NextAction {
         ModelLifecycle::Present => {
             if state.can_infer_from_present_model {
                 NextAction::None
-            } else {
+            } else if state.can_load_model {
                 NextAction::Load
+            } else {
+                // Provider doesn't support explicit load; this shouldn't happen
+                // for Present state, but handle it defensively.
+                NextAction::None
             }
         }
         ModelLifecycle::Missing => {
             // If a model is explicitly configured, download that model.
             if state.configured_model.is_some() {
-                NextAction::Download
+                if state.can_download_model {
+                    NextAction::Download
+                } else {
+                    // Provider doesn't support downloading; user must configure manually.
+                    NextAction::ConfigureModel
+                }
             } else if state.download_target.is_some() {
                 // Auto mode with a valid download target (e.g., Ollama DEFAULT_MODEL).
-                NextAction::Download
+                if state.can_download_model {
+                    NextAction::Download
+                } else {
+                    // Provider doesn't support downloading; user must configure manually.
+                    NextAction::ConfigureModel
+                }
             } else {
                 // No configured model and no valid download target.
                 // User needs to configure a model or provider has no default.
@@ -446,6 +472,8 @@ mod tests {
             endpoint_state: EndpointState::Unknown,
             model_lifecycle: ModelLifecycle::Unknown,
             can_infer_from_present_model: false,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Unknown,
             model_inventory: ModelInventoryView::NotAttempted,
             configured_model: None,
@@ -461,6 +489,8 @@ mod tests {
             endpoint_state: EndpointState::Unknown,
             model_lifecycle: ModelLifecycle::Unknown,
             can_infer_from_present_model: false,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Unknown,
             model_inventory: ModelInventoryView::NotAttempted,
             configured_model: None,
@@ -479,6 +509,8 @@ mod tests {
             endpoint_state: EndpointState::Unreachable,
             model_lifecycle: ModelLifecycle::Unknown,
             can_infer_from_present_model: false,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Unreachable {
                 reason: "connection refused".into(),
             },
@@ -502,6 +534,8 @@ mod tests {
             endpoint_state: EndpointState::Unreachable,
             model_lifecycle: ModelLifecycle::Unknown,
             can_infer_from_present_model: false,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Unreachable {
                 reason: "connection refused".into(),
             },
@@ -520,6 +554,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
             can_infer_from_present_model: false,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::Available {
                 models: vec!["llama3.2".into()],
@@ -537,6 +573,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Missing,
             can_infer_from_present_model: false,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::Available { models: vec![] },
             configured_model: None,
@@ -555,6 +593,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Downloading,
             can_infer_from_present_model: false,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::NotAttempted,
             configured_model: None,
@@ -573,6 +613,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Present,
             can_infer_from_present_model: true,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::Available {
                 models: vec!["qwen2.5:7b".into()],
@@ -590,6 +632,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Present,
             can_infer_from_present_model: false,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::Available {
                 models: vec!["llama-3.1-8b".into()],
@@ -607,6 +651,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Loading,
             can_infer_from_present_model: false,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::NotAttempted,
             configured_model: None,
@@ -622,6 +668,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
             can_infer_from_present_model: false,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::Available {
                 models: vec!["qwen2.5-7b".into()],
@@ -639,6 +687,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Failed,
             can_infer_from_present_model: false,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::Available {
                 models: vec!["qwen2.5:7b".into()],
@@ -656,6 +706,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
             can_infer_from_present_model: true,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::Available {
                 models: vec!["qwen2.5:7b".into()],
@@ -668,6 +720,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Missing,
             can_infer_from_present_model: true,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::Available { models: vec![] },
             configured_model: None,
@@ -685,6 +739,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
             can_infer_from_present_model: true,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::Available {
                 models: vec!["qwen2.5:7b".into()],
@@ -697,6 +753,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
             can_infer_from_present_model: true,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::Available {
                 models: vec!["qwen2.5:7b".into()],
@@ -716,6 +774,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
             can_infer_from_present_model: true,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::Available {
                 models: vec!["qwen2.5:7b".into()],
@@ -849,6 +909,8 @@ mod tests {
                 endpoint_state: endpoint,
                 model_lifecycle: model,
                 can_infer_from_present_model: can_infer,
+                can_download_model: true,
+                can_load_model: true,
                 provider_access,
                 model_inventory: ModelInventoryView::NotAttempted,
                 configured_model: None,
@@ -869,6 +931,8 @@ mod tests {
             endpoint_state: EndpointState::Unknown,
             model_lifecycle: ModelLifecycle::Unknown,
             can_infer_from_present_model: false,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Unknown,
             model_inventory: ModelInventoryView::NotAttempted,
             configured_model: None,
@@ -888,6 +952,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
             can_infer_from_present_model: true,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::AuthenticationRequired,
             model_inventory: ModelInventoryView::Available { models: vec![] },
             configured_model: None,
@@ -906,6 +972,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
             can_infer_from_present_model: true,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::ProviderError {
                 reason: "500 internal server error".into(),
             },
@@ -926,6 +994,8 @@ mod tests {
             endpoint_state: EndpointState::Unreachable,
             model_lifecycle: ModelLifecycle::Unknown,
             can_infer_from_present_model: false,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Unreachable {
                 reason: "connection refused".into(),
             },
@@ -946,6 +1016,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
             can_infer_from_present_model: true,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::AuthenticationRequired,
             model_inventory: ModelInventoryView::Available { models: vec![] },
             configured_model: None,
@@ -961,6 +1033,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
             can_infer_from_present_model: false,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::Available {
                 models: vec!["m".into()],
@@ -978,6 +1052,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Present,
             can_infer_from_present_model: false,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::Available {
                 models: vec!["m".into()],
@@ -995,6 +1071,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Missing,
             can_infer_from_present_model: false,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::Available {
                 models: vec!["other".into()],
@@ -1012,6 +1090,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Missing,
             can_infer_from_present_model: false,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::Available {
                 models: vec!["other".into()],
@@ -1029,6 +1109,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Missing,
             can_infer_from_present_model: false,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Available,
             model_inventory: ModelInventoryView::Available { models: vec![] },
             configured_model: None,
@@ -1044,6 +1126,8 @@ mod tests {
             endpoint_state: EndpointState::Unreachable,
             model_lifecycle: ModelLifecycle::Unknown,
             can_infer_from_present_model: false,
+            can_download_model: true,
+            can_load_model: true,
             provider_access: ProviderAccessState::Unreachable {
                 reason: "connection refused".into(),
             },
