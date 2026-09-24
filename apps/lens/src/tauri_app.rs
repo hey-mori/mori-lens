@@ -783,11 +783,20 @@ async fn get_provider_readiness(
     let deep_can_infer_from_present =
         deep_provider == lens_core::translate::Provider::Ollama;
 
+    let quick_caps = lens_core::provider_capability::ProviderCapability::for_provider(
+        quick_provider,
+    );
+    let deep_caps = lens_core::provider_capability::ProviderCapability::for_provider(
+        deep_provider,
+    );
+
     let quick_state = SetupReadinessState {
         runtime_presence: quick_runtime,
         endpoint_state: quick_endpoint_state,
         model_lifecycle: quick_lifecycle,
         can_infer_from_present_model: quick_can_infer_from_present,
+        can_download_model: quick_caps.can_download_model,
+        can_load_model: quick_caps.can_load_model,
         provider_access: quick_access.clone(),
         model_inventory: quick_inventory.clone(),
         configured_model: quick_model.clone(),
@@ -798,6 +807,8 @@ async fn get_provider_readiness(
         endpoint_state: deep_endpoint_state,
         model_lifecycle: deep_lifecycle,
         can_infer_from_present_model: deep_can_infer_from_present,
+        can_download_model: deep_caps.can_download_model,
+        can_load_model: deep_caps.can_load_model,
         provider_access: deep_access.clone(),
         model_inventory: deep_inventory.clone(),
         configured_model: deep_model.clone(),
@@ -806,24 +817,8 @@ async fn get_provider_readiness(
 
     let snapshot = lens_core::readiness::evaluate_readiness(&quick_state, &deep_state);
 
-    // Step 8: Capabilities and next actions.
-    let quick_caps = lens_core::provider_capability::ProviderCapability::for_provider(
-        quick_provider,
-    );
-    let deep_caps = lens_core::provider_capability::ProviderCapability::for_provider(
-        deep_provider,
-    );
-
-    let quick_next_raw = compute_next_action(&quick_state);
-    // If the evaluator says Download but the provider doesn't support downloading,
-    // fall back to ConfigureModel (user must manually set up).
-    let quick_next = if quick_next_raw == lens_core::readiness::NextAction::Download
-        && !quick_caps.can_download_model
-    {
-        lens_core::readiness::NextAction::ConfigureModel
-    } else {
-        quick_next_raw
-    };
+    // Step 8: Next actions (authoritative from compute_next_action).
+    let quick_next = compute_next_action(&quick_state);
     // P20C: Deep is status-only. No mutation CTA for Deep until a real setup workflow exists.
     let deep_next = lens_core::readiness::NextAction::None;
 
