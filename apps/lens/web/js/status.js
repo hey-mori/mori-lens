@@ -173,6 +173,9 @@ export async function loadStatus() {
     // Ensure stable regions exist
     ensureStableRegions();
 
+    // Attach readiness delegated listener (idempotent, updates callbacks each call)
+    attachReadinessActionHandlers(createActionCallbacks());
+
     // Fetch fresh data for non-readiness regions
     const [diag, runtime, health] = await Promise.all([
       invoke('get_diagnostics'),
