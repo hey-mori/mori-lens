@@ -858,10 +858,9 @@ mod tests {
     #[test]
     fn model_state_returns_available_when_model_exists() {
         // Model exists in native plane but not loaded.
-        // Inference plane also does not contain it (JIT disabled or not visible).
+        // model_state() only queries native management plane, not inference plane.
         let server = FakeServer::start(vec![
             FakeResponse::ok_json(LM_STUDIO_LLM_MODELS_ONLY).expect_get("/api/v1/models"),
-            FakeResponse::ok_json(LM_STUDIO_INFERENCE_MODELS_EMPTY).expect_get("/v1/models"),
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
@@ -930,10 +929,9 @@ mod tests {
     #[test]
     fn model_state_returns_available_when_model_has_no_loaded_instances() {
         // LM_STUDIO_MODELS_RESPONSE has llama-3.1-8b with empty loaded_instances
-        // Inference plane does not contain it (JIT disabled or not visible)
+        // model_state() only queries native management plane, not inference plane.
         let server = FakeServer::start(vec![
             FakeResponse::ok_json(LM_STUDIO_MODELS_RESPONSE).expect_get("/api/v1/models"),
-            FakeResponse::ok_json(LM_STUDIO_INFERENCE_MODELS_EMPTY).expect_get("/v1/models"),
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
@@ -1058,15 +1056,12 @@ mod tests {
     // model_state must resolve by key only.
     #[test]
     fn model_state_uses_canonical_key_not_display_name() {
-        // model_state calls list_models_with_loaded once and list_inference_models once per call.
+        // model_state() only queries native management plane (/api/v1/models).
         // Provide enough responses for all three model_state calls below.
         let server = FakeServer::start(vec![
             FakeResponse::ok_json(LM_STUDIO_AMBIGUOUS_DISPLAY_NAMES).expect_get("/api/v1/models"),
-            FakeResponse::ok_json(LM_STUDIO_INFERENCE_MODELS_EMPTY).expect_get("/v1/models"),
             FakeResponse::ok_json(LM_STUDIO_AMBIGUOUS_DISPLAY_NAMES).expect_get("/api/v1/models"),
-            FakeResponse::ok_json(LM_STUDIO_INFERENCE_MODELS_EMPTY).expect_get("/v1/models"),
             FakeResponse::ok_json(LM_STUDIO_AMBIGUOUS_DISPLAY_NAMES).expect_get("/api/v1/models"),
-            FakeResponse::ok_json(LM_STUDIO_INFERENCE_MODELS_EMPTY).expect_get("/v1/models"),
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
@@ -1427,11 +1422,10 @@ mod tests {
     // Official shape: loaded_instances detection with official entry shape.
     #[test]
     fn model_state_detects_loaded_from_official_shape() {
+        // model_state() only queries native management plane (/api/v1/models)
         let server = FakeServer::start(vec![
             FakeResponse::ok_json(LM_STUDIO_OFFICIAL_SHAPE).expect_get("/api/v1/models"),
-            FakeResponse::ok_json(LM_STUDIO_INFERENCE_MODELS_EMPTY).expect_get("/v1/models"),
             FakeResponse::ok_json(LM_STUDIO_OFFICIAL_SHAPE).expect_get("/api/v1/models"),
-            FakeResponse::ok_json(LM_STUDIO_INFERENCE_MODELS_EMPTY).expect_get("/v1/models"),
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
@@ -1447,10 +1441,9 @@ mod tests {
     // loaded_instances with whitespace: "[ ]" is empty, not loaded.
     #[test]
     fn loaded_instances_whitespace_is_detected_as_empty() {
-        let server = FakeServer::start(vec![
-            FakeResponse::ok_json(LM_STUDIO_LOADED_WHITESPACE).expect_get("/api/v1/models"),
-            FakeResponse::ok_json(LM_STUDIO_INFERENCE_MODELS_EMPTY).expect_get("/v1/models"),
-        ]);
+        // model_state() only queries native management plane (/api/v1/models)
+        let server = FakeServer::start(vec![FakeResponse::ok_json(LM_STUDIO_LOADED_WHITESPACE)
+            .expect_get("/api/v1/models")]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let state = runtime.model_state("whitespace-model").unwrap();
