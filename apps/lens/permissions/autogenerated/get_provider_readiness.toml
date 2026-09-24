@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-provider-readiness"
+description = "Enables the get_provider_readiness command without any pre-configured scope."
+commands.allow = ["get_provider_readiness"]
+
+[[permission]]
+identifier = "deny-get-provider-readiness"
+description = "Denies the get_provider_readiness command without any pre-configured scope."
+commands.deny = ["get_provider_readiness"]
