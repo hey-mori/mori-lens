@@ -130,7 +130,11 @@ impl HealthCheckRunning {
     /// Try to acquire the guard. Returns `None` if already running.
     pub fn try_acquire(&self) -> Option<HealthCheckGuard> {
         use std::sync::atomic::Ordering;
-        if self.0.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+        if self
+            .0
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
             Some(HealthCheckGuard(self.0.clone()))
         } else {
             None
@@ -656,7 +660,15 @@ async fn get_provider_readiness(
     use lens_core::readiness::{compute_next_action, SetupReadinessState};
 
     // Step 1: Read settings. Fail closed for invalid provider tokens.
-    let (quick_provider, deep_provider, deep_config_valid, quick_endpoint, deep_endpoint, quick_model, deep_model) = {
+    let (
+        quick_provider,
+        deep_provider,
+        deep_config_valid,
+        quick_endpoint,
+        deep_endpoint,
+        quick_model,
+        deep_model,
+    ) = {
         let s = settings.lock().unwrap();
         let view = s.view();
         let qp = lens_core::translate::Provider::from_token(&view.quick_engine)
@@ -665,33 +677,34 @@ async fn get_provider_readiness(
         // Deep is Ollama-only per product constraint (ai_runtime::from_schema_deep).
         // If the configured deep engine is not Ollama, do NOT silently remap.
         // Report the configuration as invalid so the readiness state reflects truth.
-        let (dp, deep_ep, deep_m, deep_valid) = match lens_core::translate::Provider::from_token(&view.deep_engine) {
-            Some(lens_core::translate::Provider::Ollama) => (
-                lens_core::translate::Provider::Ollama,
-                view.deep_endpoint.clone(),
-                view.deep_model.clone(),
-                true,
-            ),
-            Some(lens_core::translate::Provider::LmStudio) => {
-                // Deep is Ollama-only. LM Studio configured for deep is unsupported.
-                // Use a sentinel to avoid contacting any real endpoint on user's behalf.
-                (
+        let (dp, deep_ep, deep_m, deep_valid) =
+            match lens_core::translate::Provider::from_token(&view.deep_engine) {
+                Some(lens_core::translate::Provider::Ollama) => (
                     lens_core::translate::Provider::Ollama,
-                    "http://invalid-deep-config:0".to_owned(),
-                    None,
-                    false,
-                )
-            }
-            None => {
-                // Invalid deep engine token. Do not silently remap to defaults.
-                (
-                    lens_core::translate::Provider::Ollama,
-                    "http://invalid-deep-config:0".to_owned(),
-                    None,
-                    false,
-                )
-            }
-        };
+                    view.deep_endpoint.clone(),
+                    view.deep_model.clone(),
+                    true,
+                ),
+                Some(lens_core::translate::Provider::LmStudio) => {
+                    // Deep is Ollama-only. LM Studio configured for deep is unsupported.
+                    // Use a sentinel to avoid contacting any real endpoint on user's behalf.
+                    (
+                        lens_core::translate::Provider::Ollama,
+                        "http://invalid-deep-config:0".to_owned(),
+                        None,
+                        false,
+                    )
+                }
+                None => {
+                    // Invalid deep engine token. Do not silently remap to defaults.
+                    (
+                        lens_core::translate::Provider::Ollama,
+                        "http://invalid-deep-config:0".to_owned(),
+                        None,
+                        false,
+                    )
+                }
+            };
 
         (
             qp,
@@ -721,7 +734,8 @@ async fn get_provider_readiness(
     };
 
     // Step 3: Get model inventory (preserving errors).
-    let quick_inventory = get_model_inventory(quick_provider, quick_endpoint.clone(), &quick_access);
+    let quick_inventory =
+        get_model_inventory(quick_provider, quick_endpoint.clone(), &quick_access);
     let deep_inventory = if !deep_config_valid {
         lens_core::readiness::ModelInventoryView::NotAttempted
     } else if quick_provider == deep_provider && quick_endpoint == deep_endpoint {
@@ -732,11 +746,8 @@ async fn get_provider_readiness(
 
     // Step 4: Derive effective model using production resolver logic.
     // This mirrors resolve_model_for_provider but uses already-fetched inventory.
-    let quick_effective = derive_effective_model_and_target(
-        quick_provider,
-        &quick_model,
-        &quick_inventory,
-    );
+    let quick_effective =
+        derive_effective_model_and_target(quick_provider, &quick_model, &quick_inventory);
 
     // Step 5: Determine model lifecycle for each lane.
     // Uses effective model (not just configured) for lifecycle evaluation.
@@ -770,8 +781,12 @@ async fn get_provider_readiness(
     // Step 6: Integrate download state into lifecycle.
     // P20C: download operations are Quick-only. Do not apply to Deep.
     let download = manager.operation_snapshot();
-    let quick_lifecycle =
-        integrate_download_into_lifecycle(quick_lifecycle, &download, quick_provider, &quick_effective.effective_model);
+    let quick_lifecycle = integrate_download_into_lifecycle(
+        quick_lifecycle,
+        &download,
+        quick_provider,
+        &quick_effective.effective_model,
+    );
     // Deep lifecycle is NOT modified by download state in P20C (no mutation scope).
 
     // Step 7: Build SetupReadinessState and evaluate.
@@ -786,7 +801,10 @@ async fn get_provider_readiness(
         lens_core::translate::Provider::LmStudio => {
             // Check if the effective model is inference-visible (JIT semantics)
             if let Some(model) = &quick_effective.effective_model {
-                if matches!(quick_access, lens_core::readiness::ProviderAccessState::Available) {
+                if matches!(
+                    quick_access,
+                    lens_core::readiness::ProviderAccessState::Available
+                ) {
                     check_lmstudio_inference_visibility(
                         &quick_endpoint,
                         model,
@@ -805,7 +823,10 @@ async fn get_provider_readiness(
         lens_core::translate::Provider::LmStudio => {
             // Check if the effective model is inference-visible (JIT semantics)
             if let Some(model) = &deep_effective.effective_model {
-                if matches!(deep_access, lens_core::readiness::ProviderAccessState::Available) {
+                if matches!(
+                    deep_access,
+                    lens_core::readiness::ProviderAccessState::Available
+                ) {
                     check_lmstudio_inference_visibility(
                         &deep_endpoint,
                         model,
@@ -820,12 +841,9 @@ async fn get_provider_readiness(
         }
     };
 
-    let quick_caps = lens_core::provider_capability::ProviderCapability::for_provider(
-        quick_provider,
-    );
-    let deep_caps = lens_core::provider_capability::ProviderCapability::for_provider(
-        deep_provider,
-    );
+    let quick_caps =
+        lens_core::provider_capability::ProviderCapability::for_provider(quick_provider);
+    let deep_caps = lens_core::provider_capability::ProviderCapability::for_provider(deep_provider);
 
     let quick_state = SetupReadinessState {
         runtime_presence: quick_runtime,
@@ -1141,14 +1159,17 @@ fn integrate_download_into_lifecycle(
     }
 
     // Stale failed operation: only override if current lifecycle is not already successful.
-    // A failed download from the past should not mask a current Ready or Loading state.
+    // A failed download from the past should not mask a current Present, Ready, Loading, or
+    // Downloading state. Present means the model is physically available, which is a success
+    // fact that trumps historical operation failures.
     match &snap.status {
         DownloadStatus::Failed(_) => {
             // Only apply Failed if the current state is not already successful
             match lifecycle {
-                ModelLifecycle::Ready | ModelLifecycle::Loading | ModelLifecycle::Downloading => {
-                    lifecycle
-                }
+                ModelLifecycle::Present
+                | ModelLifecycle::Ready
+                | ModelLifecycle::Loading
+                | ModelLifecycle::Downloading => lifecycle,
                 _ => ModelLifecycle::Failed,
             }
         }
@@ -1272,9 +1293,7 @@ async fn start_quick_model_download(
     // LM Studio: require explicit model (no fabricated recommendation).
     let model = match (&view.quick_model, provider) {
         (Some(m), _) => m.clone(),
-        (None, lens_core::translate::Provider::Ollama) => {
-            lens_translate::DEFAULT_MODEL.to_string()
-        }
+        (None, lens_core::translate::Provider::Ollama) => lens_translate::DEFAULT_MODEL.to_string(),
         (None, lens_core::translate::Provider::LmStudio) => {
             return Err("no quick model configured".to_string());
         }
@@ -1285,7 +1304,12 @@ async fn start_quick_model_download(
     // Job ID is always None at reservation time; LM Studio worker sets it
     // later after the HTTP response returns the actual job ID.
     manager
-        .start_download(provider, model.clone(), lens_core::model_management::DownloadStatus::Starting, None)
+        .start_download(
+            provider,
+            model.clone(),
+            lens_core::model_management::DownloadStatus::Starting,
+            None,
+        )
         .map_err(|e| format!("{:?}", e))?;
 
     // Reservation succeeded. Spawn worker. If spawn fails, finish with error
@@ -1295,37 +1319,31 @@ async fn start_quick_model_download(
     let endpoint_clone = endpoint.clone();
 
     let spawn_result = match provider {
-        lens_core::translate::Provider::Ollama => {
-            std::thread::Builder::new()
-                .name("ollama-download".into())
-                .spawn(move || {
-                    crate::download_worker::run_ollama_download(
-                        manager_clone,
-                        endpoint_clone,
-                        model_clone,
-                    );
-                })
-        }
-        lens_core::translate::Provider::LmStudio => {
-            std::thread::Builder::new()
-                .name("lmstudio-download".into())
-                .spawn(move || {
-                    crate::download_worker::run_lmstudio_download(
-                        manager_clone,
-                        endpoint_clone,
-                        model_clone,
-                    );
-                })
-        }
+        lens_core::translate::Provider::Ollama => std::thread::Builder::new()
+            .name("ollama-download".into())
+            .spawn(move || {
+                crate::download_worker::run_ollama_download(
+                    manager_clone,
+                    endpoint_clone,
+                    model_clone,
+                );
+            }),
+        lens_core::translate::Provider::LmStudio => std::thread::Builder::new()
+            .name("lmstudio-download".into())
+            .spawn(move || {
+                crate::download_worker::run_lmstudio_download(
+                    manager_clone,
+                    endpoint_clone,
+                    model_clone,
+                );
+            }),
     };
 
     if let Err(e) = spawn_result {
         eprintln!("download worker spawn failed: {:?}", e);
-        let _ = manager.finish_download(
-            lens_core::model_management::DownloadStatus::Failed(
-                lens_core::model_management::ManagementError::DownloadFailed,
-            ),
-        );
+        let _ = manager.finish_download(lens_core::model_management::DownloadStatus::Failed(
+            lens_core::model_management::ManagementError::DownloadFailed,
+        ));
         return Err(format!("failed to spawn download worker: {:?}", e));
     }
 
@@ -1353,7 +1371,10 @@ async fn load_lmstudio_instance(
     }
 
     let endpoint = view.quick_endpoint.clone();
-    let model = view.quick_model.clone().ok_or("no quick model configured")?;
+    let model = view
+        .quick_model
+        .clone()
+        .ok_or("no quick model configured")?;
 
     // Check if Mori already owns an instance for this model.
     if let Some(instance_id) = manager.owned_instance_for_model(&model) {
@@ -1404,7 +1425,10 @@ async fn unload_lmstudio_instance(
     }
 
     let endpoint = view.quick_endpoint.clone();
-    let model = view.quick_model.clone().ok_or("no quick model configured")?;
+    let model = view
+        .quick_model
+        .clone()
+        .ok_or("no quick model configured")?;
 
     // Look up the owned instance for this model.
     let instance_id = manager
@@ -3058,5 +3082,65 @@ mod tests {
         // 2. Reading is separate (process_start_elapsed_ms)
         // 3. The anchor is stable (OnceLock)
         // 4. Health checks cannot silently create the origin
+    }
+
+    #[test]
+    fn integrate_download_does_not_override_present_with_stale_failed() {
+        use lens_core::model_management::{DownloadStatus, ManagementError};
+        use lens_core::readiness::ModelLifecycle;
+        use lens_translate::operation_manager::DownloadOperationSnapshot;
+
+        // Scenario: model is Present (physically available), but there's a historical
+        // failed download operation. The Present state should NOT be overridden.
+        let present_lifecycle = ModelLifecycle::Present;
+        let failed_download = DownloadOperationSnapshot {
+            provider: "ollama".to_string(),
+            model: "llama3.2".to_string(),
+            active: false,
+            status: DownloadStatus::Failed(ManagementError::DownloadFailed),
+        };
+
+        let result = integrate_download_into_lifecycle(
+            present_lifecycle,
+            &Some(failed_download),
+            lens_core::translate::Provider::Ollama,
+            &Some("llama3.2".to_string()),
+        );
+
+        assert_eq!(
+            result,
+            ModelLifecycle::Present,
+            "Present state should not be overridden by stale Failed operation"
+        );
+    }
+
+    #[test]
+    fn integrate_download_overrides_missing_with_stale_failed() {
+        use lens_core::model_management::{DownloadStatus, ManagementError};
+        use lens_core::readiness::ModelLifecycle;
+        use lens_translate::operation_manager::DownloadOperationSnapshot;
+
+        // Scenario: model is Missing, and there's a historical failed download.
+        // The Failed state should be applied to indicate the user should retry.
+        let missing_lifecycle = ModelLifecycle::Missing;
+        let failed_download = DownloadOperationSnapshot {
+            provider: "ollama".to_string(),
+            model: "llama3.2".to_string(),
+            active: false,
+            status: DownloadStatus::Failed(ManagementError::DownloadFailed),
+        };
+
+        let result = integrate_download_into_lifecycle(
+            missing_lifecycle,
+            &Some(failed_download),
+            lens_core::translate::Provider::Ollama,
+            &Some("llama3.2".to_string()),
+        );
+
+        assert_eq!(
+            result,
+            ModelLifecycle::Failed,
+            "Missing state should be overridden by stale Failed operation"
+        );
     }
 }
