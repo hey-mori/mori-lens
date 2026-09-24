@@ -64,7 +64,11 @@ impl HealthCheckRunning {
     }
 
     pub fn try_acquire(&self) -> Option<HealthCheckGuard> {
-        if self.0.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+        if self
+            .0
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
             Some(HealthCheckGuard(self.0.clone()))
         } else {
             None
@@ -161,7 +165,10 @@ mod tests {
 
         // Second acquire fails while guard is held
         let guard2 = health.try_acquire();
-        assert!(guard2.is_none(), "second acquire should fail while guard held");
+        assert!(
+            guard2.is_none(),
+            "second acquire should fail while guard held"
+        );
 
         // Drop first guard
         drop(guard1);
