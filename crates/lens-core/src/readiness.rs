@@ -102,6 +102,81 @@ impl Default for ModelLifecycle {
     }
 }
 
+/// Why a provider endpoint is not usable.
+///
+/// The frontend uses this to decide whether to show "Start Ollama",
+/// "Enter API key", or "Check endpoint". Collapsing all failures into
+/// "unreachable" would hide authentication errors from the user.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderAccessState {
+    /// Endpoint is responding normally.
+    Available,
+    /// Have not checked yet or check is in progress.
+    Unknown,
+    /// Provider requires authentication (401/403).
+    AuthenticationRequired,
+    /// Provider returned an error (5xx, timeout, malformed response).
+    /// Carries a human-readable reason for diagnostics.
+    ProviderError { reason: String },
+}
+
+impl Default for ProviderAccessState {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+/// Result of looking up the model inventory on a provider.
+///
+/// Distinguishes between "no models installed" (an empty successful lookup)
+/// and "could not retrieve the list" (network error, auth error, etc.).
+/// Collapsing both into `Vec<String>` would make an unreachable provider
+/// look identical to one with no models.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelInventoryView {
+    /// Successfully retrieved the list. Empty vec means no models are installed.
+    Available { models: Vec<String> },
+    /// Lookup failed. Distinguishes from empty inventory.
+    LookupFailed { reason: String },
+    /// Have not attempted lookup yet (endpoint not reachable, etc.).
+    NotAttempted,
+}
+
+impl Default for ModelInventoryView {
+    fn default() -> Self {
+        Self::NotAttempted
+    }
+}
+
+/// Semantic next action for a lane.
+///
+/// Tells the frontend which button to show. The backend computes this from
+/// the readiness state; the frontend does not duplicate the logic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NextAction {
+    /// Lane is ready; no action needed.
+    None,
+    /// Refresh the readiness state (retry after failure).
+    Refresh,
+    /// Download the configured model.
+    Download,
+    /// Load the model into memory (LM Studio explicit load).
+    Load,
+    /// Configure which model to use.
+    ConfigureModel,
+    /// Resolve authentication issue.
+    ResolveAuth,
+}
+
+impl Default for NextAction {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 /// Readiness assessment for a single engine lane (Quick or Deep).
 ///
 /// Combines the three dimensions (runtime, endpoint, model) into a lane-level
@@ -150,9 +225,9 @@ pub struct ReadinessSnapshot {
 
 /// Setup readiness state for a single provider.
 ///
-/// Contains the three dimensions that determine whether a provider can serve
+/// Contains the dimensions that determine whether a provider can serve
 /// inference requests.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct SetupReadinessState {
     /// Whether the provider runtime is present on the system.
     pub runtime_presence: RuntimePresence,
@@ -167,6 +242,11 @@ pub struct SetupReadinessState {
     /// This flag allows the readiness evaluator to treat Present as Ready for
     /// providers that support JIT, while requiring explicit Ready state for others.
     pub can_infer_from_present_model: bool,
+    /// Why the provider endpoint is or is not usable.
+    /// Extends endpoint_state with diagnostic detail (auth vs error vs unknown).
+    pub provider_access: ProviderAccessState,
+    /// The model inventory on the provider, or why it could not be retrieved.
+    pub model_inventory: ModelInventoryView,
 }
 
 /// Pure readiness evaluator.
@@ -176,40 +256,42 @@ pub struct SetupReadinessState {
 ///
 /// # Precedence rules
 ///
-/// 1. If endpoint is Reachable, continue model evaluation (runtime presence Unknown does not block).
-///    Direct validated reachability is stronger evidence than installation detection.
-/// 2. If endpoint is Unreachable:
+/// 1. If provider_access is AuthenticationRequired, report EndpointUnreachable
+///    (auth errors look like unreachable from the readiness perspective; the
+///    next-action computation distinguishes them for the UI).
+/// 2. If endpoint is Reachable, continue model evaluation (runtime presence
+///    Unknown does not block). Direct validated reachability is stronger
+///    evidence than installation detection.
+/// 3. If endpoint is Unreachable:
 ///    - If runtime presence is NotInstalled, report RuntimeNotInstalled
 ///    - Otherwise, report EndpointUnreachable
-/// 3. If endpoint is Unknown:
+/// 4. If endpoint is Unknown:
 ///    - If runtime presence is NotInstalled, report RuntimeNotInstalled
-///    - Otherwise, report Unknown (not EndpointUnreachable, which would be evidence inflation)
-/// 4. If endpoint is Reachable and model lifecycle is Present:
-///    - If can_infer_from_present_model is true, report Ready (JIT-capable provider)
+///    - Otherwise, report Unknown (not EndpointUnreachable, which would be
+///      evidence inflation)
+/// 5. If endpoint is Reachable and model lifecycle is Present:
+///    - If can_infer_from_present_model is true, report Ready (JIT-capable)
 ///    - Otherwise, report ModelPresent (explicit load required)
 pub fn evaluate_lane_readiness(state: &SetupReadinessState) -> LaneReadiness {
+    // Step 0: Authentication failure short-circuits to EndpointUnreachable.
+    // The UI distinguishes this via compute_next_action.
+    if state.provider_access == ProviderAccessState::AuthenticationRequired {
+        return LaneReadiness::EndpointUnreachable;
+    }
+
     // Step 1: Check endpoint reachability with evidence precedence.
     match state.endpoint_state {
-        EndpointState::Reachable => {
-            // Endpoint is reachable; continue to model evaluation.
-            // Runtime presence Unknown does not block here because direct
-            // validated reachability is stronger evidence.
-        }
+        EndpointState::Reachable => {}
         EndpointState::Unreachable => {
-            // Endpoint probe failed.
-            // Check if we have strong installation evidence.
             if state.runtime_presence == RuntimePresence::NotInstalled {
                 return LaneReadiness::RuntimeNotInstalled;
             }
             return LaneReadiness::EndpointUnreachable;
         }
         EndpointState::Unknown => {
-            // Endpoint not yet checked or check in progress.
-            // Check if we have strong installation evidence.
             if state.runtime_presence == RuntimePresence::NotInstalled {
                 return LaneReadiness::RuntimeNotInstalled;
             }
-            // Do not report EndpointUnreachable (evidence inflation).
             return LaneReadiness::Unknown;
         }
     }
@@ -220,16 +302,69 @@ pub fn evaluate_lane_readiness(state: &SetupReadinessState) -> LaneReadiness {
         ModelLifecycle::Missing => LaneReadiness::NoCompatibleModel,
         ModelLifecycle::Downloading => LaneReadiness::ModelDownloading,
         ModelLifecycle::Present => {
-            // Whether Present is sufficient depends on provider capability.
             if state.can_infer_from_present_model {
-                LaneReadiness::Ready // JIT-capable provider (Ollama)
+                LaneReadiness::Ready
             } else {
-                LaneReadiness::ModelPresent // Explicit load required (LM Studio)
+                LaneReadiness::ModelPresent
             }
         }
         ModelLifecycle::Loading => LaneReadiness::ModelLoading,
         ModelLifecycle::Ready => LaneReadiness::Ready,
         ModelLifecycle::Failed => LaneReadiness::ModelFailed,
+    }
+}
+
+/// Compute the semantic next action for a lane.
+///
+/// Pure function: no side effects. Takes the readiness state and returns
+/// what the frontend should prompt the user to do. The lane readiness alone
+/// is not enough: two lanes with `EndpointUnreachable` need different actions
+/// (one needs "Start Ollama", another needs "Enter API key").
+pub fn compute_next_action(state: &SetupReadinessState) -> NextAction {
+    // Auth errors take precedence over everything else.
+    if state.provider_access == ProviderAccessState::AuthenticationRequired {
+        return NextAction::ResolveAuth;
+    }
+
+    // If the endpoint is not reachable, suggest refresh (retry) unless
+    // the runtime is not installed.
+    match state.endpoint_state {
+        EndpointState::Unreachable => {
+            if state.runtime_presence == RuntimePresence::NotInstalled {
+                // Cannot fix by refreshing; but this is an install action,
+                // which is outside the scope of NextAction for now.
+                return NextAction::Refresh;
+            }
+            return NextAction::Refresh;
+        }
+        EndpointState::Unknown => return NextAction::Refresh,
+        EndpointState::Reachable => {}
+    }
+
+    // Endpoint is reachable. What about the model?
+    match state.model_lifecycle {
+        ModelLifecycle::Ready | ModelLifecycle::Downloading | ModelLifecycle::Loading => {
+            NextAction::None
+        }
+        ModelLifecycle::Present => {
+            if state.can_infer_from_present_model {
+                NextAction::None
+            } else {
+                NextAction::Load
+            }
+        }
+        ModelLifecycle::Missing => {
+            // If no model is configured, user needs to configure one.
+            // If a model is configured but missing, user needs to download.
+            match &state.model_inventory {
+                ModelInventoryView::Available { models } if models.is_empty() => {
+                    NextAction::ConfigureModel
+                }
+                _ => NextAction::Download,
+            }
+        }
+        ModelLifecycle::Failed => NextAction::Refresh,
+        ModelLifecycle::Unknown => NextAction::Refresh,
     }
 }
 
@@ -268,6 +403,8 @@ mod tests {
             endpoint_state: EndpointState::Unknown,
             model_lifecycle: ModelLifecycle::Unknown,
             can_infer_from_present_model: false,
+            provider_access: ProviderAccessState::Unknown,
+            model_inventory: ModelInventoryView::NotAttempted,
         };
         assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::Unknown);
     }
@@ -279,6 +416,8 @@ mod tests {
             endpoint_state: EndpointState::Unknown,
             model_lifecycle: ModelLifecycle::Unknown,
             can_infer_from_present_model: false,
+            provider_access: ProviderAccessState::Unknown,
+            model_inventory: ModelInventoryView::NotAttempted,
         };
         assert_eq!(
             evaluate_lane_readiness(&state),
@@ -293,6 +432,10 @@ mod tests {
             endpoint_state: EndpointState::Unreachable,
             model_lifecycle: ModelLifecycle::Unknown,
             can_infer_from_present_model: false,
+            provider_access: ProviderAccessState::ProviderError {
+                reason: "connection refused".into(),
+            },
+            model_inventory: ModelInventoryView::NotAttempted,
         };
         assert_eq!(
             evaluate_lane_readiness(&state),
@@ -308,6 +451,10 @@ mod tests {
             endpoint_state: EndpointState::Unreachable,
             model_lifecycle: ModelLifecycle::Unknown,
             can_infer_from_present_model: false,
+            provider_access: ProviderAccessState::ProviderError {
+                reason: "connection refused".into(),
+            },
+            model_inventory: ModelInventoryView::NotAttempted,
         };
         assert_eq!(
             evaluate_lane_readiness(&state),
@@ -317,12 +464,15 @@ mod tests {
 
     #[test]
     fn endpoint_reachable_runtime_unknown_model_ready_produces_ready() {
-        // Direct validated reachability overrides installation uncertainty.
         let state = SetupReadinessState {
             runtime_presence: RuntimePresence::Unknown,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
             can_infer_from_present_model: false,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available {
+                models: vec!["llama3.2".into()],
+            },
         };
         assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::Ready);
     }
@@ -334,6 +484,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Missing,
             can_infer_from_present_model: false,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available { models: vec![] },
         };
         assert_eq!(
             evaluate_lane_readiness(&state),
@@ -348,6 +500,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Downloading,
             can_infer_from_present_model: false,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::NotAttempted,
         };
         assert_eq!(
             evaluate_lane_readiness(&state),
@@ -357,24 +511,30 @@ mod tests {
 
     #[test]
     fn endpoint_reachable_model_present_with_jit_produces_ready() {
-        // Ollama: Present is sufficient because JIT loading is supported.
         let state = SetupReadinessState {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Present,
-            can_infer_from_present_model: true, // Ollama
+            can_infer_from_present_model: true,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available {
+                models: vec!["qwen2.5:7b".into()],
+            },
         };
         assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::Ready);
     }
 
     #[test]
     fn endpoint_reachable_model_present_without_jit_produces_model_present() {
-        // LM Studio: Present requires explicit load.
         let state = SetupReadinessState {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Present,
-            can_infer_from_present_model: false, // LM Studio
+            can_infer_from_present_model: false,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available {
+                models: vec!["llama-3.1-8b".into()],
+            },
         };
         assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::ModelPresent);
     }
@@ -386,6 +546,8 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Loading,
             can_infer_from_present_model: false,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::NotAttempted,
         };
         assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::ModelLoading);
     }
@@ -397,6 +559,10 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
             can_infer_from_present_model: false,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available {
+                models: vec!["qwen2.5-7b".into()],
+            },
         };
         assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::Ready);
     }
@@ -408,24 +574,33 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Failed,
             can_infer_from_present_model: false,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available {
+                models: vec!["qwen2.5:7b".into()],
+            },
         };
         assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::ModelFailed);
     }
 
     #[test]
     fn quick_ready_deep_not_ready_is_valid_state() {
-        // Quick ready + Deep not ready is a usable first-card state.
         let quick_state = SetupReadinessState {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
             can_infer_from_present_model: true,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available {
+                models: vec!["qwen2.5:7b".into()],
+            },
         };
         let deep_state = SetupReadinessState {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Missing,
             can_infer_from_present_model: true,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available { models: vec![] },
         };
         let snapshot = evaluate_readiness(&quick_state, &deep_state);
         assert_eq!(snapshot.quick, LaneReadiness::Ready);
@@ -439,12 +614,20 @@ mod tests {
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
             can_infer_from_present_model: true,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available {
+                models: vec!["qwen2.5:7b".into()],
+            },
         };
         let deep_state = SetupReadinessState {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
             can_infer_from_present_model: true,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available {
+                models: vec!["qwen2.5:7b".into()],
+            },
         };
         let snapshot = evaluate_readiness(&quick_state, &deep_state);
         assert_eq!(snapshot.quick, LaneReadiness::Ready);
@@ -453,12 +636,15 @@ mod tests {
 
     #[test]
     fn contradictory_evidence_not_installed_but_reachable() {
-        // Direct validated reachability wins over installation detection failure.
         let state = SetupReadinessState {
             runtime_presence: RuntimePresence::NotInstalled,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
             can_infer_from_present_model: true,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available {
+                models: vec!["qwen2.5:7b".into()],
+            },
         };
         assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::Ready);
     }
@@ -579,6 +765,12 @@ mod tests {
                 endpoint_state: endpoint,
                 model_lifecycle: model,
                 can_infer_from_present_model: can_infer,
+                provider_access: if endpoint == EndpointState::Reachable {
+                    ProviderAccessState::Available
+                } else {
+                    ProviderAccessState::Unknown
+                },
+                model_inventory: ModelInventoryView::NotAttempted,
             };
             assert_eq!(
                 evaluate_lane_readiness(&state),
@@ -590,18 +782,121 @@ mod tests {
 
     #[test]
     fn unknown_does_not_become_unreachable_or_not_installed() {
-        // Ensure serialization/UI mapping cannot turn Unknown into stronger claims.
         let state = SetupReadinessState {
             runtime_presence: RuntimePresence::Unknown,
             endpoint_state: EndpointState::Unknown,
             model_lifecycle: ModelLifecycle::Unknown,
             can_infer_from_present_model: false,
+            provider_access: ProviderAccessState::Unknown,
+            model_inventory: ModelInventoryView::NotAttempted,
         };
         let readiness = evaluate_lane_readiness(&state);
         assert_eq!(readiness, LaneReadiness::Unknown);
         assert_ne!(readiness, LaneReadiness::EndpointUnreachable);
         assert_ne!(readiness, LaneReadiness::RuntimeNotInstalled);
         assert_ne!(readiness, LaneReadiness::NoCompatibleModel);
+    }
+
+    #[test]
+    fn auth_required_produces_endpoint_unreachable() {
+        let state = SetupReadinessState {
+            runtime_presence: RuntimePresence::Installed,
+            endpoint_state: EndpointState::Reachable,
+            model_lifecycle: ModelLifecycle::Ready,
+            can_infer_from_present_model: true,
+            provider_access: ProviderAccessState::AuthenticationRequired,
+            model_inventory: ModelInventoryView::Available { models: vec![] },
+        };
+        assert_eq!(
+            evaluate_lane_readiness(&state),
+            LaneReadiness::EndpointUnreachable
+        );
+    }
+
+    #[test]
+    fn next_action_resolve_auth_takes_precedence() {
+        let state = SetupReadinessState {
+            runtime_presence: RuntimePresence::Installed,
+            endpoint_state: EndpointState::Reachable,
+            model_lifecycle: ModelLifecycle::Ready,
+            can_infer_from_present_model: true,
+            provider_access: ProviderAccessState::AuthenticationRequired,
+            model_inventory: ModelInventoryView::Available { models: vec![] },
+        };
+        assert_eq!(compute_next_action(&state), NextAction::ResolveAuth);
+    }
+
+    #[test]
+    fn next_action_none_when_ready() {
+        let state = SetupReadinessState {
+            runtime_presence: RuntimePresence::Installed,
+            endpoint_state: EndpointState::Reachable,
+            model_lifecycle: ModelLifecycle::Ready,
+            can_infer_from_present_model: false,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available {
+                models: vec!["m".into()],
+            },
+        };
+        assert_eq!(compute_next_action(&state), NextAction::None);
+    }
+
+    #[test]
+    fn next_action_load_when_present_non_jit() {
+        let state = SetupReadinessState {
+            runtime_presence: RuntimePresence::Installed,
+            endpoint_state: EndpointState::Reachable,
+            model_lifecycle: ModelLifecycle::Present,
+            can_infer_from_present_model: false,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available {
+                models: vec!["m".into()],
+            },
+        };
+        assert_eq!(compute_next_action(&state), NextAction::Load);
+    }
+
+    #[test]
+    fn next_action_download_when_model_missing() {
+        let state = SetupReadinessState {
+            runtime_presence: RuntimePresence::Installed,
+            endpoint_state: EndpointState::Reachable,
+            model_lifecycle: ModelLifecycle::Missing,
+            can_infer_from_present_model: false,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available {
+                models: vec!["other".into()],
+            },
+        };
+        assert_eq!(compute_next_action(&state), NextAction::Download);
+    }
+
+    #[test]
+    fn next_action_configure_model_when_inventory_empty() {
+        let state = SetupReadinessState {
+            runtime_presence: RuntimePresence::Installed,
+            endpoint_state: EndpointState::Reachable,
+            model_lifecycle: ModelLifecycle::Missing,
+            can_infer_from_present_model: false,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available { models: vec![] },
+        };
+        assert_eq!(compute_next_action(&state), NextAction::ConfigureModel);
+    }
+
+    #[test]
+    fn next_action_refresh_when_endpoint_unreachable() {
+        let state = SetupReadinessState {
+            runtime_presence: RuntimePresence::Installed,
+            endpoint_state: EndpointState::Unreachable,
+            model_lifecycle: ModelLifecycle::Unknown,
+            can_infer_from_present_model: false,
+            provider_access: ProviderAccessState::ProviderError {
+                reason: "timeout".into(),
+            },
+            model_inventory: ModelInventoryView::NotAttempted,
+        };
+        assert_eq!(compute_next_action(&state), NextAction::Refresh);
     }
 
     #[test]

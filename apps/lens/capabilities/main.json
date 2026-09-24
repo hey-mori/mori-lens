@@ -15,6 +15,7 @@
     "allow-save-settings",
     "allow-set-autostart",
     "allow-get-model-download-status",
+    "allow-get-provider-readiness",
     "allow-list-models",
     "allow-load-lmstudio-instance",
     "allow-start-quick-model-download",
