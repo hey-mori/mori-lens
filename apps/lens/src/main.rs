@@ -12,6 +12,7 @@
 mod ai_runtime;
 mod detail_view;
 mod dispatch_carrier;
+mod download_worker;
 mod keeping;
 mod library_service;
 mod mori_transfer;

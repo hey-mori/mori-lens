@@ -25,7 +25,24 @@
 //! `Authorization: Bearer <token>` header. When configured, the token is sent
 //! with every request. When not configured, requests are sent without
 //! authentication (suitable for loopback-only usage).
+//!
+//! # Model Loading
+//!
+//! LM Studio supports Just-In-Time (JIT) model loading, where downloaded models
+//! are loaded on demand when inference is requested. Whether explicit loading
+//! via `load_model()` is required depends on the server's JIT configuration:
+//!
+//! - **JIT enabled** (default): Downloaded models are loaded automatically when
+//!   inference is requested. Explicit `load_model()` is optional but can be used
+//!   to pre-load models for faster first inference.
+//! - **JIT disabled**: Models must be explicitly loaded via `load_model()` before
+//!   inference. Unloaded models will not be available for inference.
+//!
+//! The `load_model()` method returns an `instance_id` that must be used for
+//! unloading. Only instances created by Mori should be unloaded (ownership
+//! tracking is enforced by the operation manager, not this low-level runtime).
 
+use lens_core::model_management::{DownloadProgress, DownloadStatus, ManagementError};
 use lens_core::translate::{
     ModelInfo, ModelState, Provider, ProviderRuntime, Reachability, TranslateError,
 };
@@ -110,6 +127,347 @@ impl LmStudioRuntime {
     pub fn api_token(&self) -> Option<&str> {
         self.api_token.as_deref()
     }
+
+    /// Start downloading a model from LM Studio.
+    ///
+    /// Sends POST /api/v1/models/download with the model identifier.
+    /// Returns a provider-specific result indicating whether the download
+    /// started (with job_id), completed immediately, or was already present.
+    ///
+    /// The job_id (if present) can be used with `download_status()` to poll progress.
+    pub fn start_model_download(
+        &self,
+        model: &str,
+    ) -> Result<DownloadStartResult, ManagementError> {
+        let body = crate::json::object(&[("model", crate::json::Value::Str(model))]);
+
+        let (status, response_body) = if let Some(token) = &self.api_token {
+            match crate::http::post_with_auth(
+                &self.endpoint,
+                "/api/v1/models/download",
+                &body,
+                std::time::Duration::from_secs(30),
+                token,
+            ) {
+                Ok(result) => result,
+                Err(e) => return Err(map_translate_error(e)),
+            }
+        } else {
+            match crate::http::post(
+                &self.endpoint,
+                "/api/v1/models/download",
+                &body,
+                std::time::Duration::from_secs(30),
+            ) {
+                Ok(result) => result,
+                Err(e) => return Err(map_translate_error(e)),
+            }
+        };
+
+        // Map HTTP errors to ManagementError.
+        if status == 401 || status == 403 {
+            return Err(ManagementError::Unauthorized);
+        }
+        if !(200..=299).contains(&status) {
+            return Err(ManagementError::DownloadFailed);
+        }
+
+        // Parse the response JSON.
+        let response: DownloadStartResponse =
+            serde_json::from_str(&response_body).map_err(|_| ManagementError::InvalidResponse)?;
+
+        // Map provider status to our result type.
+        match response.status.as_str() {
+            "already_downloaded" => Ok(DownloadStartResult::AlreadyPresent),
+            "completed" => Ok(DownloadStartResult::TerminalCompleted),
+            "downloading" | "paused" => {
+                // job_id is required for ongoing downloads.
+                let job_id = response.job_id.ok_or(ManagementError::InvalidResponse)?;
+                let initial_status = match response.status.as_str() {
+                    "downloading" => DownloadStatus::Starting,
+                    "paused" => DownloadStatus::Paused(DownloadProgress::unknown_total(0)),
+                    _ => unreachable!(),
+                };
+                Ok(DownloadStartResult::Job {
+                    job_id,
+                    initial_status,
+                })
+            }
+            "failed" => Err(ManagementError::DownloadFailed),
+            _ => Err(ManagementError::InvalidResponse),
+        }
+    }
+
+    /// Check the status of a download job.
+    ///
+    /// Sends GET /api/v1/models/download/status/:job_id.
+    /// Returns normalized DownloadStatus with progress if available.
+    pub fn download_status(&self, job_id: &str) -> Result<DownloadStatus, ManagementError> {
+        // Validate job_id to prevent path injection.
+        // LM Studio job IDs are opaque strings; permit only safe characters.
+        if !job_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(ManagementError::InvalidResponse);
+        }
+
+        let path = format!("/api/v1/models/download/status/{}", job_id);
+
+        let (status, response_body) = if let Some(token) = &self.api_token {
+            match crate::http::get_with_auth(
+                &self.endpoint,
+                &path,
+                std::time::Duration::from_secs(10),
+                token,
+            ) {
+                Ok(result) => result,
+                Err(e) => return Err(map_translate_error(e)),
+            }
+        } else {
+            match crate::http::get(&self.endpoint, &path, std::time::Duration::from_secs(10)) {
+                Ok(result) => result,
+                Err(e) => return Err(map_translate_error(e)),
+            }
+        };
+
+        // Map HTTP errors.
+        if status == 401 || status == 403 {
+            return Err(ManagementError::Unauthorized);
+        }
+        if status == 404 {
+            return Err(ManagementError::OperationNotFound);
+        }
+        if !(200..=299).contains(&status) {
+            return Err(ManagementError::DownloadFailed);
+        }
+
+        // Parse the response.
+        let response: DownloadStatusResponse =
+            serde_json::from_str(&response_body).map_err(|_| ManagementError::InvalidResponse)?;
+
+        // Map provider status to normalized DownloadStatus.
+        match response.status.as_str() {
+            "downloading" => {
+                // Build progress if byte fields are present.
+                let progress = match (response.downloaded_bytes, response.total_size_bytes) {
+                    (Some(downloaded), Some(total)) => {
+                        let mut p = DownloadProgress::new(downloaded, total);
+                        if let Some(rate) = response.bytes_per_second {
+                            p = p.with_rate(rate);
+                        }
+                        Some(p)
+                    }
+                    (Some(downloaded), None) => Some(DownloadProgress::unknown_total(downloaded)),
+                    _ => None,
+                };
+
+                Ok(progress
+                    .map(DownloadStatus::Downloading)
+                    .unwrap_or(DownloadStatus::Starting))
+            }
+            "paused" => {
+                let progress = match (response.downloaded_bytes, response.total_size_bytes) {
+                    (Some(downloaded), Some(total)) => DownloadProgress::new(downloaded, total),
+                    (Some(downloaded), None) => DownloadProgress::unknown_total(downloaded),
+                    _ => DownloadProgress::unknown_total(0),
+                };
+                Ok(DownloadStatus::Paused(progress))
+            }
+            "completed" => Ok(DownloadStatus::Completed),
+            "failed" => Err(ManagementError::DownloadFailed),
+            _ => Err(ManagementError::InvalidResponse),
+        }
+    }
+
+    /// Load a model into memory for inference.
+    ///
+    /// Sends POST /api/v1/models/load with the model identifier.
+    /// Returns the instance_id assigned by LM Studio, which must be used
+    /// for unloading. Mori Lens becomes the owner of this instance.
+    ///
+    /// LM Studio load response includes:
+    /// - instance_id: the assigned instance identifier
+    /// - status: must be "loaded" for success
+    /// - type: model type (e.g., "llm")
+    /// - load_time_seconds: time taken to load
+    pub fn load_model(&self, model: &str) -> Result<String, ManagementError> {
+        let body = crate::json::object(&[("model", crate::json::Value::Str(model))]);
+
+        let (status, response_body) = if let Some(token) = &self.api_token {
+            match crate::http::post_with_auth(
+                &self.endpoint,
+                "/api/v1/models/load",
+                &body,
+                std::time::Duration::from_secs(60),
+                token,
+            ) {
+                Ok(result) => result,
+                Err(e) => return Err(map_translate_error(e)),
+            }
+        } else {
+            match crate::http::post(
+                &self.endpoint,
+                "/api/v1/models/load",
+                &body,
+                std::time::Duration::from_secs(60),
+            ) {
+                Ok(result) => result,
+                Err(e) => return Err(map_translate_error(e)),
+            }
+        };
+
+        // Map HTTP errors to ManagementError.
+        if status == 401 || status == 403 {
+            return Err(ManagementError::Unauthorized);
+        }
+        if status == 404 {
+            return Err(ManagementError::ModelNotFound);
+        }
+        if !(200..=299).contains(&status) {
+            return Err(ManagementError::LoadFailed);
+        }
+
+        // Parse the response to extract instance_id and validate status.
+        let response: LoadResponse =
+            serde_json::from_str(&response_body).map_err(|_| ManagementError::InvalidResponse)?;
+
+        // Validate status is "loaded".
+        if response.status.as_deref() != Some("loaded") {
+            return Err(ManagementError::InvalidResponse);
+        }
+
+        // instance_id is required for unloading.
+        response
+            .instance_id
+            .filter(|id| !id.is_empty())
+            .ok_or(ManagementError::InvalidResponse)
+    }
+
+    /// Unload a model instance from memory.
+    ///
+    /// Sends POST /api/v1/models/unload with the instance_id.
+    /// Only instances created by Mori Lens should be unloaded.
+    /// Never unload instances that existed before Mori started.
+    ///
+    /// Note: instance_id is sent in JSON body, not URL path, so
+    /// path-injection validation is not required. We still validate
+    /// that it's non-empty for safety.
+    pub fn unload_instance(&self, instance_id: &str) -> Result<(), ManagementError> {
+        // Validate that instance_id is non-empty.
+        // Character validation is not needed since it's in JSON body, not URL path.
+        if instance_id.is_empty() {
+            return Err(ManagementError::InvalidResponse);
+        }
+
+        let body = crate::json::object(&[("instance_id", crate::json::Value::Str(instance_id))]);
+
+        let (status, _response_body) = if let Some(token) = &self.api_token {
+            match crate::http::post_with_auth(
+                &self.endpoint,
+                "/api/v1/models/unload",
+                &body,
+                std::time::Duration::from_secs(30),
+                token,
+            ) {
+                Ok(result) => result,
+                Err(e) => return Err(map_translate_error(e)),
+            }
+        } else {
+            match crate::http::post(
+                &self.endpoint,
+                "/api/v1/models/unload",
+                &body,
+                std::time::Duration::from_secs(30),
+            ) {
+                Ok(result) => result,
+                Err(e) => return Err(map_translate_error(e)),
+            }
+        };
+
+        // Map HTTP errors.
+        if status == 401 || status == 403 {
+            return Err(ManagementError::Unauthorized);
+        }
+        if status == 404 {
+            return Err(ManagementError::OperationNotFound);
+        }
+        if !(200..=299).contains(&status) {
+            return Err(ManagementError::UnloadFailed);
+        }
+
+        Ok(())
+    }
+}
+
+/// Map a TranslateError to a ManagementError.
+///
+/// This is a private helper that converts HTTP-level errors to domain errors
+/// appropriate for model management operations.
+fn map_translate_error(e: TranslateError) -> ManagementError {
+    match e {
+        TranslateError::Unavailable => ManagementError::EndpointUnreachable,
+        TranslateError::Timeout => ManagementError::DownloadFailed,
+        TranslateError::HttpFailed(401) | TranslateError::HttpFailed(403) => {
+            ManagementError::Unauthorized
+        }
+        TranslateError::HttpFailed(404) => ManagementError::ModelNotFound,
+        TranslateError::HttpFailed(_) => ManagementError::DownloadFailed,
+        TranslateError::Malformed => ManagementError::InvalidResponse,
+        _ => ManagementError::DownloadFailed,
+    }
+}
+
+/// Result of starting a model download.
+///
+/// Provider-specific result that preserves the job_id for ongoing downloads.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DownloadStartResult {
+    /// Model was already present locally.
+    AlreadyPresent,
+    /// Download completed immediately (rare, but possible for cached models).
+    TerminalCompleted,
+    /// Download started; job_id can be used to poll status.
+    Job {
+        job_id: String,
+        initial_status: DownloadStatus,
+    },
+}
+
+/// LM Studio download start response.
+#[derive(Debug, Deserialize)]
+struct DownloadStartResponse {
+    status: String,
+    job_id: Option<String>,
+}
+
+/// LM Studio download status response.
+#[derive(Debug, Deserialize)]
+struct DownloadStatusResponse {
+    status: String,
+    #[serde(rename = "downloaded_bytes")]
+    downloaded_bytes: Option<u64>,
+    #[serde(rename = "total_size_bytes")]
+    total_size_bytes: Option<u64>,
+    #[serde(rename = "bytes_per_second")]
+    bytes_per_second: Option<f64>,
+}
+
+/// LM Studio load response.
+///
+/// Official v1 API response shape includes:
+/// - instance_id: the assigned instance identifier
+/// - status: "loaded" on success
+/// - type: model type (e.g., "llm")
+/// - load_time_seconds: time taken to load
+#[derive(Debug, Deserialize)]
+struct LoadResponse {
+    instance_id: Option<String>,
+    status: Option<String>,
+    #[serde(rename = "type")]
+    _model_type: Option<String>,
+    #[allow(dead_code)]
+    load_time_seconds: Option<f64>,
 }
 
 impl ProviderRuntime for LmStudioRuntime {
@@ -969,5 +1327,433 @@ mod tests {
 
         let runtime = LmStudioRuntime::new(server.address());
         assert_eq!(runtime.reachability(), Reachability::Unreachable);
+    }
+
+    // ========== Download operations contract tests ==========
+
+    #[test]
+    fn start_model_download_returns_already_present_when_model_exists() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            r#"{"status": "already_downloaded"}"#,
+        )
+        .expect_post("/api/v1/models/download")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.start_model_download("llama-3.1-8b").unwrap();
+
+        assert_eq!(result, DownloadStartResult::AlreadyPresent);
+    }
+
+    #[test]
+    fn start_model_download_returns_job_with_id_when_downloading() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            r#"{"status": "downloading", "job_id": "dl-abc123"}"#,
+        )
+        .expect_post("/api/v1/models/download")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.start_model_download("llama-3.1-8b").unwrap();
+
+        match result {
+            DownloadStartResult::Job {
+                job_id,
+                initial_status,
+            } => {
+                assert_eq!(job_id, "dl-abc123");
+                assert_eq!(initial_status, DownloadStatus::Starting);
+            }
+            _ => panic!("expected Job, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn start_model_download_returns_job_when_paused() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            r#"{"status": "paused", "job_id": "dl-paused-456"}"#,
+        )
+        .expect_post("/api/v1/models/download")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.start_model_download("llama-3.1-8b").unwrap();
+
+        match result {
+            DownloadStartResult::Job {
+                job_id,
+                initial_status,
+            } => {
+                assert_eq!(job_id, "dl-paused-456");
+                assert!(matches!(initial_status, DownloadStatus::Paused(_)));
+            }
+            _ => panic!("expected Job, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn start_model_download_returns_terminal_completed_when_immediate() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(r#"{"status": "completed"}"#)
+            .expect_post("/api/v1/models/download")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.start_model_download("llama-3.1-8b").unwrap();
+
+        assert_eq!(result, DownloadStartResult::TerminalCompleted);
+    }
+
+    #[test]
+    fn start_model_download_returns_error_when_failed() {
+        let server =
+            FakeServer::start(vec![FakeResponse::ok_json(r#"{"status": "failed"}"#)
+                .expect_post("/api/v1/models/download")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.start_model_download("llama-3.1-8b");
+
+        assert_eq!(result, Err(ManagementError::DownloadFailed));
+    }
+
+    #[test]
+    fn start_model_download_returns_error_when_unauthorized() {
+        let server = FakeServer::start(vec![
+            FakeResponse::status(401).expect_post("/api/v1/models/download")
+        ]);
+
+        let runtime = LmStudioRuntime::with_token(server.address(), "wrong-token");
+        let result = runtime.start_model_download("llama-3.1-8b");
+
+        assert_eq!(result, Err(ManagementError::Unauthorized));
+    }
+
+    #[test]
+    fn start_model_download_returns_error_when_missing_job_id() {
+        // Provider says "downloading" but omits job_id; must be InvalidResponse.
+        let server = FakeServer::start(vec![FakeResponse::ok_json(r#"{"status": "downloading"}"#)
+            .expect_post("/api/v1/models/download")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.start_model_download("llama-3.1-8b");
+
+        assert_eq!(result, Err(ManagementError::InvalidResponse));
+    }
+
+    #[test]
+    fn start_model_download_returns_error_when_malformed_json() {
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json("{broken").expect_post("/api/v1/models/download")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.start_model_download("llama-3.1-8b");
+
+        assert_eq!(result, Err(ManagementError::InvalidResponse));
+    }
+
+    #[test]
+    fn start_model_download_returns_error_when_unreachable() {
+        let runtime = LmStudioRuntime::new("127.0.0.1:1");
+        let result = runtime.start_model_download("llama-3.1-8b");
+
+        assert_eq!(result, Err(ManagementError::EndpointUnreachable));
+    }
+
+    #[test]
+    fn start_model_download_sends_auth_header_when_token_configured() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            r#"{"status": "already_downloaded"}"#,
+        )
+        .expect_post("/api/v1/models/download")
+        .expect_header("Authorization", "Bearer secret-token")]);
+
+        let runtime = LmStudioRuntime::with_token(server.address(), "secret-token");
+        let result = runtime.start_model_download("llama-3.1-8b").unwrap();
+
+        assert_eq!(result, DownloadStartResult::AlreadyPresent);
+    }
+
+    #[test]
+    fn download_status_returns_downloading_with_progress() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            r#"{"status": "downloading", "downloaded_bytes": 1048576, "total_size_bytes": 4700000000, "bytes_per_second": 5242880.0}"#,
+        )
+        .expect_get("/api/v1/models/download/status/dl-abc123")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.download_status("dl-abc123").unwrap();
+
+        match result {
+            DownloadStatus::Downloading(progress) => {
+                assert_eq!(progress.bytes_downloaded, 1048576);
+                assert_eq!(progress.total_bytes, Some(4700000000));
+                assert!((progress.bytes_per_second.unwrap() - 5242880.0).abs() < 1.0);
+            }
+            _ => panic!("expected Downloading, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn download_status_returns_paused_with_progress() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            r#"{"status": "paused", "downloaded_bytes": 2097152, "total_size_bytes": 4700000000}"#,
+        )
+        .expect_get("/api/v1/models/download/status/dl-paused-789")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.download_status("dl-paused-789").unwrap();
+
+        match result {
+            DownloadStatus::Paused(progress) => {
+                assert_eq!(progress.bytes_downloaded, 2097152);
+                assert_eq!(progress.total_bytes, Some(4700000000));
+            }
+            _ => panic!("expected Paused, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn download_status_returns_completed() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(r#"{"status": "completed"}"#)
+            .expect_get("/api/v1/models/download/status/dl-done-999")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.download_status("dl-done-999").unwrap();
+
+        assert_eq!(result, DownloadStatus::Completed);
+    }
+
+    #[test]
+    fn download_status_returns_error_when_failed() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(r#"{"status": "failed"}"#)
+            .expect_get("/api/v1/models/download/status/dl-failed-000")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.download_status("dl-failed-000");
+
+        assert_eq!(result, Err(ManagementError::DownloadFailed));
+    }
+
+    #[test]
+    fn download_status_returns_error_when_not_found() {
+        let server = FakeServer::start(vec![
+            FakeResponse::status(404).expect_get("/api/v1/models/download/status/nonexistent")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.download_status("nonexistent");
+
+        assert_eq!(result, Err(ManagementError::OperationNotFound));
+    }
+
+    #[test]
+    fn download_status_returns_error_when_unauthorized() {
+        let server = FakeServer::start(vec![
+            FakeResponse::status(403).expect_get("/api/v1/models/download/status/dl-secret")
+        ]);
+
+        let runtime = LmStudioRuntime::with_token(server.address(), "bad-token");
+        let result = runtime.download_status("dl-secret");
+
+        assert_eq!(result, Err(ManagementError::Unauthorized));
+    }
+
+    #[test]
+    fn download_status_rejects_invalid_job_id_characters() {
+        let runtime = LmStudioRuntime::new("127.0.0.1:1");
+        // Path injection attempt must be rejected before any HTTP call.
+        let result = runtime.download_status("../etc/passwd");
+
+        assert_eq!(result, Err(ManagementError::InvalidResponse));
+    }
+
+    #[test]
+    fn download_status_accepts_safe_job_id_characters() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(r#"{"status": "completed"}"#)
+            .expect_get("/api/v1/models/download/status/dl-abc_123_DEF")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.download_status("dl-abc_123_DEF").unwrap();
+
+        assert_eq!(result, DownloadStatus::Completed);
+    }
+
+    #[test]
+    fn download_status_sends_auth_header_when_token_configured() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(r#"{"status": "completed"}"#)
+            .expect_get("/api/v1/models/download/status/dl-auth")
+            .expect_header("Authorization", "Bearer my-token")]);
+
+        let runtime = LmStudioRuntime::with_token(server.address(), "my-token");
+        let result = runtime.download_status("dl-auth").unwrap();
+
+        assert_eq!(result, DownloadStatus::Completed);
+    }
+
+    // ========== Load/unload operations contract tests ==========
+
+    #[test]
+    fn load_model_returns_instance_id_on_success() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            r#"{"instance_id": "inst_abc123", "status": "loaded", "type": "llm", "load_time_seconds": 1.5}"#,
+        )
+        .expect_post("/api/v1/models/load")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.load_model("llama-3.1-8b").unwrap();
+
+        assert_eq!(result, "inst_abc123");
+    }
+
+    #[test]
+    fn load_model_returns_error_when_status_not_loaded() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            r#"{"instance_id": "inst_abc123", "status": "loading"}"#,
+        )
+        .expect_post("/api/v1/models/load")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.load_model("llama-3.1-8b");
+
+        assert_eq!(result, Err(ManagementError::InvalidResponse));
+    }
+
+    #[test]
+    fn load_model_returns_error_when_unauthorized() {
+        let server = FakeServer::start(vec![
+            FakeResponse::status(401).expect_post("/api/v1/models/load")
+        ]);
+
+        let runtime = LmStudioRuntime::with_token(server.address(), "bad-token");
+        let result = runtime.load_model("llama-3.1-8b");
+
+        assert_eq!(result, Err(ManagementError::Unauthorized));
+    }
+
+    #[test]
+    fn load_model_returns_error_when_model_not_found() {
+        let server = FakeServer::start(vec![
+            FakeResponse::status(404).expect_post("/api/v1/models/load")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.load_model("nonexistent-model");
+
+        assert_eq!(result, Err(ManagementError::ModelNotFound));
+    }
+
+    #[test]
+    fn load_model_returns_error_when_missing_instance_id() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            r#"{"status": "loaded", "type": "llm"}"#,
+        )
+        .expect_post("/api/v1/models/load")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.load_model("llama-3.1-8b");
+
+        assert_eq!(result, Err(ManagementError::InvalidResponse));
+    }
+
+    #[test]
+    fn load_model_returns_error_when_empty_instance_id() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            r#"{"instance_id": "", "status": "loaded", "type": "llm"}"#,
+        )
+        .expect_post("/api/v1/models/load")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.load_model("llama-3.1-8b");
+
+        assert_eq!(result, Err(ManagementError::InvalidResponse));
+    }
+
+    #[test]
+    fn load_model_returns_error_when_unreachable() {
+        let runtime = LmStudioRuntime::new("127.0.0.1:1");
+        let result = runtime.load_model("llama-3.1-8b");
+
+        assert_eq!(result, Err(ManagementError::EndpointUnreachable));
+    }
+
+    #[test]
+    fn load_model_sends_auth_header_when_token_configured() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            r#"{"instance_id": "inst_auth", "status": "loaded", "type": "llm", "load_time_seconds": 1.0}"#,
+        )
+        .expect_post("/api/v1/models/load")
+        .expect_header("Authorization", "Bearer secret-token")]);
+
+        let runtime = LmStudioRuntime::with_token(server.address(), "secret-token");
+        let result = runtime.load_model("llama-3.1-8b").unwrap();
+
+        assert_eq!(result, "inst_auth");
+    }
+
+    #[test]
+    fn unload_instance_succeeds_on_2xx() {
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(r#"{"success": true}"#).expect_post("/api/v1/models/unload")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.unload_instance("inst_abc123");
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn unload_instance_returns_error_when_unauthorized() {
+        let server = FakeServer::start(vec![
+            FakeResponse::status(403).expect_post("/api/v1/models/unload")
+        ]);
+
+        let runtime = LmStudioRuntime::with_token(server.address(), "bad-token");
+        let result = runtime.unload_instance("inst_abc123");
+
+        assert_eq!(result, Err(ManagementError::Unauthorized));
+    }
+
+    #[test]
+    fn unload_instance_returns_error_when_instance_not_found() {
+        let server = FakeServer::start(vec![
+            FakeResponse::status(404).expect_post("/api/v1/models/unload")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.unload_instance("nonexistent");
+
+        assert_eq!(result, Err(ManagementError::OperationNotFound));
+    }
+
+    #[test]
+    fn unload_instance_rejects_empty_instance_id() {
+        let runtime = LmStudioRuntime::new("127.0.0.1:1");
+        // Empty instance_id must be rejected before any HTTP call.
+        let result = runtime.unload_instance("");
+
+        assert_eq!(result, Err(ManagementError::InvalidResponse));
+    }
+
+    #[test]
+    fn unload_instance_accepts_opaque_instance_ids() {
+        // instance_id is in JSON body, not URL path, so we accept opaque provider IDs.
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(r#"{"success": true}"#).expect_post("/api/v1/models/unload")
+        ]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        // LM Studio may use various formats for instance IDs.
+        let result = runtime.unload_instance("inst-abc_123_DEF/xyz");
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn unload_instance_sends_auth_header_when_token_configured() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(r#"{"success": true}"#)
+            .expect_post("/api/v1/models/unload")
+            .expect_header("Authorization", "Bearer my-token")]);
+
+        let runtime = LmStudioRuntime::with_token(server.address(), "my-token");
+        let result = runtime.unload_instance("inst_auth");
+
+        assert!(result.is_ok());
     }
 }

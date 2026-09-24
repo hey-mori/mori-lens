@@ -3,6 +3,7 @@
 //! Implements the [`ProviderRuntime`] trait for Ollama, wrapping the existing
 //! Ollama-specific logic for model listing and readiness checks.
 
+use lens_core::model_management::{DownloadProgress, DownloadStatus, ManagementError};
 use lens_core::translate::{
     ModelInfo, ModelState, Provider, ProviderRuntime, Reachability, TranslateError,
 };
@@ -37,6 +38,188 @@ impl OllamaRuntime {
     /// The endpoint this runtime is pointed at.
     pub fn endpoint(&self) -> &str {
         &self.endpoint
+    }
+
+    /// Pull a model from Ollama, reporting progress via callback.
+    ///
+    /// Sends POST /api/pull with NDJSON streaming response. Each JSON line is
+    /// parsed and mapped to a [`DownloadStatus`], passed to `on_progress`.
+    ///
+    /// Returns the final status when the stream completes successfully, or a
+    /// [`ManagementError`] if the operation fails.
+    ///
+    /// # Progress phases
+    ///
+    /// Ollama's pull API emits several status phases:
+    /// - "pulling manifest" (no progress data)
+    /// - "downloading" (with digest, total, completed bytes)
+    /// - "verifying sha256" (per-layer verification)
+    /// - "writing manifest" (finalization)
+    /// - "success" (terminal)
+    ///
+    /// Progress is tracked per digest layer. The latest "downloading" line's
+    /// values are reported. Terminal success is determined by explicit
+    /// `{"status":"success"}` from the provider, not by byte arithmetic.
+    ///
+    /// # Timeout
+    ///
+    /// The timeout is an I/O inactivity timeout (connect, read, write), not a
+    /// total operation duration. A multi-GB download may legitimately run much
+    /// longer than the timeout value as long as progress keeps arriving.
+    pub fn pull_model(
+        &self,
+        model: &str,
+        on_progress: &mut dyn FnMut(DownloadStatus),
+    ) -> Result<DownloadStatus, ManagementError> {
+        // Build request body: {"model": "model", "stream": true}
+        // Ollama API uses "model" field (not "name" from older examples).
+        // stream: true enables streaming progress objects (default behavior).
+        let body = crate::json::object(&[
+            ("model", crate::json::Value::Str(model)),
+            ("stream", crate::json::Value::Raw("true")),
+        ]);
+
+        let mut final_status = DownloadStatus::Starting;
+        let mut parse_error: Option<ManagementError> = None;
+
+        // I/O inactivity timeout: applies to connect, read, and write operations.
+        // Not a total operation duration; a large download may exceed this wall-clock
+        // as long as data keeps flowing.
+        let io_timeout = std::time::Duration::from_secs(300);
+
+        let result = crate::http::post_streaming(
+            &self.endpoint,
+            "/api/pull",
+            &body,
+            io_timeout,
+            &mut |line| {
+                // Skip empty lines.
+                if line.trim().is_empty() {
+                    return true;
+                }
+
+                // Distinguish HTTP chunk framing from provider NDJSON.
+                // Chunk-size lines are hexadecimal (e.g., "1a2f") and not valid JSON.
+                // Provider NDJSON lines are JSON objects starting with '{'.
+                if !line.starts_with('{') {
+                    // Check if this is a valid HTTP chunk-size line (hexadecimal).
+                    // If it's not hex and not JSON, it's malformed provider output.
+                    if !is_valid_chunk_size_line(line) {
+                        // Non-framing, non-JSON garbage: malformed provider output.
+                        parse_error = Some(ManagementError::InvalidResponse);
+                        return false;
+                    }
+                    // Valid chunk framing: skip.
+                    return true;
+                }
+
+                // Parse each NDJSON line.
+                let parsed: Result<serde_json::Value, _> = serde_json::from_str(line);
+                let Ok(json) = parsed else {
+                    // Malformed provider JSON: record error and stop.
+                    parse_error = Some(ManagementError::InvalidResponse);
+                    return false;
+                };
+
+                // Check for error field first.
+                if let Some(error) = json.get("error").and_then(|v| v.as_str()) {
+                    final_status = DownloadStatus::Failed(classify_ollama_error(error));
+                    return false; // Stop on error.
+                }
+
+                // Extract status field.
+                let status = json.get("status").and_then(|v| v.as_str()).unwrap_or("");
+
+                // Terminal success: explicit from provider.
+                if status == "success" {
+                    final_status = DownloadStatus::Completed;
+                    on_progress(final_status.clone());
+                    return false; // Stop on success.
+                }
+
+                // Progress observation: if total/completed fields are present,
+                // this is a layer download progress update.
+                // Ollama sends these for "pulling <digest>" statuses.
+                let total = json.get("total").and_then(|v| v.as_u64());
+                let completed = json.get("completed").and_then(|v| v.as_u64());
+
+                if let (Some(total_bytes), Some(bytes_downloaded)) = (total, completed) {
+                    let progress = DownloadProgress::new(bytes_downloaded, total_bytes);
+                    final_status = DownloadStatus::Downloading(progress);
+                    on_progress(final_status.clone());
+                }
+
+                // Other status phases (e.g., "pulling manifest", "verifying sha256",
+                // "writing manifest") don't carry progress data, so we continue.
+                // We don't track phase text in the normalized status.
+
+                true // Continue reading.
+            },
+        );
+
+        // If we encountered a parse error, return it.
+        if let Some(error) = parse_error {
+            return Err(error);
+        }
+
+        // Map HTTP errors to ManagementError.
+        match result {
+            Ok(_status) => {
+                // If we encountered an error in the NDJSON stream, return it as Err.
+                if let DownloadStatus::Failed(error) = final_status {
+                    Err(error)
+                } else {
+                    Ok(final_status)
+                }
+            }
+            Err(TranslateError::Unavailable) => Err(ManagementError::EndpointUnreachable),
+            Err(TranslateError::Timeout) => Err(ManagementError::DownloadFailed),
+            Err(TranslateError::HttpFailed(code)) => {
+                if code == 401 || code == 403 {
+                    Err(ManagementError::Unauthorized)
+                } else if code == 404 {
+                    Err(ManagementError::ModelNotFound)
+                } else {
+                    Err(ManagementError::DownloadFailed)
+                }
+            }
+            Err(_) => Err(ManagementError::DownloadFailed),
+        }
+    }
+}
+
+/// Check if a line is a valid HTTP chunk-size line.
+///
+/// Chunk-size lines are hexadecimal (e.g., "1a2f", "0") and may have
+/// chunk extensions after a semicolon (e.g., "1a2f;ext=value").
+fn is_valid_chunk_size_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return true; // Empty lines are acceptable.
+    }
+    // Split on semicolon to ignore chunk extensions.
+    let size_part = trimmed.split(';').next().unwrap_or("").trim();
+    if size_part.is_empty() {
+        return false;
+    }
+    // Must be valid hexadecimal.
+    size_part.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Classify an Ollama error message into a [`ManagementError`].
+///
+/// Ollama returns error messages as plain text in the "error" field.
+/// This function maps common patterns to typed errors.
+fn classify_ollama_error(error: &str) -> ManagementError {
+    let lower = error.to_lowercase();
+    if lower.contains("not found") || lower.contains("does not exist") {
+        ManagementError::ModelNotFound
+    } else if lower.contains("unauthorized") || lower.contains("forbidden") {
+        ManagementError::Unauthorized
+    } else if lower.contains("connection") || lower.contains("refused") {
+        ManagementError::EndpointUnreachable
+    } else {
+        ManagementError::DownloadFailed
     }
 }
 
@@ -260,5 +443,283 @@ mod tests {
         let result = runtime.model_state("llama3.1:8b");
 
         assert!(matches!(result, Err(TranslateError::Unavailable)));
+    }
+
+    // P20B: Ollama pull adapter contract tests.
+    // These verify the POST /api/pull NDJSON parsing and error mapping.
+
+    #[test]
+    fn pull_model_sends_correct_post_body() {
+        let server = FakeServer::start(vec![FakeResponse {
+            status: 200,
+            status_text: "OK".to_owned(),
+            headers: vec![("Content-Type".to_owned(), "application/x-ndjson".to_owned())],
+            body: "{\"status\":\"success\"}\n".to_owned(),
+            expect: Some(crate::fake_server::RequestExpectation {
+                method: Some("POST".to_owned()),
+                path: Some("/api/pull".to_owned()),
+                headers: vec![],
+                body: Some(r#"{"model":"llama3.1:8b","stream":true}"#.to_owned()),
+            }),
+        }
+        .expect_post("/api/pull")]);
+
+        let runtime = OllamaRuntime::new(server.address());
+        let mut statuses = vec![];
+        let result = runtime.pull_model("llama3.1:8b", &mut |s| statuses.push(s));
+
+        assert!(result.is_ok());
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0], DownloadStatus::Completed);
+    }
+
+    #[test]
+    fn pull_model_returns_completed_on_terminal_success() {
+        // Ollama returns {"status":"success"} as terminal state.
+        // We do not distinguish "already present" from "just downloaded" here;
+        // the caller can refresh inventory if needed.
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json("{\"status\":\"success\"}\n").expect_post("/api/pull")
+        ]);
+
+        let runtime = OllamaRuntime::new(server.address());
+        let mut statuses = vec![];
+        let result = runtime.pull_model("llama3.1:8b", &mut |s| statuses.push(s));
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), DownloadStatus::Completed);
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0], DownloadStatus::Completed);
+    }
+
+    #[test]
+    fn pull_model_reports_download_progress() {
+        // Simulate a multi-phase download with progress updates.
+        // Ollama uses status strings like "pulling <digest>" with digest/total/completed fields.
+        let ndjson = r#"{"status":"pulling manifest"}
+{"status":"pulling sha256:abc123","digest":"sha256:abc123","total":1000000,"completed":250000}
+{"status":"pulling sha256:abc123","digest":"sha256:abc123","total":1000000,"completed":750000}
+{"status":"verifying sha256 abc123","digest":"sha256:abc123"}
+{"status":"writing manifest"}
+{"status":"success"}
+"#;
+        let server = FakeServer::start(vec![FakeResponse {
+            status: 200,
+            status_text: "OK".to_owned(),
+            headers: vec![("Content-Type".to_owned(), "application/x-ndjson".to_owned())],
+            body: ndjson.to_owned(),
+            expect: None,
+        }
+        .expect_post("/api/pull")]);
+
+        let runtime = OllamaRuntime::new(server.address());
+        let mut statuses = vec![];
+        let result = runtime.pull_model("llama3.1:8b", &mut |s| statuses.push(s));
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), DownloadStatus::Completed);
+
+        // Should have received: Starting (implicit), two Downloading, then Completed.
+        // The callback is only called for Downloading and terminal states.
+        assert!(
+            statuses.len() >= 2,
+            "expected at least 2 progress callbacks"
+        );
+
+        // Check that we got download progress with correct values.
+        let downloading_statuses: Vec<_> = statuses
+            .iter()
+            .filter(|s| matches!(s, DownloadStatus::Downloading(_)))
+            .collect();
+        assert_eq!(
+            downloading_statuses.len(),
+            2,
+            "expected 2 downloading updates"
+        );
+
+        // Verify the final status is Completed.
+        assert_eq!(*statuses.last().unwrap(), DownloadStatus::Completed);
+    }
+
+    #[test]
+    fn pull_model_reports_completion_after_download() {
+        let ndjson = r#"{"status":"pulling sha256:abc","digest":"sha256:abc","total":500,"completed":500}
+{"status":"success"}
+"#;
+        let server = FakeServer::start(vec![FakeResponse {
+            status: 200,
+            status_text: "OK".to_owned(),
+            headers: vec![("Content-Type".to_owned(), "application/x-ndjson".to_owned())],
+            body: ndjson.to_owned(),
+            expect: None,
+        }
+        .expect_post("/api/pull")]);
+
+        let runtime = OllamaRuntime::new(server.address());
+        let mut statuses = vec![];
+        let result = runtime.pull_model("qwen2.5:7b", &mut |s| statuses.push(s));
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), DownloadStatus::Completed);
+        assert_eq!(*statuses.last().unwrap(), DownloadStatus::Completed);
+    }
+
+    #[test]
+    fn pull_model_maps_model_not_found_error() {
+        let ndjson = r#"{"error":"model \"nonexistent\" not found"}"#;
+        let server = FakeServer::start(vec![FakeResponse {
+            status: 200,
+            status_text: "OK".to_owned(),
+            headers: vec![("Content-Type".to_owned(), "application/x-ndjson".to_owned())],
+            body: ndjson.to_owned(),
+            expect: None,
+        }
+        .expect_post("/api/pull")]);
+
+        let runtime = OllamaRuntime::new(server.address());
+        let mut statuses = vec![];
+        let result = runtime.pull_model("nonexistent", &mut |s| statuses.push(s));
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), ManagementError::ModelNotFound);
+    }
+
+    #[test]
+    fn pull_model_maps_unauthorized_error() {
+        let ndjson = r#"{"error":"unauthorized access"}"#;
+        let server = FakeServer::start(vec![FakeResponse {
+            status: 200,
+            status_text: "OK".to_owned(),
+            headers: vec![("Content-Type".to_owned(), "application/x-ndjson".to_owned())],
+            body: ndjson.to_owned(),
+            expect: None,
+        }
+        .expect_post("/api/pull")]);
+
+        let runtime = OllamaRuntime::new(server.address());
+        let mut statuses = vec![];
+        let result = runtime.pull_model("llama3.1:8b", &mut |s| statuses.push(s));
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), ManagementError::Unauthorized);
+    }
+
+    #[test]
+    fn pull_model_returns_invalid_response_on_malformed_json() {
+        // Lines starting with '{' but containing invalid JSON are malformed provider data.
+        // This is distinct from HTTP chunk framing (hex digits without '{').
+        let ndjson = r#"{"status":"pulling manifest"}
+{not valid json}
+{"status":"success"}
+"#;
+        let server = FakeServer::start(vec![FakeResponse {
+            status: 200,
+            status_text: "OK".to_owned(),
+            headers: vec![("Content-Type".to_owned(), "application/x-ndjson".to_owned())],
+            body: ndjson.to_owned(),
+            expect: None,
+        }
+        .expect_post("/api/pull")]);
+
+        let runtime = OllamaRuntime::new(server.address());
+        let mut statuses = vec![];
+        let result = runtime.pull_model("llama3.1:8b", &mut |s| statuses.push(s));
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), ManagementError::InvalidResponse);
+    }
+
+    #[test]
+    fn pull_model_skips_http_chunk_framing_lines() {
+        // HTTP chunked transfer encoding sends hex size lines (e.g., "1a2f") before each chunk.
+        // These do not start with '{' and should be skipped as transport framing, not provider data.
+        let ndjson = r#"1a2f
+{"status":"pulling manifest"}
+4b
+{"status":"pulling sha256:abc","digest":"sha256:abc","total":100,"completed":50}
+10
+{"status":"success"}
+0
+
+"#;
+        let server = FakeServer::start(vec![FakeResponse {
+            status: 200,
+            status_text: "OK".to_owned(),
+            headers: vec![("Content-Type".to_owned(), "application/x-ndjson".to_owned())],
+            body: ndjson.to_owned(),
+            expect: None,
+        }
+        .expect_post("/api/pull")]);
+
+        let runtime = OllamaRuntime::new(server.address());
+        let mut statuses = vec![];
+        let result = runtime.pull_model("llama3.1:8b", &mut |s| statuses.push(s));
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), DownloadStatus::Completed);
+    }
+
+    #[test]
+    fn pull_model_rejects_non_json_garbage() {
+        // Non-JSON, non-chunk-framing lines are malformed provider output.
+        // This is distinct from valid HTTP chunk framing (hex digits).
+        let ndjson = r#"{"status":"pulling manifest"}
+garbage-provider-output
+{"status":"success"}
+"#;
+        let server = FakeServer::start(vec![FakeResponse {
+            status: 200,
+            status_text: "OK".to_owned(),
+            headers: vec![("Content-Type".to_owned(), "application/x-ndjson".to_owned())],
+            body: ndjson.to_owned(),
+            expect: None,
+        }
+        .expect_post("/api/pull")]);
+
+        let runtime = OllamaRuntime::new(server.address());
+        let mut statuses = vec![];
+        let result = runtime.pull_model("llama3.1:8b", &mut |s| statuses.push(s));
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), ManagementError::InvalidResponse);
+    }
+
+    #[test]
+    fn pull_model_reports_endpoint_unreachable_on_connection_failure() {
+        let runtime = OllamaRuntime::new("127.0.0.1:1");
+        let mut statuses = vec![];
+        let result = runtime.pull_model("llama3.1:8b", &mut |s| statuses.push(s));
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), ManagementError::EndpointUnreachable);
+    }
+
+    #[test]
+    fn pull_model_progress_callback_receives_correct_values() {
+        let ndjson = r#"{"status":"pulling sha256:abc","digest":"sha256:abc","total":1000,"completed":250}
+{"status":"pulling sha256:abc","digest":"sha256:abc","total":1000,"completed":750}
+{"status":"success"}
+"#;
+        let server = FakeServer::start(vec![FakeResponse {
+            status: 200,
+            status_text: "OK".to_owned(),
+            headers: vec![("Content-Type".to_owned(), "application/x-ndjson".to_owned())],
+            body: ndjson.to_owned(),
+            expect: None,
+        }
+        .expect_post("/api/pull")]);
+
+        let runtime = OllamaRuntime::new(server.address());
+        let mut progress_values = vec![];
+        let result = runtime.pull_model("llama3.1:8b", &mut |s| {
+            if let DownloadStatus::Downloading(p) = s {
+                progress_values.push((p.bytes_downloaded, p.total_bytes));
+            }
+        });
+
+        assert!(result.is_ok());
+        assert_eq!(progress_values.len(), 2);
+        assert_eq!(progress_values[0], (250, Some(1000)));
+        assert_eq!(progress_values[1], (750, Some(1000)));
     }
 }
