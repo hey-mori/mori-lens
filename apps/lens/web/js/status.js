@@ -6,6 +6,16 @@ import { state } from './state.js';
 import { refreshProviderReadiness, renderReadinessSection, attachReadinessActionHandlers } from './readiness.js';
 import { t } from './i18n.js';
 
+// Listen for readiness state changes from action handlers (added once at module load).
+// This avoids accumulating listeners that would occur if added inside loadStatus().
+document.addEventListener('readiness-state-changed', () => {
+  loadStatus();
+});
+
+// Cache for readiness section HTML to avoid rebuilding every second.
+let cachedReadinessHtml = null;
+let cachedReadinessData = null;
+
 /**
  * Load and render the status page.
  *
@@ -22,8 +32,6 @@ export async function loadStatus() {
       invoke('get_runtime_status'),
       invoke('get_health_status'),
     ]);
-    // P20C: use cached readiness (no network call)
-    const readiness = state.cachedProviderReadiness;
     const el = document.getElementById('status-content');
     const paused = diag && diag.paused;
     const pauseLabel = paused ? t('status.pause.resume') : t('status.pause.button');
@@ -48,8 +56,16 @@ export async function loadStatus() {
     html += '</div>';
 
     // P20C: Provider readiness section (replaces legacy localAi status)
+    // Only re-render if readiness data has changed to avoid rebuilding interactive UI every second.
     html += '<h2>' + escapeHtml(t('status.local.ai')) + '</h2>';
-    html += renderReadinessSection(readiness);
+    const currentReadiness = state.cachedProviderReadiness;
+    const readinessDataKey = JSON.stringify(currentReadiness);
+    if (cachedReadinessData !== readinessDataKey) {
+      // Readiness data changed; re-render the section
+      cachedReadinessHtml = renderReadinessSection(currentReadiness);
+      cachedReadinessData = readinessDataKey;
+    }
+    html += cachedReadinessHtml;
 
     // Cached health status from last health check
     if (health && (health.quick.state !== 'unknown' || health.deep.state !== 'unknown')) {
@@ -166,10 +182,6 @@ export async function loadStatus() {
     // Attach event listeners after rendering
     attachStatusHandlers();
     attachReadinessActionHandlers();
-    // Listen for readiness state changes from action handlers
-    document.addEventListener('readiness-state-changed', () => {
-      loadStatus();
-    }, { once: true });
   } catch (e) {
     console.error('loadStatus failed:', e);
   }
