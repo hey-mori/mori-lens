@@ -10,7 +10,7 @@
 // - Polling uses get_model_download_status, not get_provider_readiness
 // - Terminal state stops polling
 // - Paused remains non-terminal (continues polling)
-// - Navigation away stops polling; navigation back reconnects
+// - Navigation away stops polling via deactivateStatus(); navigation back reconnects via activateStatus()
 
 import { invoke } from './tauri.js';
 import { state } from './state.js';
@@ -22,6 +22,19 @@ let pollTimerId = null;
 let isPolling = false;
 let lastOperationSnapshot = null;
 let onOperationUpdate = null;
+
+/**
+ * Start polling for operation status updates.
+ *
+ * Uses setTimeout chaining to prevent duplicate timers.
+ * Each poll calls get_model_download_status (lightweight).
+ *
+ * Exported for explicit start from action handlers.
+ */
+export function startOperationPolling(updateCallback) {
+  onOperationUpdate = updateCallback;
+  startPolling();
+}
 
 /**
  * Start observing an existing operation (if any).

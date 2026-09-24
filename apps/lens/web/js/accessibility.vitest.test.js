@@ -113,3 +113,8 @@ describe('Accessibility Test Documentation', () => {
     expect(knownIssues.length).toBeGreaterThan(0);
   });
 });
+
+// P20C representative-state accessibility tests moved to
+// accessibility-production.vitest.test.js which uses real
+// renderReadinessSection() output instead of synthetic ARIA markup.
+

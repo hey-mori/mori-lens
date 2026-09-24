@@ -1,6 +1,13 @@
 // Navigation: section switching, sidebar events, tray navigation
 
+let currentSection = null;
+
 export function showSection(sectionName) {
+  // Deactivate previous section if needed
+  if (currentSection === 'status' && sectionName !== 'status') {
+    import('./status.js').then(s => s.deactivateStatus());
+  }
+
   document.querySelectorAll('.sidebar-item').forEach(i => {
     i.classList.remove('active');
     i.removeAttribute('aria-current');
@@ -13,7 +20,10 @@ export function showSection(sectionName) {
     document.getElementById('section-' + sectionName).classList.add('active');
     // Dynamically import section modules to load their data
     if (sectionName === 'status') {
-      import('./status.js').then(s => s.refreshReadinessAndRender());
+      import('./status.js').then(async (s) => {
+        await s.refreshReadinessAndRender();
+        s.activateStatus();
+      });
     }
     else if (sectionName === 'library') import('./library.js').then(m => m.loadLibrary());
     else if (sectionName === 'review') import('./review.js').then(m => m.loadReview());
@@ -26,6 +36,8 @@ export function showSection(sectionName) {
     }
     else if (sectionName === 'apps') import('./settings.js').then(m => m.loadSettings());
     else if (sectionName === 'about') import('./diagnostics.js').then(m => m.loadAbout());
+
+    currentSection = sectionName;
   }
 }
 
