@@ -154,6 +154,33 @@ impl Default for ModelInventoryView {
     }
 }
 
+/// Observation of whether a Present model is inference-visible (JIT semantics).
+///
+/// For LM Studio, a model may be physically present (downloaded) but not visible
+/// in the inference plane (/v1/models). This enum distinguishes three observation
+/// outcomes to avoid collapsing errors into "not visible".
+///
+/// The readiness evaluator uses this to decide whether Present can be treated as
+/// Ready (Visible), requires explicit load (NotVisible), or represents unknown
+/// truth that should not drive decisions (ObservationFailed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InferenceVisibilityObservation {
+    /// Successfully observed: model is inference-visible (can be loaded on demand).
+    Visible,
+    /// Successfully observed: model is not inference-visible (requires explicit load).
+    NotVisible,
+    /// Observation failed (HTTP error, transport failure, malformed response).
+    /// This is distinct from NotVisible: we cannot establish the truth.
+    ObservationFailed,
+}
+
+impl Default for InferenceVisibilityObservation {
+    fn default() -> Self {
+        Self::ObservationFailed
+    }
+}
+
 /// Semantic next action for a lane.
 ///
 /// Tells the frontend which button to show. The backend computes this from
@@ -248,13 +275,15 @@ pub struct SetupReadinessState {
     pub endpoint_state: EndpointState,
     /// Lifecycle state of the configured model.
     pub model_lifecycle: ModelLifecycle,
-    /// Whether a Present model is sufficient for inference without explicit load.
-    /// - Ollama: true (supports JIT loading)
-    /// - LM Studio: false (may require explicit load)
+    /// Whether a Present model is inference-visible (JIT semantics).
+    /// - Ollama: Visible (supports JIT loading)
+    /// - LM Studio: Visible/NotVisible/ObservationFailed based on /v1/models probe
     ///
-    /// This flag allows the readiness evaluator to treat Present as Ready for
+    /// This allows the readiness evaluator to treat Present as Ready for
     /// providers that support JIT, while requiring explicit Ready state for others.
-    pub can_infer_from_present_model: bool,
+    /// ObservationFailed means the JIT probe failed; do not make decisions based
+    /// on failed evidence.
+    pub can_infer_from_present_model: InferenceVisibilityObservation,
     /// Whether the provider supports downloading models.
     /// - Ollama: true
     /// - LM Studio: true
@@ -346,10 +375,14 @@ pub fn evaluate_lane_readiness(state: &SetupReadinessState) -> LaneReadiness {
         ModelLifecycle::Missing => LaneReadiness::NoCompatibleModel,
         ModelLifecycle::Downloading => LaneReadiness::ModelDownloading,
         ModelLifecycle::Present => {
-            if state.can_infer_from_present_model {
-                LaneReadiness::Ready
-            } else {
-                LaneReadiness::ModelPresent
+            match state.can_infer_from_present_model {
+                InferenceVisibilityObservation::Visible => LaneReadiness::Ready,
+                InferenceVisibilityObservation::NotVisible => LaneReadiness::ModelPresent,
+                InferenceVisibilityObservation::ObservationFailed => {
+                    // Observation failed: do not make decisions based on failed evidence.
+                    // Report Unknown to indicate truth could not be established.
+                    LaneReadiness::Unknown
+                }
             }
         }
         ModelLifecycle::Loading => LaneReadiness::ModelLoading,
@@ -399,14 +432,22 @@ pub fn compute_next_action(state: &SetupReadinessState) -> NextAction {
             NextAction::None
         }
         ModelLifecycle::Present => {
-            if state.can_infer_from_present_model {
-                NextAction::None
-            } else if state.can_load_model {
-                NextAction::Load
-            } else {
-                // Provider doesn't support explicit load; this shouldn't happen
-                // for Present state, but handle it defensively.
-                NextAction::None
+            match state.can_infer_from_present_model {
+                InferenceVisibilityObservation::Visible => NextAction::None,
+                InferenceVisibilityObservation::NotVisible => {
+                    if state.can_load_model {
+                        NextAction::Load
+                    } else {
+                        // Provider doesn't support explicit load; this shouldn't happen
+                        // for Present state, but handle it defensively.
+                        NextAction::None
+                    }
+                }
+                InferenceVisibilityObservation::ObservationFailed => {
+                    // Observation failed: suggest refresh to retry the observation.
+                    // Do not offer Load based on failed evidence.
+                    NextAction::Refresh
+                }
             }
         }
         ModelLifecycle::Missing => {
@@ -471,7 +512,7 @@ mod tests {
             runtime_presence: RuntimePresence::Unknown,
             endpoint_state: EndpointState::Unknown,
             model_lifecycle: ModelLifecycle::Unknown,
-            can_infer_from_present_model: false,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Unknown,
@@ -488,7 +529,7 @@ mod tests {
             runtime_presence: RuntimePresence::NotInstalled,
             endpoint_state: EndpointState::Unknown,
             model_lifecycle: ModelLifecycle::Unknown,
-            can_infer_from_present_model: false,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Unknown,
@@ -508,7 +549,7 @@ mod tests {
             runtime_presence: RuntimePresence::Unknown,
             endpoint_state: EndpointState::Unreachable,
             model_lifecycle: ModelLifecycle::Unknown,
-            can_infer_from_present_model: false,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Unreachable {
@@ -533,7 +574,7 @@ mod tests {
             runtime_presence: RuntimePresence::NotInstalled,
             endpoint_state: EndpointState::Unreachable,
             model_lifecycle: ModelLifecycle::Unknown,
-            can_infer_from_present_model: false,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Unreachable {
@@ -553,7 +594,7 @@ mod tests {
             runtime_presence: RuntimePresence::Unknown,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
-            can_infer_from_present_model: false,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
@@ -572,7 +613,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Missing,
-            can_infer_from_present_model: false,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
@@ -592,7 +633,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Downloading,
-            can_infer_from_present_model: false,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
@@ -612,7 +653,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Present,
-            can_infer_from_present_model: true,
+            can_infer_from_present_model: InferenceVisibilityObservation::Visible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
@@ -631,7 +672,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Present,
-            can_infer_from_present_model: false,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
@@ -650,7 +691,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Loading,
-            can_infer_from_present_model: false,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
@@ -667,7 +708,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
-            can_infer_from_present_model: false,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
@@ -686,7 +727,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Failed,
-            can_infer_from_present_model: false,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
@@ -705,7 +746,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
-            can_infer_from_present_model: true,
+            can_infer_from_present_model: InferenceVisibilityObservation::Visible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
@@ -719,7 +760,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Missing,
-            can_infer_from_present_model: true,
+            can_infer_from_present_model: InferenceVisibilityObservation::Visible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
@@ -738,7 +779,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
-            can_infer_from_present_model: true,
+            can_infer_from_present_model: InferenceVisibilityObservation::Visible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
@@ -752,7 +793,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
-            can_infer_from_present_model: true,
+            can_infer_from_present_model: InferenceVisibilityObservation::Visible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
@@ -773,7 +814,7 @@ mod tests {
             runtime_presence: RuntimePresence::NotInstalled,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
-            can_infer_from_present_model: true,
+            can_infer_from_present_model: InferenceVisibilityObservation::Visible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
@@ -842,56 +883,56 @@ mod tests {
                 RuntimePresence::Unknown,
                 EndpointState::Unknown,
                 ModelLifecycle::Unknown,
-                false,
+                InferenceVisibilityObservation::NotVisible,
                 LaneReadiness::Unknown,
             ),
             (
                 RuntimePresence::NotInstalled,
                 EndpointState::Unreachable,
                 ModelLifecycle::Missing,
-                false,
+                InferenceVisibilityObservation::NotVisible,
                 LaneReadiness::RuntimeNotInstalled,
             ),
             (
                 RuntimePresence::Installed,
                 EndpointState::Unreachable,
                 ModelLifecycle::Present,
-                false,
+                InferenceVisibilityObservation::NotVisible,
                 LaneReadiness::EndpointUnreachable,
             ),
             (
                 RuntimePresence::Installed,
                 EndpointState::Reachable,
                 ModelLifecycle::Missing,
-                false,
+                InferenceVisibilityObservation::NotVisible,
                 LaneReadiness::NoCompatibleModel,
             ),
             (
                 RuntimePresence::Installed,
                 EndpointState::Reachable,
                 ModelLifecycle::Ready,
-                false,
+                InferenceVisibilityObservation::NotVisible,
                 LaneReadiness::Ready,
             ),
             (
                 RuntimePresence::Unknown,
                 EndpointState::Reachable,
                 ModelLifecycle::Ready,
-                false,
+                InferenceVisibilityObservation::NotVisible,
                 LaneReadiness::Ready,
             ),
             (
                 RuntimePresence::Installed,
                 EndpointState::Reachable,
                 ModelLifecycle::Present,
-                true, // JIT-capable
+                InferenceVisibilityObservation::Visible, // JIT-capable
                 LaneReadiness::Ready,
             ),
             (
                 RuntimePresence::Installed,
                 EndpointState::Reachable,
                 ModelLifecycle::Present,
-                false, // JIT not capable
+                InferenceVisibilityObservation::NotVisible, // JIT not capable
                 LaneReadiness::ModelPresent,
             ),
         ];
@@ -919,7 +960,7 @@ mod tests {
             assert_eq!(
                 evaluate_lane_readiness(&state),
                 expected,
-                "Failed for runtime={runtime:?}, endpoint={endpoint:?}, model={model:?}, can_infer={can_infer}",
+                "Failed for runtime={runtime:?}, endpoint={endpoint:?}, model={model:?}, can_infer={can_infer:?}",
             );
         }
     }
@@ -930,7 +971,7 @@ mod tests {
             runtime_presence: RuntimePresence::Unknown,
             endpoint_state: EndpointState::Unknown,
             model_lifecycle: ModelLifecycle::Unknown,
-            can_infer_from_present_model: false,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Unknown,
@@ -951,7 +992,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
-            can_infer_from_present_model: true,
+            can_infer_from_present_model: InferenceVisibilityObservation::Visible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::AuthenticationRequired,
@@ -971,7 +1012,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
-            can_infer_from_present_model: true,
+            can_infer_from_present_model: InferenceVisibilityObservation::Visible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::ProviderError {
@@ -993,7 +1034,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Unreachable,
             model_lifecycle: ModelLifecycle::Unknown,
-            can_infer_from_present_model: false,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Unreachable {
@@ -1015,7 +1056,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
-            can_infer_from_present_model: true,
+            can_infer_from_present_model: InferenceVisibilityObservation::Visible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::AuthenticationRequired,
@@ -1032,7 +1073,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Ready,
-            can_infer_from_present_model: false,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
@@ -1051,7 +1092,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Present,
-            can_infer_from_present_model: false,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
@@ -1070,7 +1111,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Missing,
-            can_infer_from_present_model: false,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
@@ -1089,7 +1130,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Missing,
-            can_infer_from_present_model: false,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
@@ -1108,7 +1149,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
             model_lifecycle: ModelLifecycle::Missing,
-            can_infer_from_present_model: false,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
@@ -1125,7 +1166,7 @@ mod tests {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Unreachable,
             model_lifecycle: ModelLifecycle::Unknown,
-            can_infer_from_present_model: false,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Unreachable {
@@ -1239,5 +1280,106 @@ mod tests {
         assert_eq!(json, r#""not_attempted""#);
         let decoded: ModelInventoryView = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded, view);
+    }
+
+    #[test]
+    fn inference_visibility_present_and_visible_produces_ready() {
+        let state = SetupReadinessState {
+            runtime_presence: RuntimePresence::Installed,
+            endpoint_state: EndpointState::Reachable,
+            model_lifecycle: ModelLifecycle::Present,
+            can_infer_from_present_model: InferenceVisibilityObservation::Visible,
+            can_download_model: true,
+            can_load_model: true,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available { models: vec!["llama3.2".to_string()] },
+            configured_model: Some("llama3.2".to_string()),
+            download_target: None,
+        };
+        assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::Ready);
+        assert_eq!(compute_next_action(&state), NextAction::None);
+    }
+
+    #[test]
+    fn inference_visibility_present_and_not_visible_produces_model_present() {
+        let state = SetupReadinessState {
+            runtime_presence: RuntimePresence::Installed,
+            endpoint_state: EndpointState::Reachable,
+            model_lifecycle: ModelLifecycle::Present,
+            can_infer_from_present_model: InferenceVisibilityObservation::NotVisible,
+            can_download_model: true,
+            can_load_model: true,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available { models: vec!["llama3.2".to_string()] },
+            configured_model: Some("llama3.2".to_string()),
+            download_target: None,
+        };
+        assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::ModelPresent);
+        assert_eq!(compute_next_action(&state), NextAction::Load);
+    }
+
+    #[test]
+    fn inference_visibility_present_and_observation_failed_produces_unknown() {
+        let state = SetupReadinessState {
+            runtime_presence: RuntimePresence::Installed,
+            endpoint_state: EndpointState::Reachable,
+            model_lifecycle: ModelLifecycle::Present,
+            can_infer_from_present_model: InferenceVisibilityObservation::ObservationFailed,
+            can_download_model: true,
+            can_load_model: true,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available { models: vec!["llama3.2".to_string()] },
+            configured_model: Some("llama3.2".to_string()),
+            download_target: None,
+        };
+        assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::Unknown);
+        assert_eq!(compute_next_action(&state), NextAction::Refresh);
+    }
+
+    #[test]
+    fn inference_visibility_loaded_ignores_observation_failure() {
+        // Physical Loaded state is stronger evidence than JIT lookup.
+        // Even if inference visibility observation fails, Loaded means Ready.
+        let state = SetupReadinessState {
+            runtime_presence: RuntimePresence::Installed,
+            endpoint_state: EndpointState::Reachable,
+            model_lifecycle: ModelLifecycle::Ready,
+            can_infer_from_present_model: InferenceVisibilityObservation::ObservationFailed,
+            can_download_model: true,
+            can_load_model: true,
+            provider_access: ProviderAccessState::Available,
+            model_inventory: ModelInventoryView::Available { models: vec!["llama3.2".to_string()] },
+            configured_model: Some("llama3.2".to_string()),
+            download_target: None,
+        };
+        assert_eq!(evaluate_lane_readiness(&state), LaneReadiness::Ready);
+        assert_eq!(compute_next_action(&state), NextAction::None);
+    }
+
+    #[test]
+    fn inference_visibility_observation_failed_serde() {
+        let obs = InferenceVisibilityObservation::ObservationFailed;
+        let json = serde_json::to_string(&obs).unwrap();
+        assert_eq!(json, r#""observation_failed""#);
+        let decoded: InferenceVisibilityObservation = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, obs);
+    }
+
+    #[test]
+    fn inference_visibility_visible_serde() {
+        let obs = InferenceVisibilityObservation::Visible;
+        let json = serde_json::to_string(&obs).unwrap();
+        assert_eq!(json, r#""visible""#);
+        let decoded: InferenceVisibilityObservation = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, obs);
+    }
+
+    #[test]
+    fn inference_visibility_not_visible_serde() {
+        let obs = InferenceVisibilityObservation::NotVisible;
+        let json = serde_json::to_string(&obs).unwrap();
+        assert_eq!(json, r#""not_visible""#);
+        let decoded: InferenceVisibilityObservation = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, obs);
     }
 }
