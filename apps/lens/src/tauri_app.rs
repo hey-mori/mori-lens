@@ -747,14 +747,17 @@ async fn get_provider_readiness(
         &quick_access,
         &quick_inventory,
     );
+    let deep_effective = if !deep_config_valid {
+        EffectiveModelResult {
+            effective_model: None,
+            download_target: None,
+        }
+    } else {
+        derive_effective_model_and_target(deep_provider, &deep_model, &deep_inventory)
+    };
     let deep_lifecycle = if !deep_config_valid {
         lens_core::readiness::ModelLifecycle::Unknown
     } else {
-        let deep_effective = derive_effective_model_and_target(
-            deep_provider,
-            &deep_model,
-            &deep_inventory,
-        );
         determine_model_lifecycle_v2(
             deep_provider,
             &deep_endpoint,
@@ -778,10 +781,44 @@ async fn get_provider_readiness(
     let quick_endpoint_state = access_to_endpoint(&quick_access);
     let deep_endpoint_state = access_to_endpoint(&deep_access);
 
-    let quick_can_infer_from_present =
-        quick_provider == lens_core::translate::Provider::Ollama;
-    let deep_can_infer_from_present =
-        deep_provider == lens_core::translate::Provider::Ollama;
+    let quick_can_infer_from_present = match quick_provider {
+        lens_core::translate::Provider::Ollama => true,
+        lens_core::translate::Provider::LmStudio => {
+            // Check if the effective model is inference-visible (JIT semantics)
+            if let Some(model) = &quick_effective.effective_model {
+                if matches!(quick_access, lens_core::readiness::ProviderAccessState::Available) {
+                    check_lmstudio_inference_visibility(
+                        &quick_endpoint,
+                        model,
+                        None, // P20C: no API token support yet
+                    )
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        }
+    };
+    let deep_can_infer_from_present = match deep_provider {
+        lens_core::translate::Provider::Ollama => true,
+        lens_core::translate::Provider::LmStudio => {
+            // Check if the effective model is inference-visible (JIT semantics)
+            if let Some(model) = &deep_effective.effective_model {
+                if matches!(deep_access, lens_core::readiness::ProviderAccessState::Available) {
+                    check_lmstudio_inference_visibility(
+                        &deep_endpoint,
+                        model,
+                        None, // P20C: no API token support yet
+                    )
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        }
+    };
 
     let quick_caps = lens_core::provider_capability::ProviderCapability::for_provider(
         quick_provider,
@@ -1006,6 +1043,27 @@ fn get_model_state(
         Ok(Err(e)) => Err(e.reason().into()),
         Err(_) => Err("thread join failed".into()),
     }
+}
+
+/// Check if a model is inference-visible for LM Studio (JIT semantics).
+///
+/// Returns true if the model is visible in /v1/models (can be loaded on demand).
+/// Returns false if not visible or on any error (fail closed).
+fn check_lmstudio_inference_visibility(
+    endpoint: &str,
+    model: &str,
+    api_token: Option<&str>,
+) -> bool {
+    use lens_translate::lmstudio_runtime::LmStudioRuntime;
+
+    let runtime = if let Some(token) = api_token {
+        LmStudioRuntime::with_token(endpoint, token)
+    } else {
+        LmStudioRuntime::new(endpoint)
+    };
+
+    // Fail closed: any error means we cannot confirm visibility
+    runtime.is_inference_visible(model).unwrap_or(false)
 }
 
 /// Map ProviderAccessState to RuntimePresence.

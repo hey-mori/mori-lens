@@ -143,6 +143,20 @@ impl LmStudioRuntime {
         self.api_token.as_deref()
     }
 
+    /// Check if a model is inference-visible via the OpenAI-compatible plane.
+    ///
+    /// This queries /v1/models to determine if the model is exposed for inference.
+    /// For LM Studio with JIT enabled, downloaded-but-not-loaded models appear here.
+    ///
+    /// Returns:
+    /// - Ok(true): model is inference-visible (JIT can load on demand)
+    /// - Ok(false): model is not inference-visible (needs explicit load)
+    /// - Err: inference plane query failed (fail closed, do not interpret as false)
+    pub fn is_inference_visible(&self, model: &str) -> Result<bool, TranslateError> {
+        let inference_models = list_inference_models(&self.endpoint, self.api_token.as_deref())?;
+        Ok(inference_models.iter().any(|m| m == model))
+    }
+
     /// Start downloading a model from LM Studio.
     ///
     /// Sends POST /api/v1/models/download with the model identifier.
@@ -511,39 +525,20 @@ impl ProviderRuntime for LmStudioRuntime {
             .find(|m| m.key == model)
             .ok_or_else(|| TranslateError::ModelMissing(model.to_owned()))?;
 
-        // If explicitly loaded, it's Ready
+        // If explicitly loaded in memory, it's Loaded (physical truth)
         if raw_model.is_loaded {
             return Ok(ModelState::Loaded {
                 name: raw_model.key.clone(),
             });
         }
 
-        // Native present but not loaded. Check inference plane for JIT visibility.
-        // This queries /v1/models to see if the model is exposed to inference.
-        match list_inference_models(&self.endpoint, self.api_token.as_deref()) {
-            Ok(inference_models) => {
-                // Inference plane query succeeded
-                if inference_models.iter().any(|m| m == model) {
-                    // Model is visible in inference plane (JIT enabled)
-                    // This means inference requests can load it automatically
-                    Ok(ModelState::Loaded {
-                        name: raw_model.key.clone(),
-                    })
-                } else {
-                    // Model not in inference plane (JIT disabled or not visible)
-                    // It's present locally but needs explicit load
-                    Ok(ModelState::Available {
-                        name: raw_model.key.clone(),
-                        size: raw_model.size_bytes,
-                    })
-                }
-            }
-            Err(e) => {
-                // Inference plane query failed. Fail closed: do not interpret
-                // failure as "model not visible". Return the error.
-                Err(e)
-            }
-        }
+        // Model is present locally but not loaded in memory.
+        // Return Available (physical truth: not loaded).
+        // Inference visibility (JIT) is tracked separately for readiness evaluation.
+        Ok(ModelState::Available {
+            name: raw_model.key.clone(),
+            size: raw_model.size_bytes,
+        })
     }
 }
 
@@ -954,58 +949,62 @@ mod tests {
     }
 
     #[test]
-    fn model_state_returns_loaded_when_inference_plane_contains_model() {
+    fn model_state_returns_available_when_inference_plane_contains_model() {
         // Model exists in native plane but not explicitly loaded.
         // Inference plane contains it (JIT enabled, model visible for inference).
-        // This means the model is usable for inference even without explicit load.
+        // Physical state is still Available (not loaded in memory).
+        // Inference visibility is tracked separately via is_inference_visible().
         let server = FakeServer::start(vec![
-            FakeResponse::ok_json(LM_STUDIO_LLM_MODELS_ONLY).expect_get("/api/v1/models"),
-            FakeResponse::ok_json(LM_STUDIO_INFERENCE_MODELS_WITH_LLAMA).expect_get("/v1/models"),
+            FakeResponse::ok_json(LM_STUDIO_LLM_MODELS_ONLY).expect_get("/api/v1/models")
         ]);
 
         let runtime = LmStudioRuntime::new(server.address());
         let state = runtime.model_state("llama-3.1-8b").unwrap();
 
+        // Physical state: Available (not loaded in memory)
         match state {
-            ModelState::Loaded { name } => {
+            ModelState::Available { name, size } => {
                 assert_eq!(name, "llama-3.1-8b");
+                assert_eq!(size, 4700000000);
             }
-            _ => panic!("Expected ModelState::Loaded (JIT visible), got {:?}", state),
+            _ => panic!(
+                "Expected ModelState::Available (physical truth), got {:?}",
+                state
+            ),
         }
     }
 
     #[test]
-    fn model_state_returns_error_when_inference_plane_fails() {
-        // Model exists in native plane but not loaded.
-        // Inference plane query fails (server error, timeout, etc.).
-        // Fail closed: return error, do not interpret failure as "not visible".
-        let server = FakeServer::start(vec![
-            FakeResponse::ok_json(LM_STUDIO_LLM_MODELS_ONLY).expect_get("/api/v1/models"),
-            FakeResponse::status(500).expect_get("/v1/models"),
-        ]);
+    fn is_inference_visible_returns_true_when_model_in_v1_models() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            LM_STUDIO_INFERENCE_MODELS_WITH_LLAMA,
+        )
+        .expect_get("/v1/models")]);
 
         let runtime = LmStudioRuntime::new(server.address());
-        let result = runtime.model_state("llama-3.1-8b");
-
-        // Should propagate the error, not return Available
-        assert!(matches!(result, Err(TranslateError::HttpFailed(500))));
+        let visible = runtime.is_inference_visible("llama-3.1-8b").unwrap();
+        assert!(visible);
     }
 
     #[test]
-    fn model_state_returns_error_when_inference_plane_malformed() {
-        // Model exists in native plane but not loaded.
-        // Inference plane returns malformed JSON (missing "data" key).
-        // Fail closed: return Malformed error.
-        let server = FakeServer::start(vec![
-            FakeResponse::ok_json(LM_STUDIO_LLM_MODELS_ONLY).expect_get("/api/v1/models"),
-            FakeResponse::ok_json(r#"{"object": "list"}"#).expect_get("/v1/models"),
-        ]);
+    fn is_inference_visible_returns_false_when_model_not_in_v1_models() {
+        let server = FakeServer::start(vec![FakeResponse::ok_json(
+            LM_STUDIO_INFERENCE_MODELS_EMPTY,
+        )
+        .expect_get("/v1/models")]);
 
         let runtime = LmStudioRuntime::new(server.address());
-        let result = runtime.model_state("llama-3.1-8b");
+        let visible = runtime.is_inference_visible("llama-3.1-8b").unwrap();
+        assert!(!visible);
+    }
 
-        // Should propagate Malformed error
-        assert!(matches!(result, Err(TranslateError::Malformed)));
+    #[test]
+    fn is_inference_visible_returns_error_when_v1_models_fails() {
+        let server = FakeServer::start(vec![FakeResponse::status(500).expect_get("/v1/models")]);
+
+        let runtime = LmStudioRuntime::new(server.address());
+        let result = runtime.is_inference_visible("llama-3.1-8b");
+        assert!(matches!(result, Err(TranslateError::HttpFailed(500))));
     }
 
     #[test]
