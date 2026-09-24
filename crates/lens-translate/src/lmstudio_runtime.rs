@@ -703,11 +703,7 @@ fn list_inference_models(
             token,
         )?
     } else {
-        crate::http::get(
-            endpoint,
-            "/v1/models",
-            std::time::Duration::from_secs(3),
-        )?
+        crate::http::get(endpoint, "/v1/models", std::time::Duration::from_secs(3))?
     };
 
     // Check for authentication errors
