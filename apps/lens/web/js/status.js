@@ -1,12 +1,20 @@
-// Status page: loadStatus, togglePause, quitApp, toggleAutostart, refreshLocalAi
+// Status page: loadStatus, togglePause, quitApp, toggleAutostart, refreshReadiness
 
 import { invoke } from './tauri.js';
 import { escapeHtml, setStatus } from './ui.js';
 import { state } from './state.js';
-import { refreshLocalAiStatus } from './local_ai.js';
 import { refreshProviderReadiness, renderReadinessSection, attachReadinessActionHandlers } from './readiness.js';
 import { t } from './i18n.js';
 
+/**
+ * Load and render the status page.
+ *
+ * Uses cached provider readiness (state.cachedProviderReadiness).
+ * Does NOT make provider network calls. The 1-second status refresh
+ * calls this function, so it must be cheap.
+ *
+ * For a fresh provider readiness fetch, use refreshReadinessAndRender().
+ */
 export async function loadStatus() {
   try {
     const [diag, runtime, health] = await Promise.all([
@@ -14,8 +22,8 @@ export async function loadStatus() {
       invoke('get_runtime_status'),
       invoke('get_health_status'),
     ]);
-    // P20C: fetch provider readiness
-    const readiness = await refreshProviderReadiness();
+    // P20C: use cached readiness (no network call)
+    const readiness = state.cachedProviderReadiness;
     const el = document.getElementById('status-content');
     const paused = diag && diag.paused;
     const pauseLabel = paused ? t('status.pause.resume') : t('status.pause.button');
@@ -149,9 +157,26 @@ export async function loadStatus() {
     el.innerHTML = html;
     // Attach event listeners after rendering
     attachStatusHandlers();
+    attachReadinessActionHandlers();
+    // Listen for readiness state changes from action handlers
+    document.addEventListener('readiness-state-changed', () => {
+      loadStatus();
+    }, { once: true });
   } catch (e) {
     console.error('loadStatus failed:', e);
   }
+}
+
+/**
+ * Perform a fresh provider readiness fetch and re-render.
+ *
+ * This is the ONE place that calls get_provider_readiness for the Status page.
+ * Used by: initial load, navigation to status, manual refresh button.
+ * NOT used by the 1-second polling interval (which uses cached data).
+ */
+export async function refreshReadinessAndRender() {
+  await refreshProviderReadiness();
+  await loadStatus();
 }
 
 function attachStatusHandlers() {
@@ -162,7 +187,7 @@ function attachStatusHandlers() {
   if (quitBtn) quitBtn.addEventListener('click', quitApp);
 
   const refreshBtn = document.getElementById('refresh-local-ai-btn');
-  if (refreshBtn) refreshBtn.addEventListener('click', refreshLocalAi);
+  if (refreshBtn) refreshBtn.addEventListener('click', refreshReadinessAndRender);
 
   const autostartBtn = document.getElementById('autostart-toggle-btn');
   if (autostartBtn) autostartBtn.addEventListener('click', toggleAutostart);
@@ -185,11 +210,6 @@ function attachStatusHandlers() {
 
   // Pull command copy buttons
   import('./diagnostics.js').then(m => m.attachPullCommandHandlers());
-}
-
-export async function refreshLocalAi() {
-  await refreshLocalAiStatus();
-  await loadStatus();
 }
 
 async function runHealthCheck() {

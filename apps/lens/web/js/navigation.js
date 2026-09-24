@@ -13,8 +13,7 @@ export function showSection(sectionName) {
     document.getElementById('section-' + sectionName).classList.add('active');
     // Dynamically import section modules to load their data
     if (sectionName === 'status') {
-      import('./models.js').then(m => m.refreshLocalAiStatus())
-        .then(() => import('./status.js').then(s => s.loadStatus()));
+      import('./status.js').then(s => s.refreshReadinessAndRender());
     }
     else if (sectionName === 'library') import('./library.js').then(m => m.loadLibrary());
     else if (sectionName === 'review') import('./review.js').then(m => m.loadReview());
