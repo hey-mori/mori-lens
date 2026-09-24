@@ -13,15 +13,14 @@ async function loadAll() {
     const statusModule = await import('./status.js');
     const settingsModule = await import('./settings.js');
     const diagnosticsModule = await import('./diagnostics.js');
+    // Initial load: render status from empty cache first (fast)
     await Promise.all([
       statusModule.loadStatus(),
       settingsModule.loadSettings(),
       diagnosticsModule.loadAbout(),
     ]);
-    // Asynchronously refresh Local AI after initial load
-    import('./models.js').then(m => m.refreshLocalAiStatus()).then(() => {
-      statusModule.loadStatus();
-    });
+    // Then perform ONE readiness refresh and re-render
+    statusModule.refreshReadinessAndRender();
   } catch (e) {
     console.error('loadAll failed:', e);
   }

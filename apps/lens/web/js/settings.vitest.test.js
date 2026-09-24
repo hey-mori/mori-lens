@@ -5,7 +5,7 @@ import { createControlCenterFixture, cleanupFixture } from './test-infrastructur
 // Use vi.hoisted to create mocks before vi.mock is hoisted
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
-  refreshLocalAiStatus: vi.fn(),
+  refreshProviderReadiness: vi.fn(),
   renderApps: vi.fn(),
   refreshModels: vi.fn(),
   setStatus: vi.fn(),
@@ -32,9 +32,9 @@ vi.mock('./ui.js', () => ({
   setStatus: mocks.setStatus,
 }));
 
-// Mock local_ai module
-vi.mock('./local_ai.js', () => ({
-  refreshLocalAiStatus: mocks.refreshLocalAiStatus,
+// Mock readiness module
+vi.mock('./readiness.js', () => ({
+  refreshProviderReadiness: mocks.refreshProviderReadiness,
 }));
 
 // Mock models module
@@ -171,8 +171,8 @@ describe('Settings module', () => {
     // Verify state was updated
     expect(state.currentSettings).toBeDefined();
 
-    // Verify refreshLocalAiStatus was called
-    expect(mocks.refreshLocalAiStatus).toHaveBeenCalled();
+    // Verify refreshProviderReadiness was called
+    expect(mocks.refreshProviderReadiness).toHaveBeenCalled();
 
     // Verify success status shown
     expect(mocks.setStatus).toHaveBeenCalledWith('settings.saved');

@@ -157,11 +157,11 @@ if grep -A 10 "export async function loadStatus()" apps/lens/web/js/status.js | 
 fi
 echo "Local AI polling regression check passed"
 
-# Verify initial startup triggers one Local AI refresh.
-# loadAll() must call refreshLocalAiStatus to avoid indefinite "확인 중..." on first open.
+# Verify initial startup triggers one readiness refresh.
+# loadAll() must call refreshReadinessAndRender to avoid indefinite "확인 중..." on first open.
 step "local-ai initial load regression"
-if ! grep -A 15 "async function loadAll()" apps/lens/web/js/app.js | grep -q "refreshLocalAiStatus"; then
-  echo "ERROR: loadAll() does not call refreshLocalAiStatus, initial Status will show '확인 중...' indefinitely"
+if ! grep -A 15 "async function loadAll()" apps/lens/web/js/app.js | grep -q "refreshReadinessAndRender"; then
+  echo "ERROR: loadAll() does not call refreshReadinessAndRender, initial Status will show '확인 중...' indefinitely"
   exit 1
 fi
 echo "Local AI initial load regression check passed"

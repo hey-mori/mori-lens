@@ -622,6 +622,12 @@ pub struct ProviderReadinessView {
     pub quick_next_action: lens_core::readiness::NextAction,
     /// Semantic next action for Deep lane.
     pub deep_next_action: lens_core::readiness::NextAction,
+    /// Effective model for Quick lane (derived from production resolver logic).
+    /// Some(model) if a model will be used for inference, None if no model is available.
+    pub quick_effective_model: Option<String>,
+    /// Download target for Quick lane (if a download would help).
+    /// Some(model_name) if Mori can download a specific model, None otherwise.
+    pub quick_download_target: Option<String>,
 }
 
 /// Tauri command: get provider readiness for the frontend.
@@ -645,42 +651,39 @@ async fn get_provider_readiness(
     use lens_core::readiness::{compute_next_action, SetupReadinessState};
 
     // Step 1: Read settings. Fail closed for invalid provider tokens.
-    let (quick_provider, deep_provider, quick_endpoint, deep_endpoint, quick_model, deep_model) = {
+    let (quick_provider, deep_provider, deep_config_valid, quick_endpoint, deep_endpoint, quick_model, deep_model) = {
         let s = settings.lock().unwrap();
         let view = s.view();
         let qp = lens_core::translate::Provider::from_token(&view.quick_engine)
             .ok_or_else(|| format!("invalid quick engine: {}", view.quick_engine))?;
 
         // Deep is Ollama-only per product constraint (ai_runtime::from_schema_deep).
-        // If the configured deep engine is not Ollama, report it but do not silently remap.
-        let dp = lens_core::translate::Provider::from_token(&view.deep_engine);
-
-        let (dp, deep_ep, deep_m) = match dp {
+        // If the configured deep engine is not Ollama, do NOT silently remap.
+        // Report the configuration as invalid so the readiness state reflects truth.
+        let (dp, deep_ep, deep_m, deep_valid) = match lens_core::translate::Provider::from_token(&view.deep_engine) {
             Some(lens_core::translate::Provider::Ollama) => (
                 lens_core::translate::Provider::Ollama,
                 view.deep_endpoint.clone(),
                 view.deep_model.clone(),
+                true,
             ),
             Some(lens_core::translate::Provider::LmStudio) => {
-                // Deep is Ollama-only. LM Studio configured for deep is invalid.
-                // Report as Ollama with default endpoint; the readiness state will
-                // show this lane as not ready because the deep model won't match.
+                // Deep is Ollama-only. LM Studio configured for deep is unsupported.
+                // Use a sentinel to avoid contacting any real endpoint on user's behalf.
                 (
                     lens_core::translate::Provider::Ollama,
-                    lens_core::translate::Provider::Ollama
-                        .default_endpoint()
-                        .to_owned(),
+                    "http://invalid-deep-config:0".to_owned(),
                     None,
+                    false,
                 )
             }
             None => {
-                // Invalid deep engine token. Fall back to Ollama defaults.
+                // Invalid deep engine token. Do not silently remap to defaults.
                 (
                     lens_core::translate::Provider::Ollama,
-                    lens_core::translate::Provider::Ollama
-                        .default_endpoint()
-                        .to_owned(),
+                    "http://invalid-deep-config:0".to_owned(),
                     None,
+                    false,
                 )
             }
         };
@@ -688,6 +691,7 @@ async fn get_provider_readiness(
         (
             qp,
             dp,
+            deep_valid,
             view.quick_endpoint.clone(),
             deep_ep,
             view.quick_model.clone(),
@@ -698,10 +702,14 @@ async fn get_provider_readiness(
     // Step 2: Check reachability with typed errors.
     // Run on a thread pool to avoid blocking the async runtime.
     let quick_access = check_provider_access(quick_provider, quick_endpoint.clone());
-    let same_endpoint =
-        quick_provider == deep_provider && quick_endpoint == deep_endpoint;
 
-    let deep_access = if same_endpoint {
+    // Deep access: if configuration is invalid, do NOT contact any endpoint.
+    // Report as ProviderError so the readiness lane shows the truth.
+    let deep_access = if !deep_config_valid {
+        lens_core::readiness::ProviderAccessState::ProviderError {
+            reason: "unsupported deep configuration".into(),
+        }
+    } else if quick_provider == deep_provider && quick_endpoint == deep_endpoint {
         quick_access.clone()
     } else {
         check_provider_access(deep_provider, deep_endpoint.clone())
@@ -709,37 +717,56 @@ async fn get_provider_readiness(
 
     // Step 3: Get model inventory (preserving errors).
     let quick_inventory = get_model_inventory(quick_provider, quick_endpoint.clone(), &quick_access);
-    let deep_inventory = if same_endpoint {
+    let deep_inventory = if !deep_config_valid {
+        lens_core::readiness::ModelInventoryView::NotAttempted
+    } else if quick_provider == deep_provider && quick_endpoint == deep_endpoint {
         quick_inventory.clone()
     } else {
         get_model_inventory(deep_provider, deep_endpoint.clone(), &deep_access)
     };
 
-    // Step 4: Determine model lifecycle for each lane.
-    // Uses model_state via ProviderRuntime to detect loaded_instances for LM Studio.
+    // Step 4: Derive effective model using production resolver logic.
+    // This mirrors resolve_model_for_provider but uses already-fetched inventory.
+    let quick_effective = derive_effective_model_and_target(
+        quick_provider,
+        &quick_model,
+        &quick_inventory,
+    );
+
+    // Step 5: Determine model lifecycle for each lane.
+    // Uses effective model (not just configured) for lifecycle evaluation.
     let quick_lifecycle = determine_model_lifecycle_v2(
         quick_provider,
         &quick_endpoint,
-        &quick_model,
+        &quick_effective.effective_model,
         &quick_access,
         &quick_inventory,
     );
-    let deep_lifecycle = determine_model_lifecycle_v2(
-        deep_provider,
-        &deep_endpoint,
-        &deep_model,
-        &deep_access,
-        &deep_inventory,
-    );
+    let deep_lifecycle = if !deep_config_valid {
+        lens_core::readiness::ModelLifecycle::Unknown
+    } else {
+        let deep_effective = derive_effective_model_and_target(
+            deep_provider,
+            &deep_model,
+            &deep_inventory,
+        );
+        determine_model_lifecycle_v2(
+            deep_provider,
+            &deep_endpoint,
+            &deep_effective.effective_model,
+            &deep_access,
+            &deep_inventory,
+        )
+    };
 
-    // Step 5: Integrate download state into lifecycle.
+    // Step 6: Integrate download state into lifecycle.
+    // P20C: download operations are Quick-only. Do not apply to Deep.
     let download = manager.operation_snapshot();
     let quick_lifecycle =
-        integrate_download_into_lifecycle(quick_lifecycle, &download, quick_provider, &quick_model);
-    let deep_lifecycle =
-        integrate_download_into_lifecycle(deep_lifecycle, &download, deep_provider, &deep_model);
+        integrate_download_into_lifecycle(quick_lifecycle, &download, quick_provider, &quick_effective.effective_model);
+    // Deep lifecycle is NOT modified by download state in P20C (no mutation scope).
 
-    // Step 6: Build SetupReadinessState and evaluate.
+    // Step 7: Build SetupReadinessState and evaluate.
     let quick_runtime = endpoint_to_runtime(&quick_access);
     let deep_runtime = endpoint_to_runtime(&deep_access);
 
@@ -770,7 +797,7 @@ async fn get_provider_readiness(
 
     let snapshot = lens_core::readiness::evaluate_readiness(&quick_state, &deep_state);
 
-    // Step 7: Capabilities and next actions.
+    // Step 8: Capabilities and next actions.
     let quick_caps = lens_core::provider_capability::ProviderCapability::for_provider(
         quick_provider,
     );
@@ -778,8 +805,19 @@ async fn get_provider_readiness(
         deep_provider,
     );
 
-    let quick_next = compute_next_action(&quick_state);
-    let deep_next = compute_next_action(&deep_state);
+    let quick_next_raw = compute_next_action(&quick_state);
+    // Override: if pure evaluator says ConfigureModel but we have a download target,
+    // the real action is Download (Ollama first-run with DEFAULT_MODEL).
+    let quick_next = if quick_next_raw == lens_core::readiness::NextAction::ConfigureModel
+        && quick_effective.download_target.is_some()
+        && quick_caps.can_download_model
+    {
+        lens_core::readiness::NextAction::Download
+    } else {
+        quick_next_raw
+    };
+    // P20C: Deep is status-only. No mutation CTA for Deep until a real setup workflow exists.
+    let deep_next = lens_core::readiness::NextAction::None;
 
     Ok(ProviderReadinessView {
         quick_lane: snapshot.quick,
@@ -801,6 +839,8 @@ async fn get_provider_readiness(
         download,
         quick_next_action: quick_next,
         deep_next_action: deep_next,
+        quick_effective_model: quick_effective.effective_model,
+        quick_download_target: quick_effective.download_target,
     })
 }
 
@@ -821,13 +861,16 @@ fn check_provider_access(
     match rx.recv() {
         Ok(Ok(())) => ProviderAccessState::Available,
         Ok(Err(e)) => map_translate_error_to_access(e),
-        Err(_) => ProviderAccessState::ProviderError {
+        Err(_) => ProviderAccessState::Unreachable {
             reason: "thread join failed".into(),
         },
     }
 }
 
 /// Map a TranslateError to a ProviderAccessState.
+///
+/// Distinguishes transport-level failures (Unavailable, Timeout) from
+/// provider-level errors (5xx, malformed response) and auth failures (401/403).
 fn map_translate_error_to_access(
     e: lens_core::translate::TranslateError,
 ) -> lens_core::readiness::ProviderAccessState {
@@ -837,10 +880,10 @@ fn map_translate_error_to_access(
         TranslateError::HttpFailed(401) | TranslateError::HttpFailed(403) => {
             ProviderAccessState::AuthenticationRequired
         }
-        TranslateError::Unavailable => ProviderAccessState::ProviderError {
+        TranslateError::Unavailable => ProviderAccessState::Unreachable {
             reason: "unavailable".into(),
         },
-        TranslateError::Timeout => ProviderAccessState::ProviderError {
+        TranslateError::Timeout => ProviderAccessState::Unreachable {
             reason: "timeout".into(),
         },
         TranslateError::HttpFailed(status) => ProviderAccessState::ProviderError {
@@ -887,6 +930,9 @@ fn get_model_inventory(
 ///
 /// For LM Studio, this detects loaded_instances to produce Ready directly.
 /// For Ollama, Present + can_infer_from_present_model handles JIT semantics.
+///
+/// If model-state lookup fails, returns Unknown instead of fabricating presence.
+/// A provider/model-state error is NOT evidence that the model is available.
 fn determine_model_lifecycle_v2(
     provider: lens_core::translate::Provider,
     endpoint: &str,
@@ -912,8 +958,10 @@ fn determine_model_lifecycle_v2(
             if !model_list.iter().any(|m| m == model) {
                 return ModelLifecycle::Missing;
             }
-            let model_state = get_model_state(provider, endpoint, model);
-            lens_core::readiness::model_state_to_lifecycle(model_state)
+            match get_model_state(provider, endpoint, model) {
+                Ok(state) => lens_core::readiness::model_state_to_lifecycle(state),
+                Err(_) => ModelLifecycle::Unknown,
+            }
         }
         None => match provider {
             lens_core::translate::Provider::Ollama => {
@@ -929,12 +977,14 @@ fn determine_model_lifecycle_v2(
 }
 
 /// Get model state via ProviderRuntime.
+///
+/// Returns Err on any failure (thread join, runtime error, model missing).
+/// Callers must NOT interpret failure as model presence.
 fn get_model_state(
     provider: lens_core::translate::Provider,
     endpoint: &str,
     model: &str,
-) -> lens_core::translate::ModelState {
-    use lens_core::translate::ModelState;
+) -> Result<lens_core::translate::ModelState, String> {
     let (tx, rx) = std::sync::mpsc::channel();
     let ep = endpoint.to_owned();
     let m = model.to_owned();
@@ -944,15 +994,18 @@ fn get_model_state(
         let _ = tx.send(result);
     });
     match rx.recv() {
-        Ok(Ok(state)) => state,
-        _ => ModelState::Available {
-            name: model.to_owned(),
-            size: 0,
-        },
+        Ok(Ok(state)) => Ok(state),
+        Ok(Err(e)) => Err(e.reason().into()),
+        Err(_) => Err("thread join failed".into()),
     }
 }
 
 /// Map ProviderAccessState to RuntimePresence.
+///
+/// A reachable HTTP endpoint proves the provider is answering, but does not
+/// prove installation in the domain's defined sense (PATH, registry, service
+/// enumeration). Use Unknown until real installation detection exists.
+/// Only Available is strong enough evidence to claim Installed.
 fn endpoint_to_runtime(
     access: &lens_core::readiness::ProviderAccessState,
 ) -> lens_core::readiness::RuntimePresence {
@@ -960,12 +1013,17 @@ fn endpoint_to_runtime(
     match access {
         ProviderAccessState::Available => RuntimePresence::Installed,
         ProviderAccessState::Unknown => RuntimePresence::Unknown,
-        ProviderAccessState::AuthenticationRequired => RuntimePresence::Installed,
+        ProviderAccessState::Unreachable { .. } => RuntimePresence::Unknown,
+        ProviderAccessState::AuthenticationRequired => RuntimePresence::Unknown,
         ProviderAccessState::ProviderError { .. } => RuntimePresence::Unknown,
     }
 }
 
 /// Map ProviderAccessState to EndpointState.
+///
+/// AuthenticationRequired and ProviderError both imply the provider is
+/// reachable (it answered), so they map to Reachable. Only Unreachable
+/// (transport failure) maps to EndpointState::Unreachable.
 fn access_to_endpoint(
     access: &lens_core::readiness::ProviderAccessState,
 ) -> lens_core::readiness::EndpointState {
@@ -973,8 +1031,11 @@ fn access_to_endpoint(
     match access {
         ProviderAccessState::Available => EndpointState::Reachable,
         ProviderAccessState::Unknown => EndpointState::Unknown,
-        ProviderAccessState::AuthenticationRequired => EndpointState::Unreachable,
-        ProviderAccessState::ProviderError { .. } => EndpointState::Unreachable,
+        ProviderAccessState::Unreachable { .. } => EndpointState::Unreachable,
+        // Provider answered but with auth error; it IS reachable.
+        ProviderAccessState::AuthenticationRequired => EndpointState::Reachable,
+        // Provider answered but with server error; it IS reachable.
+        ProviderAccessState::ProviderError { .. } => EndpointState::Reachable,
     }
 }
 
@@ -1016,6 +1077,82 @@ fn integrate_download_into_lifecycle(
     match &snap.status {
         DownloadStatus::Failed(_) => ModelLifecycle::Failed,
         _ => lifecycle,
+    }
+}
+
+/// Result of deriving effective model and download target.
+struct EffectiveModelResult {
+    /// The model that will actually be used for inference (mirrors production resolver).
+    effective_model: Option<String>,
+    /// A model that Mori can download to improve readiness (None if no action available).
+    download_target: Option<String>,
+}
+
+/// Derive effective model and download target using production resolver logic.
+///
+/// Mirrors `resolve_model_for_provider` but uses already-fetched inventory instead
+/// of making network calls. This ensures readiness evaluation uses the same model
+/// selection as actual inference.
+///
+/// For Ollama auto mode:
+/// - If inventory has models: effective = first model (matches runtime auto-select)
+/// - If inventory is empty: effective = None, download_target = DEFAULT_MODEL
+///
+/// For LM Studio auto mode:
+/// - If inventory has models: effective = first model (matches runtime auto-select)
+/// - If inventory is empty: effective = None, download_target = None (no fake target)
+///
+/// When a model is explicitly configured: effective = configured, download_target = None.
+fn derive_effective_model_and_target(
+    provider: lens_core::translate::Provider,
+    configured_model: &Option<String>,
+    inventory: &lens_core::readiness::ModelInventoryView,
+) -> EffectiveModelResult {
+    use lens_core::readiness::ModelInventoryView;
+
+    // If a model is explicitly configured, that is the effective model.
+    if let Some(model) = configured_model {
+        return EffectiveModelResult {
+            effective_model: Some(model.clone()),
+            download_target: None,
+        };
+    }
+
+    // Auto mode: derive from inventory.
+    let models = match inventory {
+        ModelInventoryView::Available { models } => models,
+        ModelInventoryView::LookupFailed { .. } | ModelInventoryView::NotAttempted => {
+            return EffectiveModelResult {
+                effective_model: None,
+                download_target: None,
+            };
+        }
+    };
+
+    if !models.is_empty() {
+        // Production resolver picks first available model for both Ollama and LM Studio.
+        EffectiveModelResult {
+            effective_model: Some(models[0].clone()),
+            download_target: None,
+        }
+    } else {
+        // No models installed.
+        match provider {
+            lens_core::translate::Provider::Ollama => {
+                // Ollama has a canonical default download target.
+                EffectiveModelResult {
+                    effective_model: None,
+                    download_target: Some(lens_translate::DEFAULT_MODEL.to_owned()),
+                }
+            }
+            lens_core::translate::Provider::LmStudio => {
+                // LM Studio has no default recommendation. Do not fabricate one.
+                EffectiveModelResult {
+                    effective_model: None,
+                    download_target: None,
+                }
+            }
+        }
     }
 }
 

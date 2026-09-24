@@ -105,8 +105,8 @@ impl Default for ModelLifecycle {
 /// Why a provider endpoint is not usable.
 ///
 /// The frontend uses this to decide whether to show "Start Ollama",
-/// "Enter API key", or "Check endpoint". Collapsing all failures into
-/// "unreachable" would hide authentication errors from the user.
+/// "Enter API key", or "Check endpoint". Each variant represents a
+/// distinct product fact; collapsing them hides actionable information.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderAccessState {
@@ -114,10 +114,14 @@ pub enum ProviderAccessState {
     Available,
     /// Have not checked yet or check is in progress.
     Unknown,
-    /// Provider requires authentication (401/403).
+    /// Connection refused, DNS failure, or timeout. Provider is not reachable
+    /// at the transport layer.
+    Unreachable { reason: String },
+    /// Provider requires authentication (HTTP 401/403). The provider answered
+    /// but refused the request due to missing or invalid credentials.
     AuthenticationRequired,
-    /// Provider returned an error (5xx, timeout, malformed response).
-    /// Carries a human-readable reason for diagnostics.
+    /// Provider returned an error (HTTP 5xx, malformed response, etc.).
+    /// The provider is reachable but not functioning correctly.
     ProviderError { reason: String },
 }
 
@@ -180,7 +184,8 @@ impl Default for NextAction {
 /// Readiness assessment for a single engine lane (Quick or Deep).
 ///
 /// Combines the three dimensions (runtime, endpoint, model) into a lane-level
-/// readiness state.
+/// readiness state. Each variant represents a distinct product truth; the
+/// frontend uses it to decide what to show the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LaneReadiness {
@@ -188,8 +193,16 @@ pub enum LaneReadiness {
     Unknown,
     /// Runtime is not installed. User needs to install the provider.
     RuntimeNotInstalled,
-    /// Endpoint probe failed. User needs to start the provider or check endpoint configuration.
+    /// Endpoint probe failed at the transport layer (connection refused,
+    /// timeout, DNS failure). User needs to start the provider or check
+    /// endpoint configuration.
     EndpointUnreachable,
+    /// Provider is reachable but requires authentication (HTTP 401/403).
+    /// The provider answered but refused the request.
+    AuthenticationRequired,
+    /// Provider is reachable but returned an error (HTTP 5xx, malformed
+    /// response). The provider is not functioning correctly.
+    ProviderError,
     /// Endpoint is reachable but no compatible model is present. User needs to download a model.
     NoCompatibleModel,
     /// Model is downloaded but not loaded. For providers requiring explicit load, user needs to load it.
@@ -256,27 +269,40 @@ pub struct SetupReadinessState {
 ///
 /// # Precedence rules
 ///
-/// 1. If provider_access is AuthenticationRequired, report EndpointUnreachable
-///    (auth errors look like unreachable from the readiness perspective; the
-///    next-action computation distinguishes them for the UI).
-/// 2. If endpoint is Reachable, continue model evaluation (runtime presence
+/// 1. If provider_access is AuthenticationRequired, report AuthenticationRequired
+///    (the provider answered but refused due to auth; this is distinct from
+///    transport-level unreachable).
+/// 2. If provider_access is ProviderError, report ProviderError (the provider
+///    answered but is malfunctioning; distinct from unreachable).
+/// 3. If endpoint is Reachable, continue model evaluation (runtime presence
 ///    Unknown does not block). Direct validated reachability is stronger
 ///    evidence than installation detection.
-/// 3. If endpoint is Unreachable:
+/// 4. If endpoint is Unreachable:
 ///    - If runtime presence is NotInstalled, report RuntimeNotInstalled
 ///    - Otherwise, report EndpointUnreachable
-/// 4. If endpoint is Unknown:
+/// 5. If endpoint is Unknown:
 ///    - If runtime presence is NotInstalled, report RuntimeNotInstalled
 ///    - Otherwise, report Unknown (not EndpointUnreachable, which would be
 ///      evidence inflation)
-/// 5. If endpoint is Reachable and model lifecycle is Present:
+/// 6. If endpoint is Reachable and model lifecycle is Present:
 ///    - If can_infer_from_present_model is true, report Ready (JIT-capable)
 ///    - Otherwise, report ModelPresent (explicit load required)
 pub fn evaluate_lane_readiness(state: &SetupReadinessState) -> LaneReadiness {
-    // Step 0: Authentication failure short-circuits to EndpointUnreachable.
-    // The UI distinguishes this via compute_next_action.
-    if state.provider_access == ProviderAccessState::AuthenticationRequired {
-        return LaneReadiness::EndpointUnreachable;
+    // Step 0: Provider access state takes precedence for auth and provider errors.
+    // These are distinct from transport-level unreachable: the provider answered.
+    match &state.provider_access {
+        ProviderAccessState::AuthenticationRequired => {
+            return LaneReadiness::AuthenticationRequired;
+        }
+        ProviderAccessState::ProviderError { .. } => {
+            return LaneReadiness::ProviderError;
+        }
+        ProviderAccessState::Unreachable { .. } => {
+            // Transport-level failure; fall through to endpoint_state logic below.
+        }
+        ProviderAccessState::Available | ProviderAccessState::Unknown => {
+            // No access-level blocker; continue to endpoint/model evaluation.
+        }
     }
 
     // Step 1: Check endpoint reachability with evidence precedence.
@@ -324,6 +350,14 @@ pub fn compute_next_action(state: &SetupReadinessState) -> NextAction {
     // Auth errors take precedence over everything else.
     if state.provider_access == ProviderAccessState::AuthenticationRequired {
         return NextAction::ResolveAuth;
+    }
+
+    // Provider errors suggest refresh (retry).
+    if matches!(
+        state.provider_access,
+        ProviderAccessState::ProviderError { .. }
+    ) {
+        return NextAction::Refresh;
     }
 
     // If the endpoint is not reachable, suggest refresh (retry) unless
@@ -432,7 +466,7 @@ mod tests {
             endpoint_state: EndpointState::Unreachable,
             model_lifecycle: ModelLifecycle::Unknown,
             can_infer_from_present_model: false,
-            provider_access: ProviderAccessState::ProviderError {
+            provider_access: ProviderAccessState::Unreachable {
                 reason: "connection refused".into(),
             },
             model_inventory: ModelInventoryView::NotAttempted,
@@ -451,7 +485,7 @@ mod tests {
             endpoint_state: EndpointState::Unreachable,
             model_lifecycle: ModelLifecycle::Unknown,
             can_infer_from_present_model: false,
-            provider_access: ProviderAccessState::ProviderError {
+            provider_access: ProviderAccessState::Unreachable {
                 reason: "connection refused".into(),
             },
             model_inventory: ModelInventoryView::NotAttempted,
@@ -760,16 +794,19 @@ mod tests {
         ];
 
         for (runtime, endpoint, model, can_infer, expected) in cases {
+            let provider_access = match endpoint {
+                EndpointState::Reachable => ProviderAccessState::Available,
+                EndpointState::Unreachable => ProviderAccessState::Unreachable {
+                    reason: "connection refused".into(),
+                },
+                EndpointState::Unknown => ProviderAccessState::Unknown,
+            };
             let state = SetupReadinessState {
                 runtime_presence: runtime,
                 endpoint_state: endpoint,
                 model_lifecycle: model,
                 can_infer_from_present_model: can_infer,
-                provider_access: if endpoint == EndpointState::Reachable {
-                    ProviderAccessState::Available
-                } else {
-                    ProviderAccessState::Unknown
-                },
+                provider_access,
                 model_inventory: ModelInventoryView::NotAttempted,
             };
             assert_eq!(
@@ -798,7 +835,7 @@ mod tests {
     }
 
     #[test]
-    fn auth_required_produces_endpoint_unreachable() {
+    fn auth_required_produces_authentication_required_lane() {
         let state = SetupReadinessState {
             runtime_presence: RuntimePresence::Installed,
             endpoint_state: EndpointState::Reachable,
@@ -806,6 +843,42 @@ mod tests {
             can_infer_from_present_model: true,
             provider_access: ProviderAccessState::AuthenticationRequired,
             model_inventory: ModelInventoryView::Available { models: vec![] },
+        };
+        assert_eq!(
+            evaluate_lane_readiness(&state),
+            LaneReadiness::AuthenticationRequired
+        );
+    }
+
+    #[test]
+    fn provider_error_produces_provider_error_lane() {
+        let state = SetupReadinessState {
+            runtime_presence: RuntimePresence::Installed,
+            endpoint_state: EndpointState::Reachable,
+            model_lifecycle: ModelLifecycle::Ready,
+            can_infer_from_present_model: true,
+            provider_access: ProviderAccessState::ProviderError {
+                reason: "500 internal server error".into(),
+            },
+            model_inventory: ModelInventoryView::Available { models: vec![] },
+        };
+        assert_eq!(
+            evaluate_lane_readiness(&state),
+            LaneReadiness::ProviderError
+        );
+    }
+
+    #[test]
+    fn unreachable_access_produces_endpoint_unreachable_lane() {
+        let state = SetupReadinessState {
+            runtime_presence: RuntimePresence::Installed,
+            endpoint_state: EndpointState::Unreachable,
+            model_lifecycle: ModelLifecycle::Unknown,
+            can_infer_from_present_model: false,
+            provider_access: ProviderAccessState::Unreachable {
+                reason: "connection refused".into(),
+            },
+            model_inventory: ModelInventoryView::NotAttempted,
         };
         assert_eq!(
             evaluate_lane_readiness(&state),
@@ -891,8 +964,8 @@ mod tests {
             endpoint_state: EndpointState::Unreachable,
             model_lifecycle: ModelLifecycle::Unknown,
             can_infer_from_present_model: false,
-            provider_access: ProviderAccessState::ProviderError {
-                reason: "timeout".into(),
+            provider_access: ProviderAccessState::Unreachable {
+                reason: "connection refused".into(),
             },
             model_inventory: ModelInventoryView::NotAttempted,
         };

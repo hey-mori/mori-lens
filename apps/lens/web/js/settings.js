@@ -3,7 +3,7 @@
 import { invoke } from './tauri.js';
 import { setStatus } from './ui.js';
 import { state } from './state.js';
-import { refreshLocalAiStatus } from './local_ai.js';
+import { refreshProviderReadiness } from './readiness.js';
 import { getLocale, setLocale, t } from './i18n.js';
 
 const PROVIDER_DEFAULT_ENDPOINTS = {
@@ -93,11 +93,11 @@ export async function saveSettings() {
     applySettingsToForm(outcome.settings);
     import('./apps.js').then(m => m.renderApps());
 
-    // Refresh Local AI status after successful save to reflect new configuration.
+    // Refresh provider readiness after successful save to reflect new configuration.
     // The status represents saved configuration (not active runtime), so refreshing
     // immediately is correct even when restart is required. The restart indicator
     // separately shows that active runtime differs from saved configuration.
-    await refreshLocalAiStatus();
+    await refreshProviderReadiness();
 
     if (outcome.restart_required) {
       setStatus(t('settings.saved.restart'), true);
