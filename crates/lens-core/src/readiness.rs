@@ -1293,7 +1293,9 @@ mod tests {
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
-            model_inventory: ModelInventoryView::Available { models: vec!["llama3.2".to_string()] },
+            model_inventory: ModelInventoryView::Available {
+                models: vec!["llama3.2".to_string()],
+            },
             configured_model: Some("llama3.2".to_string()),
             download_target: None,
         };
@@ -1311,7 +1313,9 @@ mod tests {
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
-            model_inventory: ModelInventoryView::Available { models: vec!["llama3.2".to_string()] },
+            model_inventory: ModelInventoryView::Available {
+                models: vec!["llama3.2".to_string()],
+            },
             configured_model: Some("llama3.2".to_string()),
             download_target: None,
         };
@@ -1329,7 +1333,9 @@ mod tests {
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
-            model_inventory: ModelInventoryView::Available { models: vec!["llama3.2".to_string()] },
+            model_inventory: ModelInventoryView::Available {
+                models: vec!["llama3.2".to_string()],
+            },
             configured_model: Some("llama3.2".to_string()),
             download_target: None,
         };
@@ -1349,7 +1355,9 @@ mod tests {
             can_download_model: true,
             can_load_model: true,
             provider_access: ProviderAccessState::Available,
-            model_inventory: ModelInventoryView::Available { models: vec!["llama3.2".to_string()] },
+            model_inventory: ModelInventoryView::Available {
+                models: vec!["llama3.2".to_string()],
+            },
             configured_model: Some("llama3.2".to_string()),
             download_target: None,
         };

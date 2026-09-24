@@ -701,4 +701,55 @@ mod tests {
         assert!(json.contains("\"model\":\"llama3.1:8b\""));
         assert!(json.contains("\"active\":true"));
     }
+
+    #[test]
+    fn snapshot_exact_json_shape() {
+        let progress = DownloadProgress {
+            bytes_downloaded: 50,
+            total_bytes: Some(100),
+            bytes_per_second: Some(10.0),
+            estimated_completion_seconds: Some(5.0),
+        };
+        let snapshot = DownloadOperationSnapshot {
+            provider: "ollama".to_string(),
+            model: "llama3.1:8b".to_string(),
+            status: DownloadStatus::Downloading(progress),
+            active: true,
+        };
+        let json = serde_json::to_string(&snapshot).unwrap();
+        assert_eq!(
+            json,
+            "{\"provider\":\"ollama\",\"model\":\"llama3.1:8b\",\"status\":{\"downloading\":{\"bytes_downloaded\":50,\"total_bytes\":100,\"bytes_per_second\":10.0,\"estimated_completion_seconds\":5.0}},\"active\":true}"
+        );
+    }
+
+    #[test]
+    fn snapshot_terminal_state_exact_shape() {
+        let snapshot = DownloadOperationSnapshot {
+            provider: "lmstudio".to_string(),
+            model: "mistral-7b".to_string(),
+            status: DownloadStatus::Completed,
+            active: false,
+        };
+        let json = serde_json::to_string(&snapshot).unwrap();
+        assert_eq!(
+            json,
+            "{\"provider\":\"lmstudio\",\"model\":\"mistral-7b\",\"status\":\"completed\",\"active\":false}"
+        );
+    }
+
+    #[test]
+    fn snapshot_failed_state_exact_shape() {
+        let snapshot = DownloadOperationSnapshot {
+            provider: "ollama".to_string(),
+            model: "llama3.1:8b".to_string(),
+            status: DownloadStatus::Failed(ManagementError::DownloadFailed),
+            active: false,
+        };
+        let json = serde_json::to_string(&snapshot).unwrap();
+        assert_eq!(
+            json,
+            "{\"provider\":\"ollama\",\"model\":\"llama3.1:8b\",\"status\":{\"failed\":\"download_failed\"},\"active\":false}"
+        );
+    }
 }

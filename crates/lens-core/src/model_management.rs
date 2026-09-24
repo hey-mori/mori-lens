@@ -345,4 +345,93 @@ mod tests {
         assert!(json.contains("\"bytes_per_second\":10.0"));
         assert!(json.contains("\"estimated_completion_seconds\":5.0"));
     }
+
+    #[test]
+    fn download_status_starting_exact_shape() {
+        let status = DownloadStatus::Starting;
+        let json = serde_json::to_string(&status).unwrap();
+        assert_eq!(json, "\"starting\"");
+    }
+
+    #[test]
+    fn download_status_completed_exact_shape() {
+        let status = DownloadStatus::Completed;
+        let json = serde_json::to_string(&status).unwrap();
+        assert_eq!(json, "\"completed\"");
+    }
+
+    #[test]
+    fn download_status_already_present_exact_shape() {
+        let status = DownloadStatus::AlreadyPresent;
+        let json = serde_json::to_string(&status).unwrap();
+        assert_eq!(json, "\"already_present\"");
+    }
+
+    #[test]
+    fn download_status_downloading_exact_shape() {
+        let progress = DownloadProgress {
+            bytes_downloaded: 50,
+            total_bytes: Some(100),
+            bytes_per_second: Some(10.0),
+            estimated_completion_seconds: Some(5.0),
+        };
+        let status = DownloadStatus::Downloading(progress);
+        let json = serde_json::to_string(&status).unwrap();
+        assert_eq!(
+            json,
+            "{\"downloading\":{\"bytes_downloaded\":50,\"total_bytes\":100,\"bytes_per_second\":10.0,\"estimated_completion_seconds\":5.0}}"
+        );
+    }
+
+    #[test]
+    fn download_status_paused_exact_shape() {
+        let progress = DownloadProgress {
+            bytes_downloaded: 75,
+            total_bytes: Some(200),
+            bytes_per_second: None,
+            estimated_completion_seconds: None,
+        };
+        let status = DownloadStatus::Paused(progress);
+        let json = serde_json::to_string(&status).unwrap();
+        assert_eq!(
+            json,
+            "{\"paused\":{\"bytes_downloaded\":75,\"total_bytes\":200,\"bytes_per_second\":null,\"estimated_completion_seconds\":null}}"
+        );
+    }
+
+    #[test]
+    fn download_status_failed_exact_shape() {
+        let status = DownloadStatus::Failed(ManagementError::DownloadFailed);
+        let json = serde_json::to_string(&status).unwrap();
+        assert_eq!(json, "{\"failed\":\"download_failed\"}");
+    }
+
+    #[test]
+    fn management_error_all_variants_exact_shape() {
+        let cases = vec![
+            (
+                ManagementError::EndpointUnreachable,
+                "\"endpoint_unreachable\"",
+            ),
+            (ManagementError::Unauthorized, "\"unauthorized\""),
+            (ManagementError::ModelNotFound, "\"model_not_found\""),
+            (ManagementError::InvalidResponse, "\"invalid_response\""),
+            (ManagementError::DownloadFailed, "\"download_failed\""),
+            (ManagementError::LoadFailed, "\"load_failed\""),
+            (ManagementError::UnloadFailed, "\"unload_failed\""),
+            (
+                ManagementError::UnsupportedOperation,
+                "\"unsupported_operation\"",
+            ),
+            (ManagementError::ProviderBusy, "\"provider_busy\""),
+            (
+                ManagementError::OperationNotFound,
+                "\"operation_not_found\"",
+            ),
+        ];
+        for (error, expected) in cases {
+            let json = serde_json::to_string(&error).unwrap();
+            assert_eq!(json, expected, "Mismatch for {:?}", error);
+        }
+    }
 }
