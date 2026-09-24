@@ -22,7 +22,6 @@ let cachedReadinessData = null;
 
 // Track whether handlers have been attached to prevent duplicates
 let statusHandlersAttached = false;
-let readinessHandlersAttached = false;
 
 /**
  * Create action callbacks for readiness handlers.
@@ -38,14 +37,12 @@ function createActionCallbacks() {
       startOperationPolling(handleOperationUpdate);
     },
     onLoadStarted: () => {
-      // Start operation controller polling for load operation
-      startOperationPolling(handleOperationUpdate);
+      // Load completed and readiness was reconciled; update the readiness region
+      updateReadinessRegion();
     },
     onRefreshCompleted: () => {
       // Refresh completed; update readiness region
       updateReadinessRegion();
-      // Re-attach handlers with fresh callbacks
-      attachReadinessActionHandlers(createActionCallbacks());
     },
     onConfigureModel: () => {
       // Navigation only; no readiness refresh needed
@@ -103,7 +100,6 @@ function handleOperationUpdate(snapshot, isTerminal) {
     // Operation completed; trigger one final readiness reconciliation
     refreshProviderReadiness().then(() => {
       updateReadinessRegion();
-      attachReadinessActionHandlers(createActionCallbacks());
     });
   } else if (snapshot) {
     // Update the readiness region with the new operation snapshot
@@ -114,7 +110,6 @@ function handleOperationUpdate(snapshot, isTerminal) {
         download: snapshot,
       };
       updateReadinessRegion();
-      attachReadinessActionHandlers(createActionCallbacks());
     }
   }
 }
@@ -142,7 +137,27 @@ export function _resetCaches() {
   cachedReadinessHtml = null;
   cachedReadinessData = null;
   statusHandlersAttached = false;
-  readinessHandlersAttached = false;
+}
+
+/**
+ * Activate Status page (called when navigating to Status).
+ *
+ * Starts operation observation if there's an active operation.
+ * This is the entry point for the Status page lifecycle.
+ */
+export function activateStatus() {
+  // Start observing existing operations (if any)
+  observeExisting(handleOperationUpdate);
+}
+
+/**
+ * Deactivate Status page (called when navigating away from Status).
+ *
+ * Stops operation polling to prevent invisible background work.
+ * Backend download continues independently; frontend observation pauses.
+ */
+export function deactivateStatus() {
+  stopPolling();
 }
 
 /**
@@ -185,13 +200,8 @@ export async function loadStatus() {
       attachStatusHandlers();
       statusHandlersAttached = true;
     }
-    if (!readinessHandlersAttached) {
-      attachReadinessActionHandlers(createActionCallbacks());
-      readinessHandlersAttached = true;
-    }
 
-    // Start operation controller if not already polling
-    observeExisting(handleOperationUpdate);
+    // Note: Operation observation is started by activateStatus() from navigation
   } catch (e) {
     console.error('loadStatus failed:', e);
   }
@@ -372,30 +382,40 @@ export async function refreshReadinessAndRender() {
 }
 
 function attachStatusHandlers() {
-  const pauseBtn = document.getElementById('pause-btn');
-  if (pauseBtn) pauseBtn.addEventListener('click', togglePause);
+  const statusContent = document.getElementById('status-content');
+  if (!statusContent) return;
 
-  const quitBtn = document.getElementById('quit-btn');
-  if (quitBtn) quitBtn.addEventListener('click', quitApp);
+  // Single delegated listener for all status actions
+  statusContent.addEventListener('click', async (e) => {
+    const target = e.target.closest('button');
+    if (!target) return;
 
-  const refreshBtn = document.getElementById('refresh-local-ai-btn');
-  if (refreshBtn) refreshBtn.addEventListener('click', refreshReadinessAndRender);
+    const buttonId = target.id;
 
-  const autostartBtn = document.getElementById('autostart-toggle-btn');
-  if (autostartBtn) autostartBtn.addEventListener('click', toggleAutostart);
-
-  const exportBtn = document.getElementById('export-diagnostics-btn');
-  if (exportBtn) exportBtn.addEventListener('click', () => {
-    import('./diagnostics.js').then(m => m.exportDiagnostics());
+    // Dispatch based on button ID
+    if (buttonId === 'pause-btn') {
+      e.preventDefault();
+      await togglePause();
+    } else if (buttonId === 'quit-btn') {
+      e.preventDefault();
+      await quitApp();
+    } else if (buttonId === 'refresh-local-ai-btn') {
+      e.preventDefault();
+      await refreshReadinessAndRender();
+    } else if (buttonId === 'autostart-toggle-btn') {
+      e.preventDefault();
+      await toggleAutostart();
+    } else if (buttonId === 'export-diagnostics-btn') {
+      e.preventDefault();
+      import('./diagnostics.js').then(m => m.exportDiagnostics());
+    } else if (buttonId === 'copy-diagnostics-btn') {
+      e.preventDefault();
+      import('./diagnostics.js').then(m => m.copyDiagnostics(target));
+    } else if (buttonId === 'run-health-check-btn') {
+      e.preventDefault();
+      await runHealthCheck();
+    }
   });
-
-  const copyBtn = document.getElementById('copy-diagnostics-btn');
-  if (copyBtn) copyBtn.addEventListener('click', function() {
-    import('./diagnostics.js').then(m => m.copyDiagnostics(this));
-  });
-
-  const healthCheckBtn = document.getElementById('run-health-check-btn');
-  if (healthCheckBtn) healthCheckBtn.addEventListener('click', runHealthCheck);
 
   // Load recent diagnostic events
   loadRecentDiagnostics();

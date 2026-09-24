@@ -459,65 +459,98 @@ function escapeHtml(str) {
 }
 
 /**
- * Attach event handlers for readiness action buttons.
- * Call this after rendering the readiness UI.
+ * Current readiness action callbacks.
+ * Updated by attachReadinessActionHandlers without re-attaching listeners.
+ */
+let currentReadinessCallbacks = {
+  onDownloadStarted: () => {},
+  onLoadStarted: () => {},
+  onRefreshCompleted: () => {},
+  onConfigureModel: () => {},
+};
+
+/**
+ * Attach event handlers for readiness action buttons using event delegation.
+ *
+ * Uses a single delegated listener on the readiness region container.
+ * This ensures handlers survive readiness DOM replacement and prevents
+ * duplicate listener accumulation.
  *
  * Accepts explicit callbacks for action orchestration instead of using
  * global events. This ensures single-owner semantics and prevents cycles.
  *
  * @param {object} callbacks - Action completion callbacks
  * @param {function} callbacks.onDownloadStarted - Called after download starts (before polling)
- * @param {function} callbacks.onLoadStarted - Called after load starts
+ * @param {function} callbacks.onLoadStarted - Called after load completes (direct reconciliation)
  * @param {function} callbacks.onRefreshCompleted - Called after manual refresh completes
  * @param {function} callbacks.onConfigureModel - Called when configure-model action triggered
  */
 export function attachReadinessActionHandlers(callbacks = {}) {
-  const {
-    onDownloadStarted = () => {},
-    onLoadStarted = () => {},
-    onRefreshCompleted = () => {},
-    onConfigureModel = () => {},
-  } = callbacks;
+  // Update the current callbacks (used by the delegated listener)
+  currentReadinessCallbacks = {
+    onDownloadStarted: callbacks.onDownloadStarted || (() => {}),
+    onLoadStarted: callbacks.onLoadStarted || (() => {}),
+    onRefreshCompleted: callbacks.onRefreshCompleted || (() => {}),
+    onConfigureModel: callbacks.onConfigureModel || (() => {}),
+  };
 
-  document.querySelectorAll('.readiness-action-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const action = btn.dataset.action;
-      const provider = btn.dataset.provider;
+  // Find the readiness region container (stable root for delegation)
+  const readinessRegion = document.getElementById('status-readiness-region');
+  if (!readinessRegion) return;
 
-      btn.disabled = true;
-      btn.textContent = t('status.readiness.action.working');
+  // Only attach the delegated listener once
+  if (readinessRegion._readinessClickHandlerAttached) return;
 
-      try {
-        if (action === 'download') {
-          await invoke('start_quick_model_download');
-          // Start operation controller polling immediately, not refreshProviderReadiness
-          onDownloadStarted();
-        } else if (action === 'load') {
-          await invoke('load_lmstudio_instance');
-          // Start load observation
-          onLoadStarted();
-        } else if (action === 'refresh') {
-          // Refresh readiness from backend
-          await refreshProviderReadiness();
-          // Notify owner to re-render via explicit callback
-          onRefreshCompleted();
-          return; // Exactly-once: refresh action completes here
-        } else if (action === 'configure-model') {
-          // Navigate to the Models page
-          if (window.showSection) {
-            window.showSection('models');
-          }
-          onConfigureModel();
-          return; // Don't refresh readiness; models page has its own loading
+  // Create the delegated click handler
+  const clickHandler = async (e) => {
+    const btn = e.target.closest('.readiness-action-btn');
+    if (!btn) return;
+
+    e.preventDefault();
+    const action = btn.dataset.action;
+    const provider = btn.dataset.provider;
+
+    btn.disabled = true;
+    btn.textContent = t('status.readiness.action.working');
+
+    try {
+      if (action === 'download') {
+        await invoke('start_quick_model_download');
+        // Start operation controller polling immediately, not refreshProviderReadiness
+        currentReadinessCallbacks.onDownloadStarted();
+      } else if (action === 'load') {
+        // Load is synchronous: wait for completion, then reconcile readiness directly
+        // Do NOT start operation polling; load_lmstudio_instance is not an operation
+        await invoke('load_lmstudio_instance');
+        // Load completed successfully; trigger exactly one readiness reconciliation
+        await refreshProviderReadiness();
+        currentReadinessCallbacks.onLoadStarted();
+      } else if (action === 'refresh') {
+        // Refresh readiness from backend
+        await refreshProviderReadiness();
+        // Notify owner to re-render via explicit callback
+        currentReadinessCallbacks.onRefreshCompleted();
+        return; // Exactly-once: refresh action completes here
+      } else if (action === 'configure-model') {
+        // Navigate to the Models page
+        if (window.showSection) {
+          window.showSection('models');
         }
-        // For download/load, do NOT immediately refreshProviderReadiness.
-        // The operation controller will poll get_model_download_status instead.
-        // Terminal state will trigger exactly one refreshProviderReadiness reconciliation.
-      } catch (e) {
-        console.error('Readiness action failed:', e);
-        btn.disabled = false;
-        btn.textContent = t('status.readiness.action.failed');
+        currentReadinessCallbacks.onConfigureModel();
+        return; // Don't refresh readiness; models page has its own loading
       }
-    });
-  });
+      // For download, do NOT immediately refreshProviderReadiness.
+      // The operation controller will poll get_model_download_status instead.
+      // Terminal state will trigger exactly one refreshProviderReadiness reconciliation.
+      // For load, we already called refreshProviderReadiness above.
+    } catch (e) {
+      console.error('Readiness action failed:', e);
+      btn.disabled = false;
+      btn.textContent = t('status.readiness.action.failed');
+    }
+  };
+
+  // Attach the delegated listener once
+  readinessRegion.addEventListener('click', clickHandler);
+  readinessRegion._readinessClickHandlerAttached = true;
 }
