@@ -55,23 +55,30 @@ export const ProviderAccessState = {
  * Normalize provider access state from backend wire format.
  *
  * Backend serializes variants with fields as objects: {"variant": {fields}}.
- * Simple variants serialize as strings. This function extracts the variant name.
+ * Simple variants serialize as strings. This function extracts the variant name
+ * and preserves any associated data (e.g., reason).
  *
  * @param {string|object} accessState - Raw access state from backend
- * @returns {string} Normalized variant name
+ * @returns {{kind: string, reason?: string}} Normalized access state with kind and optional reason
  */
 export function normalizeAccessState(accessState) {
   if (typeof accessState === 'string') {
-    return accessState;
+    return { kind: accessState };
   }
   if (typeof accessState === 'object' && accessState !== null) {
     // Object form: {"variant_name": {fields}}
     const keys = Object.keys(accessState);
     if (keys.length === 1) {
-      return keys[0];
+      const kind = keys[0];
+      const data = accessState[kind];
+      // Preserve reason field if present
+      if (data && typeof data === 'object' && data.reason) {
+        return { kind, reason: data.reason };
+      }
+      return { kind };
     }
   }
-  return 'unknown';
+  return { kind: 'unknown' };
 }
 
 /**
@@ -192,9 +199,9 @@ function renderLaneRow(laneName, laneReadiness, provider, configuredModel,
 
   // Show auth error if applicable
   const normalizedAccess = normalizeAccessState(accessState);
-  if (normalizedAccess === ProviderAccessState.AuthenticationRequired) {
+  if (normalizedAccess.kind === ProviderAccessState.AuthenticationRequired) {
     html += ' <span style="color:#c00">(' + escapeHtml(t('status.readiness.auth.required')) + ')</span>';
-  } else if (normalizedAccess === ProviderAccessState.ProviderError) {
+  } else if (normalizedAccess.kind === ProviderAccessState.ProviderError) {
     html += ' <span style="color:#c00">(' + escapeHtml(t('status.readiness.error')) + ')</span>';
   }
 

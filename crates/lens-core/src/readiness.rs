@@ -1157,4 +1157,87 @@ mod tests {
         };
         assert_eq!(model_state_to_lifecycle(model_state), ModelLifecycle::Ready);
     }
+
+    #[test]
+    fn provider_access_state_serde_available() {
+        let state = ProviderAccessState::Available;
+        let json = serde_json::to_string(&state).unwrap();
+        assert_eq!(json, r#""available""#);
+        let decoded: ProviderAccessState = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, state);
+    }
+
+    #[test]
+    fn provider_access_state_serde_unknown() {
+        let state = ProviderAccessState::Unknown;
+        let json = serde_json::to_string(&state).unwrap();
+        assert_eq!(json, r#""unknown""#);
+        let decoded: ProviderAccessState = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, state);
+    }
+
+    #[test]
+    fn provider_access_state_serde_unreachable_with_reason() {
+        let state = ProviderAccessState::Unreachable {
+            reason: "connection refused".to_string(),
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        assert_eq!(json, r#"{"unreachable":{"reason":"connection refused"}}"#);
+        let decoded: ProviderAccessState = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, state);
+    }
+
+    #[test]
+    fn provider_access_state_serde_authentication_required() {
+        let state = ProviderAccessState::AuthenticationRequired;
+        let json = serde_json::to_string(&state).unwrap();
+        assert_eq!(json, r#""authentication_required""#);
+        let decoded: ProviderAccessState = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, state);
+    }
+
+    #[test]
+    fn provider_access_state_serde_provider_error_with_reason() {
+        let state = ProviderAccessState::ProviderError {
+            reason: "500 Internal Server Error".to_string(),
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        assert_eq!(
+            json,
+            r#"{"provider_error":{"reason":"500 Internal Server Error"}}"#
+        );
+        let decoded: ProviderAccessState = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, state);
+    }
+
+    #[test]
+    fn model_inventory_view_serde_available() {
+        let view = ModelInventoryView::Available {
+            models: vec!["llama3.2".to_string(), "qwen2.5".to_string()],
+        };
+        let json = serde_json::to_string(&view).unwrap();
+        assert_eq!(json, r#"{"available":{"models":["llama3.2","qwen2.5"]}}"#);
+        let decoded: ModelInventoryView = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, view);
+    }
+
+    #[test]
+    fn model_inventory_view_serde_lookup_failed_with_reason() {
+        let view = ModelInventoryView::LookupFailed {
+            reason: "timeout".to_string(),
+        };
+        let json = serde_json::to_string(&view).unwrap();
+        assert_eq!(json, r#"{"lookup_failed":{"reason":"timeout"}}"#);
+        let decoded: ModelInventoryView = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, view);
+    }
+
+    #[test]
+    fn model_inventory_view_serde_not_attempted() {
+        let view = ModelInventoryView::NotAttempted;
+        let json = serde_json::to_string(&view).unwrap();
+        assert_eq!(json, r#""not_attempted""#);
+        let decoded: ModelInventoryView = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, view);
+    }
 }

@@ -66,21 +66,27 @@ describe('Readiness constants', () => {
   });
 
   it('normalizes string access states', () => {
-    expect(normalizeAccessState('available')).toBe('available');
-    expect(normalizeAccessState('unknown')).toBe('unknown');
-    expect(normalizeAccessState('authentication_required')).toBe('authentication_required');
+    expect(normalizeAccessState('available')).toEqual({ kind: 'available' });
+    expect(normalizeAccessState('unknown')).toEqual({ kind: 'unknown' });
+    expect(normalizeAccessState('authentication_required')).toEqual({ kind: 'authentication_required' });
   });
 
   it('normalizes object access states with fields', () => {
-    expect(normalizeAccessState({ unreachable: { reason: 'connection refused' } })).toBe('unreachable');
-    expect(normalizeAccessState({ provider_error: { reason: '500 Internal Server Error' } })).toBe('provider_error');
+    expect(normalizeAccessState({ unreachable: { reason: 'connection refused' } })).toEqual({
+      kind: 'unreachable',
+      reason: 'connection refused',
+    });
+    expect(normalizeAccessState({ provider_error: { reason: '500 Internal Server Error' } })).toEqual({
+      kind: 'provider_error',
+      reason: '500 Internal Server Error',
+    });
   });
 
   it('returns unknown for malformed access states', () => {
-    expect(normalizeAccessState(null)).toBe('unknown');
-    expect(normalizeAccessState(undefined)).toBe('unknown');
-    expect(normalizeAccessState({})).toBe('unknown');
-    expect(normalizeAccessState({ a: 1, b: 2 })).toBe('unknown');
+    expect(normalizeAccessState(null)).toEqual({ kind: 'unknown' });
+    expect(normalizeAccessState(undefined)).toEqual({ kind: 'unknown' });
+    expect(normalizeAccessState({})).toEqual({ kind: 'unknown' });
+    expect(normalizeAccessState({ a: 1, b: 2 })).toEqual({ kind: 'unknown' });
   });
 });
 
