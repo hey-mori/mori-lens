@@ -37,7 +37,7 @@ toml_edit = "0.22"
 sha2 = "0.10"
 
 [workspace.lints.rust]
-# An unsafe block without a stated invariant does not merge (CLAUDE.md).
+# An unsafe block without a stated invariant does not merge (CONTRIBUTING.md).
 unsafe_op_in_unsafe_fn = "deny"
 missing_debug_implementations = "warn"
 

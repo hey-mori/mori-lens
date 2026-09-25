@@ -202,7 +202,7 @@ impl CardBody {
             .collect::<Vec<_>>()
             // `"\n"`, not a newline typed inside the quotes. rustfmt keeps the
             // literal one and it reads as an accident every time somebody
-            // opens this file, which is how `CLAUDE.md`'s string rule was
+            // opens this file, which is how `CONTRIBUTING.md`'s string rule was
             // earned.
             .join("\n")
     }
@@ -410,7 +410,7 @@ impl Card {
     /// that has stopped responding; the point of this card is the opposite.
     ///
     /// Static, deliberately. An animated indicator would need a timer, and
-    /// this product does not run one (`CLAUDE.md`); it would also be the first
+    /// this product does not run one (`CONTRIBUTING.md`); it would also be the first
     /// thing to ignore the system's reduced-motion setting.
     pub const WAITING_TEXT: &str = "번역 중";
 
