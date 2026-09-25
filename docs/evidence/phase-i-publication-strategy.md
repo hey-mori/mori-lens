@@ -114,26 +114,30 @@ The merge commit containing subsequent reports necessarily postdates the audited
 
 ### Execution Plan for Option A
 
-1. **Merge evidence reconciliation PR**
-   - Update Phase F, G, H evidence documents
-   - Update final publication report
-   - Ensure all gates pass
+**Publication strategy recommendation**: Option A (convert existing repository to public)
 
-2. **Verify all gates pass on main**
-   - `scripts/check.sh --full`
-   - `scripts/check_public_readiness.py`
-   - Re-run gitleaks to confirm
-   - Re-run PII/internal-data scan
+**Execution prerequisite**: Final RC verification on exact post-#644 main
 
-3. **Make repository public**
-   - Use GitHub API or web UI to change visibility
-   - No tag, no release yet (owner decision)
+**Phase J: Final RC Verification (required before publication execution)**
 
-4. **Optional: Create v0.1.0 tag**
+1. **Merge PR #644** (corrective publication-truth PR)
+2. **Establish FINAL_RC_SOURCE_SHA** from resulting remote main
+3. **Run ci.yml** on that exact SHA
+4. **Run package-smoke.yml** on that exact SHA
+5. **Run source-only release preflight**: `scripts/release-preflight.sh --source-only`
+6. **Run full Windows release preflight**: `scripts/release-preflight.sh`
+7. **Build fresh NSIS and MSIX** from exact final SHA
+8. **Record final hashes and build provenance**
+9. **Only then return to owner decisions**
+
+**Owner-controlled publication execution (after Phase J completion)**
+
+1. **Owner decision**: Choose licence grant (MIT, Apache-2.0, or other)
+2. **Owner decision**: Execute publication (make repository public)
+3. **Optional**: Create v0.1.0 tag
    - Only if owner decides to release
    - Would use `git tag -s v0.1.0 -m "v0.1.0: Initial public release"`
-
-5. **Optional: Create GitHub Release**
+4. **Optional**: Create GitHub Release
    - Only if owner decides to distribute binaries
    - Would include signed installers (NSIS, MSIX)
    - Would include SHA256SUMS.txt with detached signature
