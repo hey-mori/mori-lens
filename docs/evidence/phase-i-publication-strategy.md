@@ -3,12 +3,14 @@
 **Date**: 2026-09-25  
 **Purpose**: Recommend publication strategy based on audit findings
 
-## Current Repository State
+## Audited Baseline
 
-**Exact main SHA**: 017acde029c14194f6d6ec1c7eb74bbaf5951dc9  
-**Total commits**: 1,391  
+**Audited baseline SHA**: c48f9c36b5c3a0ea8748ea1e9650adc40dc3a342  
+**Total commits (as of audited baseline)**: 1,392  
 **Visibility**: PRIVATE  
 **Repository**: swarea/mori-lens
+
+The merge commit containing subsequent reports necessarily postdates the audited baseline. The final RC SHA is established externally after all publication changes have landed.
 
 ## Options
 
@@ -17,7 +19,7 @@
 **What it means**: Make the current private repository public as-is.
 
 **Pros**:
-- Preserves all commit history (1,391 commits)
+- Preserves all commit history (1,392 commits as of audited baseline)
 - Preserves all PRs, issues, discussions
 - No migration work required
 - All branches, tags, and metadata already audited
@@ -51,7 +53,7 @@
 - Can curate commit messages from scratch
 
 **Cons**:
-- Loses 1,391 commits of development history
+- Loses 1,392 commits of development history (as of audited baseline)
 - Loses all PR discussions, reviews, and context
 - Loses issue tracking history
 - Requires significant manual work to reconstruct
@@ -95,7 +97,7 @@
 
 4. **History is the product**
    - This project's defining characteristic is evidence-based development
-   - 1,391 commits document the measurement-first approach
+   - 1,392 commits document the measurement-first approach (as of audited baseline)
    - ADRs, benchmarks, and compatibility matrices reference commit history
    - Losing history would destroy the project's provenance
 
