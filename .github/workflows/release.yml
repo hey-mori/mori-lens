@@ -44,7 +44,7 @@ jobs:
           node-version: '20'
 
       - name: Install Node dependencies
-        run: npm ci --prefix apps/lens/web
+        run: npm ci --prefix apps/lens
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2"
@@ -126,7 +126,7 @@ jobs:
           node-version: '20'
 
       - name: Install Node dependencies
-        run: npm ci --prefix apps/lens/web
+        run: npm ci --prefix apps/lens
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2"
@@ -224,7 +224,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [build-windows, build-macos, build-msix]
+    needs: [build-windows, build-msix]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -234,12 +234,6 @@ jobs:
         with:
           name: windows-nsis
           path: artifacts/windows
-
-      - name: Download macOS artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: macos-app
-          path: artifacts/macos
 
       - name: Download MSIX artifact
         uses: actions/download-artifact@v4
@@ -253,8 +247,6 @@ jobs:
           files: |
             artifacts/windows/*.exe
             artifacts/windows/SHA256SUMS.txt
-            artifacts/macos/*.zip
-            artifacts/macos/SHA256SUMS.txt
             artifacts/msix/*.msix
             artifacts/msix/*.sha256
           body: |
@@ -263,9 +255,9 @@ jobs:
             These builds are **not code-signed**.
             - **Windows (NSIS)**: SmartScreen will show a warning. Verify SHA-256 before running.
             - **Windows (MSIX)**: Structurally valid for Store submission. Publisher identity uses placeholder values.
-            - **macOS**: Gatekeeper will block the unsigned .app. Right-click → Open to bypass. SHA-256 verifies artifact integrity but does not satisfy Gatekeeper.
 
-            Apple Developer ID signing and notarization require external credentials (not yet configured).
             Microsoft Store submission requires a Store developer account and publisher identity replacement.
+
+            **Note**: macOS support is planned for a future release. The macOS implementation exists in the source tree but has not been runtime-verified.
           generate_release_notes: true
           draft: true

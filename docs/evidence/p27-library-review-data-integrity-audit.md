@@ -85,11 +85,12 @@ None. All P1 issues are handled correctly.
 2. **Stress tests**: Add tests for 100+ items, special characters
 3. **JS test coverage**: Add tests for missing library.js functions
 
-## Data Integrity Guarantees
+## Data Integrity Assessment
 
-✅ **No data loss**: Corruption recovery with in-memory fallback  
-✅ **No silent corruption**: `FutureSchema` refuses incompatible DBs  
-✅ **No race conditions**: Mutex protection on all writes  
+✅ **No known release-blocking data-loss defect found in audited paths**: Corruption recovery with in-memory fallback  
+✅ **No silent schema corruption**: `FutureSchema` refuses incompatible DBs  
+✅ **Writes serialized by SharedLibrary mutex**: Prevents concurrent write races  
+⚠️ **Tag updates have a known low-severity atomicity gap**: `set_tags()` does DELETE + INSERTs without transaction (Priority 2 post-release fix)  
 ✅ **Schema evolution**: Numbered migrations prevent downgrade corruption  
 ✅ **Diagnostic visibility**: `library_persistent` flag informs UI  
 
