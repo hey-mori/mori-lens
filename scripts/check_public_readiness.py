@@ -244,6 +244,55 @@ def check_no_secrets():
             fail(f"possible secret: {f}")
 
 
+def check_node_project_paths():
+    """Check that Node project paths are correct."""
+    print("\n· Node project paths")
+    # Check that CONTRIBUTING.md uses correct npm command paths
+    contributing = REPO_ROOT / "CONTRIBUTING.md"
+    if contributing.exists():
+        content = contributing.read_text(encoding="utf-8", errors="ignore")
+        # Check for stale npm command paths (npm ci/test with --prefix apps/lens/web)
+        if re.search(r"npm\s+(ci|test|run).*--prefix\s+apps/lens/web", content):
+            fail("CONTRIBUTING.md contains stale npm command path 'apps/lens/web'")
+        elif re.search(r"npm\s+(ci|test|run).*--prefix\s+apps/lens", content):
+            ok("CONTRIBUTING.md uses correct npm command path 'apps/lens'")
+        else:
+            ok("CONTRIBUTING.md npm paths appear correct")
+    else:
+        fail("CONTRIBUTING.md missing")
+
+    # Verify actual package.json location
+    package_json = REPO_ROOT / "apps/lens/package.json"
+    if package_json.exists():
+        ok("apps/lens/package.json exists")
+    else:
+        fail("apps/lens/package.json missing")
+
+
+def check_changelog_unreleased():
+    """Check that CHANGELOG uses Unreleased until actual release."""
+    print("\n· CHANGELOG unreleased status")
+    changelog = REPO_ROOT / "CHANGELOG.md"
+    if not changelog.exists():
+        fail("CHANGELOG.md missing")
+        return
+
+    content = changelog.read_text(encoding="utf-8", errors="ignore")
+    # Check for fake release dates
+    if re.search(r"## \[0\.1\.0\] - \d{4}-\d{2}-\d{2}", content):
+        fail("CHANGELOG.md has fake release date")
+    elif "## [Unreleased]" in content:
+        ok("CHANGELOG.md uses [Unreleased]")
+    else:
+        fail("CHANGELOG.md missing [Unreleased] section")
+
+    # Check for release links that don't exist yet
+    if "releases/tag/v0.1.0" in content:
+        fail("CHANGELOG.md links to non-existent v0.1.0 release")
+    else:
+        ok("CHANGELOG.md does not link to non-existent releases")
+
+
 def main():
     print("Public-readiness gate")
     print("=" * 60)
@@ -256,6 +305,8 @@ def main():
     check_version_consistency()
     check_license_state()
     check_no_secrets()
+    check_node_project_paths()
+    check_changelog_unreleased()
 
     print("\n" + "=" * 60)
     if EXIT_CODE == 0:
