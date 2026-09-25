@@ -3,6 +3,13 @@
 **Date**: 2026-09-25  
 **Purpose**: Recommend publication strategy based on audit findings
 
+## Current Repository State
+
+**Exact main SHA**: 017acde029c14194f6d6ec1c7eb74bbaf5951dc9  
+**Total commits**: 1,391  
+**Visibility**: PRIVATE  
+**Repository**: swarea/mori-lens
+
 ## Options
 
 ### Option A: Convert Existing Repository to Public
@@ -10,28 +17,28 @@
 **What it means**: Make the current private repository public as-is.
 
 **Pros**:
-- Preserves all commit history (914 commits)
-- Preserves all PRs, issues, discussions (if any)
+- Preserves all commit history (1,391 commits)
+- Preserves all PRs, issues, discussions
 - No migration work required
-- Single author identity maintained throughout
 - All branches, tags, and metadata already audited
+- Evidence-based development history preserved
 
 **Cons**:
 - Commit history contains historical references to CLAUDE.md (now replaced)
 - Some commit messages contain internal context (but no secrets)
-- PR bodies have been sanitized (41 PRs cleaned)
+- PR bodies have been sanitized (41 PRs for AI attribution, 2 PRs for PII/internal data)
 - Cannot undo git history (what's committed stays committed)
 
 **Evidence from Phases F-H**:
 - **Phase F (Security Scan)**: PASS - No secrets in current tree or full git history
-- **Phase G (Metadata Sanitation)**: PASS - 41 PR bodies sanitized, no attribution in issues/comments
-- **Phase H (Actions/Artifacts)**: PASS - 4 merged branches deleted, 1 backup tag deleted, repository metadata clean
+- **Phase G (Metadata Sanitation)**: PASS - 41 PRs sanitized for AI attribution, 2 PRs sanitized for PII/internal data
+- **Phase H (Actions/Artifacts)**: PASS - All merged branches deleted, no releases, no tags, repository metadata clean
 
 **Risk Assessment**: LOW
 - No secrets detected in git history (gitleaks scan)
 - All PR metadata sanitized
 - No internal domains or sensitive paths in code
-- Single author (easy to explain commit history)
+- Author metadata retained by owner decision
 - All references to CLAUDE.md now point to CONTRIBUTING.md
 
 ### Option B: Create New Clean Repository
@@ -44,7 +51,7 @@
 - Can curate commit messages from scratch
 
 **Cons**:
-- Loses 914 commits of development history
+- Loses 1,391 commits of development history
 - Loses all PR discussions, reviews, and context
 - Loses issue tracking history
 - Requires significant manual work to reconstruct
@@ -75,25 +82,28 @@
    - The repository is safe to make public as-is
 
 2. **Metadata is sanitized**
-   - Phase G cleaned 41 PR bodies
+   - Phase G cleaned 41 PR bodies for AI attribution
+   - Phase G sanitized 2 PR bodies for PII/internal data (PR #181, PR #200)
    - No attribution in issues or comments
    - All references to AI tools removed from public-facing content
 
 3. **Infrastructure is clean**
-   - Phase H deleted 4 merged branches and 1 backup tag
+   - Phase H audited all branches, tags, releases, artifacts
+   - Only main branch remains (all merged branches deleted)
    - No releases, no Pages, no Wiki
    - Repository metadata is public-facing and accurate
 
 4. **History is the product**
    - This project's defining characteristic is evidence-based development
-   - 914 commits document the measurement-first approach
+   - 1,391 commits document the measurement-first approach
    - ADRs, benchmarks, and compatibility matrices reference commit history
    - Losing history would destroy the project's provenance
 
-5. **Single author simplifies everything**
-   - All commits are from one author (Isaac Lee)
-   - No need to coordinate with multiple contributors
-   - Easy to explain the commit narrative
+5. **Author metadata decision resolved**
+   - Owner decision: Existing Git author metadata will be retained for history preservation
+   - No author-history rewrite will be performed
+   - Evidence documents redacted to remove PII
+   - Git author emails will be publicly visible (owner accepted)
 
 6. **No security benefit to Option B**
    - Phase F proved no secrets exist in history
@@ -102,16 +112,16 @@
 
 ### Execution Plan for Option A
 
-1. **Merge PR #637** (Phase C/D/E work)
-   - This PR contains the public repository rewrite
-   - Adds CHANGELOG.md, docs/README.md, THIRD-PARTY-NOTICES.md
-   - Removes CLAUDE.md, handoff.md
-   - Updates 15 files to reference CONTRIBUTING.md instead of CLAUDE.md
+1. **Merge evidence reconciliation PR**
+   - Update Phase F, G, H evidence documents
+   - Update final publication report
+   - Ensure all gates pass
 
 2. **Verify all gates pass on main**
    - `scripts/check.sh --full`
    - `scripts/check_public_readiness.py`
    - Re-run gitleaks to confirm
+   - Re-run PII/internal-data scan
 
 3. **Make repository public**
    - Use GitHub API or web UI to change visibility
@@ -133,6 +143,14 @@
 The repository is ready for Option A publication. All audits pass. The recommendation is to convert the existing repository to public, preserving the full commit history and evidence trail.
 
 The decision to execute (make public, tag, release) remains with the owner.
+
+## Owner Decisions
+
+**EVIDENCE DOCUMENT PII = REDACTED**  
+**GIT AUTHOR EMAILS = RETAINED**  
+**GIT HISTORY REWRITE = NO**  
+**LICENSE GRANT = OWNER DECISION PENDING**  
+**PUBLICATION EXECUTION = PENDING**
 
 ## Repository Status
 
