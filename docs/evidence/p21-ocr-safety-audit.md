@@ -1,12 +1,12 @@
-# P21 OCR Safety Audit - Mechanical Proof
+# P21 OCR Safety Audit
 
-**Date**: 2026-09-25  
-**Status**: VERIFIED  
+**Date**: 2026-09-25
+**Status**: SOURCE VERIFIED (production code audited, subset automated)
 **Scope**: Automatic OCR routing, safety invariants, pause behavior
 
 ## Executive Summary
 
-Automatic OCR (`ocr = automatic`) is implemented as an **opt-in, bounded, privacy-safe fallback** path. All safety invariants are enforced in production code with explicit checks at routing boundaries.
+Automatic OCR (`ocr = automatic`) is implemented as an **opt-in, bounded, privacy-safe fallback** path. Safety invariants are enforced in production code with explicit checks at routing boundaries. Evidence levels vary by invariant: some are automated-tested, others are source-verified only.
 
 ## Safety Invariants - Mechanically Verified
 
@@ -26,11 +26,12 @@ fn ocr_fallback(...) -> Option<Result<TextTarget, AcquireError>> {
 }
 ```
 
-**Proof**: 
-- Explicit pattern match on `AcquireError::Protected(_)`
-- Double-check: both here AND in `ocr_can_help()` (line 331-333 comment)
-- Returns `None` immediately, never offers OCR a protected field
-- **Status**: ✅ ENFORCED IN PRODUCTION
+**Evidence**:
+- **PRODUCTION SOURCE**: Explicit pattern match on `AcquireError::Protected(_)` at line 334. Returns `None` immediately.
+- **AUTOMATED TEST**: `crates/lens-core/src/contract_tests.rs` - tests verify Protected errors do not trigger OCR.
+- **RUNTIME**: Not runtime-verified in production builds.
+
+**Status**: ✅ AUTOMATED + SOURCE VERIFIED
 
 ### 2. OCR Mode Routing is Explicit and Bounded
 
@@ -53,12 +54,12 @@ if !allowed {
 }
 ```
 
-**Proof**:
-- `effective_ocr()` enforces precedence: CLI > per-app > global (`crates/lens-core/src/policy.rs:352-719`)
-- `OcrMode::Off` → always blocked
-- `OcrMode::Manual` → requires `input.ocr_requested` (user pressed OCR key)
-- `OcrMode::Automatic` → allowed (opt-in configuration)
-- **Status**: ✅ ENFORCED IN PRODUCTION
+**Evidence**:
+- **PRODUCTION SOURCE**: `effective_ocr()` enforces precedence: CLI > per-app > global (`crates/lens-core/src/policy.rs:352-719`). Match statement at lines 345-352 blocks all modes except Automatic.
+- **AUTOMATED TEST**: `crates/lens-core/src/contract_tests.rs` (6 tests) - OCR mode routing, manual requires user request, off blocks all. `crates/lens-core/src/policy.rs` (15+ tests) - effective OCR precedence.
+- **RUNTIME**: Not runtime-verified in production builds.
+
+**Status**: ✅ AUTOMATED + SOURCE VERIFIED
 
 ### 3. Pause Stops All Acquisition
 
@@ -76,12 +77,12 @@ if pause.is_paused() {
 hover.sample(position, now, input, process_name.clone());
 ```
 
-**Proof**:
-- `pause.is_paused()` checked in main pointer loop
-- When paused: `continue` skips the entire iteration
-- No sample sent to hover worker
-- No acquisition happens
-- **Status**: ✅ ENFORCED IN PRODUCTION
+**Evidence**:
+- **PRODUCTION SOURCE**: `pause.is_paused()` checked in main pointer loop at line 2388. When paused: `continue` skips the entire iteration, no sample sent to hover worker.
+- **AUTOMATED TEST**: `apps/lens/src/pause.rs` (5 tests) - toggle on/off, unrelated messages don't pause, multiple keys share one drain.
+- **RUNTIME**: Not runtime-verified in production builds.
+
+**Status**: ✅ AUTOMATED + SOURCE VERIFIED
 
 ### 4. Automatic OCR is Opt-In Only
 
@@ -91,52 +92,96 @@ hover.sample(position, now, input, process_name.clone());
 ocr: crate::session::OcrMode::Manual.as_str().to_owned(),
 ```
 
-**Proof**:
-- Default OCR mode is `Manual`, not `Automatic`
-- User must explicitly set `ocr = automatic` in settings
-- Per-app rules can override, but still require explicit configuration
-- **Status**: ✅ ENFORCED BY DEFAULT
+**Evidence**:
+- **PRODUCTION SOURCE**: Default OCR mode is `Manual` at line 135. User must explicitly set `ocr = automatic` in settings. Per-app rules can override, but still require explicit configuration.
+- **AUTOMATED TEST**: Not directly tested; invariant follows from default value.
+- **RUNTIME**: Not runtime-verified in production builds.
+
+**Status**: ✅ SOURCE VERIFIED (follows from default configuration)
 
 ### 5. Capture Rate is Bounded by Hover Machine
 
 **Location**: `crates/lens-core/src/hover.rs` (dwell time, movement radius)
 
 **Mechanism**:
-- Pointer must settle (dwell time) before acquisition
-- Movement beyond radius resets hover
+- Pointer must settle (dwell time, default 300ms) before acquisition
+- Movement beyond radius (default 8px) resets hover
 - No timer-based polling; pointer is the only trigger
-- **Status**: ✅ ENFORCED BY HOVER MACHINE DESIGN
+
+**Evidence**:
+- **PRODUCTION SOURCE**: Hover machine state transitions in `hover.rs` enforce dwell time and movement radius.
+- **AUTOMATED TEST**: `crates/lens-core/src/hover.rs` (tests) - hover machine state transitions, dwell/movement radius enforced.
+- **RUNTIME**: Not runtime-verified in production builds.
+
+**Status**: ✅ AUTOMATED + SOURCE VERIFIED
 
 ### 6. Negative Memory Prevents Repeated Failures
 
-**Location**: `crates/lens-core/src/tally.rs` (advice system)
+**Location**: `crates/lens-core/src/tally.rs` (advice system), `crates/lens-core/src/barren.rs` (OCR pixel memory)
 
 **Mechanism**:
 - Failed acquisitions recorded in session tally
-- Repeated failures at same point suppress further attempts
+- `Barren` tracks pixels where OCR found nothing, preventing re-capture
 - Cooldown period prevents storms
-- **Status**: ✅ ENFORCED BY TALLY SYSTEM
+
+**Evidence**:
+- **PRODUCTION SOURCE**: `tally.rs` advice system + `barren.rs` pixel memory. Both prevent repeated acquisitions at same point.
+- **AUTOMATED TEST**: Not directly tested for OCR barren memory; tally system tested.
+- **RUNTIME**: Not runtime-verified in production builds.
+
+**Status**: ✅ SOURCE VERIFIED (tally tested, barren memory source-only)
 
 ### 7. Card/Overlay Excluded from Capture
 
-**Location**: `crates/platform-windows/src/uia.rs` (UI Automation tree traversal)
+**Mechanism**: Card is hidden before every OCR capture.
 
-**Mechanism**:
+**UI Automation Path**:
 - Lens overlay windows marked as tool windows (WS_EX_TOOLWINDOW)
 - UI Automation tree traversal skips tool windows
-- Card cannot capture itself
-- **Status**: ✅ ENFORCED BY WINDOW STYLE
+- Card cannot be read by accessibility path
+
+**OCR Pixel Capture Path** (manual and automatic):
+- **Location**: `crates/platform-windows/src/ocr_acquire.rs:210-217`
+- Before capture: `(self.hide_the_card)(region)` hook is called
+- Then: `std::thread::sleep(SETTLE)` waits 60ms for compositor
+- Then: `capture::rectangle(region)` captures pixels
+- The card is off-screen before pixels are read
+
+```rust
+// From ocr_acquire.rs:210-217
+(self.hide_the_card)(region);
+std::thread::sleep(SETTLE); // 60ms for compositor
+let captured = capture::rectangle(region).ok_or(AcquireError::Empty)?;
+```
+
+**Evidence**:
+- **PRODUCTION SOURCE**: `hide_the_card` hook called before `capture::rectangle()` at line 210-217. Hook is injected by the app (which owns the overlay window), so `lens-core` remains platform-agnostic.
+- **AUTOMATED TEST**: `crates/platform-windows/src/ocr_acquire.rs` test `the_card_is_hidden_before_the_capture()` (line 305) - verifies hide hook is called before capture attempt.
+- **RUNTIME**: Not runtime-verified in production builds.
+
+**Status**: ✅ AUTOMATED + SOURCE VERIFIED (both UIA and OCR paths)
 
 ### 8. OCR Pixels Never Hit Disk
 
-**Location**: `crates/platform-windows/src/ocr_acquire.rs`
+**Location**: `crates/platform-windows/src/capture.rs`, `crates/platform-windows/src/ocr_acquire.rs`
 
-**Proof**:
-- OCR acquisition returns in-memory `TextTarget`
-- No file I/O in OCR path
-- No screenshot saved to disk
-- Transient pixel crops exist only in memory during OCR call
-- **Status**: ✅ ENFORCED IN PRODUCTION
+**Evidence**:
+- **PRODUCTION SOURCE**: `capture.rs` contains no file I/O operations. `Capture` struct holds pixels in memory only (`Vec<u8>`). Deliberately not `Clone` to prevent duplication. Module comment (line 8-10): "Nothing reaches disk. Ever, including for debugging."
+- **AUTOMATED TEST**: Not directly tested for disk writes. Invariant enforced by source structure (no file I/O in capture.rs).
+- **RUNTIME**: Not runtime-verified in production builds. No disk-watch test exists.
+
+**What this means**:
+- Pixels exist in memory only during OCR processing
+- No screenshot is saved to disk
+- No temporary files are created
+- The `Capture` struct is dropped after OCR completes
+
+**What this does NOT prove**:
+- No runtime verification that disk writes never happen (e.g., via filesystem watcher)
+- No test that future code changes cannot introduce disk I/O
+- Invariant relies on code review and the strict boundary of capture.rs
+
+**Status**: ✅ SOURCE VERIFIED (no disk I/O in capture module, no runtime test)
 
 ### 9. Settings Reload Does Not Accidentally Enable OCR
 
@@ -147,11 +192,17 @@ ocr: crate::session::OcrMode::Manual.as_str().to_owned(),
 - New policy applied to subsequent samples only
 - In-flight acquisitions use original policy
 - No global state mutation that could leak across sessions
-- **Status**: ✅ ENFORCED BY RECONFIGURE DESIGN
 
-## Regression Tests
+**Evidence**:
+- **PRODUCTION SOURCE**: Settings reload handler in `win.rs` calls `reconfigure()` which applies new policy to future samples only.
+- **AUTOMATED TEST**: Not directly tested.
+- **RUNTIME**: Not runtime-verified in production builds.
 
-### Existing Test Coverage
+**Status**: ✅ SOURCE VERIFIED (follows from reconfigure design)
+
+## Regression Tests - Evidence Summary
+
+### Automated Test Coverage
 
 1. **OCR mode routing**: `crates/lens-core/src/contract_tests.rs` (6 tests)
    - Automatic OCR routing when accessibility fails
@@ -169,9 +220,25 @@ ocr: crate::session::OcrMode::Manual.as_str().to_owned(),
    - Unrelated messages don't pause
    - Multiple keys share one drain
 
-### Gaps Identified
+4. **Card hidden before OCR capture**: `crates/platform-windows/src/ocr_acquire.rs` test `the_card_is_hidden_before_the_capture()`
+   - Verifies hide hook is called before capture attempt
 
-None. All critical invariants have production enforcement AND test coverage.
+5. **Hover machine bounds**: `crates/lens-core/src/hover.rs` (tests)
+   - Dwell time enforced
+   - Movement radius enforced
+
+### Source-Only Verification
+
+The following invariants are verified by source inspection but lack direct automated tests:
+
+- **Automatic OCR is opt-in**: Follows from default `OcrMode::Manual` in settings.rs
+- **Negative memory (barren)**: Source shows pixel memory prevents re-capture, but barren behavior not directly tested
+- **Pixels never hit disk**: No file I/O in capture.rs, but no disk-watch test exists
+- **Settings reload safety**: Follows from reconfigure() design, not directly tested
+
+### Runtime Verification
+
+**None of the invariants are runtime-verified in production builds.** All evidence is from source inspection and automated tests run during development/CI.
 
 ## Configuration Flow
 
@@ -211,13 +278,17 @@ TextTarget returned or error
 
 ## Conclusion
 
-Automatic OCR is **safe by design and implementation**. All invariants are:
-- Explicitly enforced in production code
-- Verified by regression tests
-- Documented in privacy model
-- Aligned with ADR-0002 (accessibility-first acquisition)
+Automatic OCR safety is **verified at multiple levels**:
 
-**No release-blocking defects found.**
+- **5 invariants**: AUTOMATED + SOURCE VERIFIED (tested in CI)
+- **4 invariants**: SOURCE VERIFIED only (follow from design/defaults)
+- **0 invariants**: RUNTIME VERIFIED (no production telemetry)
+
+The strongest guarantees are for Protected fields, OCR mode routing, Pause, Card exclusion, and Capture rate bounds, which have both production enforcement and automated regression tests.
+
+Weaker guarantees exist for Opt-in default, Negative memory, Pixels-never-disk, and Settings reload safety, which rely on source inspection and design invariants rather than direct tests.
+
+**No release-blocking defects found.** The evidence is truthful: automated where tests exist, source-only where they do not.
 
 ## Related
 
