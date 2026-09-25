@@ -51,42 +51,13 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2"
 
-      - name: Verify production assets present
+      - name: Verify production assets
         shell: bash
         run: |
-          # Release builds MUST use production assets, never smoke placeholders
-          echo "Verifying production assets are present..."
-
-          # Check application icons
-          for icon in apps/lens/icons/icon.png apps/lens/icons/icon.ico apps/lens/icons/icon.icns; do
-            if [ ! -f "$icon" ]; then
-              echo "ERROR: Production asset missing: $icon"
-              echo "Run: python scripts/generate-product-assets.py"
-              exit 1
-            fi
-            echo "✓ $icon present"
-          done
-
-          # Check MSIX assets
-          for asset in StoreLogo.png Square44x44Logo.png Square150x150Logo.png Wide310x150Logo.png; do
-            path="packaging/windows-msix/Assets/$asset"
-            if [ ! -f "$path" ]; then
-              echo "ERROR: Production asset missing: $path"
-              echo "Run: python scripts/generate-product-assets.py"
-              exit 1
-            fi
-            echo "✓ $path present"
-          done
-
-          # Verify assets are NOT smoke placeholders (check file size as proxy)
-          # Smoke assets are very small (< 1KB), production assets are larger
-          ICON_SIZE=$(stat -c%s apps/lens/icons/icon.png 2>/dev/null || stat -f%z apps/lens/icons/icon.png)
-          if [ "$ICON_SIZE" -lt 1000 ]; then
-            echo "ERROR: apps/lens/icons/icon.png appears to be a smoke placeholder (size: $ICON_SIZE bytes)"
-            echo "Production assets must be used for release builds"
-            exit 1
-          fi
-          echo "✓ Assets appear to be production quality (not smoke placeholders)"
+          # Install pinned asset toolchain
+          python -m pip install -r scripts/requirements-assets.txt
+          # Run comprehensive production asset verification
+          python scripts/verify-product-assets.py
 
       - name: Verify version consistency
         shell: bash
@@ -157,34 +128,13 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Verify production assets present
+      - name: Verify production assets
         shell: bash
         run: |
-          # Release builds MUST use production assets, never smoke placeholders
-          echo "Verifying production assets are present..."
-
-          # Check application icons
-          for icon in apps/lens/icons/icon.png apps/lens/icons/icon.ico apps/lens/icons/icon.icns; do
-            if [ ! -f "$icon" ]; then
-              echo "ERROR: Production asset missing: $icon"
-              echo "Run: python scripts/generate-product-assets.py"
-              exit 1
-            fi
-            echo "✓ $icon present"
-          done
-
-          # Check MSIX assets
-          for asset in StoreLogo.png Square44x44Logo.png Square150x150Logo.png Wide310x150Logo.png; do
-            path="packaging/windows-msix/Assets/$asset"
-            if [ ! -f "$path" ]; then
-              echo "ERROR: Production asset missing: $path"
-              echo "Run: python scripts/generate-product-assets.py"
-              exit 1
-            fi
-            echo "✓ $path present"
-          done
-
-          echo "✓ All production assets present"
+          # Install pinned asset toolchain
+          python -m pip install -r scripts/requirements-assets.txt
+          # Run comprehensive production asset verification
+          python scripts/verify-product-assets.py
 
       - name: Run checks
         shell: bash
