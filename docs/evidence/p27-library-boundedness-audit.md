@@ -1,14 +1,14 @@
 # P27 Library Boundedness Audit
 
-**Date**: 2026-09-25  
-**Status**: VERIFIED  
+**Date**: 2026-09-25
+**Status**: SOURCE VERIFIED
 **Scope**: Library query pagination, Review session loading, import/export bounds
 
 ## Executive Summary
 
-All Library query APIs implement **offset-based pagination** with `PAGE_SIZE = 50`. Review session loading is intentionally unbounded for session coherence, but bounded by session size in practice. Import/export are bounded by file size and item count.
+All Library query APIs implement **offset-based pagination** with `PAGE_SIZE = 50`. Review session loading is intentionally unbounded for session coherence. Import/export use paginated reads but may accumulate full results in memory.
 
-**No release-blocking defects found.**
+**No release-blocking defects found.** Key tradeoffs are documented.
 
 ## Library Query APIs - All Paginated
 
@@ -24,7 +24,7 @@ pub fn list(&self, offset: i64) -> Result<Page, Error> {
         .prepare(LIST_QUERY)?
         .query_map(params![limit, offset], row_to_item)?
         .collect::<Result<Vec<_>, _>>()?;
-    
+
     let has_more = items.len() as i64 > PAGE_SIZE;
     // ...
 }
@@ -88,7 +88,7 @@ pub fn list_later(&self, offset: i64) -> Result<Page, Error> {
         .prepare(LIST_LATER_QUERY)?
         .query_map(params![REVIEW_LATER, limit, offset], row_to_item)?
         .collect::<Result<Vec<_>, _>>()?;
-    
+
     let has_more = items.len() as i64 > PAGE_SIZE;
     // ...
 }
@@ -136,21 +136,23 @@ pub fn list_later_session(&self) -> Result<Vec<Item>, Error> {
 **Rationale** (from code comment):
 - Review session is a **single coherent action**
 - Page boundary in middle of session would break user flow
-- Typical session size: tens to low hundreds of items
-- Memory cost acceptable for coherence gain
+- Design choice: coherence over memory bounds
 
 **Risk Assessment**:
-- Worst case: user has 10,000 items in Later queue
-- Memory: ~10MB (10k items × 1KB each)
-- Duration: <1 second to load
-- **Status**: ✅ ACCEPTABLE FOR v0.1.0
+- **UNBOUNDED BY ITEM COUNT**: Loads all items marked "Later" into memory
+- No hard cap exists
+- Typical usage: tens to low hundreds of items
+- Worst case: user has 10,000+ items in Later queue → all loaded into memory
+- Memory impact: scales linearly with Later queue size
 
-**Mitigation**:
-- If Later queue grows beyond 10k items, consider pagination
-- Monitor in production via diagnostics
-- Document as known limitation if triggered
+**Status**: ⚠️ INTENTIONALLY UNBOUNDED (v0.1.0 tradeoff)
 
-## Import/Export - Bounded by Design
+**Mitigation for v0.1.0**:
+- Acceptable for typical usage patterns
+- If Later queue grows beyond ~1000 items, memory may become noticeable
+- Future work: consider batched review sessions or pagination with session coherence preserved
+
+## Import/Export - Paged Reads, Unbounded Accumulation
 
 ### Export
 
@@ -172,10 +174,12 @@ pub fn export_json(&self) -> Result<String, Error> {
 }
 ```
 
-**Proof**:
-- Uses pagination internally
-- Bounded by total item count
-- **Status**: ✅ BOUNDED
+**Behavior**:
+- **DB retrieval is paged**: Uses pagination internally (PAGE_SIZE=50)
+- **Overall operation memory scales with total items**: Accumulates all items into `all` Vec
+- Final JSON string also scales with total library size
+
+**Status**: ⚠️ DB reads are paged, but memory usage scales with total library size
 
 ### Import
 
@@ -197,10 +201,12 @@ pub fn import_json(&self, json: &str) -> Result<usize, Error> {
 }
 ```
 
-**Proof**:
-- Iterates through existing items for deduplication
-- Uses pagination
-- **Status**: ✅ BOUNDED
+**Behavior**:
+- **Input parsing**: Accepts complete JSON payload (caller provides full string)
+- **DB reads are paged**: Iterates through existing items for deduplication using pagination
+- **Memory**: Input JSON string held in memory, plus accumulated items during deduplication
+
+**Status**: ⚠️ Input size unbounded, DB reads paged for deduplication
 
 ### Secure Wipe
 
@@ -246,26 +252,40 @@ pub fn secure_wipe(&self) -> Result<(), Error> {
 
 ## Performance Characteristics
 
-### Typical Workloads
+### Query Scaling
 
-- **Small library** (<100 items): 1-2 pages, instant load
-- **Medium library** (100-1000 items): 2-20 pages, smooth scrolling
-- **Large library** (1000-10000 items): 20-200 pages, virtualized rendering
-- **Very large library** (>10000 items): pagination essential, client-side virtualization required
+- **Offset pagination**: SQLite `LIMIT ... OFFSET ...` is used
+- **Not O(1) per page**: Offset pagination requires scanning OFFSET rows before returning LIMIT rows. Performance degrades linearly with offset value.
+- **Acceptable for v0.1.0**: Typical library sizes (<10k items) keep offsets small
+- **Future concern**: Very large libraries (>100k items) with high offsets may show latency
+
+### Frontend Rendering
+
+**Current implementation**: Incremental paged append
+- "Load more" button appends next page to existing rows
+- No viewport virtualization implemented
+- All loaded rows remain in DOM
+
+**Status**: ⚠️ Not virtualized (acceptable for v0.1.0 typical usage)
 
 ### Memory Usage
 
-- Per page: ~50 items × 1KB = 50KB
-- Client holds: current page + cache = ~100KB
-- Review session: up to ~1MB (1000 items)
-- **Status**: ✅ ACCEPTABLE
+**Not measured with controlled fixtures.** Qualitative behavior:
+- Per page: 50 items loaded at a time
+- Accumulated pages: each "Load more" adds 50 items to DOM
+- Review session: all Later items loaded (unbounded)
+- Export: all items accumulated in memory before serialization
+
+**Status**: UNKNOWN exact memory footprint (no benchmarks)
 
 ### Query Performance
 
-- Indexed: `created_at`, `kind`, `review_state`
-- Pagination: O(1) per page (offset + limit)
-- Search: O(log n) with FTS (if enabled) or O(n) with LIKE
-- **Status**: ✅ SCALABLE
+**Indexed columns**: `created_at`, `kind`, `review_state`
+- Pagination: requires scanning OFFSET rows (not constant time)
+- Search: FTS if enabled (O(log n)), otherwise LIKE (O(n))
+- Filters: dynamic WHERE clause construction
+
+**Status**: Source-verified query patterns, no performance benchmarks
 
 ## Regression Guards
 
@@ -284,14 +304,27 @@ pub fn secure_wipe(&self) -> Result<(), Error> {
 
 ## Conclusion
 
-Library boundedness is **solid for v0.1.0**:
-- All query APIs paginated with PAGE_SIZE = 50
-- Review session intentionally unbounded for coherence (acceptable risk)
-- Import/export bounded by pagination
-- Comprehensive test coverage
-- No release-blocking defects
+Library boundedness for v0.1.0:
 
-**Recommendation**: Ship as-is. Monitor large-library performance in production.
+**Strong bounds**:
+- All query APIs paginated with PAGE_SIZE = 50
+- Deterministic pagination tests (11 tests)
+
+**Known unbounded paths** (intentional v0.1.0 tradeoffs):
+- `list_later_session()`: loads all Later items for session coherence
+- Export: accumulates all items in memory
+- Import: accepts unbounded input JSON
+
+**Not virtualized**:
+- Frontend uses incremental paged append (not viewport virtualization)
+- All loaded rows remain in DOM
+
+**Performance**:
+- Offset pagination is not O(1) (degrades with offset)
+- No performance benchmarks exist
+- Acceptable for typical v0.1.0 library sizes
+
+**Recommendation**: Ship as-is for v0.1.0. Monitor large-library and large-Later-queue usage in production.
 
 ## Related
 

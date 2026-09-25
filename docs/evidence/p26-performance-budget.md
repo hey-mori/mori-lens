@@ -1,248 +1,235 @@
 # P26 Performance Budget
 
-**Date**: 2026-09-25  
-**Status**: DOCUMENTED  
+**Date**: 2026-09-25
+**Status**: DOCUMENTED (subset measured, subset target, subset unknown)
 **Scope**: Startup, idle, acquisition, translation, Library queries
 
 ## Executive Summary
 
-Performance characteristics are **documented from measured evidence**. No flaky wall-clock CI gates. Deterministic tests for stable properties only. Informational/manual measurements for variable properties.
+Performance characteristics are documented with **truthful evidence levels**:
+- **MEASURED**: Values from benchmarks (cited with source file, date, platform)
+- **TARGET**: Product goals, not yet validated by measurement
+- **UNKNOWN**: No measurement exists
+
+No flaky wall-clock CI gates. Deterministic tests for stable properties only (timeouts, pagination, event delegation). Informational measurements for variable properties.
+
+**This document does not claim all values are measured.** Unknown is a valid evidence state.
+
+## Evidence Level Key
+
+- ✅ **MEASURED**: Benchmark exists, cited below
+- 🎯 **TARGET**: Product goal, not validated
+- ⚠️ **UNKNOWN**: No measurement
+- 🔒 **DETERMINISTIC GUARD**: Tested in CI (not wall-clock)
 
 ## Startup Performance
 
 ### Tray Icon Appearance
 
-**Current Evidence**:
-- Typical: <500ms from launch to tray icon visible
-- Cold start (no cache): ~800ms
-- Warm start (cached): ~300ms
+**Evidence Level**: ⚠️ UNKNOWN
 
-**Desired Budget**: <1000ms to tray icon
+**Target Budget**: <1000ms to tray icon
+
+**Measurement**: None exists
 
 **Regression Guard**: Informational only (platform variability too high)
 
-**Status**: ✅ WITHIN BUDGET
-
 ### Control Center First Open
 
-**Current Evidence**:
-- First open: ~400ms (WebView initialization)
-- Subsequent opens: ~100ms (WebView reuse)
+**Evidence Level**: ⚠️ UNKNOWN
 
-**Desired Budget**: <800ms first open, <200ms subsequent
+**Target Budget**: <800ms first open, <200ms subsequent
+
+**Measurement**: None exists
 
 **Regression Guard**: Informational only
-
-**Status**: ✅ WITHIN BUDGET
 
 ## Idle Resource Usage
 
 ### CPU (Idle, Pointer Stationary)
 
-**Current Evidence**:
-- Idle: <1% CPU (no polling, event-driven)
-- Pointer moving (no acquisition): <2% CPU
-- Acquisition in progress: 5-15% CPU (brief, <1s)
+**Evidence Level**: ⚠️ UNKNOWN
 
-**Desired Budget**: <3% idle, <5% pointer-moving
+**Target Budget**: <3% idle, <5% pointer-moving
 
-**Regression Guard**: Deterministic test for event delegation (no listener accumulation)
+**Measurement**: None exists (platform variability)
 
-**Status**: ✅ WITHIN BUDGET
+**Deterministic Guard**: ✅ Event delegation test prevents listener accumulation (`apps/lens/web/js/accessibility-production.vitest.test.js`)
 
 ### Memory (Idle)
 
-**Current Evidence**:
-- Base footprint: ~50MB (Rust + WebView)
-- After 100 acquisitions: ~80MB (card cache, hover state)
-- After 1000 acquisitions: ~150MB (with Library growth)
+**Evidence Level**: ⚠️ UNKNOWN
 
-**Desired Budget**: <200MB for typical session
+**Target Budget**: <200MB for typical session
 
-**Regression Guard**: Informational only (GC/platform variability)
+**Measurement**: None exists (GC/platform variability)
 
-**Status**: ✅ WITHIN BUDGET
+**Regression Guard**: Informational only
 
 ## Acquisition Latency
 
 ### Settled Pointer → Acquisition Start
 
-**Current Evidence**:
+**Evidence Level**: 🔒 DETERMINISTIC GUARD
+
+**Mechanism**:
 - Dwell time: 300ms (configurable)
 - Movement radius: 8px (configurable)
-- Acquisition start: immediate after dwell
+- Hover machine state transitions tested
 
-**Desired Budget**: <500ms total (dwell + trigger)
+**Target Budget**: <500ms total (dwell + trigger)
 
-**Regression Guard**: Deterministic test for hover machine state transitions
-
-**Status**: ✅ WITHIN BUDGET
+**Deterministic Guard**: ✅ Hover machine tests in `crates/lens-core/src/hover.rs`
 
 ### Accessibility Acquisition (UI Automation)
 
-**Current Evidence**:
-- Fast apps (Notepad, VS Code): 50-100ms
-- Slow apps (Chrome, Office): 200-500ms
-- Timeout: 800ms (per-call)
+**Evidence Level**: 🔒 DETERMINISTIC GUARD (timeout)
 
-**Desired Budget**: <800ms (timeout is the guard)
+**Mechanism**:
+- Per-call timeout: 800ms enforced in production
+- Actual latency varies by app (50-500ms observed anecdotally)
 
-**Regression Guard**: Per-call timeout enforced in production
+**Target Budget**: <800ms (timeout is the guard)
 
-**Status**: ✅ WITHIN BUDGET
+**Deterministic Guard**: ✅ Per-call timeout enforced in `crates/platform-windows/src/uia.rs`
+
+**Note**: No benchmark of actual UIA latency across apps exists for v0.1.0.
 
 ### OCR Acquisition (Windows OCR)
 
-**Current Evidence**:
-- Fast OCR: 200-400ms
-- Slow OCR: 500-800ms
-- Timeout: 1500ms
+**Evidence Level**: 🔒 DETERMINISTIC GUARD (timeout)
 
-**Desired Budget**: <1500ms (timeout is the guard)
+**Mechanism**:
+- Per-call timeout: 1500ms enforced in production
+- Actual latency varies (200-800ms observed anecdotally)
 
-**Regression Guard**: Per-call timeout enforced in production
+**Target Budget**: <1500ms (timeout is the guard)
 
-**Status**: ✅ WITHIN BUDGET
+**Deterministic Guard**: ✅ Per-call timeout enforced in `crates/platform-windows/src/ocr_acquire.rs`
+
+**Note**: No benchmark of actual OCR latency exists for v0.1.0.
 
 ## Translation Performance
 
-### Waiting Card → Quick Result (Warm)
+### Quick (Warm, Local Provider)
 
-**Current Evidence**:
-- Local provider (Ollama qwen2.5:7b): 2-5 seconds
-- Local provider (LM Studio): 3-8 seconds
-- Network latency: +100-500ms
+**Evidence Level**: ✅ MEASURED (Ollama only)
 
-**Desired Budget**: <10 seconds (warm, local provider)
+**Measurement**:
+- Source: `docs/evidence/p20e-live-provider-evidence.md`
+- Provider: Ollama qwen2.5:7b
+- Platform: Windows 11
+- Date: 2026-09-25
+- Median: 2-5 seconds (warm)
 
-**Regression Guard**: Informational only (provider variability too high)
+**Target Budget**: <10 seconds (warm, local provider)
 
-**Status**: ✅ WITHIN BUDGET
+**Note**: LM Studio latency is UNKNOWN for v0.1.0. P20E states "LIVE LM STUDIO VERIFIED = NO".
 
 ### Cold Quick (Provider Not Loaded)
 
-**Current Evidence**:
-- Model load time: 5-30 seconds (depends on model size)
-- First inference: +2-5 seconds
+**Evidence Level**: ⚠️ UNKNOWN
 
-**Desired Budget**: <45 seconds total (cold start + inference)
+**Target Budget**: <45 seconds total (cold start + inference)
+
+**Measurement**: None exists (provider variability too high)
 
 **Regression Guard**: Informational only
-
-**Status**: ✅ WITHIN BUDGET
 
 ### Deep (Explanation)
 
-**Current Evidence**:
-- Typical: 5-15 seconds (depends on context length)
-- Long context: 20-40 seconds
+**Evidence Level**: ⚠️ UNKNOWN
 
-**Desired Budget**: <60 seconds
+**Target Budget**: <60 seconds
+
+**Measurement**: None exists (context length variability)
 
 **Regression Guard**: Informational only
-
-**Status**: ✅ WITHIN BUDGET
 
 ### Manual OCR (User-Triggered)
 
-**Current Evidence**:
-- OCR acquisition: 200-800ms
-- Translation: 2-5 seconds (warm)
-- Total: 3-6 seconds
+**Evidence Level**: ⚠️ UNKNOWN
 
-**Desired Budget**: <10 seconds
+**Target Budget**: <10 seconds (OCR + translation)
+
+**Measurement**: None exists
 
 **Regression Guard**: Informational only
-
-**Status**: ✅ WITHIN BUDGET
 
 ### Automatic OCR (Fallback)
 
-**Current Evidence**:
-- Same as manual OCR (same code path)
-- Triggered automatically on accessibility failure
+**Evidence Level**: ⚠️ UNKNOWN
 
-**Desired Budget**: <10 seconds
+**Target Budget**: <10 seconds
+
+**Measurement**: None exists (same code path as manual OCR)
 
 **Regression Guard**: Informational only
-
-**Status**: ✅ WITHIN BUDGET
 
 ## Library Performance
 
 ### Query (First Page, No Filters)
 
-**Current Evidence**:
-- Small library (<100): <10ms
-- Medium library (100-1000): 10-50ms
-- Large library (1000-10000): 50-200ms
+**Evidence Level**: ⚠️ UNKNOWN
 
-**Desired Budget**: <500ms (even for very large libraries)
+**Target Budget**: <500ms (even for very large libraries)
 
-**Regression Guard**: Deterministic test for pagination correctness
+**Measurement**: None exists
 
-**Status**: ✅ WITHIN BUDGET
+**Deterministic Guard**: ✅ Pagination correctness tests (11 tests in `crates/lens-storage/src/lib.rs`)
+
+**Note**: Offset pagination is not O(1); performance degrades with offset. Acceptable for v0.1.0 typical sizes.
 
 ### Query (With Filters)
 
-**Current Evidence**:
-- Single filter: +5-20ms
-- Multiple filters: +20-50ms
-- Complex filter (tags + app + language): +50-100ms
+**Evidence Level**: ⚠️ UNKNOWN
 
-**Desired Budget**: <1000ms (even for complex filters)
+**Target Budget**: <1000ms (even for complex filters)
 
-**Regression Guard**: Deterministic test for filter + pagination interaction
+**Measurement**: None exists
 
-**Status**: ✅ WITHIN BUDGET
+**Deterministic Guard**: ✅ Filter + pagination interaction tests
 
 ### Search (FTS or LIKE)
 
-**Current Evidence**:
-- FTS (if enabled): 10-50ms
-- LIKE (fallback): 50-200ms (depends on library size)
+**Evidence Level**: ⚠️ UNKNOWN
 
-**Desired Budget**: <500ms
+**Target Budget**: <500ms
+
+**Measurement**: None exists
 
 **Regression Guard**: Informational only
-
-**Status**: ✅ WITHIN BUDGET
 
 ## Control Center Performance
 
 ### Idle (Open, No Interaction)
 
-**Current Evidence**:
-- CPU: <1% (event-driven, no polling)
-- Memory: stable (no growth)
+**Evidence Level**: ⚠️ UNKNOWN
 
-**Desired Budget**: <2% CPU, stable memory
+**Target Budget**: <2% CPU, stable memory
 
-**Regression Guard**: Deterministic test for event delegation (no listener accumulation)
+**Measurement**: None exists
 
-**Status**: ✅ WITHIN BUDGET
+**Deterministic Guard**: ✅ Event delegation test prevents listener accumulation
 
 ### Settings Change → Reconfigure
 
-**Current Evidence**:
-- Reconfigure hover worker: <10ms
-- Reapply policy: <5ms
-- Total: <50ms
+**Evidence Level**: ⚠️ UNKNOWN
 
-**Desired Budget**: <200ms
+**Target Budget**: <200ms
+
+**Measurement**: None exists
 
 **Regression Guard**: Informational only
 
-**Status**: ✅ WITHIN BUDGET
-
 ## Deterministic Regression Guards
 
-### Implemented Tests
+### Implemented Tests (Run in CI)
 
 1. **Event delegation** (no listener accumulation)
    - Location: `apps/lens/web/js/accessibility-production.vitest.test.js`
    - Property: single listener pattern prevents accumulation
-   
+
 2. **Stable DOM identity** (no unnecessary re-renders)
    - Location: `apps/lens/web/js/accessibility-production.vitest.test.js`
    - Property: DOM nodes retain identity across updates
@@ -256,7 +243,7 @@ Performance characteristics are **documented from measured evidence**. No flaky 
    - Property: has_more, total, offset all correct
 
 5. **Per-call timeouts**
-   - Location: `crates/platform-windows/src/uia.rs`, `ocr_acquire.rs`
+   - Location: `crates/platform-windows/src/uia.rs`, `crates/platform-windows/src/ocr_acquire.rs`
    - Property: acquisition bounded by timeout
 
 ### Not Implemented (By Design)
@@ -264,44 +251,55 @@ Performance characteristics are **documented from measured evidence**. No flaky 
 - Wall-clock CI gates (too flaky across platforms)
 - Memory growth tests (GC variability)
 - Network latency tests (provider variability)
+- Startup time tests (platform variability)
 
-## Performance Characteristics by Classification
+## Performance Summary by Evidence Level
 
-### Hard Deterministic Guards
+### Measured (Benchmark Exists)
 
-- Per-call timeouts (accessibility, OCR)
-- Pagination correctness (has_more, total)
-- Event delegation (no listener accumulation)
+- Quick translation (Ollama warm): 2-5s median (P20E)
+
+### Deterministic Guards (Tested in CI)
+
 - Hover machine state transitions
+- Pagination correctness (has_more, total, offset)
+- Event delegation (no listener accumulation)
+- Per-call timeouts (UIA 800ms, OCR 1500ms)
 
-### Informational / Manual Measurement
+### Target Only (No Measurement)
 
-- Startup time (platform variability)
-- Translation latency (provider variability)
-- Memory footprint (GC variability)
-- Large library query performance
+- Startup time (<1000ms tray, <800ms Control Center)
+- Idle CPU (<3%)
+- Idle memory (<200MB)
+- Translation cold start (<45s)
+- Deep explanation (<60s)
+- Library queries (<500-1000ms)
 
-### Unknown / Monitor in Production
+### Unknown (No Benchmark, No Target)
 
+- LM Studio latency
 - Very large library (>10k items) performance
 - Review session with >1000 items
 - Concurrent provider downloads
 
 ## Conclusion
 
-Performance budget is **documented and verifiable**:
-- All critical paths have measured evidence
-- Deterministic guards for stable properties
-- Informational measurements for variable properties
-- No flaky wall-clock CI gates
-- All within budget for v0.1.0
+Performance budget is **documented with truthful evidence levels**:
 
-**Recommendation**: Ship as-is. Monitor large-scale performance in production.
+- **1 measured value**: Ollama Quick translation (P20E)
+- **5 deterministic guards**: Hover, pagination, event delegation, timeouts
+- **10+ targets**: Startup, idle, translation, library queries
+- **4+ unknowns**: LM Studio, large-scale performance
+
+**No release-blocking defects found.** The document does not claim more than it can prove.
+
+**Recommendation**: Ship v0.1.0 with current evidence. Monitor performance in production. Add benchmarks for unknown values in future releases.
 
 ## Related
 
-- `docs/evidence/p26-performance-regression-audit.md`
-- `crates/lens-core/src/hover.rs`
-- `crates/platform-windows/src/uia.rs`
-- `crates/platform-windows/src/ocr_acquire.rs`
-- `apps/lens/web/js/accessibility-production.vitest.test.js`
+- `docs/evidence/p20e-live-provider-evidence.md` (Ollama measurement)
+- `docs/evidence/p27-library-boundedness-audit.md` (pagination details)
+- `crates/lens-core/src/hover.rs` (hover machine tests)
+- `crates/lens-storage/src/lib.rs` (pagination tests)
+- `crates/platform-windows/src/uia.rs` (UIA timeout)
+- `crates/platform-windows/src/ocr_acquire.rs` (OCR timeout)
