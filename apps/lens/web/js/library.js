@@ -37,8 +37,10 @@ async function loadFilterOptions() {
     populateSelect('lib-filter-target', targets);
     populateSelect('lib-filter-tag', tags);
   } catch (e) {
-    // Show error to user instead of silently failing.
-    alert(t('library.filter.load.error', { error: e.message || String(e) }));
+    // Log detailed error for debugging, show safe message to user.
+    console.error('Failed to load filter options:', e);
+    // Do not expose raw backend errors (may contain paths, SQLite details, etc.).
+    // Filter options are non-critical; Library still works without them.
   }
 }
 

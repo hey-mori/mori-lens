@@ -1,9 +1,11 @@
 # Release workflow.
 #
-# Builds platform-specific artifacts when a version tag is pushed:
-#   - Windows: NSIS installer (.exe)
-#   - macOS: .app bundle (zipped, unsigned)
+# Builds Windows distribution artifacts when a version tag is pushed:
+#   - NSIS installer (.exe)
+#   - MSIX package (Store-preparation artifact)
 # Then creates a GitHub Release with all artifacts + SHA-256 manifests.
+#
+# v0.1.0 is Windows-only. macOS build verification remains in package-smoke.yml.
 #
 # The tag must match the version in Cargo.toml and tauri.conf.json.
 #
@@ -108,78 +110,6 @@ jobs:
           path: |
             apps/lens/target/release/bundle/nsis/*.exe
             apps/lens/target/release/bundle/nsis/SHA256SUMS.txt
-
-  build-macos:
-    name: Build .app bundle (macOS)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - uses: Swatinem/rust-cache@v2
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install Node dependencies
-        run: npm ci --prefix apps/lens
-
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2"
-
-      - name: Generate package icons
-        run: python3 scripts/generate-smoke-assets.py
-
-      - name: Run checks
-        shell: bash
-        run: bash scripts/check.sh --full
-
-      - name: Build .app bundle
-        working-directory: apps/lens
-        run: cargo tauri build --bundles app
-
-      - name: Verify .app exists
-        shell: bash
-        run: |
-          APP_DIR=$(find apps/lens/target/release/bundle/macos -maxdepth 1 -name "*.app" -type d | head -1)
-          if [ -z "$APP_DIR" ]; then
-            echo "ERROR: .app bundle not found in apps/lens/target/release/bundle/macos/"
-            exit 1
-          fi
-          echo "Found: $APP_DIR"
-          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
-
-      - name: Verify .app structure
-        shell: bash
-        run: ./scripts/verify-app-bundle.sh "$APP_DIR"
-
-      - name: Create zip artifact
-        shell: bash
-        run: |
-          APP_NAME=$(basename "$APP_DIR")
-          VERSION="${GITHUB_REF_NAME#v}"
-          ZIP_NAME="Mori-Lens-${VERSION}-macos-arm64.app.zip"
-          ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" "$ZIP_NAME"
-          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
-          ls -la "$ZIP_NAME"
-
-      - name: Generate SHA-256 manifest
-        shell: bash
-        run: |
-          shasum -a 256 "$ZIP_NAME" > SHA256SUMS.txt
-          cat SHA256SUMS.txt
-
-      - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-app
-          path: |
-            ${{ env.ZIP_NAME }}
-            SHA256SUMS.txt
 
   build-msix:
     name: Build MSIX package (Windows)
