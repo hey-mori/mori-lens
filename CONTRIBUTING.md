@@ -1,8 +1,58 @@
 # Contributing to Mori Lens
 
-This document supplements the project-specific guidance in `CLAUDE.md` and
-`docs/git-workflow.md`. It covers environment setup and the testing contract
-for the Control Center frontend.
+This document covers environment setup, testing, and the development
+contract for Mori Lens. For architectural decisions, see
+[`docs/decisions/`](docs/decisions/). For the privacy model, see
+[`docs/privacy-model.md`](docs/privacy-model.md).
+
+## The rule this project exists to keep
+
+**Accessibility first, OCR fallback, and neither on every mouse move.**
+
+Every performance and privacy property of Lens follows from those two
+clauses. A change that reads the screen on a timer, that runs OCR
+before the accessibility path has failed, or that calls a language model
+on pointer movement rather than on a settled hover, is wrong even if it
+works. See [ADR-0002](docs/decisions/ADR-0002-accessibility-first-acquisition.md).
+
+## Privacy invariants · non-negotiable
+
+These are enforced by the code, the tests, and the check script:
+
+- **No captured text in logs.** Log its length, its language, and how it
+  was acquired. Never the string itself. A debug build may opt in behind
+  an explicit flag; a release build may not.
+- **No screen capture written to disk.** Ever, including for debugging.
+  An OCR crop lives in memory for the duration of one recognition and is
+  dropped.
+- **Protected fields fail closed.** `IsPassword` is checked before any
+  text is materialised. If the check itself fails, the field is treated
+  as protected. Unreadable means unprovable, and unprovable is treated
+  as secure.
+- **Local-only inference.** Translation runs against a local provider on
+  `127.0.0.1`. A remote address is refused, not warned about. The HTTP
+  client has no TLS and no per-provider grant.
+- **Pause stops all acquisition.** Pause means the pointer is not
+  sampled at all, not that the card is hidden. A process monitor can
+  confirm it.
+
+## Evidence terminology
+
+This repository is a measurement instrument before it is a product, so
+the standard for "it works" is higher than a green test run.
+
+- **Source verified:** the code is correct by inspection. No runtime
+  test exists.
+- **Automated:** a test in CI proves the property.
+- **Runtime verified:** a live measurement against a real application
+  produced evidence.
+
+State which of these is the basis for each claim. A change to
+`crates/lens-core/` is verified by `cargo test`. A change to
+`crates/platform-windows/` is **not** verified by `cargo test` alone;
+UI Automation cannot be asserted headlessly. It is verified by running
+`apps/hover-probe` against named applications and pasting the result.
+Never report an application as supported without a probe line for it.
 
 ## Node.js environment
 
@@ -160,5 +210,49 @@ They do **not** prove:
 
 ## Questions?
 
-See `CLAUDE.md` for project-wide conventions, `docs/git-workflow.md` for
-branch/PR workflow, and `docs/decisions/` for architectural decisions.
+See `docs/git-workflow.md` for branch/PR workflow, and `docs/decisions/`
+for architectural decisions.
+
+## Rust conventions
+
+- The domain crates (`lens-core`) must not depend on `windows`,
+  `objc`, `tauri`, or any OS crate. If a type needs an OS concept,
+  the concept gets a plain Rust representation in `lens-core` and the
+  adapter converts. This is what makes the macOS adapter a new file
+  rather than a rewrite.
+- Every `unsafe` block carries a `// SAFETY:` comment stating the
+  invariant that makes it sound. A block without one does not merge.
+- A COM call site initialises its own apartment and tolerates
+  `RPC_E_CHANGED_MODE`. Do not assume a thread's apartment.
+- Failure is a value, not a panic. The adapter returns a typed
+  `AcquireError`; it never unwraps a COM result.
+- **Never continue a string literal with a trailing `\`.** `rustfmt`
+  rejoins such a literal onto one line and leaves the indentation
+  *inside the string*. A sweep on 2026-08-18 found ten strings it had
+  already done this to, carrying sixteen runs of spaces between them.
+  Use one long line, or `concat!`, or build the string in pieces.
+  `scripts/check.sh` fails on the trailing `\` itself, so this is
+  enforced rather than remembered.
+
+## Writing style · non-negotiable
+
+- Never use the em dash `—` anywhere: not in UI strings, not in code
+  comments, not in docs or commit messages. Use `,` or `·` instead, or
+  split into two sentences. An en dash `–` inside a numeric range like
+  `3–7` is fine; the banned character is U+2014.
+- Repository artifacts are English. Product UI copy will be Korean-first
+  when a UI exists. See [`docs/git-workflow.md`](docs/git-workflow.md) §7.
+
+## Commit messages
+
+Every commit MUST follow [`docs/commit-format.md`](docs/commit-format.md).
+That file is the authoritative spec. The short form:
+
+- Subject: `<type>: <imperative lower-case summary>`, no trailing
+  period, under ~70 chars. Type is one of `feat`, `fix`, `refactor`,
+  `test`, `docs`, `chore`.
+- One blank line after the subject.
+- Body is a **bullet list only**, each line starting with `- `. No prose
+  paragraphs. No blank lines between bullets. 3 to 7 bullets is typical.
+- Never include emoji, an AI footer, `Co-Authored-By:` lines,
+  "Generated with" lines, validation logs, or filler.
