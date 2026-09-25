@@ -4537,7 +4537,7 @@ fn rect_of(window_id: i64) -> windows::Win32::Foundation::RECT {
 /// The strongest promise in this project, run.
 ///
 /// `capture.rs` opens by saying **nothing reaches disk, ever, including for
-/// debugging**, and `CLAUDE.md` says it twice. Until this existed, the sentence
+/// debugging**, and `CONTRIBUTING.md` says it twice. Until this existed, the sentence
 /// appeared in this repository as a comment, in a roadmap gate, and as a
 /// **translation fixture** in another crate's live tests. Nowhere as a check.
 ///
@@ -4601,7 +4601,7 @@ fn an_ocr_acquisition_writes_nothing_to_disk() {
     for point in &points {
         match acquirer.acquire(*point, &context) {
             Ok(target) => {
-                // Length and shape, never the text. `CLAUDE.md`, and the live
+                // Length and shape, never the text. `CONTRIBUTING.md`, and the live
                 // check that once printed the desktop behind a translucent card.
                 println!(
                     "  read {} chars at ({}, {})",
