@@ -43,7 +43,7 @@ Mori Lens has **complete macOS code** but **no real-world runtime verification**
 ## What's Verified (Automated)
 
 ✅ **Unit tests**: Coordinate conversion, UTF conversion, capture math, permission state  
-✅ **CI passes**: `scripts/check.sh` runs on macOS in CI  
+✅ **Source/build verification configured**: `scripts/check.sh` includes macOS crate in CI configuration (remote CI runs not yet verified on exact main)  
 ✅ **Bundle structure**: Verified by release workflows  
 ✅ **Code compiles**: Links successfully on macOS  
 

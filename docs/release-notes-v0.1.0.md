@@ -20,7 +20,7 @@ Mori Lens is an accessibility-first text capture and translation tool for Window
 ### Provider Readiness Management (NEW in v0.1.0)
 - **Real-time readiness display**: See which providers are ready, what models are available
 - **One-click actions**: Download, Load, Refresh, Configure models directly from the Status section
-- **Operation tracking**: Watch download progress, pause/resume transfers
+- **Operation tracking**: Watch download progress and status
 - **Accurate state reporting**: No more stale or misleading readiness information
 - **Event-driven updates**: UI updates only when needed, not on every poll
 
@@ -37,9 +37,8 @@ Mori Lens is an accessibility-first text capture and translation tool for Window
 - **Export**: Export library to JSONL for backup or migration
 
 ### Translation & OCR
-- **25+ languages**: Automatic language detection
-- **Quality scoring**: Automated contract checks for translation quality
-- **OCR fallback**: Vision framework for when accessibility fails
+- **Multiple languages**: Supports translation between various languages via local models
+- **OCR fallback**: Windows OCR implementation for when accessibility fails (manual by default, automatic opt-in)
 - **Model selection**: Choose from various local models (qwen2.5:7b recommended)
 
 ### User Experience
@@ -52,7 +51,7 @@ Mori Lens is an accessibility-first text capture and translation tool for Window
 
 ### Windows NSIS Installer (Recommended)
 
-1. Download `Mori-Lens_0.1.0_x64-setup.exe` from the release assets
+1. Download `Mori Lens_0.1.0_x64-setup.exe` from the release assets
 2. Run the installer (no admin rights required)
 3. Launch Mori Lens from Start Menu or desktop shortcut
 4. Follow the welcome lesson
@@ -60,11 +59,12 @@ Mori Lens is an accessibility-first text capture and translation tool for Window
 6. Download a model (qwen2.5:7b recommended for Ollama)
 7. Start capturing text by hovering over it
 
-### Windows MSIX Package (Microsoft Store)
+### Windows MSIX Package (Store-Preparation Artifact)
 
-1. Download `Mori-Lens_0.1.0_x64.msix` from the release assets
-2. Double-click to install (may require Developer Mode or sideloading)
-3. Launch from Start Menu
+1. Download `MoriLens_0.1.0.0_x64.msix` from the release assets
+2. This is a structurally verified Store-preparation artifact with placeholder publisher identity
+3. For testing: double-click to install (may require Developer Mode or sideloading)
+4. For production: requires code signing and publisher identity replacement before Store submission
 
 ### Unsigned Build Warning
 
@@ -119,7 +119,7 @@ This release is **not code-signed**. Windows SmartScreen will warn on first run.
 - **No code signing**: SmartScreen warning on first run (accurate, not false alarm)
 - **Ollama/LM Studio required**: Not bundled, must be installed separately
 - **No auto-update**: Download new versions from GitHub Releases
-- **No startup option**: Must launch manually (tray menu option planned for v0.2.0)
+- **Start with Windows**: Off by default, can be enabled from tray menu
 
 ### macOS
 - **Not verified**: Code exists but has not been tested on actual macOS hardware
@@ -142,7 +142,7 @@ This release is **not code-signed**. Windows SmartScreen will warn on first run.
 ### What Mori Lens Does NOT Do
 - Send text to remote servers
 - Collect telemetry or usage analytics
-- Start automatically with Windows (by default)
+- Start automatically with Windows unless explicitly enabled
 - Bundle or download models without your consent
 
 ### Endpoint Security
@@ -180,8 +180,8 @@ All checks passed:
 - ✅ `scripts/release-preflight.sh`: Artifacts built and verified
 - ✅ Version consistency: All three files show 0.1.0
 - ✅ 657 Rust tests pass
-- ✅ 100+ JavaScript tests pass
-- ✅ Accessibility tests: 11 states, zero violations
+- ✅ 105 JavaScript tests pass
+- ✅ Automated accessibility tests: 11 production readiness states checked with axe-core, zero violations
 - ✅ Security audit: Endpoint validation strong
 
 ## Documentation
@@ -203,7 +203,6 @@ All checks passed:
 
 ### v0.2.0 (Planned)
 - Auto-update support
-- Tray menu with "Start with Windows" option
 - macOS runtime verification
 - Performance regression baseline
 - Library/Review hardening (tag atomicity, pagination)
