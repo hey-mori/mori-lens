@@ -1,0 +1,8 @@
+# Pinned dependencies for production asset generation
+# Install with: python -m pip install -r scripts/requirements-assets.txt
+#
+# This pins Pillow to a specific version to ensure deterministic asset generation.
+# If you update this version, verify that regenerated assets are byte-identical
+# (or document what changed and why).
+
+Pillow==10.1.0
