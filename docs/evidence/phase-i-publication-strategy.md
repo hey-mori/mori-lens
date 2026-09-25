@@ -3,12 +3,14 @@
 **Date**: 2026-09-25  
 **Purpose**: Recommend publication strategy based on audit findings
 
-## Current Repository State
+## Audited Baseline
 
-**Exact main SHA**: 017acde029c14194f6d6ec1c7eb74bbaf5951dc9  
-**Total commits**: 1,391  
+**Audited baseline SHA**: c48f9c36b5c3a0ea8748ea1e9650adc40dc3a342  
+**Total commits (as of audited baseline)**: 1,392  
 **Visibility**: PRIVATE  
 **Repository**: swarea/mori-lens
+
+The merge commit containing subsequent reports necessarily postdates the audited baseline. The final RC SHA is established externally after all publication changes have landed.
 
 ## Options
 
@@ -17,7 +19,7 @@
 **What it means**: Make the current private repository public as-is.
 
 **Pros**:
-- Preserves all commit history (1,391 commits)
+- Preserves all commit history (1,392 commits as of audited baseline)
 - Preserves all PRs, issues, discussions
 - No migration work required
 - All branches, tags, and metadata already audited
@@ -51,7 +53,7 @@
 - Can curate commit messages from scratch
 
 **Cons**:
-- Loses 1,391 commits of development history
+- Loses 1,392 commits of development history (as of audited baseline)
 - Loses all PR discussions, reviews, and context
 - Loses issue tracking history
 - Requires significant manual work to reconstruct
@@ -95,7 +97,7 @@
 
 4. **History is the product**
    - This project's defining characteristic is evidence-based development
-   - 1,391 commits document the measurement-first approach
+   - 1,392 commits document the measurement-first approach (as of audited baseline)
    - ADRs, benchmarks, and compatibility matrices reference commit history
    - Losing history would destroy the project's provenance
 
@@ -112,26 +114,30 @@
 
 ### Execution Plan for Option A
 
-1. **Merge evidence reconciliation PR**
-   - Update Phase F, G, H evidence documents
-   - Update final publication report
-   - Ensure all gates pass
+**Publication strategy recommendation**: Option A (convert existing repository to public)
 
-2. **Verify all gates pass on main**
-   - `scripts/check.sh --full`
-   - `scripts/check_public_readiness.py`
-   - Re-run gitleaks to confirm
-   - Re-run PII/internal-data scan
+**Execution prerequisite**: Final RC verification on exact post-#644 main
 
-3. **Make repository public**
-   - Use GitHub API or web UI to change visibility
-   - No tag, no release yet (owner decision)
+**Phase J: Final RC Verification (required before publication execution)**
 
-4. **Optional: Create v0.1.0 tag**
+1. **Merge PR #644** (corrective publication-truth PR)
+2. **Establish FINAL_RC_SOURCE_SHA** from resulting remote main
+3. **Run ci.yml** on that exact SHA
+4. **Run package-smoke.yml** on that exact SHA
+5. **Run source-only release preflight**: `scripts/release-preflight.sh --source-only`
+6. **Run full Windows release preflight**: `scripts/release-preflight.sh`
+7. **Build fresh NSIS and MSIX** from exact final SHA
+8. **Record final hashes and build provenance**
+9. **Only then return to owner decisions**
+
+**Owner-controlled publication execution (after Phase J completion)**
+
+1. **Owner decision**: Choose licence grant (MIT, Apache-2.0, or other)
+2. **Owner decision**: Execute publication (make repository public)
+3. **Optional**: Create v0.1.0 tag
    - Only if owner decides to release
    - Would use `git tag -s v0.1.0 -m "v0.1.0: Initial public release"`
-
-5. **Optional: Create GitHub Release**
+4. **Optional**: Create GitHub Release
    - Only if owner decides to distribute binaries
    - Would include signed installers (NSIS, MSIX)
    - Would include SHA256SUMS.txt with detached signature

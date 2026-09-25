@@ -8,10 +8,15 @@
 #   - Release binary built (cargo build --release)
 #
 # Usage:
-#   .\scripts\package-msix.ps1
+#   .\scripts\package-msix.ps1            # Release mode (production assets)
+#   .\scripts\package-msix.ps1 -Smoke     # Smoke mode (synthetic assets)
 #
 # Output:
 #   target\msix\MoriLens_<version>_x64.msix
+
+param(
+    [switch]$Smoke
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -47,6 +52,28 @@ if (-not $MakeAppx) {
         Write-Error "MakeAppx.exe not found. Install Windows SDK."
         exit 1
     }
+}
+
+# Verify production assets (release mode only)
+if (-not $Smoke) {
+    Write-Host ""
+    Write-Host "Verifying production assets..."
+    $VerifierPath = Join-Path $ProjectRoot "scripts\verify-product-assets.py"
+    if (Test-Path $VerifierPath) {
+        python $VerifierPath
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Production asset verification failed. Cannot proceed with release build."
+            exit 1
+        }
+        Write-Host "PASS: Production assets verified"
+    } else {
+        Write-Error "Production asset verifier not found at $VerifierPath"
+        exit 1
+    }
+} else {
+    Write-Host ""
+    Write-Host "SMOKE MODE: Skipping production asset verification"
+    Write-Host "  (Using synthetic assets for CI testing only)"
 }
 
 # Check release binary
@@ -128,7 +155,11 @@ $HashPath = "$MsixPath.sha256"
 "$Hash  $MsixName" | Out-File $HashPath -Encoding ascii
 
 Write-Host ""
-Write-Host "MSIX packaged successfully:"
+if ($Smoke) {
+    Write-Host "MSIX packaged successfully (SMOKE MODE):"
+} else {
+    Write-Host "MSIX packaged successfully (RELEASE MODE):"
+}
 Write-Host "  $MsixPath"
 Write-Host "  SHA-256: $Hash"
 Write-Host ""

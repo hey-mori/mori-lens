@@ -10,13 +10,15 @@ The Mori Lens repository has completed all publication-readiness work. All gates
 
 **Recommendation**: Convert existing repository to public as-is. Do NOT create a new repository.
 
-**Exact main SHA**: 017acde029c14194f6d6ec1c7eb74bbaf5951dc9
+**Audited baseline SHA**: c48f9c36b5c3a0ea8748ea1e9650adc40dc3a342
+
+The merge commit containing this report necessarily postdates the audited baseline. The final RC SHA is established externally after all publication changes have landed.
 
 ## Evidence Table
 
 | Category | Status | Evidence Reference |
 |----------|--------|-------------------|
-| Exact main SHA | PASS | 017acde029c14194f6d6ec1c7eb74bbaf5951dc9 |
+| Audited baseline SHA | PASS | c48f9c36b5c3a0ea8748ea1e9650adc40dc3a342 |
 | Public-facing tree | PASS | Phase C complete, PR #637 merged |
 | Third-party inventory | PASS | 10 first-party, 458 third-party, 28 unique licenses |
 | Asset provenance | PASS | docs/assets/PROVENANCE.md, Phase D complete |
@@ -25,11 +27,13 @@ The Mori Lens repository has completed all publication-readiness work. All gates
 | PII/internal-data scan | PASS | Phase G, PR #181 and #200 sanitized |
 | Author metadata | OWNER ACCEPTED | 3 distinct author identities, 4 committer identities, retention accepted |
 | GitHub metadata | PASS | Phase G, 41 PRs sanitized for AI attribution, 2 PRs sanitized for PII |
-| Actions/artifacts | PASS | Phase H, 20 runs inspected, 1 artifact inspected |
-| Branches/tags/releases | PASS | Phase H, only main branch, 0 tags, 0 releases |
+| Actions/artifacts | PASS | Phase H, 24 runs enumerated, 1 artifact inspected |
+| Branches/tags/releases | PASS | Phase H, 1 GitHub branch (main), 0 tags, 0 releases |
 | Publication strategy | PASS | Phase I, Option A recommended |
-| Remote CI | PASS | ci.yml, package-smoke.yml, release.yml all verified |
-| Distribution readiness | PASS | NSIS and MSIX pipelines verified |
+| Workflow source contract | VERIFIED | ci.yml, package-smoke.yml, release.yml source verified |
+| Remote CI on exact main | PENDING | Requires execution on final RC SHA |
+| Distribution pipeline contract | VERIFIED | NSIS and MSIX workflows verified |
+| Final RC distribution | PENDING | Requires fresh build on final RC SHA |
 | Owner decisions | RECORDED | See Owner Decisions section below |
 
 ## Phase Results
@@ -53,9 +57,13 @@ The Mori Lens repository has completed all publication-readiness work. All gates
 **Work completed**:
 - Created THIRD-PARTY-NOTICES.md documenting all dependencies
 - Created docs/decisions/licensing-decision-memo.md with options analysis
-- Confirmed all dependencies use permissive licenses (MIT, Apache-2.0, MPL-2.0)
-- No copyleft dependencies detected
+- Repository dependency inventory generated mechanically from cargo metadata
+- First-party packages separated mechanically by manifest path
+- Third-party SPDX license expressions preserved exactly as reported
+- 28 unique license expressions identified (including MIT, Apache-2.0, MPL-2.0, and others)
 - License state: all-rights-reserved (owner decision pending)
+
+**Note**: The inventory preserves exact SPDX expressions and does not classify licenses as "permissive" or "copyleft". License compatibility analysis is separate from inventory generation and remains pending owner decision.
 
 ### Phase E: Public-Readiness Automated Gate ✅
 **Status**: PASS  
@@ -77,8 +85,8 @@ The Mori Lens repository has completed all publication-readiness work. All gates
 **Evidence**: docs/evidence/phase-f-security-scan.md
 
 **Results**:
-- **Current tree**: 0 leaks (gitleaks v8.18.4, 1,391 commits)
-- **Full git history**: 0 leaks (gitleaks v8.18.4, 1,391 commits)
+- **Current tree**: 0 leaks (gitleaks v8.18.4, 1,392 commits as of audited baseline)
+- **Full git history**: 0 leaks (gitleaks v8.18.4, 1,392 commits as of audited baseline)
 - **Git author identities**: 3 distinct author identities, 4 committer identities
 - **Owner decision**: Metadata retention accepted
 
@@ -106,11 +114,10 @@ The Mori Lens repository has completed all publication-readiness work. All gates
 **Evidence**: docs/evidence/phase-h-actions-audit.md
 
 **Results**:
-- **Actions runs inspected**: 20 most recent
-- **Accessible logs inspected**: YES
+- **Actions runs enumerated**: 24 (all runs)
+- **Accessible logs inspected**: YES (all 24)
 - **Accessible artifacts inspected**: 1 (windows-packages)
-- **Expired/unavailable logs**: NOT INSPECTABLE
-- **Remote branches**: 1 (main only)
+- **GitHub repository branches**: 1 (main)
 - **Remote tags**: 0
 - **Releases**: 0
 - **Repository metadata**: Clean
@@ -125,7 +132,7 @@ The Mori Lens repository has completed all publication-readiness work. All gates
 - Security proven (Phase F)
 - Metadata sanitized (Phase G)
 - Infrastructure clean (Phase H)
-- History preserved (1,391 commits)
+- History preserved (1,392 commits as of audited baseline)
 - Author metadata decision resolved
 
 ### Corrective PR #642: Release Assets and Dependency Inventory ✅
@@ -152,7 +159,7 @@ The Mori Lens repository has completed all publication-readiness work. All gates
 - Git author emails will be publicly visible when repository becomes public
 
 **GIT HISTORY REWRITE = NO**
-- Rewriting 1,391 commits would destroy provenance
+- Rewriting the repository's full history would change commit identities and invalidate existing SHA-based provenance
 - Owner accepts git author email exposure
 
 **LICENSE GRANT = OWNER DECISION PENDING**
@@ -195,6 +202,11 @@ The Mori Lens repository has completed all publication-readiness work. All gates
 ## Repository Status
 
 ```
+PUBLICATION AUDIT = COMPLETE
+FINAL RC VERIFICATION = PENDING
+LOCAL SOURCE GATES = PASS
+REMOTE CI ON EXACT MAIN = NONE (pending Phase J)
+
 PUBLIC-FACING TREE = PASS
 PUBLIC-READINESS AUTOMATED GATE = PASS
 CURRENT TREE SECRET/PII SCAN = PASS
@@ -203,20 +215,46 @@ GITHUB PR/ISSUE METADATA = SANITIZED
 ACTIONS/ARTIFACTS/BRANCHES = AUDITED
 THIRD-PARTY COMPLIANCE = PASS
 ASSET PROVENANCE = PASS
-RELEASE ASSET PIPELINE = PASS
+ASSET ORIGIN = VERIFIED
+DISTRIBUTION RIGHTS = VERIFIED
+FORMAT/STRUCTURAL VALIDITY = VERIFIED
+SMOKE-SEPARATION = VERIFIED
+VISUAL PRODUCT REVIEW = PENDING
+
+WORKFLOW SOURCE CONTRACT = VERIFIED
+DISTRIBUTION PIPELINE CONTRACT = VERIFIED
+FINAL RC DISTRIBUTION = PENDING
+
+AUDITED BASELINE SHA = c48f9c36b5c3a0ea8748ea1e9650adc40dc3a342
+AUDITED BASELINE COMMIT COUNT = 1,392
+
 LICENCE PREPARATION = COMPLETE
 LICENCE GRANT = OWNER DECISION PENDING
 PUBLICATION STRATEGY = RECOMMENDED (Option A), NOT EXECUTED
 REPOSITORY VISIBILITY = PRIVATE
-EXACT MAIN SHA = 017acde029c14194f6d6ec1c7eb74bbaf5951dc9
-TOTAL COMMITS = 1,391
+TAG = NONE
+GITHUB RELEASE = NONE
 ```
 
 ## Next Steps
+
+**Phase J: Final RC Verification (required before owner decisions)**
+
+1. Merge PR #644
+2. Establish FINAL_RC_SOURCE_SHA from resulting remote main
+3. Run ci.yml on that exact SHA
+4. Run package-smoke.yml on that exact SHA
+5. Run source-only release preflight
+6. Run full Windows release preflight
+7. Build fresh NSIS and MSIX from exact final SHA
+8. Record final hashes and build provenance
+9. Only then return to owner decisions
+
+**Owner decisions (after Phase J completion)**
 
 1. **Owner decision**: Choose licence grant (MIT, Apache-2.0, or other)
 2. **Owner decision**: Execute publication (make repository public)
 3. **Optional**: Create v0.1.0 tag
 4. **Optional**: Create GitHub Release with signed binaries
 
-All mechanical publication tasks are complete. The repository is ready for owner decisions.
+All mechanical publication audit tasks are complete. Final RC verification (Phase J) must complete before owner decisions.
