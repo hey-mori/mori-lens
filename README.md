@@ -11,15 +11,14 @@ Mori Lens explains what you are reading, without interrupting it.
 A local-first language layer for everything on your screen. Rest the
 pointer on a word or a sentence in any application and Lens reads the
 text the operating system already knows about, detects its language, and
-shows the meaning in your target language next to it. No selecting, no
-copying, no hotkey, no screenshot.
+shows the meaning in your target language next to it. No selection or
+copy/paste is required.
 
 Lens is not a screen translator. It asks the accessibility tree for the
 real characters under the pointer first, and only falls back to a small
-local OCR crop when an application exposes nothing to ask. That single
-decision is what makes it cheap enough to leave running, accurate about
-word boundaries, and able to stay off the screen-recording permission
-until the user actually needs it.
+in-memory OCR crop when an application exposes nothing to ask. That
+single decision is what makes it cheap enough to leave running, accurate
+about word boundaries, and respectful of privacy by default.
 
 ## Current state
 
@@ -161,17 +160,16 @@ registers it in Settings > Apps. Per-user, no elevation.
 Or build and install separately:
 
 ```bash
-cargo build --release -p lens
+cargo build --release --manifest-path apps/lens/Cargo.toml
 ```
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/install.ps1
 ```
 
-### From a release zip
+### Manual installation from source build
 
-Unpack the zip, then right-click `install.ps1` and choose Run with
-PowerShell, or:
+After building, run the PowerShell installer script:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File install.ps1
