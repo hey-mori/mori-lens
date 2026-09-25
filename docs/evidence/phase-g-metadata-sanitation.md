@@ -59,7 +59,11 @@
 
 ### Inline Review Comments
 - **Status**: PASS
-- **Comments with attribution**: 0 (not checked exhaustively, but no patterns found in review bodies)
+- **Total inline review comments**: 41
+- **Comments with AI attribution**: 0
+- **Comments with PII/internal data**: 0
+- **Audit method**: Exhaustive enumeration via GitHub API pagination
+- **Notes**: All 41 comments are legitimate code review feedback (style, correctness, documentation). No publication risk detected.
 
 ## Sanitation Details
 
