@@ -6,9 +6,14 @@ This script:
 - Uses cargo metadata to get complete dependency information
 - Detects first-party packages mechanically by manifest_path (inside repo)
 - Preserves exact SPDX license expressions
-- Distinguishes repository inventory from Windows distribution inventory
+- Uses stable package identity (name, version) to handle multiple versions
 - Verifies JavaScript dev-only claim from package.json
 - Does not make legal conclusions from naive substring matching
+
+Note: This generates a REPOSITORY dependency inventory. It does not compute
+a Windows-specific distribution subset. Platform-conditional dependencies
+are included in the repository inventory but may not all be shipped in the
+Windows binary.
 """
 
 import json
@@ -49,6 +54,17 @@ def is_first_party(package, repo_root):
         return False
 
 
+def package_key(pkg):
+    """
+    Generate a stable package identity key.
+
+    Uses (name, version) to distinguish multiple versions of the same crate.
+    This is critical because Cargo dependency graphs can legitimately contain
+    multiple versions simultaneously (e.g., bitflags 1.x and 2.x).
+    """
+    return (pkg["name"], pkg["version"])
+
+
 def check_js_dev_only():
     """Verify JavaScript dependencies are dev-only from package.json."""
     package_json_path = REPO_ROOT / "apps" / "lens" / "package.json"
@@ -69,22 +85,6 @@ def check_js_dev_only():
         return True, "No JavaScript dependencies"
 
 
-def get_windows_target_deps(metadata, repo_root):
-    """Filter dependencies for Windows target."""
-    # This is a simplification - in reality we'd need to evaluate target cfg expressions
-    # For now, we include all deps and note that some are platform-conditional
-    first_party = []
-    third_party = []
-
-    for package in metadata.get("packages", []):
-        if is_first_party(package, repo_root):
-            first_party.append(package)
-        else:
-            third_party.append(package)
-
-    return first_party, third_party
-
-
 def main():
     print("=" * 70)
     print("Mori Lens Third-Party Notice Generator")
@@ -102,13 +102,18 @@ def main():
     lens_pkgs = lens_metadata.get("packages", [])
     print(f"   Found {len(lens_pkgs)} lens app packages")
 
-    # Combine all packages
-    all_packages = {pkg["name"]: pkg for pkg in workspace_pkgs}
+    # Combine all packages using stable identity (name, version)
+    # This preserves multiple versions of the same crate
+    all_packages = {}
+    for pkg in workspace_pkgs:
+        key = package_key(pkg)
+        all_packages[key] = pkg
     for pkg in lens_pkgs:
-        if pkg["name"] not in all_packages:
-            all_packages[pkg["name"]] = pkg
+        key = package_key(pkg)
+        if key not in all_packages:
+            all_packages[key] = pkg
 
-    print(f"\n3. Total unique packages: {len(all_packages)}")
+    print(f"\n3. Total unique (name, version) packages: {len(all_packages)}")
 
     # Separate first-party from third-party
     first_party = []
@@ -151,11 +156,14 @@ def main():
         f.write(f"- **Third-party dependencies**: {len(third_party)}\n")
         f.write(f"- **Unique license expressions**: {len(by_license)}\n\n")
 
-        f.write("### Target Platform Note\n\n")
-        f.write("This is the **repository dependency inventory** — it includes dependencies for all target platforms ")
-        f.write("(Windows, macOS, Linux). The actual Windows v0.1.0 distribution includes only Windows-compatible ")
-        f.write("dependencies. Platform-conditional dependencies (e.g., macOS-only crates) are not shipped in the ")
-        f.write("Windows binary but are listed here for completeness.\n\n")
+        f.write("### Repository vs Distribution Inventory\n\n")
+        f.write("This is the **repository dependency inventory**: it includes all dependencies resolved ")
+        f.write("by Cargo across all target platforms (Windows, macOS, Linux). Platform-conditional ")
+        f.write("dependencies (e.g., macOS-only crates) are included in this inventory but may not be ")
+        f.write("shipped in the Windows v0.1.0 binary.\n\n")
+        f.write("The Windows binary distribution subset is not separately enumerated by this generator. ")
+        f.write("For a platform-specific inventory, use `cargo tree --target x86_64-pc-windows-msvc` ")
+        f.write("or equivalent tooling.\n\n")
 
         f.write("### JavaScript Dependencies\n\n")
         if js_dev_only:
@@ -185,7 +193,7 @@ def main():
         f.write("## Full Third-Party Dependency List\n\n")
         f.write("| Package | Version | License |\n")
         f.write("|---------|---------|----------|\n")
-        for pkg in sorted(third_party, key=lambda d: d["name"]):
+        for pkg in sorted(third_party, key=lambda d: (d["name"], d["version"])):
             license_expr = pkg.get("license") or "NO-License"
             f.write(f"| `{pkg['name']}` | {pkg['version']} | {license_expr} |\n")
 
@@ -199,6 +207,7 @@ def main():
     print("=" * 70)
     print("\nNote: This generator uses cargo metadata to detect first-party packages")
     print("mechanically by manifest_path, not by hardcoded name lists.")
+    print("Multiple versions of the same crate are preserved in the inventory.")
 
 
 if __name__ == "__main__":
