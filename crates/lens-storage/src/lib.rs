@@ -404,6 +404,7 @@ impl Library {
     /// Set the tags for an item, replacing any existing tags.
     ///
     /// Tags are created if they don't exist. Returns whether the item existed.
+    /// The operation is atomic: if any step fails, all changes are rolled back.
     pub fn set_tags(&self, id: i64, tags: &[String]) -> Result<bool, Error> {
         // Check if the item exists.
         let exists: bool = self
@@ -414,8 +415,11 @@ impl Library {
             return Ok(false);
         }
 
+        // Wrap DELETE + INSERTs in a transaction for atomicity.
+        let tx = self.conn.unchecked_transaction()?;
+
         // Remove existing tags for this item.
-        self.conn.execute(
+        tx.execute(
             "DELETE FROM library_tags WHERE library_id = ?1",
             params![id],
         )?;
@@ -428,23 +432,24 @@ impl Library {
             }
 
             // Insert or get the tag id.
-            self.conn.execute(
+            tx.execute(
                 "INSERT OR IGNORE INTO tags (name) VALUES (?1)",
                 params![tag],
             )?;
-            let tag_id: i64 = self.conn.query_row(
+            let tag_id: i64 = tx.query_row(
                 "SELECT id FROM tags WHERE name = ?1",
                 params![tag],
                 |row| row.get(0),
             )?;
 
             // Link the tag to the item.
-            self.conn.execute(
+            tx.execute(
                 "INSERT OR IGNORE INTO library_tags (library_id, tag_id) VALUES (?1, ?2)",
                 params![id, tag_id],
             )?;
         }
 
+        tx.commit()?;
         Ok(true)
     }
 
@@ -1977,6 +1982,41 @@ mod tests {
             .unwrap();
         let tags = lib.get_tags(id).unwrap();
         assert_eq!(tags, vec!["valid"]);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn set_tags_is_atomic_and_idempotent() {
+        let path = temp_db("tags-atomic");
+        let lib = Library::open(&path).unwrap();
+        let id = lib.insert(&a_translation()).unwrap();
+
+        // Set initial tags.
+        lib.set_tags(id, &["alpha".to_owned(), "beta".to_owned()])
+            .unwrap();
+        assert_eq!(
+            lib.get_tags(id).unwrap(),
+            vec!["alpha", "beta"]
+        );
+
+        // Replace with new tags (should be atomic).
+        lib.set_tags(id, &["gamma".to_owned()]).unwrap();
+        assert_eq!(lib.get_tags(id).unwrap(), vec!["gamma"]);
+
+        // Verify the item no longer has the old tags.
+        let item_tags = lib.get_tags(id).unwrap();
+        assert!(item_tags.contains(&"gamma".to_owned()));
+        assert!(!item_tags.contains(&"alpha".to_owned()));
+        assert!(!item_tags.contains(&"beta".to_owned()));
+
+        // Setting empty tags should clear all tags atomically.
+        lib.set_tags(id, &[]).unwrap();
+        assert_eq!(lib.get_tags(id).unwrap(), Vec::<String>::new());
+
+        // Verify tags can be re-set after clearing.
+        lib.set_tags(id, &["delta".to_owned()]).unwrap();
+        assert_eq!(lib.get_tags(id).unwrap(), vec!["delta"]);
 
         cleanup(&path);
     }
