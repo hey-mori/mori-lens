@@ -250,6 +250,7 @@ export const translations = {
     'library.export.error': 'Export failed: {error}',
     'library.import.success': 'Imported {count} item(s). Duplicates were skipped.',
     'library.import.error': 'Import failed: {error}',
+    'library.filter.load.error': 'Failed to load filter options: {error}',
 
     // Dynamic strings - Recent
     'recent.empty.state': 'No recent cards.',
@@ -640,6 +641,7 @@ export const translations = {
     'library.export.error': '내보내기 실패: {error}',
     'library.import.success': '{count}개 항목을 가져왔습니다. 중복은 건너뛰었습니다.',
     'library.import.error': '가져오기 실패: {error}',
+    'library.filter.load.error': '필터 옵션 로드 실패: {error}',
 
     // Dynamic strings - Diagnostics
     'diagnostics.copy.success': '복사됨!',
