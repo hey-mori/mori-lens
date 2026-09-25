@@ -53,7 +53,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm ci --prefix apps/lens/web
+      - run: npm ci --prefix apps/lens
       - run: bash scripts/check.sh --full
         shell: bash
 
@@ -69,6 +69,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm ci --prefix apps/lens/web
+      - run: npm ci --prefix apps/lens
       - run: bash scripts/check.sh --full
         shell: bash

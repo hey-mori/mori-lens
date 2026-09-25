@@ -261,12 +261,49 @@ def check_node_project_paths():
     else:
         fail("CONTRIBUTING.md missing")
 
+    # Check workflows for stale npm paths
+    workflows_dir = REPO_ROOT / ".github" / "workflows"
+    if workflows_dir.exists():
+        for workflow in workflows_dir.glob("*.yml"):
+            content = workflow.read_text(encoding="utf-8", errors="ignore")
+            if re.search(r"npm\s+(ci|test|run).*--prefix\s+apps/lens/web", content):
+                fail(f"{workflow.name} contains stale npm command path 'apps/lens/web'")
+
+    # Check scripts for stale npm paths
+    scripts_dir = REPO_ROOT / "scripts"
+    if scripts_dir.exists():
+        for script in scripts_dir.glob("*.sh"):
+            content = script.read_text(encoding="utf-8", errors="ignore")
+            if re.search(r"npm\s+(ci|test|run).*--prefix\s+apps/lens/web", content):
+                fail(f"{script.name} contains stale npm command path 'apps/lens/web'")
+
     # Verify actual package.json location
     package_json = REPO_ROOT / "apps/lens/package.json"
     if package_json.exists():
         ok("apps/lens/package.json exists")
     else:
         fail("apps/lens/package.json missing")
+
+
+def check_release_workflow_no_smoke_assets():
+    """Check that release workflow does not use smoke assets."""
+    print("\n· Release workflow asset policy")
+    release_yml = REPO_ROOT / ".github" / "workflows" / "release.yml"
+    if release_yml.exists():
+        content = release_yml.read_text(encoding="utf-8", errors="ignore")
+        # Check for smoke asset generation in release workflow
+        if "generate-smoke-assets.py" in content:
+            fail("release.yml invokes generate-smoke-assets.py (must use production assets only)")
+        else:
+            ok("release.yml does not invoke smoke asset generator")
+
+        # Check for production asset verification
+        if "Verify production assets" in content or "production asset" in content.lower():
+            ok("release.yml verifies production assets")
+        else:
+            fail("release.yml should verify production assets are present")
+    else:
+        ok("release.yml not present (OK for now)")
 
 
 def check_changelog_unreleased():
@@ -307,6 +344,7 @@ def main():
     check_no_secrets()
     check_node_project_paths()
     check_changelog_unreleased()
+    check_release_workflow_no_smoke_assets()
 
     print("\n" + "=" * 60)
     if EXIT_CODE == 0:
