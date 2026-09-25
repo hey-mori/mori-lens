@@ -26,7 +26,7 @@ This directory contains the technical and product documentation for Mori Lens.
   - [ADR-0014](decisions/ADR-0014-three-tiers-of-history.md) - Three tiers of history
   - [ADR-0015](decisions/ADR-0015-the-library-schema.md) - The library schema
   - [ADR-0017](decisions/ADR-0017-signed-binary-distribution.md) - Signed binary distribution
-  - [ADR-0018](decisions/ADR-0018-mori-boundary.md) - Mori boundary
+  - [ADR-0018](decisions/ADR-0018-mori-process-boundary.md) - Mori process boundary
   - [ADR-0019](decisions/ADR-0019-provider-runtime.md) - Provider runtime
 
 ## Evidence and Measurement
