@@ -186,18 +186,18 @@ All checks passed:
 
 ## Documentation
 
-- [Project Goal](docs/mori-lens-project-goal.md)
-- [Architecture](docs/architecture.md)
-- [Privacy Model](docs/privacy-model.md)
-- [Roadmap](docs/roadmap.md)
-- [Release Checklist](docs/release-checklist.md)
-- [Windows App Matrix](docs/compatibility/windows-app-matrix.md)
+- [Project Goal](mori-lens-project-goal.md)
+- [Architecture](architecture.md)
+- [Privacy Model](privacy-model.md)
+- [Roadmap](roadmap.md)
+- [Release Checklist](release-checklist.md)
+- [Windows App Matrix](compatibility/windows-app-matrix.md)
 
 ## Support & Feedback
 
 - **Issues**: https://github.com/swarea/mori-lens/issues
 - **Discussions**: https://github.com/swarea/mori-lens/discussions
-- **Security**: See [SECURITY.md](SECURITY.md) for reporting vulnerabilities
+- **Security**: See [SECURITY.md](../SECURITY.md) for reporting vulnerabilities
 
 ## What's Next
 
