@@ -5,7 +5,7 @@
 //!
 //! # What it will not do
 //!
-//! **Nothing reaches disk. Ever, including for debugging** (`CLAUDE.md`). There
+//! **Nothing reaches disk. Ever, including for debugging** (`CONTRIBUTING.md`). There
 //! is no path out of this module that writes a file, and the returned buffer is
 //! a plain `Vec` the caller drops.
 //!

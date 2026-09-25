@@ -14,7 +14,7 @@
 //!
 //! None of this is covered by `cargo test`. UI Automation needs a live desktop
 //! with a real window, so the verification for this file is a probe run against
-//! named applications (`CLAUDE.md`, "Claiming something works").
+//! named applications (`CONTRIBUTING.md`, "Claiming something works").
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -160,7 +160,7 @@ impl Deadline {
 /// failed `RangeFromPoint` means `Empty`. Reporting a timed-out call that way
 /// would put "this application exposes no text" in the compatibility matrix for
 /// an application that exposes plenty and answered too slowly once. Distinguishing
-/// failure reasons is the whole output of Milestone 1 (`CLAUDE.md`).
+/// failure reasons is the whole output of Milestone 1 (`CONTRIBUTING.md`).
 ///
 /// Three codes because three layers can be the one that gives up: UI Automation
 /// itself, the COM runtime underneath it, and Win32 under that.

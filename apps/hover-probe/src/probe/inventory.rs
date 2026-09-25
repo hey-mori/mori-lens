@@ -279,7 +279,7 @@ pub fn coverage(only: Option<&str>) {
         );
     }
 
-    // One string per line. A `\` continuing a string literal is what CLAUDE.md
+    // One string per line. A `\` continuing a string literal is what CONTRIBUTING.md
     // bans and what broke this file's first draft: rustfmt rejoins such a
     // literal and leaves the indentation inside it.
     for line in [

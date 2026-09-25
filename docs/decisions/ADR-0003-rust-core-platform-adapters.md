@@ -60,7 +60,7 @@ found.
 - The adapters have almost no coverage, because they cannot have any.
   This is accepted and compensated for by the probe
   ([ADR-0008](ADR-0008-probe-before-product.md)) and by the rule in
-  `CLAUDE.md` that an adapter change is not verified by `cargo test`.
+  `CONTRIBUTING.md` that an adapter change is not verified by `cargo test`.
 - macOS will need a small Swift bridge for AppKit and ScreenCaptureKit
   rather than raw Rust FFI. Wrapping AppKit lifetimes by hand at an
   `unsafe` boundary costs more in debugging than the bridge costs in

@@ -174,7 +174,7 @@ impl CaptureCost {
         };
         // Built in pieces rather than as one literal continued with a trailing
         // backslash. rustfmt rejoins those and leaves the indentation inside
-        // the string, which has reached a reader twice (`CLAUDE.md`).
+        // the string, which has reached a reader twice (`CONTRIBUTING.md`).
         let mut line = format!("capture   {captured} screenshots in {asked} fall-throughs");
         line.push_str(&format!(", {refused} refused by memory"));
         line.push_str(&format!(", {millis:.0}ms total, {each:.0}ms each"));
