@@ -40,7 +40,7 @@
 1. Used `gh pr list --state all --limit 1000` to fetch all PRs
 2. Filtered PRs with regex patterns: `Generated with`, `Co-Authored-By`, `Claude`
 3. For each PR:
-   - Removed `🤖 Generated with [Claude Code](...)` footer
+   - Removed `🤖 Generated with [Claude Code]` footer (with URL)
    - Removed `Co-authored-by:` lines
    - Removed `---` separators before footers
    - Cleaned up excessive blank lines
