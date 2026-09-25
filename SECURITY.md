@@ -14,10 +14,6 @@ something and asking how to send it privately, and keep the technical
 details out of it. That reaches the maintainer without disclosing
 anything.
 
-An earlier version of this section gave an email address at a domain that
-does not resolve. Anyone following it exactly reached nothing, while the
-one alternative it named was the one it forbade.
-
 Expect a response within a few days, even if only to acknowledge
 receipt. If the report involves a specific file or line, include the
 path and what you think it does.
@@ -36,21 +32,22 @@ The full model, with evidence and how to verify each claim:
 - **Nothing leaves the machine by default.** Translation runs against a
   local Ollama on `127.0.0.1`. A remote address is refused, not warned
   about: the HTTP client has no TLS and no per-provider grant.
-- **Nothing is recorded.** No screen recording, no keylogging, no
-  clipboard history, no automatic transcript. The translation cache is
-  in memory only and dies with the process.
 - **No screen image is ever written to disk.** Including for debugging.
   An OCR crop lives in memory for the duration of one recognition and is
   dropped.
+- **Persistent History is disabled by default.** When enabled, only text
+  already shown on screen is stored, in a local SQLite database, with no
+  automatic transmission.
+- **Explicitly saved Library items are persisted.** The user saves a card
+  to the Library with `Ctrl+Alt+S` or the Save button. Each entry is one
+  deliberate action.
+- **Session Recent is memory-only.** The most recent cards are held in
+  memory for the session and discarded on exit.
 - **Protected fields are refused before they are read.** `IsPassword` is
   checked before any text is materialised. If the check itself fails,
   the field is treated as protected.
 - **The clipboard is written on a keypress and never read.** `Ctrl+Alt+C`
   puts the card on the clipboard. Lens never reads the clipboard back.
-- **One file holds what was read, and a person put every line in it.**
-  `Ctrl+Alt+S` appends the card to `saved.md`. Every entry is one
-  keypress. The file is plain Markdown, and deletion is selecting a
-  block and pressing delete.
 - **The engine in use is visible.** The card shows what produced the
   answer, so the user can always tell whether that text left the
   machine.
@@ -99,9 +96,9 @@ is a stable hash, not a process name.
 
 ## Supported versions
 
-Only the current milestone is supported. There is no backport process.
+Only the latest release is supported. There is no backport process.
+Security fixes are applied to the current release and future releases.
 
 ## License
 
-See the README. A security policy repeating a licence is a second place for
-it to be wrong, which is how this file came to claim one the manifest denies.
+See the README for the current license state.

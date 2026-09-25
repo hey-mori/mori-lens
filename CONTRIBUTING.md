@@ -69,7 +69,7 @@ requirements.
 ### Installation
 
 ```bash
-npm ci --prefix apps/lens/web
+npm ci --prefix apps/lens
 ```
 
 Use `npm ci` (not `npm install`) to ensure the lockfile is respected and
@@ -79,7 +79,7 @@ and must be kept up to date.
 ### Running tests
 
 ```bash
-npm test --prefix apps/lens/web
+npm test --prefix apps/lens
 ```
 
 This runs the Vitest suite in headless jsdom. The canonical gate
@@ -88,7 +88,7 @@ This runs the Vitest suite in headless jsdom. The canonical gate
 ### Watch mode
 
 ```bash
-npm run test:watch --prefix apps/lens/web
+npm run test:watch --prefix apps/lens
 ```
 
 ## Frontend test architecture
@@ -168,7 +168,7 @@ production code.
 - `cargo test`
 - `node apps/lens/web/js/i18n.test.js` (legacy i18n tests)
 - `node apps/lens/web/js/i18n-key-checker.js` (key reference integrity)
-- `(cd apps/lens/web && npm test)` (Vitest behavioral tests)
+- `(cd apps/lens && npm test)` (Vitest behavioral tests)
 - `python3 scripts/check_capability_matrix.py` (capability matrix integrity)
 
 Add `--full` to also build the probe in release mode.
