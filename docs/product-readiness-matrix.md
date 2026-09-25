@@ -2,7 +2,8 @@
 
 **Date**: 2026-09-25  
 **Version**: 0.1.0  
-**Status**: Release Candidate
+**Status**: Release Candidate - MECHANICALLY COMPLETE  
+**Final Main SHA**: `1665b1950551138317a00ab8cf096f37774a09b6`
 
 ## Phase Status Summary
 
@@ -10,12 +11,15 @@
 |-------|-------------|--------|----------|--------------|
 | P20C | Production accessibility tests | ✅ COMPLETE | `accessibility-production.vitest.test.js` | None |
 | P20D | First-run lesson and #140 | ✅ ENGINEERING COMPLETE | `p20d-clean-machine-verification.md` | HUMAN: Requires clean-machine testing (#140) |
+| P20E | Live validation / evidence | ✅ LIVE OLLAMA VERIFIED | `p20e-live-provider-evidence.md` | HUMAN: Mori Lens end-to-end pending (#140) |
+| P21 | Compatibility + OCR fallback | ✅ AUDITED | `p21-compatibility-ocr-audit.md` | HUMAN: Automatic OCR runtime pending |
 | P22 | macOS release truth audit | ✅ COMPLETE | `p22-macos-release-truth-audit.md` | HUMAN/HARDWARE: Requires macOS hardware |
+| P23 | Platform orchestration audit | ✅ AUDITED | `p23-orchestration-maintainability-audit.md` | None (post-release maintainability) |
 | P24 | Security audit | ✅ COMPLETE | Adversarial tests in `translate.rs` | None |
-| P25 | Distribution/RC artifacts | ⏳ IN PROGRESS | Release preflight building | None |
-| P26 | Performance regression baseline | ⏳ PENDING | Compare to P13 baseline | None |
+| P25 | Distribution/RC artifacts | ✅ VERIFIED | `p25-distribution-evidence.md` | External: Code signing, Store account |
+| P26 | Performance regression audit | ✅ AUDITED | `p26-performance-regression-audit.md` | None (post-release budget) |
 | P27 | Library/Review data integrity | ✅ COMPLETE | `p27-library-review-data-integrity-audit.md` | None |
-| P28 | Final docs/evidence reconciliation | ⏳ IN PROGRESS | Release notes, this matrix | None |
+| P28 | Final docs/evidence reconciliation | ✅ COMPLETE | Release notes, this matrix, all evidence | None |
 
 ## Release Readiness by Dimension
 
@@ -54,9 +58,9 @@
 - ✅ **Stable DOM identity**: No unnecessary re-renders
 
 ### Distribution
-- ⏳ **NSIS installer**: Building (release preflight in progress)
-- ⏳ **MSIX package**: Building (release preflight in progress)
-- ⏳ **SHA256SUMS.txt**: Will be generated after build
+- ✅ **NSIS installer**: VERIFIED - `Mori Lens_0.1.0_x64-setup.exe`, SHA256: `c6bd2e6fdf7b183de2a6f4e52acc81a7b5fed6e16e301ed0f2ab81d77a9a653d`
+- ✅ **MSIX package**: VERIFIED - `MoriLens_0.1.0.0_x64.msix`, SHA256: `eacd167488839cecb887a5b423fdaabd904a88ef3d340f58f879130a5676500b`
+- ✅ **Build provenance**: BUILT_FROM_CURRENT_CLEAN_HEAD
 - ❌ **Code signing**: External blocker (requires certificate purchase)
 - ❌ **Microsoft Store**: External blocker (requires publisher account)
 
@@ -75,9 +79,18 @@
 
 ## Remaining Work Before Release
 
-### Mechanically Actionable (Can Be Completed Now)
-1. **P25**: Wait for release preflight to complete, verify artifacts
-2. **P26**: Run performance baseline, compare to P13
+### Mechanically Actionable (COMPLETED)
+All mechanically actionable work is complete. The repository is at the final human/publication gate.
+
+### External Blockers (Owner Decisions)
+1. **Code signing certificate**: Purchase Windows code signing certificate
+2. **Microsoft Store publisher account**: Set up publisher account with Microsoft
+
+### Human Gates
+3. **Clean-machine testing**: Human tester runs first-run procedure (Issue #140)
+4. **macOS runtime verification**: Test on actual macOS hardware (future release)
+5. **Automatic OCR runtime validation**: Human tester with `ocr = automatic` enabled
+6. **LM Studio live validation**: Requires LM Studio environment
 3. **P28**: Final reconciliation of all evidence documents
 
 ### External Blockers (Cannot Be Completed By Automation)
