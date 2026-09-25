@@ -5,8 +5,8 @@
 **Do not open a public issue for something exploitable.** A public issue
 is a disclosure, and it lands before there is a fix.
 
-Where this repository offers a **private security advisory** — its
-*Security* tab, *Report a vulnerability* — use that. It is private end to
+Where this repository offers a **private security advisory**, its
+*Security* tab, *Report a vulnerability*, use that. It is private end to
 end and needs no address.
 
 Where that form is not there, open an issue saying you have found
