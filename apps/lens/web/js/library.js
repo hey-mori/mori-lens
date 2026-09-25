@@ -37,7 +37,8 @@ async function loadFilterOptions() {
     populateSelect('lib-filter-target', targets);
     populateSelect('lib-filter-tag', tags);
   } catch (e) {
-    // Ignore; dropdowns stay at "All".
+    // Show error to user instead of silently failing.
+    alert(t('library.filter.load.error', { error: e.message || String(e) }));
   }
 }
 
