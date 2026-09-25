@@ -95,6 +95,7 @@ def check_no_ai_attribution():
                 "node_modules",
                 "target",
                 "check_public_readiness.py",
+                "sanitize_pr_metadata.py",
                 "test-check-pr",
                 "test_check_pr",
                 "test_attribution",
