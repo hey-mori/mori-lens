@@ -39,7 +39,7 @@ jobs:
           node-version: '20'
 
       - name: Install Node dependencies
-        run: npm ci --prefix apps/lens/web
+        run: npm ci --prefix apps/lens
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2"
@@ -137,7 +137,7 @@ jobs:
           node-version: '20'
 
       - name: Install Node dependencies
-        run: npm ci --prefix apps/lens/web
+        run: npm ci --prefix apps/lens
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2"

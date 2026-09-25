@@ -51,8 +51,13 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2"
 
-      - name: Generate package icons
-        run: python3 scripts/generate-smoke-assets.py
+      - name: Verify production assets
+        shell: bash
+        run: |
+          # Install pinned asset toolchain
+          python -m pip install -r scripts/requirements-assets.txt
+          # Run comprehensive production asset verification
+          python scripts/verify-product-assets.py
 
       - name: Verify version consistency
         shell: bash
@@ -123,8 +128,13 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Generate package icons
-        run: python3 scripts/generate-smoke-assets.py
+      - name: Verify production assets
+        shell: bash
+        run: |
+          # Install pinned asset toolchain
+          python -m pip install -r scripts/requirements-assets.txt
+          # Run comprehensive production asset verification
+          python scripts/verify-product-assets.py
 
       - name: Run checks
         shell: bash
