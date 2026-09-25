@@ -23,11 +23,15 @@ until the user actually needs it.
 
 ## Current state
 
-**Milestone 8+ · Cross-platform with Library.** The full product runs on
-Windows and macOS: hover, read, translate, card, OCR, deep analysis,
+**v0.1.0 Release Candidate · Windows.** The full product runs on
+Windows: hover, read, translate, card, OCR, deep analysis,
 save to Library, manual review, and a Tauri settings/library UI.
 `cargo build --release --manifest-path apps/lens/Cargo.toml` produces
 something you can use today.
+
+**macOS:** Source implementation is substantial and mirrors the Windows
+product, but runtime validation with outside readers is pending. macOS is
+not part of the v0.1.0 release scope. Sequenced in [docs/roadmap.md](docs/roadmap.md).
 
 What ships:
 
@@ -56,7 +60,6 @@ restarting the application.
 
 What does not exist yet: real-world validation on macOS with outside
 readers (requires Accessibility and Screen Recording permissions).
-Sequenced in [docs/roadmap.md](docs/roadmap.md).
 
 The authoritative list, capability by capability, is in
 [`docs/mori-lens-project-goal.md`](docs/mori-lens-project-goal.md).
@@ -137,10 +140,11 @@ ollama pull qwen2.5:7b
 
 Download a model through LM Studio and start its local server.
 
-A 3B model is fast and visibly wrong; 7B costs 200ms more and is right
-every time. Model resolution is provider-specific: Ollama's router picks
-the best installed model when none is named; LM Studio uses the
-configured or discovered model.
+A 3B model is fast but may produce lower-quality translations; 7B models
+generally produce better results at the cost of slightly higher latency.
+Model resolution is provider-specific: Ollama's router picks the best
+installed model when none is named; LM Studio uses the configured or
+discovered model.
 
 ### From the repository
 
@@ -273,4 +277,4 @@ That is a state rather than a decision. Nothing has shipped, the repository is
 private, and opening it later stays possible: every commit is one author's, so
 relicensing needs nobody's consent, and every dependency is permissive, so a
 permissive licence remains reachable. Opening a repository is a commit. Closing
-one is not — what has shipped stays shipped.
+one is not, what has shipped stays shipped.

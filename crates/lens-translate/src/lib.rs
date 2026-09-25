@@ -426,7 +426,7 @@ fn system_prompt(
         // One long line rather than a continued literal. A `\` at the end of a
         // string line is what put fourteen spaces into the middle of this
         // sentence: `rustfmt` rejoins such a literal and leaves the
-        // indentation inside the string. `CLAUDE.md` bans the construction for
+        // indentation inside the string. `CONTRIBUTING.md` bans the construction for
         // that reason and this was the fifth time.
         prompt.push_str(&format!(
             "\nThese appear in the material and must appear unchanged in your output, exactly as written: {}",

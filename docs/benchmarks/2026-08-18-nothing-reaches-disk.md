@@ -4,7 +4,7 @@
 
 > **Nothing reaches disk. Ever, including for debugging.**
 
-`CLAUDE.md` says it twice and M4's gate asks for it. Until today the sentence
+`CONTRIBUTING.md` says it twice and M4's gate asks for it. Until today the sentence
 appeared in this repository as a module comment, as a roadmap row, and as a
 **translation fixture in another crate's live tests**. Nowhere as a check.
 

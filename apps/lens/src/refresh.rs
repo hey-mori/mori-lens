@@ -13,7 +13,7 @@
 //!
 //! # Why polling is allowed here
 //!
-//! `CLAUDE.md` forbids polling **the screen**, and the reason is that reading
+//! `CONTRIBUTING.md` forbids polling **the screen**, and the reason is that reading
 //! the screen on a timer is what makes a hover tool expensive and invasive.
 //! Neither of these reads the screen. One is a file timestamp and the other is
 //! two registry values, once a second, and the cost is in the same measurement

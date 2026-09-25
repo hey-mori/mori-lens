@@ -258,7 +258,7 @@ titled "hover card appears on the wrong monitor" matches the code; one
 titled "번역 카드가 …" matches neither the code nor a reader.
 
 **Identifiers are ASCII; prose follows the writing style.** The em dash
-is banned in prose (see [`CLAUDE.md`](../CLAUDE.md)) and `·` is offered
+is banned in prose (see [`CONTRIBUTING.md`](../CONTRIBUTING.md)) and `·` is offered
 as a replacement, but that rule does not govern *identifiers*. A label
 name, a milestone title, and a branch name are typed into a shell,
 pasted into a URL, and matched by scripts, so they use plain ASCII with

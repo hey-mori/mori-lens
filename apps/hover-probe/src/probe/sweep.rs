@@ -615,7 +615,7 @@ fn samples_disagree(cold: &PassStats, woken: &PassStats) -> bool {
 fn print_wake_verdict(cold: &PassStats, woken: &PassStats) {
     if samples_disagree(cold, woken) {
         // One line per line. A `\` continuing a string literal is rejoined by
-        // rustfmt with the indentation left inside it, which `CLAUDE.md` bans
+        // rustfmt with the indentation left inside it, which `CONTRIBUTING.md` bans
         // and which happened in this function's first draft.
         println!(
             "           wake: NOT COMPARABLE. {} points cold against {} woken,",

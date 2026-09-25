@@ -11,7 +11,7 @@ Turn Mori Lens from a highly developed implementation into a deeply verified, ma
 Not a feature-count exercise. Make the core product sentence work better:
 > Rest the pointer on a sentence. A card appears with the translation.
 
-Preserve the eight product invariants (CLAUDE.md).
+Preserve the eight product invariants (CONTRIBUTING.md).
 
 ## P13 remains deferred
 
@@ -38,7 +38,7 @@ P13 human quality review is a human-only evidence gate. Do not fill human-review
 ### Goals
 
 - Build canonical capability/evidence matrix
-- Reconcile stale historical documents (gap-analysis-2026-09-09.md, handoff.md, what-finished-means.md)
+- Reconcile stale historical documents (gap-analysis-2026-09-09.md, what-finished-means.md)
 - Correct CI evidence terminology (CONFIGURED MANUAL-ONLY, not "NO RUN")
 - Verify current repository state against historical claims
 
@@ -666,7 +666,9 @@ Update after auditing current Library/Review and first-run implementation. Prese
 
 ### handoff.md
 
-Make useful for new engineer today:
+**Retired 2026-09-25** as part of publication-readiness program. Historical session snapshots are not suitable for public repositories. Durable rules have been migrated to CONTRIBUTING.md.
+
+Original purpose:
 - Current main
 - Current architecture
 - True open product risks
@@ -676,14 +678,14 @@ Make useful for new engineer today:
 - Current runtime evidence
 - Next roadmap issue
 
-Do not make another enormous history dump. Link to historical reports instead.
+For current development guidance, see CONTRIBUTING.md and docs/README.md.
 
 ### Deliverables
 
 - [ ] Documentation convention established
 - [ ] mori-lens-project-goal.md updated with runtime evidence
 - [ ] what-finished-means.md reconciled
-- [ ] handoff.md made current
+- [ ] ~~handoff.md made current~~ (retired 2026-09-25, see CONTRIBUTING.md)
 
 ## Extensibility principles
 
