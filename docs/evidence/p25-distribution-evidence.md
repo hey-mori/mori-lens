@@ -11,7 +11,7 @@ Windows distribution artifacts are structurally valid and verified for this revi
 ## Pre-Tag Artifact Evidence
 
 ### Build Context
-- **Source SHA**: `1665b1950551138317a00ab8cf096f37774a09b6` (final main, ready for tag)
+- **Source SHA**: `8841492` (final main, ready for tag)
 - **Version**: 0.1.0
 - **Tree State**: clean
 - **Build Provenance**: BUILT_FROM_CURRENT_CLEAN_HEAD
