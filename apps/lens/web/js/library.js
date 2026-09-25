@@ -25,6 +25,7 @@ export async function loadLibrary() {
 }
 
 async function loadFilterOptions() {
+  const listEl = document.getElementById('lib-list');
   try {
     const [apps, sources, targets, tags] = await Promise.all([
       invoke('library_distinct_apps'),
@@ -36,8 +37,28 @@ async function loadFilterOptions() {
     populateSelect('lib-filter-source', sources);
     populateSelect('lib-filter-target', targets);
     populateSelect('lib-filter-tag', tags);
+    // Clear any prior error indication on success.
+    const filterStatusEl = document.getElementById('lib-filter-status');
+    if (filterStatusEl) filterStatusEl.remove();
   } catch (e) {
-    // Ignore; dropdowns stay at "All".
+    // Sanitize error: log only the error type, not the full message (may contain paths/SQLite details).
+    console.error('Failed to load filter options:', e?.name || 'UnknownError');
+    // Show safe inline error near filters. Do not use alert(). Do not expose raw backend errors.
+    let filterStatusEl = document.getElementById('lib-filter-status');
+    if (!filterStatusEl) {
+      const filtersEl = document.getElementById('lib-filters');
+      if (filtersEl) {
+        filterStatusEl = document.createElement('div');
+        filterStatusEl.id = 'lib-filter-status';
+        filterStatusEl.style.cssText = 'color:#c00;font-size:12px;margin:8px 0;padding:8px;background:#fff3f3;border:1px solid #ffcdd2;border-radius:4px';
+        filtersEl.parentNode.insertBefore(filterStatusEl, filtersEl.nextSibling);
+      }
+    }
+    if (filterStatusEl) {
+      filterStatusEl.textContent = t('library.filter.load.error');
+      filterStatusEl.style.display = '';
+    }
+    // Filter options are non-critical; Library search/list still works.
   }
 }
 
@@ -72,7 +93,7 @@ export function clearFilters() {
   fetchLibraryPage();
 }
 
-async function fetchLibraryPage() {
+async function fetchLibraryPage(append = false) {
   const listEl = document.getElementById('lib-list');
   const countEl = document.getElementById('lib-count');
   try {
@@ -88,12 +109,15 @@ async function fetchLibraryPage() {
       offset: libraryOffset
     });
     countEl.textContent = t('library.items.count', { count: page.total });
-    if (page.items.length === 0) {
+    if (page.items.length === 0 && !append) {
       listEl.innerHTML = '<p style="color:#888;font-size:13px">' +
         (libraryQuery ? escapeHtml(t('library.items.match', { query: libraryQuery })) : escapeHtml(t('library.empty.default'))) + '</p>';
       return;
     }
-    let html = '<table style="max-width:100%">';
+    let html = '';
+    if (!append) {
+      html += '<table style="max-width:100%">';
+    }
     for (const item of page.items) {
       const date = new Date(item.created_at * 1000).toLocaleDateString();
       const kind = item.kind === 'analysis' ? 'analysis' : 'translation';
@@ -110,11 +134,24 @@ async function fetchLibraryPage() {
       html += '<td style="width:10%;color:#888;font-size:12px;text-align:right">' + date + '</td>';
       html += '</tr>';
     }
-    html += '</table>';
+    if (!append) {
+      html += '</table>';
+    }
     if (page.has_more) {
       html += '<button class="btn" id="load-more-lib-btn" style="margin-top:8px;padding:4px 12px;font-size:12px">' + escapeHtml(t('library.load.more')) + '</button>';
     }
-    listEl.innerHTML = html;
+    if (append) {
+      // Remove existing load-more button before appending new content.
+      const existingBtn = document.getElementById('load-more-lib-btn');
+      if (existingBtn) existingBtn.remove();
+      // Append to existing table.
+      const table = listEl.querySelector('table');
+      if (table) {
+        table.insertAdjacentHTML('beforeend', html);
+      }
+    } else {
+      listEl.innerHTML = html;
+    }
     // Attach handlers for library item rows and load more
     attachLibraryPageHandlers();
   } catch (e) {
@@ -134,7 +171,7 @@ function attachLibraryPageHandlers() {
 
 function loadMoreLibrary() {
   libraryOffset += 50;
-  fetchLibraryPage();
+  fetchLibraryPage(true); // append=true
 }
 
 export async function showLibraryItem(id) {

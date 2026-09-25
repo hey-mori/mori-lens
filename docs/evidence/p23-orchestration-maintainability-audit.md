@@ -11,7 +11,7 @@ Windows orchestration (`win.rs` 5248 lines) is **large but stable**. No known co
 
 | Question | Answer | Evidence |
 |----------|--------|----------|
-| Known correctness defect? | NO | No open bugs, no TODOs, all tests pass |
+| Known correctness defect? | NO | No open bugs, no TODOs, local tests pass |
 | Untestable state machine? | NO | Operation controller, readiness, downloads all tested |
 | Narrow extraction reduces RC risk? | NO | Code stable, decomposition adds change risk |
 

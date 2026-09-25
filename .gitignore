@@ -22,3 +22,8 @@ apps/lens/Cargo.lock
 __pycache__/
 *.pyc
 .e2e-data/
+.vite/
+coverage/
+test-results/
+.nyc_output/
+*.tsbuildinfo
