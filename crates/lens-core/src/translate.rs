@@ -2191,6 +2191,34 @@ mod fence_tests {
         assert_eq!(engine_for(":11434"), EngineId::External);
     }
 
+    /// Adversarial userinfo and scheme confusion attacks.
+    ///
+    /// URLs with embedded credentials or scheme tricks must not be classified
+    /// as local. These forms attempt to disguise an external host as loopback
+    /// by hiding the real authority behind userinfo or path components.
+    ///
+    /// Defense-in-depth: even if engine_for() misclassifies, resolve_loopback()
+    /// in the HTTP layer catches non-loopback addresses at connection time.
+    #[test]
+    fn engine_for_rejects_userinfo_and_scheme_confusion() {
+        // Userinfo tricks: http://user:pass@evil.com looks like it has
+        // credentials for a local service, but the host is external.
+        assert_eq!(engine_for("user:pass@evil.com"), EngineId::External);
+        assert_eq!(engine_for("user@evil.com"), EngineId::External);
+        assert_eq!(engine_for("127.0.0.1@evil.com"), EngineId::External);
+        assert_eq!(engine_for("localhost@evil.com"), EngineId::External);
+
+        // Scheme/path confusion: embedding loopback in the path, not the host.
+        assert_eq!(engine_for("evil.com/127.0.0.1"), EngineId::External);
+        assert_eq!(engine_for("evil.com?host=127.0.0.1"), EngineId::External);
+        assert_eq!(engine_for("evil.com#127.0.0.1"), EngineId::External);
+
+        // Full URL forms with scheme: these should not be classified as local
+        // just because they contain "localhost" somewhere.
+        assert_eq!(engine_for("http://evil.com/localhost"), EngineId::External);
+        assert_eq!(engine_for("http://evil.com:11434"), EngineId::External);
+    }
+
     #[test]
     fn provider_as_str_returns_canonical_token() {
         assert_eq!(Provider::Ollama.as_str(), "ollama");
