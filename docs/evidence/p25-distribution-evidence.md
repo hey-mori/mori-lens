@@ -8,13 +8,14 @@
 
 Windows distribution artifacts are structurally valid and verified for this revision. Code signing and Store publication remain external blockers.
 
-## Pre-Tag Artifact Evidence
+## Intermediate Local Pre-Merge Package Evidence
 
 ### Build Context
-- **Source SHA**: `8841492` (final main, ready for tag)
+- **Source SHA**: `8841492` (intermediate, pre-PR-merge)
+- **Final Source SHA**: PENDING CONVERGENCE (after PR #636 merge)
 - **Version**: 0.1.0
 - **Tree State**: clean
-- **Build Provenance**: BUILT_FROM_CURRENT_CLEAN_HEAD
+- **Build Provenance**: INTERMEDIATE_LOCAL_PRE-MERGE
 
 ### NSIS Installer
 - **Filename**: `Mori Lens_0.1.0_x64-setup.exe`

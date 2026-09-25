@@ -1,7 +1,8 @@
-# Mori Lens v0.1.0 Final Pre-Tag Acceptance Matrix
+# Mori Lens v0.1.0 Pre-Tag Acceptance Matrix
 
 **Date**: 2026-09-25  
-**FINAL_MAIN_SHA**: `8841492` (local, pending push)  
+**CURRENT CANDIDATE SOURCE**: `8841492` (intermediate, pre-PR-merge)  
+**FINAL SOURCE**: PENDING CONVERGENCE (after PR #636 merge)  
 **VERSION**: 0.1.0  
 **TREE**: CLEAN  
 **PLATFORM**: Windows

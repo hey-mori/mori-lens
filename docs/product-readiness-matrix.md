@@ -3,7 +3,8 @@
 **Date**: 2026-09-25  
 **Version**: 0.1.0  
 **Status**: Release Candidate - MECHANICALLY COMPLETE  
-**Final Main SHA**: `8841492`
+**Current Candidate Source**: `8841492` (intermediate, pre-PR-merge)  
+**Final Source**: PENDING CONVERGENCE (after PR #636 merge)
 
 ## Phase Status Summary
 
