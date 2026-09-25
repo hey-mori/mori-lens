@@ -436,11 +436,10 @@ impl Library {
                 "INSERT OR IGNORE INTO tags (name) VALUES (?1)",
                 params![tag],
             )?;
-            let tag_id: i64 = tx.query_row(
-                "SELECT id FROM tags WHERE name = ?1",
-                params![tag],
-                |row| row.get(0),
-            )?;
+            let tag_id: i64 =
+                tx.query_row("SELECT id FROM tags WHERE name = ?1", params![tag], |row| {
+                    row.get(0)
+                })?;
 
             // Link the tag to the item.
             tx.execute(
@@ -1995,10 +1994,7 @@ mod tests {
         // Set initial tags.
         lib.set_tags(id, &["alpha".to_owned(), "beta".to_owned()])
             .unwrap();
-        assert_eq!(
-            lib.get_tags(id).unwrap(),
-            vec!["alpha", "beta"]
-        );
+        assert_eq!(lib.get_tags(id).unwrap(), vec!["alpha", "beta"]);
 
         // Replace with new tags.
         lib.set_tags(id, &["gamma".to_owned()]).unwrap();
