@@ -32,7 +32,8 @@ The merge commit containing this report necessarily postdates the audited baseli
 | Publication strategy | PASS | Phase I, Option A recommended |
 | Workflow source contract | VERIFIED | ci.yml, package-smoke.yml, release.yml source verified |
 | Remote CI on exact main | PENDING | Requires execution on final RC SHA |
-| Distribution readiness | PASS | NSIS and MSIX pipelines verified |
+| Distribution pipeline contract | VERIFIED | NSIS and MSIX workflows verified |
+| Final RC distribution | PENDING | Requires fresh build on final RC SHA |
 | Owner decisions | RECORDED | See Owner Decisions section below |
 
 ## Phase Results
@@ -158,7 +159,7 @@ The merge commit containing this report necessarily postdates the audited baseli
 - Git author emails will be publicly visible when repository becomes public
 
 **GIT HISTORY REWRITE = NO**
-- Rewriting 1,391 commits would destroy provenance
+- Rewriting the repository's full history would change commit identities and invalidate existing SHA-based provenance
 - Owner accepts git author email exposure
 
 **LICENSE GRANT = OWNER DECISION PENDING**
@@ -201,6 +202,11 @@ The merge commit containing this report necessarily postdates the audited baseli
 ## Repository Status
 
 ```
+PUBLICATION AUDIT = COMPLETE
+FINAL RC VERIFICATION = PENDING
+LOCAL SOURCE GATES = PASS
+REMOTE CI ON EXACT MAIN = NONE (pending Phase J)
+
 PUBLIC-FACING TREE = PASS
 PUBLIC-READINESS AUTOMATED GATE = PASS
 CURRENT TREE SECRET/PII SCAN = PASS
@@ -209,20 +215,46 @@ GITHUB PR/ISSUE METADATA = SANITIZED
 ACTIONS/ARTIFACTS/BRANCHES = AUDITED
 THIRD-PARTY COMPLIANCE = PASS
 ASSET PROVENANCE = PASS
-RELEASE ASSET PIPELINE = PASS
+ASSET ORIGIN = VERIFIED
+DISTRIBUTION RIGHTS = VERIFIED
+FORMAT/STRUCTURAL VALIDITY = VERIFIED
+SMOKE-SEPARATION = VERIFIED
+VISUAL PRODUCT REVIEW = PENDING
+
+WORKFLOW SOURCE CONTRACT = VERIFIED
+DISTRIBUTION PIPELINE CONTRACT = VERIFIED
+FINAL RC DISTRIBUTION = PENDING
+
+AUDITED BASELINE SHA = c48f9c36b5c3a0ea8748ea1e9650adc40dc3a342
+AUDITED BASELINE COMMIT COUNT = 1,392
+
 LICENCE PREPARATION = COMPLETE
 LICENCE GRANT = OWNER DECISION PENDING
 PUBLICATION STRATEGY = RECOMMENDED (Option A), NOT EXECUTED
 REPOSITORY VISIBILITY = PRIVATE
-EXACT MAIN SHA = 017acde029c14194f6d6ec1c7eb74bbaf5951dc9
-TOTAL COMMITS = 1,391
+TAG = NONE
+GITHUB RELEASE = NONE
 ```
 
 ## Next Steps
+
+**Phase J: Final RC Verification (required before owner decisions)**
+
+1. Merge PR #644
+2. Establish FINAL_RC_SOURCE_SHA from resulting remote main
+3. Run ci.yml on that exact SHA
+4. Run package-smoke.yml on that exact SHA
+5. Run source-only release preflight
+6. Run full Windows release preflight
+7. Build fresh NSIS and MSIX from exact final SHA
+8. Record final hashes and build provenance
+9. Only then return to owner decisions
+
+**Owner decisions (after Phase J completion)**
 
 1. **Owner decision**: Choose licence grant (MIT, Apache-2.0, or other)
 2. **Owner decision**: Execute publication (make repository public)
 3. **Optional**: Create v0.1.0 tag
 4. **Optional**: Create GitHub Release with signed binaries
 
-All mechanical publication tasks are complete. The repository is ready for owner decisions.
+All mechanical publication audit tasks are complete. Final RC verification (Phase J) must complete before owner decisions.

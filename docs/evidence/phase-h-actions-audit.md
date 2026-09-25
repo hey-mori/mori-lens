@@ -7,16 +7,16 @@
 
 **Total runs**: 24  
 **Status**: PASS  
-**Accessible logs inspected**: YES  
+**Accessible logs inspected**: YES (24/24)  
 **Sensitive data in logs**: None (only GitHub runner paths found)  
-**Expired/unavailable logs**: NOT INSPECTABLE
+**Expired/unavailable logs**: 0 (all logs accessible)
 
 ### Run Enumeration
 
 | Run ID | Workflow | Head SHA | Event | Conclusion | Logs Accessible | Artifacts Accessible |
 |--------|----------|----------|-------|------------|-----------------|---------------------|
 | 34131713859 | package-smoke | e6337d8 | workflow_dispatch | failure | YES | NO |
-| 34123643588 | package-smoke | 70d751a | workflow_dispatch | failure | YES | NO |
+| 34123643588 | package-smoke | 70d751a | workflow_dispatch | failure | YES | YES |
 | 34058540557 | package-smoke | a289847 | workflow_dispatch | failure | YES | NO |
 | 34041508190 | package-smoke | dbc33cc | workflow_dispatch | failure | YES | NO |
 | 34039483348 | package-smoke | 555657d | workflow_dispatch | failure | YES | NO |
@@ -44,17 +44,21 @@
 - **package-smoke runs**: 7 (all failure, historical)
 - **ci runs**: 7 (1 success, 6 failure, historical)
 - **Copilot runs**: 10 (all success, historical)
-- **All logs accessible**: YES
-- **All artifacts accessible**: NO (expired/unavailable)
+- **Logs accessible**: 24/24
+- **Artifacts currently accessible**: 1 (run 34123643588)
 - **Sensitive data found**: NONE
 
 ### Accessible Artifacts
 
 **Status**: PASS  
 **Artifacts currently available**: 1  
+**Run ID**: 34123643588  
 **Artifact name**: windows-packages  
+**Artifact ID**: 10020491348  
 **Created**: 2026-09-07  
-**Size**: 7.2 MB  
+**Size**: 7,231,684 bytes (7.2 MB)  
+**Head SHA**: 70d751a00a67e8d81e5bc233c1f62a52b41331aa  
+**Expired**: false  
 **Sensitive data**: None detected
 
 ## GitHub Repository Branches
@@ -68,18 +72,20 @@
 
 ## Branch Protection
 
-**Status**: NOT CONFIGURED (GitHub Free limitation)  
+**Status**: NOT CONFIGURED  
 **Main branch protected**: NO
 
-**Reason**: GitHub Free plan does not support branch protection rules for private repositories. Branch protection will be available after making the repository public (GitHub Free supports branch protection for public repositories).
+**Remote main protection**: NOT CONFIGURED
 
-**Recommendation**: After making the repository public, configure branch protection for main:
+**Reason**: The repository is currently private under a plan where protected branches are not available. GitHub Free supports branch protection after the repository becomes public.
+
+**Publication execution requirement**: Enable main protection immediately after visibility changes.
+
+**Recommended branch protection configuration** (after making repository public):
 - Require pull requests before merging
 - Require 1 approving review
 - Require status checks to pass before merging
 - Require branches to be up to date before merging
-
-This is a GitHub platform limitation, not a repository configuration issue.
 
 ## Releases
 
