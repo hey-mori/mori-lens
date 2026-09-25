@@ -2,11 +2,12 @@
 
 **Date**: 2026-09-25  
 **Version**: 0.1.0  
-**Status**: RELEASE CANDIDATE - MECHANICALLY COMPLETE
+**Status**: RELEASE CANDIDATE - MECHANICALLY COMPLETE  
+**Final Main SHA**: `1665b1950551138317a00ab8cf096f37774a09b6`
 
 ## Executive Summary
 
-Mori Lens v0.1.0 is **mechanically complete** as a Release Candidate. All code is tested, documented, and verified. The remaining gates before distribution are external blockers (code signing, store publication) and human/hardware gates (clean-machine testing, macOS runtime verification).
+Mori Lens v0.1.0 is **mechanically complete** as a Release Candidate. All code is tested, documented, and verified. Final artifacts are built from exact main. The remaining gates before distribution are external blockers (code signing, store publication) and human/hardware gates (clean-machine testing, macOS runtime verification).
 
 ## What Was Accomplished
 
@@ -16,11 +17,15 @@ Mori Lens v0.1.0 is **mechanically complete** as a Release Candidate. All code i
 |-------|------|--------|----------|
 | P20C | Production accessibility tests | ✅ COMPLETE | 11 representative states, zero violations |
 | P20D | First-run lesson | ✅ ENGINEERING COMPLETE | Procedure documented for #140 |
+| P20E | Live validation | ✅ LIVE OLLAMA VERIFIED | Durable evidence recorded |
+| P21 | Compatibility + OCR | ✅ AUDITED | Safe by design, opt-in automatic |
 | P22 | macOS audit | ✅ COMPLETE | Code complete, runtime = hardware gate |
+| P23 | Orchestration audit | ✅ AUDITED | Stable, no blockers |
 | P24 | Security audit | ✅ COMPLETE | Adversarial tests added |
-| P25 | Distribution artifacts | ⏳ IN PROGRESS | Release preflight building |
+| P25 | Distribution artifacts | ✅ VERIFIED | NSIS + MSIX built and verified |
+| P26 | Performance audit | ✅ AUDITED | No blockers found |
 | P27 | Library/Review audit | ✅ COMPLETE | Solid, release ready |
-| P28 | Final docs | ✅ COMPLETE | Release notes, readiness matrix |
+| P28 | Final docs | ✅ COMPLETE | All documentation reconciled |
 
 ### Code Quality
 
