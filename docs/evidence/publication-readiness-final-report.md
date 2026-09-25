@@ -1,7 +1,7 @@
 # Publication Readiness Program: Final Report
 
 **Date**: 2026-09-25  
-**Program**: Phases C through I  
+**Program**: Phases C through I + Corrective PR #642  
 **Status**: COMPLETE
 
 ## Executive Summary
@@ -9,6 +9,28 @@
 The Mori Lens repository has completed all publication-readiness work. All gates pass. The repository is ready for public conversion (Option A).
 
 **Recommendation**: Convert existing repository to public as-is. Do NOT create a new repository.
+
+**Exact main SHA**: 017acde029c14194f6d6ec1c7eb74bbaf5951dc9
+
+## Evidence Table
+
+| Category | Status | Evidence Reference |
+|----------|--------|-------------------|
+| Exact main SHA | PASS | 017acde029c14194f6d6ec1c7eb74bbaf5951dc9 |
+| Public-facing tree | PASS | Phase C complete, PR #637 merged |
+| Third-party inventory | PASS | 10 first-party, 458 third-party, 28 unique licenses |
+| Asset provenance | PASS | docs/assets/PROVENANCE.md, Phase D complete |
+| Release asset pipeline | PASS | PR #642 merged, production assets verified |
+| Secret scan | PASS | Phase F, gitleaks v8.18.4, 0 leaks |
+| PII/internal-data scan | PASS | Phase G, PR #181 and #200 sanitized |
+| Author metadata | OWNER ACCEPTED | 3 distinct author identities, 4 committer identities, retention accepted |
+| GitHub metadata | PASS | Phase G, 41 PRs sanitized for AI attribution, 2 PRs sanitized for PII |
+| Actions/artifacts | PASS | Phase H, 20 runs inspected, 1 artifact inspected |
+| Branches/tags/releases | PASS | Phase H, only main branch, 0 tags, 0 releases |
+| Publication strategy | PASS | Phase I, Option A recommended |
+| Remote CI | PASS | ci.yml, package-smoke.yml, release.yml all verified |
+| Distribution readiness | PASS | NSIS and MSIX pipelines verified |
+| Owner decisions | RECORDED | See Owner Decisions section below |
 
 ## Phase Results
 
@@ -23,7 +45,6 @@ The Mori Lens repository has completed all publication-readiness work. All gates
 - Updated 15 files to reference CONTRIBUTING.md
 - Created CHANGELOG.md for v0.1.0
 - Created docs/README.md as documentation index
-- Fixed em dashes in README.md and SECURITY.md
 
 ### Phase D: Licensing Preparation ✅
 **Status**: PASS  
@@ -56,18 +77,18 @@ The Mori Lens repository has completed all publication-readiness work. All gates
 **Evidence**: docs/evidence/phase-f-security-scan.md
 
 **Results**:
-- **Current tree**: 0 leaks (gitleaks v8.18.4, 914 commits, 7.99s)
-- **Full git history**: 0 leaks (gitleaks v8.18.4, 914 commits, 2.8s)
-- **Git author identities**: Consistent (Isaac Lee, isaacleeswdev@gmail.com)
-- **No anomalies detected**
+- **Current tree**: 0 leaks (gitleaks v8.18.4, 1,391 commits)
+- **Full git history**: 0 leaks (gitleaks v8.18.4, 1,391 commits)
+- **Git author identities**: 3 distinct author identities, 4 committer identities
+- **Owner decision**: Metadata retention accepted
 
 ### Phase G: GitHub Metadata Sanitation ✅
 **Status**: PASS  
-**Evidence**: docs/evidence/phase-g-metadata-sanitation.md  
-**Tool**: scripts/sanitize_pr_metadata.py
+**Evidence**: docs/evidence/phase-g-metadata-sanitation.md
 
 **Results**:
-- **PR bodies sanitized**: 41
+- **PR bodies sanitized for AI attribution**: 41
+- **PR bodies sanitized for PII/internal data**: 2 (PR #181, PR #200)
 - **Issues with attribution**: 0
 - **PR comments with attribution**: 0
 - **Issue comments with attribution**: 0
@@ -77,71 +98,99 @@ The Mori Lens repository has completed all publication-readiness work. All gates
 - `🤖 Generated with [Claude Code](https://claude.com/claude-code)`
 - `Co-authored-by: Qwen Code <qwen-code@alibabacloud.com>`
 - `---` separators before attribution footers
+- Internal service identifiers (replaced with neutral examples)
+- Personal machine paths (generalized to placeholders)
 
 ### Phase H: Actions/Artifacts/Releases/Branches Audit ✅
 **Status**: PASS  
 **Evidence**: docs/evidence/phase-h-actions-audit.md
 
 **Results**:
-- **Actions runs**: 20 checked, no sensitive data
-- **Remote branches deleted**: 4 (merged branches)
-- **Remote branches remaining**: 2 (main, chore/public-repository-rewrite)
+- **Actions runs inspected**: 20 most recent
+- **Accessible logs inspected**: YES
+- **Accessible artifacts inspected**: 1 (windows-packages)
+- **Expired/unavailable logs**: NOT INSPECTABLE
+- **Remote branches**: 1 (main only)
+- **Remote tags**: 0
 - **Releases**: 0
-- **Tags deleted**: 1 (local backup tag)
-- **Tags remaining**: 0
-- **Repository metadata**: Clean (description, no Wiki, no Discussions, no Pages)
-
-**Deleted branches**:
-1. chore/public-release-convergence
-2. docs/release-audit-reports
-3. feat/p20-readiness-ui
-4. release/v0.1.0-rc-prep
+- **Repository metadata**: Clean
 
 ### Phase I: Publication Strategy Analysis ✅
 **Status**: PASS  
 **Evidence**: docs/evidence/phase-i-publication-strategy.md
 
-**Options analyzed**:
-- **Option A**: Convert existing repository to public
-- **Option B**: Create new clean repository
-
-**Recommendation**: **Option A** (convert existing repository)
+**Recommendation**: Option A - Convert existing repository to public
 
 **Rationale**:
-1. Security is proven (Phase F scanned full git history)
-2. Metadata is sanitized (Phase G cleaned 41 PRs)
-3. Infrastructure is clean (Phase H deleted obsolete branches)
-4. History is the product (914 commits document evidence-based development)
-5. Single author simplifies everything
-6. No security benefit to Option B
+- Security proven (Phase F)
+- Metadata sanitized (Phase G)
+- Infrastructure clean (Phase H)
+- History preserved (1,391 commits)
+- Author metadata decision resolved
 
-## Final Verification
+### Corrective PR #642: Release Assets and Dependency Inventory ✅
+**Status**: PASS  
+**PR**: #642 (merged)
 
-### Public-Readiness Gate
-```
-PUBLIC-READINESS GATE: PASS
+**Work completed**:
+- Fixed dependency-inventory deduplication bug (preserves multiple versions)
+- Created production asset verifier (scripts/verify-product-assets.py)
+- Pinned asset toolchain (Pillow 10.1.0)
+- Updated release.yml to use production assets only
+- Fixed package-lock.json version alignment
+- Regenerated THIRD-PARTY-NOTICES.md (458 third-party dependencies)
 
-· required public files: OK
-· forbidden files absent: OK
-· no AI attribution: OK
-· markdown links: OK
-· writing style: OK
-· version consistency: OK
-· license state: OK
-· no obvious secrets: OK
-```
+## Owner Decisions
 
-### Full Verification Gate
-```
-scripts/check.sh --full: PASS
+**EVIDENCE DOCUMENT PII = REDACTED**
+- Author name/email removed from evidence documents
+- Privacy-preserving factual wording used
 
-· cargo fmt: OK
-· cargo clippy: OK
-· cargo test: OK (300+ tests)
-· smoke assets: OK
-· documentation integrity: OK
-· commit message policy: OK
-```
+**GIT AUTHOR EMAILS = RETAINED**
+- Existing Git author metadata will be retained for history preservation
+- No author-history rewrite will be performed
+- Git author emails will be publicly visible when repository becomes public
+
+**GIT HISTORY REWRITE = NO**
+- Rewriting 1,391 commits would destroy provenance
+- Owner accepts git author email exposure
+
+**LICENSE GRANT = OWNER DECISION PENDING**
+- Current state: all-rights-reserved
+- No licence file created yet
+- Owner decision required before public release
+
+**PUBLICATION EXECUTION = PENDING**
+- Repository remains PRIVATE
+- No tag created
+- No release created
+- Owner decision required to make public
+
+## Third-Party Compliance
+
+**Repository dependency inventory**: 468 packages total
+- **First-party Mori Lens crates**: 10 (not listed as third-party obligations)
+- **Third-party dependencies**: 458
+- **Unique license expressions**: 28
+- **JavaScript dependencies**: dev-only (not distributed)
+
+**First-party crates**:
+- lens
+- lens-core
+- lens-settings
+- lens-storage
+- lens-translate
+- lens-build-stamp
+- lens-platform-windows
+- lens-platform-macos
+- hover-probe
+- p13-live-baseline
+
+**Asset provenance**: PASS
+- Organization mark assets: Organization-provided with distribution grant
+- Production application icons: Generated by repository script
+- Production MSIX assets: Generated by repository script
+- Smoke test assets: Structural CI only, not distributed
 
 ## Repository Status
 
@@ -154,51 +203,20 @@ GITHUB PR/ISSUE METADATA = SANITIZED
 ACTIONS/ARTIFACTS/BRANCHES = AUDITED
 THIRD-PARTY COMPLIANCE = PASS
 ASSET PROVENANCE = PASS
+RELEASE ASSET PIPELINE = PASS
 LICENCE PREPARATION = COMPLETE
 LICENCE GRANT = OWNER DECISION PENDING
 PUBLICATION STRATEGY = RECOMMENDED (Option A), NOT EXECUTED
 REPOSITORY VISIBILITY = PRIVATE
+EXACT MAIN SHA = 017acde029c14194f6d6ec1c7eb74bbaf5951dc9
+TOTAL COMMITS = 1,391
 ```
 
-## What Remains
+## Next Steps
 
-The following are **owner decisions**, not technical blockers:
+1. **Owner decision**: Choose licence grant (MIT, Apache-2.0, or other)
+2. **Owner decision**: Execute publication (make repository public)
+3. **Optional**: Create v0.1.0 tag
+4. **Optional**: Create GitHub Release with signed binaries
 
-1. **When to make the repository public**
-   - Use GitHub API or web UI to change visibility
-   - No technical blockers remain
-
-2. **Which license to apply** (if any)
-   - Currently: all-rights-reserved
-   - Options: MIT, Apache-2.0, GPL, BSL, etc.
-   - See docs/decisions/licensing-decision-memo.md
-
-3. **Whether to tag v0.1.0**
-   - If yes: `git tag -s v0.1.0 -m "v0.1.0: Initial public release"`
-   - If yes: `git push origin v0.1.0`
-
-4. **Whether to create a GitHub Release**
-   - If yes: Include signed installers (NSIS, MSIX)
-   - If yes: Include SHA256SUMS.txt with detached signature
-
-## Conclusion
-
-All publication-readiness work is complete. The repository is in a clean state with:
-- No secrets or sensitive data
-- No AI attribution in public-facing content
-- All metadata sanitized
-- All obsolete branches deleted
-- All gates passing
-
-The repository can be made public at the owner's discretion using Option A (convert existing repository).
-
----
-
-**Program completed**: 2026-09-25  
-**Total PRs merged**: 2 (#637, #638)  
-**Total files changed**: 30+  
-**Total commits**: 8 (across 2 PRs)  
-**Total branches deleted**: 4  
-**Total PRs sanitized**: 41  
-**Security scans**: 2 (current tree + full history)  
-**Status**: READY FOR PUBLIC CONVERSION
+All mechanical publication tasks are complete. The repository is ready for owner decisions.
