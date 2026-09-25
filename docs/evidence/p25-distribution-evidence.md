@@ -11,7 +11,7 @@ Windows distribution artifacts are structurally valid and verified for this revi
 ## Pre-Tag Artifact Evidence
 
 ### Build Context
-- **Source SHA**: `9207905586060b790f8c3288ee9ac5a344a27344` (local main, pending merge)
+- **Source SHA**: `1665b1950551138317a00ab8cf096f37774a09b6` (final main, ready for tag)
 - **Version**: 0.1.0
 - **Tree State**: clean
 - **Build Provenance**: BUILT_FROM_CURRENT_CLEAN_HEAD
@@ -19,7 +19,7 @@ Windows distribution artifacts are structurally valid and verified for this revi
 ### NSIS Installer
 - **Filename**: `Mori Lens_0.1.0_x64-setup.exe`
 - **Size**: ~22 MB (exact size recorded during build)
-- **SHA-256**: `bea106704fda84eff8ac549c5c0cb321bf16f59d23b21cfe31a7e927b8722361`
+- **SHA-256**: `c6bd2e6fdf7b183de2a6f4e52acc81a7b5fed6e16e301ed0f2ab81d77a9a653d`
 - **Architecture**: x64 (AMD64)
 - **Structural Verification**: PASS (15/15 checks)
 - **Signature State**: UNSIGNED
@@ -28,7 +28,7 @@ Windows distribution artifacts are structurally valid and verified for this revi
 ### MSIX Package
 - **Filename**: `MoriLens_0.1.0.0_x64.msix`
 - **Size**: ~19 MB (exact size recorded during build)
-- **SHA-256**: `162304d8dece1bb8f4f9e4178c75b722a1302e56290a979364c37e6396014523`
+- **SHA-256**: `eacd167488839cecb887a5b423fdaabd904a88ef3d340f58f879130a5676500b`
 - **Architecture**: x64 (AMD64)
 - **Structural Verification**: PASS (15/15 checks)
 - **Signature State**: UNSIGNED
@@ -64,11 +64,11 @@ The release workflow (`.github/workflows/release.yml`) generates artifact checks
 ```bash
 # Verify NSIS installer
 sha256sum "Mori Lens_0.1.0_x64-setup.exe"
-# Expected: bea106704fda84eff8ac549c5c0cb321bf16f59d23b21cfe31a7e927b8722361
+# Expected: c6bd2e6fdf7b183de2a6f4e52acc81a7b5fed6e16e301ed0f2ab81d77a9a653d
 
 # Verify MSIX package
 sha256sum "MoriLens_0.1.0.0_x64.msix"
-# Expected: 162304d8dece1bb8f4f9e4178c75b722a1302e56290a979364c37e6396014523
+# Expected: eacd167488839cecb887a5b423fdaabd904a88ef3d340f58f879130a5676500b
 ```
 
 ## Related
