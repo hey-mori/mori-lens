@@ -404,6 +404,7 @@ impl Library {
     /// Set the tags for an item, replacing any existing tags.
     ///
     /// Tags are created if they don't exist. Returns whether the item existed.
+    /// The operation is atomic: if any step fails, all changes are rolled back.
     pub fn set_tags(&self, id: i64, tags: &[String]) -> Result<bool, Error> {
         // Check if the item exists.
         let exists: bool = self
@@ -414,8 +415,11 @@ impl Library {
             return Ok(false);
         }
 
+        // Wrap DELETE + INSERTs in a transaction for atomicity.
+        let tx = self.conn.unchecked_transaction()?;
+
         // Remove existing tags for this item.
-        self.conn.execute(
+        tx.execute(
             "DELETE FROM library_tags WHERE library_id = ?1",
             params![id],
         )?;
@@ -428,23 +432,23 @@ impl Library {
             }
 
             // Insert or get the tag id.
-            self.conn.execute(
+            tx.execute(
                 "INSERT OR IGNORE INTO tags (name) VALUES (?1)",
                 params![tag],
             )?;
-            let tag_id: i64 = self.conn.query_row(
-                "SELECT id FROM tags WHERE name = ?1",
-                params![tag],
-                |row| row.get(0),
-            )?;
+            let tag_id: i64 =
+                tx.query_row("SELECT id FROM tags WHERE name = ?1", params![tag], |row| {
+                    row.get(0)
+                })?;
 
             // Link the tag to the item.
-            self.conn.execute(
+            tx.execute(
                 "INSERT OR IGNORE INTO library_tags (library_id, tag_id) VALUES (?1, ?2)",
                 params![id, tag_id],
             )?;
         }
 
+        tx.commit()?;
         Ok(true)
     }
 
@@ -1977,6 +1981,83 @@ mod tests {
             .unwrap();
         let tags = lib.get_tags(id).unwrap();
         assert_eq!(tags, vec!["valid"]);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn set_tags_replaces_tags_successfully() {
+        let path = temp_db("tags-replace");
+        let lib = Library::open(&path).unwrap();
+        let id = lib.insert(&a_translation()).unwrap();
+
+        // Set initial tags.
+        lib.set_tags(id, &["alpha".to_owned(), "beta".to_owned()])
+            .unwrap();
+        assert_eq!(lib.get_tags(id).unwrap(), vec!["alpha", "beta"]);
+
+        // Replace with new tags.
+        lib.set_tags(id, &["gamma".to_owned()]).unwrap();
+        assert_eq!(lib.get_tags(id).unwrap(), vec!["gamma"]);
+
+        // Setting empty tags should clear all tags.
+        lib.set_tags(id, &[]).unwrap();
+        assert_eq!(lib.get_tags(id).unwrap(), Vec::<String>::new());
+
+        // Verify tags can be re-set after clearing.
+        lib.set_tags(id, &["delta".to_owned()]).unwrap();
+        assert_eq!(lib.get_tags(id).unwrap(), vec!["delta"]);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn set_tags_rolls_back_on_failure() {
+        let path = temp_db("tags-rollback");
+        let lib = Library::open(&path).unwrap();
+        let id = lib.insert(&a_translation()).unwrap();
+
+        // Set initial tags.
+        lib.set_tags(id, &["alpha".to_owned(), "beta".to_owned()])
+            .unwrap();
+        assert_eq!(lib.get_tags(id).unwrap(), vec!["alpha", "beta"]);
+
+        // Create a trigger that aborts when inserting a tag named "FAIL".
+        lib.conn
+            .execute_batch(
+                "CREATE TRIGGER abort_on_fail_tag
+                 BEFORE INSERT ON tags
+                 WHEN NEW.name = 'FAIL'
+                 BEGIN
+                     SELECT RAISE(ABORT, 'forced failure for test');
+                 END;",
+            )
+            .unwrap();
+
+        // Attempt to set tags including the forbidden name.
+        let result = lib.set_tags(id, &["gamma".to_owned(), "FAIL".to_owned()]);
+        assert!(result.is_err(), "set_tags should fail when trigger aborts");
+
+        // Verify the original tags are preserved (transaction rolled back).
+        assert_eq!(
+            lib.get_tags(id).unwrap(),
+            vec!["alpha", "beta"],
+            "original tags must survive after failed set_tags",
+        );
+
+        // Verify "gamma" was not partially inserted.
+        let all_tags: Vec<String> = lib
+            .conn
+            .prepare("SELECT name FROM tags ORDER BY name")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            !all_tags.contains(&"gamma".to_owned()),
+            "gamma should not be in tags table after rollback",
+        );
 
         cleanup(&path);
     }
