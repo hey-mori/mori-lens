@@ -205,6 +205,18 @@ if [[ "$SOURCE_ONLY" == "true" ]]; then
 elif [[ "$IS_WINDOWS" == "true" ]]; then
     echo "=== Step 3: Build and verify Windows packages ==="
 
+    # ── Step 3a: Verify production assets ────────────────────────────────
+    echo "--- Verifying production assets ---"
+    if python scripts/verify-product-assets.py 2>&1 | tail -20; then
+        summary_set "PRODUCTION_ASSETS" "PASS"
+        echo "PASS: Production assets verified"
+    else
+        summary_set "PRODUCTION_ASSETS" "FAIL"
+        echo "FAIL: Production asset verification failed"
+        gate_fail
+    fi
+    echo ""
+
     if [[ "$VERIFY_ONLY" == "true" ]]; then
         echo "(--verify-only: skipping build, looking for existing artifacts)"
     else
@@ -486,6 +498,7 @@ echo "TREE:                 ${SUMMARY[TREE]:-unknown}"
 echo ""
 echo "FULL_GATE:            ${SUMMARY[FULL_GATE]:-SKIP}"
 echo "VERSION_CONSISTENCY:  ${SUMMARY[VERSION_CONSISTENCY]:-SKIP}"
+echo "PRODUCTION_ASSETS:    ${SUMMARY[PRODUCTION_ASSETS]:-SKIP}"
 echo ""
 
 if [[ "$SOURCE_ONLY" == "true" ]]; then
