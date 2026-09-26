@@ -360,37 +360,36 @@ elif [[ "$IS_WINDOWS" == "true" ]]; then
     fi
     summary_set "BUILD_PROVENANCE" "$BUILD_PROVENANCE"
 
-    # Determine EMBEDDED_BUILD_STAMP from binary
+    # Determine EMBEDDED_BUILD_STAMP from binary using runtime --version check
     EMBEDDED_STAMP="UNPROVEN"
     if [[ -f "$PAYLOAD_PATH" ]]; then
-        # Extract LENS_BUILD_SHA from the PE binary using PowerShell.
-        # The Rust env!() macro embeds the string as a literal in the binary.
-        BUILD_SHA_FROM_BINARY="$(powershell -NoProfile -Command "
-            \$bytes = [System.IO.File]::ReadAllBytes('$REPO_ROOT/$PAYLOAD_PATH')
-            \$text = [System.Text.Encoding]::ASCII.GetString(\$bytes)
-            if (\$text -match 'LENS_BUILD_SHA=([0-9a-f]{7,40}(-dirty)?)') {
-                Write-Output \$Matches[1]
-            } else {
-                \$short = '$REVISION_SHORT'
-                if (\$text.Contains(\$short)) {
-                    Write-Output \$short
-                }
-            }
-        " 2>/dev/null || true)"
+        # Use the runtime --version interface to extract the build stamp.
+        # This is the canonical contract: lens.exe --version reports the embedded SHA.
+        VERSION_OUTPUT="$("$REPO_ROOT/$PAYLOAD_PATH" --version 2>/dev/null || true)"
 
-        if [[ -n "$BUILD_SHA_FROM_BINARY" ]]; then
-            CLEAN_SHA="${BUILD_SHA_FROM_BINARY%-dirty}"
-            if [[ "$CLEAN_SHA" == "$REVISION_SHORT" ]]; then
-                EMBEDDED_STAMP="VERIFIED"
-                echo "Embedded build stamp: VERIFIED (matches $REVISION_SHORT)"
+        if [[ -n "$VERSION_OUTPUT" ]]; then
+            # Expected format: "Mori Lens 0.1.0 · build <sha>" or "Mori Lens 0.1.0 · build <sha>-dirty"
+            # Extract the SHA from the build stamp
+            BUILD_SHA_FROM_RUNTIME="$(echo "$VERSION_OUTPUT" | grep -oE 'build [0-9a-f]{7,40}(-dirty)?' | awk '{print $2}' || true)"
+
+            if [[ -n "$BUILD_SHA_FROM_RUNTIME" ]]; then
+                CLEAN_SHA="${BUILD_SHA_FROM_RUNTIME%-dirty}"
+                if [[ "$CLEAN_SHA" == "$REVISION_SHORT" ]]; then
+                    EMBEDDED_STAMP="VERIFIED"
+                    echo "Embedded build stamp: VERIFIED (matches $REVISION_SHORT)"
+                else
+                    EMBEDDED_STAMP="MISMATCH"
+                    echo "Embedded build stamp: MISMATCH (binary has $BUILD_SHA_FROM_RUNTIME, expected $REVISION_SHORT)"
+                    gate_fail
+                fi
             else
-                EMBEDDED_STAMP="MISMATCH"
-                echo "Embedded build stamp: MISMATCH (binary has $BUILD_SHA_FROM_BINARY, expected $REVISION_SHORT)"
-                gate_fail
+                EMBEDDED_STAMP="UNPROVEN"
+                echo "Embedded build stamp: UNPROVEN (--version output did not contain build stamp)"
+                echo "  Output: $VERSION_OUTPUT"
             fi
         else
             EMBEDDED_STAMP="UNPROVEN"
-            echo "Embedded build stamp: UNPROVEN (could not extract from binary)"
+            echo "Embedded build stamp: UNPROVEN (--version execution failed)"
         fi
     else
         EMBEDDED_STAMP="UNPROVEN"
@@ -571,11 +570,29 @@ if [[ $GATE_FAILURES -eq 0 ]]; then
         echo "Signing and distribution remain external blockers."
         exit 0
     else
-        echo "OVERALL:              STRUCTURALLY READY"
-        echo ""
-        echo "All gates passed. Packages are structurally valid for this revision."
-        echo "Signing and distribution remain external blockers."
-        exit 0
+        # Canonical clean final RC build: require EMBEDDED_BUILD_STAMP = VERIFIED
+        if [[ "${SUMMARY[EMBEDDED_BUILD_STAMP]}" == "VERIFIED" ]]; then
+            echo "OVERALL:              STRUCTURALLY READY"
+            echo ""
+            echo "All gates passed. Packages are structurally valid and verified for this revision."
+            echo "Signing and distribution remain external blockers."
+            exit 0
+        elif [[ "${SUMMARY[EMBEDDED_BUILD_STAMP]}" == "UNPROVEN" ]]; then
+            echo "OVERALL:              FAILED (embedded stamp unproven for canonical clean build)"
+            echo ""
+            echo "Canonical clean build requires EMBEDDED_BUILD_STAMP = VERIFIED."
+            echo "The embedded build stamp could not be verified, which means the exact-source provenance is not proven."
+            echo "Investigate the build-stamp subsystem and runtime --version contract."
+            exit 1
+        elif [[ "${SUMMARY[EMBEDDED_BUILD_STAMP]}" == "MISMATCH" ]]; then
+            echo "OVERALL:              FAILED (embedded stamp mismatch)"
+            echo ""
+            echo "Artifacts are structurally valid but the embedded build stamp does not match this revision."
+            exit 1
+        else
+            echo "OVERALL:              FAILED (unexpected embedded stamp: ${SUMMARY[EMBEDDED_BUILD_STAMP]})"
+            exit 1
+        fi
     fi
 else
     echo "OVERALL:              FAILED ($GATE_FAILURES gate(s))"
