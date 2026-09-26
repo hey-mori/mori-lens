@@ -22,15 +22,22 @@
 
 use std::process::Command;
 
+#[cfg(test)]
+mod tests;
+
 /// Emit `LENS_BUILD_SHA` for the crate being built.
 ///
 /// Call from a `build.rs`. The value is the short sha, with `-dirty` appended
 /// when the working tree has uncommitted changes, or `unknown` outside a git
 /// checkout.
 pub fn emit() {
-    // Re-run when the checked-out commit changes. `.git/index` is included so
-    // staging something usually refreshes the dirty flag too, though that flag
-    // is best-effort by nature: cargo cannot watch every source file for it.
+    // Re-run when the checked-out commit changes.
+    // For symbolic refs (normal branches), watch the actual ref file.
+    // For detached HEAD, watch HEAD itself.
+    // Also watch index for dirty-state changes.
+    if let Some(ref_path) = resolve_git_ref_path() {
+        println!("cargo:rerun-if-changed={}", ref_path);
+    }
     println!("cargo:rerun-if-changed=../../.git/HEAD");
     println!("cargo:rerun-if-changed=../../.git/index");
 
@@ -41,6 +48,27 @@ pub fn emit() {
         "cargo:rustc-env=LENS_BUILD_SHA={sha}{}",
         if dirty { "-dirty" } else { "" }
     );
+}
+
+/// Resolve the actual Git ref file that changes when the commit changes.
+///
+/// For symbolic refs (normal branches), this returns the path to the ref file
+/// (e.g., `.git/refs/heads/main`). For detached HEAD, returns `.git/HEAD`.
+/// Returns None if Git is unavailable or not in a repository.
+fn resolve_git_ref_path() -> Option<String> {
+    // Read .git/HEAD to determine if we're on a symbolic ref or detached
+    let head_content = std::fs::read_to_string("../../.git/HEAD").ok()?;
+    let head_content = head_content.trim();
+
+    if head_content.starts_with("ref: ") {
+        // Symbolic ref: extract the ref path
+        let ref_name = head_content.strip_prefix("ref: ")?;
+        // The ref is stored in .git/<ref_name>
+        Some(format!("../../.git/{}", ref_name))
+    } else {
+        // Detached HEAD: HEAD itself contains the SHA
+        Some("../../.git/HEAD".to_string())
+    }
 }
 
 /// Run a git command, or `None` if git is unavailable or the command failed.

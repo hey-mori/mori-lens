@@ -3,3 +3,6 @@ name = "lens-build-stamp"
 version.workspace = true
 edition.workspace = true
 publish = false
+
+[dev-dependencies]
+tempfile = "3.10"
