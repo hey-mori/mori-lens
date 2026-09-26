@@ -498,7 +498,9 @@ fn read_chunked_session(
             return Err(TranslateError::Malformed);
         }
         let mut chunk = vec![0u8; size];
-        reader.read_exact(&mut chunk).map_err(|error| classify(&error))?;
+        reader
+            .read_exact(&mut chunk)
+            .map_err(|error| classify(&error))?;
         body.extend_from_slice(&chunk);
         let mut crlf = [0u8; 2];
         let _ = reader.read_exact(&mut crlf);

@@ -87,9 +87,7 @@ fn readiness_config_hash(
     h.finish()
 }
 
-fn get_cached_readiness(
-    config_hash: u64,
-) -> Option<ProviderReadinessView> {
+fn get_cached_readiness(config_hash: u64) -> Option<ProviderReadinessView> {
     let cache = READINESS_CACHE.get_or_init(|| Mutex::new(None));
     let guard = cache.lock().ok()?;
     let entry = guard.as_ref()?;
@@ -736,7 +734,7 @@ async fn get_provider_readiness(
     manager: tauri::State<'_, SharedOperationManager>,
     settings: tauri::State<'_, SharedSettings>,
 ) -> Result<ProviderReadinessView, String> {
-    use lens_core::readiness::{compute_next_action, SetupReadinessState};
+    use lens_core::readiness::{SetupReadinessState, compute_next_action};
 
     // Step 1: Read settings. Fail closed for invalid provider tokens.
     let (
@@ -1534,7 +1532,8 @@ async fn load_lmstudio_instance(
         let runtime = lens_translate::lmstudio_runtime::LmStudioRuntime::new(&endpoint_clone);
         let result = runtime.load_model(&model_clone);
         let _ = tx.send(result);
-    }).map_err(|e| format!("spawn failed: {e}"))?;
+    })
+    .map_err(|e| format!("spawn failed: {e}"))?;
 
     let instance_id = rx
         .recv()
@@ -1591,7 +1590,8 @@ async fn unload_lmstudio_instance(
         let runtime = lens_translate::lmstudio_runtime::LmStudioRuntime::new(&endpoint_clone);
         let result = runtime.unload_instance(&instance_id_clone);
         let _ = tx.send(result);
-    }).map_err(|e| format!("spawn failed: {e}"))?;
+    })
+    .map_err(|e| format!("spawn failed: {e}"))?;
 
     rx.recv()
         .map_err(|_| "thread error".to_string())?
