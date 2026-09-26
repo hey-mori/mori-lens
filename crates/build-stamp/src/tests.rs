@@ -51,8 +51,8 @@ mod tests {
         let (_temp_dir, repo_path) = create_test_git_repo();
 
         // On a normal branch, HEAD should contain "ref: refs/heads/main" or similar
-        let head_content = fs::read_to_string(repo_path.join(".git/HEAD"))
-            .expect("Failed to read HEAD");
+        let head_content =
+            fs::read_to_string(repo_path.join(".git/HEAD")).expect("Failed to read HEAD");
 
         if head_content.starts_with("ref: ") {
             // Symbolic ref: should resolve to the actual ref file
@@ -83,10 +83,13 @@ mod tests {
             .expect("Failed to detach HEAD");
 
         // In detached HEAD, HEAD should contain the SHA directly
-        let head_content = fs::read_to_string(repo_path.join(".git/HEAD"))
-            .expect("Failed to read HEAD");
+        let head_content =
+            fs::read_to_string(repo_path.join(".git/HEAD")).expect("Failed to read HEAD");
 
-        assert!(!head_content.starts_with("ref: "), "Detached HEAD should not be symbolic");
+        assert!(
+            !head_content.starts_with("ref: "),
+            "Detached HEAD should not be symbolic"
+        );
         assert_eq!(head_content.trim(), sha, "HEAD should contain the SHA");
     }
 
@@ -107,7 +110,10 @@ mod tests {
         // Note: We can't easily test the actual emit() function without a full Cargo build,
         // but we can verify the git command works correctly
         assert!(!expected_sha.is_empty(), "Short SHA should not be empty");
-        assert!(expected_sha.len() >= 7, "Short SHA should be at least 7 characters");
+        assert!(
+            expected_sha.len() >= 7,
+            "Short SHA should be at least 7 characters"
+        );
     }
 
     #[test]
@@ -135,7 +141,10 @@ mod tests {
             .expect("Failed to check git status");
 
         let status = String::from_utf8_lossy(&output.stdout);
-        assert!(!status.trim().is_empty(), "Repo should be dirty after changes");
+        assert!(
+            !status.trim().is_empty(),
+            "Repo should be dirty after changes"
+        );
     }
 
     #[test]
