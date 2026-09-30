@@ -572,6 +572,26 @@ fn list_models_with_loaded(
         )?
     };
 
+    validate_and_parse_models(status, &body)
+}
+
+/// Apply the status rules to a native v1 models response, then parse it.
+///
+/// Split out of [`list_models_with_loaded`] so a session-based probe reaches the
+/// same checks instead of re-deriving them. The status rules are the substance
+/// and are easy to get subtly wrong: 401 and 403 are auth failures, any other
+/// non-2xx is an error rather than an empty inventory, and an
+/// `authentication_error` inside a 2xx body is still an auth failure.
+///
+/// Schema: `{"models": [{"key": "...", "type": "llm", "size_bytes": 123,
+/// "loaded_instances": [...]}]}`. A 2xx response missing the `"models"` key is
+/// malformed, not an empty success. Parsing is per-object to avoid index
+/// misalignment when a field is missing: flat extraction would assign values by
+/// position across the whole response, which breaks when one model lacks a field.
+fn validate_and_parse_models(
+    status: u16,
+    body: &str,
+) -> Result<Vec<RawLmStudioModel>, TranslateError> {
     // Check for authentication errors using HTTP status code
     if status == 401 || status == 403 {
         return Err(TranslateError::HttpFailed(status));
@@ -584,22 +604,47 @@ fn list_models_with_loaded(
     }
 
     // Also check for authentication errors in the response body
-    if let Some(error_type) = crate::json::string_value_of_key(&body, "type") {
+    if let Some(error_type) = crate::json::string_value_of_key(body, "type") {
         if error_type == "authentication_error" || error_type == "permission_error" {
             return Err(TranslateError::Unavailable);
         }
     }
 
-    // Parse the LM Studio native v1 models response
-    // Schema: {"models": [{"key": "...", "type": "llm", "size_bytes": 123, "loaded_instances": [...]}]}
-    //
-    // A 2xx response missing the "models" key is malformed, not an empty success.
-    // Parse per-object to avoid index misalignment when fields are missing.
-    // Flat extraction (string_values_of_key) would assign values by position
-    // across the entire response, which breaks when one model lacks a field.
-    let models = parse_model_objects(&body)?;
+    parse_model_objects(body)
+}
 
-    Ok(models)
+/// Inventory and loaded state for one LM Studio endpoint, over one connection.
+///
+/// LM Studio's native `/api/v1/models` carries both facts in one response, so
+/// this is a single request where `get_provider_readiness` previously made three
+/// against the same URL: one for reachability whose result was dropped, one for
+/// the inventory, and one inside `model_state`.
+///
+/// Returns the inventory and the ids the provider reports as loaded in memory.
+/// Loaded state is physical truth here, matching
+/// [`LmStudioRuntime::model_state`]; JIT inference visibility is a separate fact
+/// the readiness path evaluates on its own.
+pub(crate) fn probe_over_session(
+    session: &mut crate::http::Session,
+) -> Result<(Vec<ModelInfo>, Option<Vec<String>>), TranslateError> {
+    let (status, body) = session.get("/api/v1/models")?;
+    let raw = validate_and_parse_models(status, &body)?;
+
+    let loaded = raw
+        .iter()
+        .filter(|m| m.is_loaded)
+        .map(|m| m.key.clone())
+        .collect();
+    let models = raw
+        .into_iter()
+        .map(|m| ModelInfo {
+            id: m.key,
+            display_name: m.display_name,
+            size_bytes: m.size_bytes,
+        })
+        .collect();
+
+    Ok((models, Some(loaded)))
 }
 
 /// Parse model objects from the native v1 response body using serde_json.
@@ -749,6 +794,49 @@ fn list_models_with_auth(
 mod tests {
     use super::*;
     use crate::fake_server::{FakeResponse, FakeServer};
+    use std::time::Duration;
+
+    #[test]
+    fn a_probe_reads_inventory_and_loaded_state_from_one_request() {
+        // LM Studio's native endpoint carries both facts, so the readiness path
+        // needs one request where it previously made three identical ones.
+        let body = r#"{"models":[
+            {"key":"qwen2.5-7b","type":"llm","display_name":"Qwen 2.5 7B","size_bytes":4700000000,"loaded_instances":["inst-1"]},
+            {"key":"gemma-2b","type":"llm","display_name":"Gemma 2B","size_bytes":1600000000,"loaded_instances":[]}
+        ]}"#;
+        let server = FakeServer::start_keep_alive(vec![
+            FakeResponse::ok_json(body).expect_get("/api/v1/models")
+        ]);
+
+        let mut session =
+            crate::http::Session::connect(server.address(), Duration::from_secs(2), None).unwrap();
+        let (models, loaded) = probe_over_session(&mut session).unwrap();
+
+        assert_eq!(models.len(), 2);
+        assert_eq!(
+            loaded.as_deref(),
+            Some(["qwen2.5-7b".to_owned()].as_slice()),
+            "only the model with a loaded instance counts as loaded",
+        );
+        drop(session);
+        assert_eq!(server.connection_count(), 1);
+    }
+
+    #[test]
+    fn a_probe_reports_an_auth_failure_rather_than_an_empty_inventory() {
+        // A 401 that read as "no models installed" would tell the user to pull a
+        // model when the real problem is the token.
+        let server = FakeServer::start_keep_alive(vec![
+            FakeResponse::unauthorized().expect_get("/api/v1/models")
+        ]);
+
+        let mut session =
+            crate::http::Session::connect(server.address(), Duration::from_secs(2), None).unwrap();
+        assert_eq!(
+            probe_over_session(&mut session),
+            Err(TranslateError::HttpFailed(401)),
+        );
+    }
     use crate::lmstudio_fixtures::*;
 
     #[test]

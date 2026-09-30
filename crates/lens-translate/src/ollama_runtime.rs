@@ -271,22 +271,57 @@ impl ProviderRuntime for OllamaRuntime {
 /// This is the same check used by the settings UI and the worker.
 fn is_model_loaded(endpoint: &str, model: &str) -> Result<bool, TranslateError> {
     let (status, body) = crate::http::get(endpoint, "/api/ps", std::time::Duration::from_secs(2))?;
-    // A non-2xx response should not be parsed as a successful probe: a 500
-    // whose body happens to contain a model name must not report that model
-    // as loaded.
+    let loaded = parse_ps(status, &body)?;
+    Ok(loaded.iter().any(|name| name == model))
+}
+
+/// Turn an `/api/ps` response into the list of models loaded in memory.
+///
+/// Split from [`is_model_loaded`] so the session-based probe shares the status
+/// rule rather than repeating it. A non-2xx response must not be parsed as a
+/// successful probe: a 500 whose body happens to contain a model name must not
+/// report that model as loaded.
+fn parse_ps(status: u16, body: &str) -> Result<Vec<String>, TranslateError> {
     if !(200..=299).contains(&status) {
         return Err(TranslateError::HttpFailed(status));
     }
-
     // Use canonical JSON parsing path (same as lib.rs)
-    let loaded_models = crate::json::string_values_of_key(&body, "name");
-    Ok(loaded_models.iter().any(|name| name == model))
+    Ok(crate::json::string_values_of_key(body, "name"))
+}
+
+/// Inventory and loaded state for one Ollama endpoint, over one connection.
+///
+/// Two requests, `/api/tags` then `/api/ps`, on one socket. The readiness path
+/// previously made four against this endpoint: `/api/tags` for reachability with
+/// the body dropped, `/api/tags` again for the inventory, and inside
+/// `model_state` a third `/api/tags` plus `/api/ps`.
+///
+/// Returns the inventory, and the ids Ollama reports as loaded when it says.
+///
+/// A failed `/api/ps` is not a failed probe. The inventory is already in hand by
+/// then, and discarding it would report an endpoint as unreachable on the
+/// strength of a second request that has nothing to do with reachability. `None`
+/// means the loaded set is unknown, which a caller turns into an unknown
+/// lifecycle rather than into "not loaded".
+pub(crate) fn probe_over_session(
+    session: &mut crate::http::Session,
+) -> Result<(Vec<ModelInfo>, Option<Vec<String>>), TranslateError> {
+    let (status, body) = session.get("/api/tags")?;
+    let models = crate::parse_tags(status, &body)?;
+
+    let loaded = match session.get("/api/ps") {
+        Ok((status, body)) => parse_ps(status, &body).ok(),
+        Err(_) => None,
+    };
+
+    Ok((models, loaded))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::fake_server::{FakeResponse, FakeServer};
+    use std::time::Duration;
 
     #[test]
     fn ollama_runtime_reports_ollama_identity() {
@@ -367,6 +402,75 @@ mod tests {
         let runtime = OllamaRuntime::new("127.0.0.1:1");
         let result = runtime.list_models();
         assert!(matches!(result, Err(TranslateError::Unavailable)));
+    }
+
+    #[test]
+    fn a_probe_reads_tags_and_ps_over_one_connection() {
+        // The point of the probe is the socket, not the parsing: two requests
+        // that open two connections would parse identically and be 9.8ms slower
+        // each, so the assertion that matters is the connection count.
+        let server = FakeServer::start_keep_alive(vec![
+            FakeResponse::ok_json(r#"{"models":[{"name":"llama3.1:8b","size":4700000000}]}"#)
+                .expect_get("/api/tags"),
+            FakeResponse::ok_json(r#"{"models":[{"name":"llama3.1:8b"}]}"#).expect_get("/api/ps"),
+        ]);
+
+        let mut session =
+            crate::http::Session::connect(server.address(), Duration::from_secs(2), None).unwrap();
+        let (models, loaded) = probe_over_session(&mut session).unwrap();
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "llama3.1:8b");
+        assert_eq!(models[0].size_bytes, 4_700_000_000);
+        assert_eq!(
+            loaded.as_deref(),
+            Some(["llama3.1:8b".to_owned()].as_slice())
+        );
+        drop(session);
+        assert_eq!(
+            server.connection_count(),
+            1,
+            "both requests must share one connection",
+        );
+    }
+
+    #[test]
+    fn a_failed_ps_leaves_the_inventory_intact_and_the_loaded_set_unknown() {
+        // /api/ps has nothing to do with reachability. Letting its failure sink
+        // the whole probe would report an endpoint that just answered with a
+        // model list as unreachable.
+        let server = FakeServer::start_keep_alive(vec![
+            FakeResponse::ok_json(r#"{"models":[{"name":"llama3.1:8b","size":100}]}"#)
+                .expect_get("/api/tags"),
+            FakeResponse::server_error().expect_get("/api/ps"),
+        ]);
+
+        let mut session =
+            crate::http::Session::connect(server.address(), Duration::from_secs(2), None).unwrap();
+        let (models, loaded) = probe_over_session(&mut session).unwrap();
+
+        assert_eq!(models.len(), 1, "the inventory was already in hand");
+        assert!(
+            loaded.is_none(),
+            "unknown, which is not the same as nothing loaded",
+        );
+    }
+
+    #[test]
+    fn a_failed_tags_fails_the_probe() {
+        // The inventory request is the reachability answer, so its failure is
+        // the probe's failure and must not be softened into an empty list.
+        let server =
+            FakeServer::start_keep_alive(
+                vec![FakeResponse::server_error().expect_get("/api/tags")],
+            );
+
+        let mut session =
+            crate::http::Session::connect(server.address(), Duration::from_secs(2), None).unwrap();
+        assert_eq!(
+            probe_over_session(&mut session),
+            Err(TranslateError::HttpFailed(500)),
+        );
     }
 
     #[test]
