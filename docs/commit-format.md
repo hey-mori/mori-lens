@@ -34,7 +34,17 @@ followed or to be argued with.
   - Keep it under ~70 characters.
 - **Body**
   - One blank line after the subject, then a **bullet list only**.
-  - Every body line is a bullet starting with `- `.
+  - Every body line is a bullet starting with `- `. That is literal: a bullet
+    that needs more words stays on one line however long it gets, because a
+    wrapped continuation line is not a bullet and is rejected.
+  - **Bullets are consecutive. No blank line between them.** The body is one
+    list, and a blank line between bullets makes `git log` read as paragraphs,
+    which is the shape the bullet rule exists to prevent. It also renders as
+    several separate lists rather than one wherever a commit body is shown as
+    Markdown. This was the unanimous convention long before it was written down
+    here: 748 of the 765 multi-bullet commits in this repository are
+    consecutive, and the 17 that are not slipped through because the validator
+    skipped blank lines rather than because anybody chose that shape.
   - **No prose paragraphs.** If a point needs explanation, it is still
     one bullet: write a fuller sentence in that bullet rather than
     dropping into paragraph form.
@@ -56,6 +66,12 @@ followed or to be argued with.
     that, and a subject line that starts with a label reads worse a
     year later.
 
+Every rule above is checked by `scripts/validate-commit-message.sh`, which the
+commit-msg hook, the pre-push hook and `scripts/check-commit-policy.sh` all call,
+and which `.githooks/tests/test-validate-commit-message.sh` covers. A rule here
+that the validator does not enforce is a rule that will be broken, which is the
+history of the blank-line rule above.
+
 The `Co-Authored-By` ban is deliberate and outranks any default an
 agent harness supplies. Attribution here is the commit author field;
 a trailer that says a model wrote it adds no information a reader can
@@ -69,9 +85,14 @@ feat: resolve the word under the pointer through ui automation
 - Add UiaTextAcquirer, walking ElementFromPoint to RangeFromPoint
 - Expand the range by word and read the enclosing line for context
 - Report bounding rectangles in physical screen coordinates
-- Return NoTextPattern rather than an empty string when the provider
-  exposes no text, so a failure can be attributed to the provider
+- Return NoTextPattern rather than an empty string when the provider exposes no text, so a failure can be attributed to the provider
 ```
+
+The last bullet is long and stays on one line. An earlier version of this
+example wrapped it, and that version does not pass
+`scripts/validate-commit-message.sh`: the rule is one bullet per line, not one
+bullet per paragraph. An example that the validator rejects is worse than no
+example, because it is the thing people copy.
 
 ## The pull request title is a commit subject
 
