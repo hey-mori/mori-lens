@@ -609,11 +609,12 @@ async fn list_models(provider: String, endpoint: String) -> Result<Vec<ModelInfo
     let provider = lens_core::translate::Provider::from_token(&provider)
         .unwrap_or(lens_core::translate::Provider::Ollama);
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let result = lens_translate::list_models_for_provider(provider, &endpoint);
-        let _ = tx.send(result);
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+    std::thread::Builder::new()
+        .spawn(move || {
+            let result = lens_translate::list_models_for_provider(provider, &endpoint);
+            let _ = tx.send(result);
+        })
+        .map_err(|e| format!("spawn failed: {e}"))?;
     rx.recv()
         .map_err(|_| "thread error".to_string())?
         .map(|models| {
@@ -635,12 +636,15 @@ async fn check_provider(provider: String, endpoint: String) -> bool {
     let provider = lens_core::translate::Provider::from_token(&provider)
         .unwrap_or(lens_core::translate::Provider::Ollama);
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
+    let spawned = std::thread::Builder::new().spawn(move || {
         let _ = tx.send(lens_translate::check_provider_reachable(
             provider, &endpoint,
         ));
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+    });
+    if spawned.is_err() {
+        // A probe that never ran is not a provider that answered.
+        return false;
+    }
     rx.recv().unwrap_or(false)
 }
 
@@ -734,7 +738,7 @@ async fn get_provider_readiness(
     manager: tauri::State<'_, SharedOperationManager>,
     settings: tauri::State<'_, SharedSettings>,
 ) -> Result<ProviderReadinessView, String> {
-    use lens_core::readiness::{SetupReadinessState, compute_next_action};
+    use lens_core::readiness::{compute_next_action, SetupReadinessState};
 
     // Step 1: Read settings. Fail closed for invalid provider tokens.
     let (
@@ -1032,11 +1036,15 @@ fn check_provider_access(
 ) -> lens_core::readiness::ProviderAccessState {
     use lens_core::readiness::ProviderAccessState;
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
+    let spawned = std::thread::Builder::new().spawn(move || {
         let result = lens_translate::check_provider_reachable_typed(provider, &endpoint);
         let _ = tx.send(result);
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+    });
+    if spawned.is_err() {
+        return ProviderAccessState::Unreachable {
+            reason: "probe thread could not start".into(),
+        };
+    }
     match rx.recv() {
         Ok(Ok(())) => ProviderAccessState::Available,
         Ok(Err(e)) => map_translate_error_to_access(e),
@@ -1088,11 +1096,15 @@ fn get_model_inventory(
         return ModelInventoryView::NotAttempted;
     }
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
+    let spawned = std::thread::Builder::new().spawn(move || {
         let result = lens_translate::list_models_for_provider(provider, &endpoint);
         let _ = tx.send(result);
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+    });
+    if spawned.is_err() {
+        return ModelInventoryView::LookupFailed {
+            reason: "probe thread could not start".into(),
+        };
+    }
     match rx.recv() {
         Ok(Ok(models)) => ModelInventoryView::Available {
             models: models.into_iter().map(|m| m.id).collect(),
@@ -1168,12 +1180,13 @@ fn get_model_state(
     let (tx, rx) = std::sync::mpsc::channel();
     let ep = endpoint.to_owned();
     let m = model.to_owned();
-    std::thread::spawn(move || {
-        let runtime = lens_translate::build_provider_runtime(provider, &ep);
-        let result = runtime.model_state(&m);
-        let _ = tx.send(result);
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+    std::thread::Builder::new()
+        .spawn(move || {
+            let runtime = lens_translate::build_provider_runtime(provider, &ep);
+            let result = runtime.model_state(&m);
+            let _ = tx.send(result);
+        })
+        .map_err(|e| format!("spawn failed: {e}"))?;
     match rx.recv() {
         Ok(Ok(state)) => Ok(state),
         Ok(Err(e)) => Err(e.reason().into()),
@@ -1205,7 +1218,7 @@ fn check_lmstudio_inference_visibility(
     let token = api_token.map(|t| t.to_owned());
     let (tx, rx) = std::sync::mpsc::channel();
 
-    std::thread::spawn(move || {
+    let spawned = std::thread::Builder::new().spawn(move || {
         let runtime = if let Some(tok) = token {
             LmStudioRuntime::with_token(&ep, &tok)
         } else {
@@ -1213,8 +1226,10 @@ fn check_lmstudio_inference_visibility(
         };
         let result = runtime.is_inference_visible(&m);
         let _ = tx.send(result);
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+    });
+    if spawned.is_err() {
+        return InferenceVisibilityObservation::ObservationFailed;
+    }
 
     match rx.recv() {
         Ok(Ok(true)) => InferenceVisibilityObservation::Visible,
@@ -1528,12 +1543,13 @@ async fn load_lmstudio_instance(
     let (tx, rx) = std::sync::mpsc::channel();
     let endpoint_clone = endpoint.clone();
     let model_clone = model.clone();
-    std::thread::spawn(move || {
-        let runtime = lens_translate::lmstudio_runtime::LmStudioRuntime::new(&endpoint_clone);
-        let result = runtime.load_model(&model_clone);
-        let _ = tx.send(result);
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+    std::thread::Builder::new()
+        .spawn(move || {
+            let runtime = lens_translate::lmstudio_runtime::LmStudioRuntime::new(&endpoint_clone);
+            let result = runtime.load_model(&model_clone);
+            let _ = tx.send(result);
+        })
+        .map_err(|e| format!("spawn failed: {e}"))?;
 
     let instance_id = rx
         .recv()
@@ -1586,12 +1602,13 @@ async fn unload_lmstudio_instance(
     let (tx, rx) = std::sync::mpsc::channel();
     let endpoint_clone = endpoint.clone();
     let instance_id_clone = instance_id.clone();
-    std::thread::spawn(move || {
-        let runtime = lens_translate::lmstudio_runtime::LmStudioRuntime::new(&endpoint_clone);
-        let result = runtime.unload_instance(&instance_id_clone);
-        let _ = tx.send(result);
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+    std::thread::Builder::new()
+        .spawn(move || {
+            let runtime = lens_translate::lmstudio_runtime::LmStudioRuntime::new(&endpoint_clone);
+            let result = runtime.unload_instance(&instance_id_clone);
+            let _ = tx.send(result);
+        })
+        .map_err(|e| format!("spawn failed: {e}"))?;
 
     rx.recv()
         .map_err(|_| "thread error".to_string())?
@@ -1609,11 +1626,12 @@ async fn list_provider_models(
     endpoint: String,
 ) -> Result<Vec<ModelInfoView>, String> {
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let result = lens_translate::list_models_for_provider(provider, &endpoint);
-        let _ = tx.send(result);
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+    std::thread::Builder::new()
+        .spawn(move || {
+            let result = lens_translate::list_models_for_provider(provider, &endpoint);
+            let _ = tx.send(result);
+        })
+        .map_err(|e| format!("spawn failed: {e}"))?;
     rx.recv()
         .map_err(|_| "thread error".to_string())?
         .map(|models| {
@@ -1866,14 +1884,15 @@ async fn test_model(
     let provider = lens_core::translate::Provider::from_token(&provider)
         .unwrap_or(lens_core::translate::Provider::Ollama);
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        use lens_core::translate::QuickRequest;
-        let translator = lens_translate::build_translator(provider, &endpoint, &model);
-        let request = QuickRequest::new("The output files came back empty.", "ko");
-        let result = translator.quick(&request);
-        let _ = tx.send(result);
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+    std::thread::Builder::new()
+        .spawn(move || {
+            use lens_core::translate::QuickRequest;
+            let translator = lens_translate::build_translator(provider, &endpoint, &model);
+            let request = QuickRequest::new("The output files came back empty.", "ko");
+            let result = translator.quick(&request);
+            let _ = tx.send(result);
+        })
+        .map_err(|e| format!("spawn failed: {e}"))?;
     rx.recv()
         .map_err(|_| "thread error".to_string())?
         .map(|t| TestResultView {
@@ -1956,30 +1975,31 @@ async fn run_health_check(
 
     // Run health check in a background thread to avoid blocking the Tauri command.
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        use std::time::Instant;
-        // Check Quick engine using QuickRequest and Translator::quick.
-        let started_quick = Instant::now();
-        let (quick_state, quick_failure) =
-            check_quick_engine_health(quick_provider, &quick_endpoint, quick_model.as_deref());
-        let quick_latency = started_quick.elapsed().as_millis() as u64;
+    std::thread::Builder::new()
+        .spawn(move || {
+            use std::time::Instant;
+            // Check Quick engine using QuickRequest and Translator::quick.
+            let started_quick = Instant::now();
+            let (quick_state, quick_failure) =
+                check_quick_engine_health(quick_provider, &quick_endpoint, quick_model.as_deref());
+            let quick_latency = started_quick.elapsed().as_millis() as u64;
 
-        // Check Deep engine using DeepRequest and Analyser::deep (Ollama-only).
-        let started_deep = Instant::now();
-        let (deep_state, deep_failure) =
-            check_deep_engine_health(&deep_endpoint, deep_model.as_deref());
-        let deep_latency = started_deep.elapsed().as_millis() as u64;
+            // Check Deep engine using DeepRequest and Analyser::deep (Ollama-only).
+            let started_deep = Instant::now();
+            let (deep_state, deep_failure) =
+                check_deep_engine_health(&deep_endpoint, deep_model.as_deref());
+            let deep_latency = started_deep.elapsed().as_millis() as u64;
 
-        let _ = tx.send((
-            quick_state,
-            quick_failure,
-            quick_latency,
-            deep_state,
-            deep_failure,
-            deep_latency,
-        ));
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+            let _ = tx.send((
+                quick_state,
+                quick_failure,
+                quick_latency,
+                deep_state,
+                deep_failure,
+                deep_latency,
+            ));
+        })
+        .map_err(|e| format!("spawn failed: {e}"))?;
 
     let result = rx.recv().map_err(|_| "thread error".to_string());
 
