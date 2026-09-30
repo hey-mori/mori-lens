@@ -5392,6 +5392,7 @@ mod tests {
         {
             let f = std::fs::OpenOptions::new()
                 .create(true)
+                .truncate(true)
                 .write(true)
                 .mode(0o644)
                 .open(&path)

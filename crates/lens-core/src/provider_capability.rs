@@ -18,11 +18,12 @@ use serde::{Deserialize, Serialize};
 /// Authentication requirement for a provider.
 ///
 /// Represents whether the provider requires authentication for API access.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthenticationRequirement {
     /// Provider does not require authentication.
     /// Ollama: runs locally without auth.
+    #[default]
     None,
     /// Provider supports authentication but does not require it by default.
     /// LM Studio: can be configured to require an API token.
@@ -30,12 +31,6 @@ pub enum AuthenticationRequirement {
     Optional,
     /// Provider requires authentication for all requests.
     Required,
-}
-
-impl Default for AuthenticationRequirement {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// Provider capability descriptor.
