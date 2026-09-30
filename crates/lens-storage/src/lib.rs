@@ -5413,31 +5413,30 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn existing_broad_wal_is_tightened() {
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        use std::os::unix::fs::PermissionsExt;
         let path = temp_db("harden-wal");
-        // Create the main DB normally first.
-        let lib = Library::open(&path).expect("open");
-        drop(lib);
-
-        // Create a broad-permission WAL file alongside.
+        // Keep a real WAL open. SQLite may remove an unused or invalid WAL
+        // when the final connection closes, so a fabricated empty file does
+        // not test the permissions of an active database.
+        let first = Library::open(&path).expect("open");
+        first
+            .conn
+            .execute_batch(
+                "CREATE TABLE wal_probe (value INTEGER); INSERT INTO wal_probe VALUES (1);",
+            )
+            .expect("write through WAL");
         let wal_path = path.with_extension("db-wal");
-        {
-            let f = std::fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .mode(0o644)
-                .open(&wal_path)
-                .expect("create broad WAL");
-            drop(f);
-        }
+        assert!(wal_path.exists(), "test setup: live WAL exists");
+        std::fs::set_permissions(&wal_path, std::fs::Permissions::from_mode(0o644))
+            .expect("make existing WAL broad");
         let mode_before = std::fs::metadata(&wal_path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode_before, 0o644, "test setup: WAL starts broad");
 
-        let lib = Library::open(&path).expect("reopen succeeds");
-        drop(lib);
-
+        let second = Library::open(&path).expect("reopen succeeds");
         let mode_after = std::fs::metadata(&wal_path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode_after, 0o600, "WAL tightened to owner-only");
+        drop(second);
+        drop(first);
         cleanup(&path);
     }
 
