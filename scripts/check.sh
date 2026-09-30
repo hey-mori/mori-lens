@@ -221,6 +221,9 @@ if [[ "$FULL" == "1" ]]; then
   cargo test -p lens-platform-macos
 fi
 
+step "commit message validator"
+bash "$(dirname "$0")/../.githooks/tests/test-validate-commit-message.sh"
+
 step "commit message policy"
 bash "$(dirname "$0")/check-commit-policy.sh"
 

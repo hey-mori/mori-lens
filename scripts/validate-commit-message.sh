@@ -80,6 +80,31 @@ if [ -n "$body" ]; then
       break
     fi
   done <<< "$body"
+
+  # 10. Bullets are consecutive: no blank line between them.
+  #
+  # Rule 9 skips blank lines, so it accepts a body whose bullets are separated by
+  # them. That is how 17 commits in this repository came to have it, against 748
+  # that do not: the convention was already unanimous and simply unenforced.
+  #
+  # The body is one list. A blank line between bullets makes `git log` read as
+  # paragraphs, which is the prose shape the bullet rule exists to prevent, and
+  # renders as several separate lists rather than one wherever Markdown is
+  # applied to a commit body.
+  seen_bullet=""
+  blank_since_bullet=""
+  while IFS= read -r line; do
+    if echo "$line" | grep -q '^- '; then
+      if [ -n "$seen_bullet" ] && [ -n "$blank_since_bullet" ]; then
+        errors="${errors}ERROR: blank line between bullets; the body is one list\n"
+        break
+      fi
+      seen_bullet=1
+      blank_since_bullet=""
+    elif [ -z "$line" ] && [ -n "$seen_bullet" ]; then
+      blank_since_bullet=1
+    fi
+  done <<< "$body"
 fi
 
 if [ -n "$errors" ]; then
