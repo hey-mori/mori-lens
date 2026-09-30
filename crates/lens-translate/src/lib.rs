@@ -69,14 +69,22 @@ pub use lens_core::translate::ModelInfo;
 /// `display_name` since Ollama has no separate human-readable label.
 pub fn list_models(endpoint: &str) -> Result<Vec<ModelInfo>, TranslateError> {
     let (status, body) = http::get(endpoint, "/api/tags", Duration::from_secs(3))?;
-    // Surface non-2xx so the diagnostic ring can classify HttpClient vs
-    // HttpServer. A 500 whose body happens to parse as valid JSON must not
-    // silently return an empty list.
+    parse_tags(status, &body)
+}
+
+/// Turn an `/api/tags` response into an inventory.
+///
+/// Split from [`list_models`] so the session-based readiness probe applies the
+/// same status rule rather than repeating it. That rule is the substance: a
+/// non-2xx is surfaced so the diagnostic ring can classify HttpClient vs
+/// HttpServer, because a 500 whose body happens to parse as valid JSON must not
+/// silently return an empty list.
+pub(crate) fn parse_tags(status: u16, body: &str) -> Result<Vec<ModelInfo>, TranslateError> {
     if !(200..=299).contains(&status) {
         return Err(TranslateError::HttpFailed(status));
     }
-    let names = json::string_values_of_key(&body, "name");
-    let sizes = json::number_values_of_key(&body, "size");
+    let names = json::string_values_of_key(body, "name");
+    let sizes = json::number_values_of_key(body, "size");
     Ok(names
         .into_iter()
         .zip(sizes)
@@ -1167,6 +1175,77 @@ pub fn build_provider_runtime(provider: Provider, endpoint: &str) -> Box<dyn Pro
 ///
 /// Provider-aware version of [`list_models`]. Dispatches to the appropriate
 /// provider runtime based on the provider parameter.
+/// Inventory and loaded state for one endpoint, gathered over one connection.
+///
+/// The readiness path needs three facts about an endpoint: whether it answers,
+/// what it has installed, and whether the configured model is loaded. All three
+/// come out of the same responses, so asking for them separately means asking
+/// the same question more than once.
+#[derive(Debug, Clone)]
+pub struct ReadinessProbe {
+    /// Models installed on the endpoint.
+    pub models: Vec<ModelInfo>,
+    /// Ids of the models the provider reports as loaded in memory, when it says.
+    ///
+    /// Physical truth, matching `ProviderRuntime::model_state`. For Ollama this
+    /// is `/api/ps`; for LM Studio it is `loaded_instances`. JIT inference
+    /// visibility is a separate fact and is not folded in here.
+    ///
+    /// `None` means the provider answered about its inventory but not about what
+    /// is loaded. That is a third state, not a synonym for an empty set, and
+    /// flattening it to "nothing is loaded" would report a loaded model as
+    /// merely present.
+    pub loaded: Option<Vec<String>>,
+}
+
+impl ReadinessProbe {
+    /// Whether the endpoint has `model` installed.
+    pub fn has(&self, model: &str) -> bool {
+        self.models.iter().any(|m| m.id == model)
+    }
+
+    /// The installed size of `model`, if it is installed.
+    pub fn size_of(&self, model: &str) -> Option<u64> {
+        self.models
+            .iter()
+            .find(|m| m.id == model)
+            .map(|m| m.size_bytes)
+    }
+
+    /// Whether the provider reports `model` as loaded in memory.
+    ///
+    /// `None` when the provider did not say, which a caller reports as an
+    /// unknown lifecycle rather than as not loaded.
+    pub fn is_loaded(&self, model: &str) -> Option<bool> {
+        self.loaded
+            .as_ref()
+            .map(|loaded| loaded.iter().any(|name| name == model))
+    }
+}
+
+/// Probe one endpoint for everything the readiness path needs, on one socket.
+///
+/// Replaces a sequence that asked the same endpoint the same question several
+/// times over separate connections. For Ollama that was four requests
+/// (`/api/tags` three times and `/api/ps` once) and is now two; for LM Studio it
+/// was three identical `/api/v1/models` requests and is now one.
+///
+/// `Err` is the reachability answer as well as the failure: a caller maps it to
+/// its own unreachable or provider-error state, which is why the typed
+/// [`TranslateError`] is preserved rather than collapsed to a boolean.
+pub fn probe_readiness(
+    provider: Provider,
+    endpoint: &str,
+    api_token: Option<&str>,
+) -> Result<ReadinessProbe, TranslateError> {
+    let mut session = http::Session::connect(endpoint, Duration::from_secs(3), api_token)?;
+    let (models, loaded) = match provider {
+        Provider::Ollama => ollama_runtime::probe_over_session(&mut session)?,
+        Provider::LmStudio => lmstudio_runtime::probe_over_session(&mut session)?,
+    };
+    Ok(ReadinessProbe { models, loaded })
+}
+
 pub fn list_models_for_provider(
     provider: Provider,
     endpoint: &str,

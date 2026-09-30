@@ -10,6 +10,8 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::thread;
 
 /// Expected properties of an incoming HTTP request.
@@ -234,6 +236,12 @@ fn verify_request(received: &ReceivedRequest, expect: &RequestExpectation) {
 pub struct FakeServer {
     address: String,
     handle: Option<thread::JoinHandle<()>>,
+    /// How many TCP connections the server has accepted.
+    ///
+    /// A test that claims a connection was reused has to be able to count them,
+    /// otherwise it asserts on the responses it queued rather than on the socket
+    /// behaviour it cares about.
+    connections: Arc<AtomicUsize>,
 }
 
 impl FakeServer {
@@ -247,6 +255,8 @@ impl FakeServer {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake server");
         let address = listener.local_addr().unwrap().to_string();
         let num_responses = responses.len();
+        let connections = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&connections);
 
         let handle = thread::spawn(move || {
             let mut response_queue = responses;
@@ -256,6 +266,7 @@ impl FakeServer {
                     Ok((s, _)) => s,
                     Err(_) => break,
                 };
+                counter.fetch_add(1, Ordering::SeqCst);
 
                 if response_queue.is_empty() {
                     break;
@@ -345,12 +356,120 @@ impl FakeServer {
         Self {
             address,
             handle: Some(handle),
+            connections,
+        }
+    }
+
+    /// Start a fake server that serves every queued response on one connection.
+    ///
+    /// Replies `Connection: keep-alive` with a `Content-Length`, so a client
+    /// finds the end of each body without the socket closing and can send the
+    /// next request down the same one. [`Self::start`] closes after every
+    /// response, which makes it unable to observe reuse at all: to it, a client
+    /// that reuses a connection and one that does not look identical.
+    ///
+    /// The thread stops when the queue empties or the client goes away, so a
+    /// client that sends fewer requests than there are queued responses does not
+    /// hang the test in `drop`.
+    pub fn start_keep_alive(responses: Vec<FakeResponse>) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake server");
+        let address = listener.local_addr().unwrap().to_string();
+        let connections = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&connections);
+
+        let handle = thread::spawn(move || {
+            let mut response_queue = responses;
+            let Ok((stream, _)) = listener.accept() else {
+                return;
+            };
+            counter.fetch_add(1, Ordering::SeqCst);
+            let Ok(mut writer) = stream.try_clone() else {
+                return;
+            };
+            let mut reader = BufReader::new(stream);
+
+            while !response_queue.is_empty() {
+                let mut request_line = String::new();
+                match reader.read_line(&mut request_line) {
+                    // EOF: the client is finished and will not ask again.
+                    Ok(0) => break,
+                    Ok(_) => {}
+                    Err(_) => break,
+                }
+                let parts: Vec<&str> = request_line.split_whitespace().collect();
+                if parts.len() < 2 {
+                    break;
+                }
+                let method = parts[0].to_owned();
+                let path = parts[1].to_owned();
+
+                let mut received_headers = Vec::new();
+                let mut content_length = 0usize;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).is_err() {
+                        break;
+                    }
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        break;
+                    }
+                    if let Some((key, value)) = trimmed.split_once(':') {
+                        let key = key.trim().to_owned();
+                        let value = value.trim().to_owned();
+                        if key.eq_ignore_ascii_case("content-length") {
+                            content_length = value.parse().unwrap_or(0);
+                        }
+                        received_headers.push((key, value));
+                    }
+                }
+
+                let mut body = String::new();
+                if content_length > 0 {
+                    let mut buf = vec![0u8; content_length];
+                    if reader.read_exact(&mut buf).is_ok() {
+                        body = String::from_utf8_lossy(&buf).into_owned();
+                    }
+                }
+
+                let response = response_queue.remove(0);
+                if let Some(expectation) = &response.expect {
+                    let received = ReceivedRequest {
+                        method,
+                        path,
+                        headers: received_headers,
+                        body,
+                    };
+                    verify_request(&received, expectation);
+                }
+
+                let mut out = format!("HTTP/1.1 {} {}\r\n", response.status, response.status_text);
+                for (key, value) in &response.headers {
+                    out.push_str(&format!("{key}: {value}\r\n"));
+                }
+                out.push_str(&format!("Content-Length: {}\r\n", response.body.len()));
+                out.push_str("Connection: keep-alive\r\n\r\n");
+                out.push_str(&response.body);
+                let _ = writer.write_all(out.as_bytes());
+                let _ = writer.flush();
+            }
+        });
+
+        Self {
+            address,
+            handle: Some(handle),
+            connections,
         }
     }
 
     /// Get the server address (e.g., "127.0.0.1:12345").
     pub fn address(&self) -> &str {
         &self.address
+    }
+
+    /// How many TCP connections this server has accepted.
+    pub fn connection_count(&self) -> usize {
+        self.connections.load(Ordering::SeqCst)
     }
 }
 
