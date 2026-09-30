@@ -41,7 +41,7 @@ failed=0
 while IFS= read -r sha; do
   msg="$(git log -1 --format='%B' "$sha")"
   subject="$(echo "$msg" | head -1)"
-  errors="$(echo "$msg" | scripts/validate-commit-message.sh --stdin 2>&1)" || true
+  errors="$(echo "$msg" | bash scripts/validate-commit-message.sh --stdin 2>&1)" || true
 
   if [ -n "$errors" ]; then
     echo "commit-policy: FAIL $(echo "$sha" | cut -c1-8) ${subject}"

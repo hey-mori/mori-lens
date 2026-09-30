@@ -23,21 +23,16 @@ use serde::{Deserialize, Serialize};
 ///
 /// This is about installation, not about whether it is currently running.
 /// Evidence may come from PATH detection, registry, or service enumeration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimePresence {
     /// Have not checked yet or check failed in a way that does not distinguish.
+    #[default]
     Unknown,
     /// Runtime is not installed or not on PATH.
     NotInstalled,
     /// Runtime is installed (binary found or service registered).
     Installed,
-}
-
-impl Default for RuntimePresence {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 /// Whether the provider endpoint is reachable.
@@ -48,10 +43,11 @@ impl Default for RuntimePresence {
 ///
 /// A random process listening on the port is not sufficient; the probe must
 /// return provider-identity evidence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EndpointState {
     /// Have not checked yet or check is in progress.
+    #[default]
     Unknown,
     /// Provider probe failed (connection refused, timeout, DNS failure, or non-provider response).
     Unreachable,
@@ -59,20 +55,15 @@ pub enum EndpointState {
     Reachable,
 }
 
-impl Default for EndpointState {
-    fn default() -> Self {
-        Self::Unknown
-    }
-}
-
 /// Lifecycle state of a model relative to a provider.
 ///
 /// Derived from `ProviderRuntime::model_state()` observations plus setup operations.
 /// This tracks the model's presence and readiness for inference.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelLifecycle {
     /// Have not checked yet or check failed in a way that does not distinguish.
+    #[default]
     Unknown,
     /// Model is not present locally (needs download).
     Missing,
@@ -96,23 +87,18 @@ pub enum ModelLifecycle {
     Failed,
 }
 
-impl Default for ModelLifecycle {
-    fn default() -> Self {
-        Self::Unknown
-    }
-}
-
 /// Why a provider endpoint is not usable.
 ///
 /// The frontend uses this to decide whether to show "Start Ollama",
 /// "Enter API key", or "Check endpoint". Each variant represents a
 /// distinct product fact; collapsing them hides actionable information.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderAccessState {
     /// Endpoint is responding normally.
     Available,
     /// Have not checked yet or check is in progress.
+    #[default]
     Unknown,
     /// Connection refused, DNS failure, or timeout. Provider is not reachable
     /// at the transport layer.
@@ -125,19 +111,13 @@ pub enum ProviderAccessState {
     ProviderError { reason: String },
 }
 
-impl Default for ProviderAccessState {
-    fn default() -> Self {
-        Self::Unknown
-    }
-}
-
 /// Result of looking up the model inventory on a provider.
 ///
 /// Distinguishes between "no models installed" (an empty successful lookup)
 /// and "could not retrieve the list" (network error, auth error, etc.).
 /// Collapsing both into `Vec<String>` would make an unreachable provider
 /// look identical to one with no models.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelInventoryView {
     /// Successfully retrieved the list. Empty vec means no models are installed.
@@ -145,13 +125,8 @@ pub enum ModelInventoryView {
     /// Lookup failed. Distinguishes from empty inventory.
     LookupFailed { reason: String },
     /// Have not attempted lookup yet (endpoint not reachable, etc.).
+    #[default]
     NotAttempted,
-}
-
-impl Default for ModelInventoryView {
-    fn default() -> Self {
-        Self::NotAttempted
-    }
 }
 
 /// Observation of whether a Present model is inference-visible (JIT semantics).
@@ -163,7 +138,7 @@ impl Default for ModelInventoryView {
 /// The readiness evaluator uses this to decide whether Present can be treated as
 /// Ready (Visible), requires explicit load (NotVisible), or represents unknown
 /// truth that should not drive decisions (ObservationFailed).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InferenceVisibilityObservation {
     /// Successfully observed: model is inference-visible (can be loaded on demand).
@@ -172,23 +147,19 @@ pub enum InferenceVisibilityObservation {
     NotVisible,
     /// Observation failed (HTTP error, transport failure, malformed response).
     /// This is distinct from NotVisible: we cannot establish the truth.
+    #[default]
     ObservationFailed,
-}
-
-impl Default for InferenceVisibilityObservation {
-    fn default() -> Self {
-        Self::ObservationFailed
-    }
 }
 
 /// Semantic next action for a lane.
 ///
 /// Tells the frontend which button to show. The backend computes this from
 /// the readiness state; the frontend does not duplicate the logic.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NextAction {
     /// Lane is ready; no action needed.
+    #[default]
     None,
     /// Refresh the readiness state (retry after failure).
     Refresh,
@@ -202,21 +173,16 @@ pub enum NextAction {
     ResolveAuth,
 }
 
-impl Default for NextAction {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
 /// Readiness assessment for a single engine lane (Quick or Deep).
 ///
 /// Combines the three dimensions (runtime, endpoint, model) into a lane-level
 /// readiness state. Each variant represents a distinct product truth; the
 /// frontend uses it to decide what to show the user.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LaneReadiness {
     /// Runtime presence and endpoint state are not yet known.
+    #[default]
     Unknown,
     /// Runtime is not installed. User needs to install the provider.
     RuntimeNotInstalled,
@@ -242,12 +208,6 @@ pub enum LaneReadiness {
     ModelFailed,
     /// Model is present and ready for inference. Lane is ready for first card.
     Ready,
-}
-
-impl Default for LaneReadiness {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 /// Readiness snapshot for both engine lanes.
