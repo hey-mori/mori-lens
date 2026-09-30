@@ -40,3 +40,11 @@ fn main() -> std::process::ExitCode {
 fn main() -> std::process::ExitCode {
     macos::main()
 }
+
+// Keep the shared Tauri command wiring checkable on development hosts that
+// cannot run either product adapter. This is not a Linux product entry point.
+#[cfg(not(any(windows, target_os = "macos")))]
+fn main() -> std::process::ExitCode {
+    eprintln!("Mori Lens desktop supports Windows and macOS only");
+    std::process::ExitCode::FAILURE
+}
