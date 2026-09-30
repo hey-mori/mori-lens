@@ -12,6 +12,12 @@ dist/
 # worth keeping is transcribed into docs/compatibility/ by hand.
 /probe-runs/
 
+# A release staging directory holds installers built from a tag plus the drafts
+# written while preparing that release. The installers are reproducible from the
+# tagged source and ship as GitHub Release assets, and a draft worth keeping is
+# checked and moved into docs/ by hand, so neither is a repository record.
+/release-staging/
+
 # The product binary is a Tauri app (#165).
 apps/lens/target/
 apps/lens/gen/
