@@ -609,11 +609,12 @@ async fn list_models(provider: String, endpoint: String) -> Result<Vec<ModelInfo
     let provider = lens_core::translate::Provider::from_token(&provider)
         .unwrap_or(lens_core::translate::Provider::Ollama);
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let result = lens_translate::list_models_for_provider(provider, &endpoint);
-        let _ = tx.send(result);
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+    std::thread::Builder::new()
+        .spawn(move || {
+            let result = lens_translate::list_models_for_provider(provider, &endpoint);
+            let _ = tx.send(result);
+        })
+        .map_err(|e| format!("spawn failed: {e}"))?;
     rx.recv()
         .map_err(|_| "thread error".to_string())?
         .map(|models| {
@@ -635,12 +636,15 @@ async fn check_provider(provider: String, endpoint: String) -> bool {
     let provider = lens_core::translate::Provider::from_token(&provider)
         .unwrap_or(lens_core::translate::Provider::Ollama);
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
+    let spawned = std::thread::Builder::new().spawn(move || {
         let _ = tx.send(lens_translate::check_provider_reachable(
             provider, &endpoint,
         ));
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+    });
+    if spawned.is_err() {
+        // A probe that never ran is not a provider that answered.
+        return false;
+    }
     rx.recv().unwrap_or(false)
 }
 
@@ -734,7 +738,7 @@ async fn get_provider_readiness(
     manager: tauri::State<'_, SharedOperationManager>,
     settings: tauri::State<'_, SharedSettings>,
 ) -> Result<ProviderReadinessView, String> {
-    use lens_core::readiness::{SetupReadinessState, compute_next_action};
+    use lens_core::readiness::{compute_next_action, SetupReadinessState};
 
     // Step 1: Read settings. Fail closed for invalid provider tokens.
     let (
@@ -809,32 +813,29 @@ async fn get_provider_readiness(
         return Ok(cached);
     }
 
-    // Step 2: Check reachability with typed errors.
-    // Run on a thread pool to avoid blocking the async runtime.
-    let quick_access = check_provider_access(quick_provider, quick_endpoint.clone());
+    // Step 2 and 3: probe each distinct endpoint once for reachability, inventory
+    // and loaded state together. They were three separate lookups, and for one
+    // endpoint that meant asking the same question up to four times: the
+    // reachability check fetched the model list and dropped it, the inventory
+    // fetched it again, and the lifecycle check fetched it a third time before
+    // asking what was loaded. One probe answers all of it over one connection.
+    // Run on a thread to avoid blocking the async runtime.
+    let quick_endpoint_readiness = probe_endpoint(quick_provider, quick_endpoint.clone());
 
-    // Deep access: if configuration is invalid, do NOT contact any endpoint.
-    // Report as ProviderError so the readiness lane shows the truth.
-    let deep_access = if !deep_config_valid {
-        lens_core::readiness::ProviderAccessState::ProviderError {
-            reason: "unsupported deep configuration".into(),
-        }
+    // Deep: if configuration is invalid, do NOT contact any endpoint. Report as
+    // ProviderError so the readiness lane shows the truth.
+    let deep_endpoint_readiness = if !deep_config_valid {
+        EndpointReadiness::not_contacted("unsupported deep configuration")
     } else if quick_provider == deep_provider && quick_endpoint == deep_endpoint {
-        quick_access.clone()
+        quick_endpoint_readiness.clone()
     } else {
-        check_provider_access(deep_provider, deep_endpoint.clone())
+        probe_endpoint(deep_provider, deep_endpoint.clone())
     };
 
-    // Step 3: Get model inventory (preserving errors).
-    let quick_inventory =
-        get_model_inventory(quick_provider, quick_endpoint.clone(), &quick_access);
-    let deep_inventory = if !deep_config_valid {
-        lens_core::readiness::ModelInventoryView::NotAttempted
-    } else if quick_provider == deep_provider && quick_endpoint == deep_endpoint {
-        quick_inventory.clone()
-    } else {
-        get_model_inventory(deep_provider, deep_endpoint.clone(), &deep_access)
-    };
+    let quick_access = quick_endpoint_readiness.access.clone();
+    let deep_access = deep_endpoint_readiness.access.clone();
+    let quick_inventory = quick_endpoint_readiness.inventory.clone();
+    let deep_inventory = deep_endpoint_readiness.inventory.clone();
 
     // Step 4: Derive effective model using production resolver logic.
     // This mirrors resolve_model_for_provider but uses already-fetched inventory.
@@ -845,10 +846,8 @@ async fn get_provider_readiness(
     // Uses effective model (not just configured) for lifecycle evaluation.
     let quick_lifecycle = determine_model_lifecycle_v2(
         quick_provider,
-        &quick_endpoint,
         &quick_effective.effective_model,
-        &quick_access,
-        &quick_inventory,
+        &quick_endpoint_readiness,
     );
     let deep_effective = if !deep_config_valid {
         EffectiveModelResult {
@@ -863,10 +862,8 @@ async fn get_provider_readiness(
     } else {
         determine_model_lifecycle_v2(
             deep_provider,
-            &deep_endpoint,
             &deep_effective.effective_model,
-            &deep_access,
-            &deep_inventory,
+            &deep_endpoint_readiness,
         )
     };
 
@@ -1022,26 +1019,82 @@ async fn get_provider_readiness(
     Ok(result)
 }
 
-/// Check provider access with typed errors.
+/// What one endpoint answered, as the readiness lanes need it.
 ///
-/// Maps TranslateError to ProviderAccessState. Runs the network call on a
-/// thread pool to avoid blocking the async runtime.
-fn check_provider_access(
-    provider: lens_core::translate::Provider,
-    endpoint: String,
-) -> lens_core::readiness::ProviderAccessState {
-    use lens_core::readiness::ProviderAccessState;
+/// Reachability, inventory and loaded state are three views of the same
+/// responses, so they are produced together and carried together. Holding them
+/// in one value is also what makes the quick/deep deduplication a `clone`
+/// instead of a second round of requests.
+#[derive(Clone)]
+struct EndpointReadiness {
+    access: lens_core::readiness::ProviderAccessState,
+    inventory: lens_core::readiness::ModelInventoryView,
+    /// The probe itself, when the endpoint answered. `None` when it did not, in
+    /// which case `access` says why.
+    probe: Option<lens_translate::ReadinessProbe>,
+}
+
+impl EndpointReadiness {
+    /// An endpoint that was deliberately not contacted.
+    ///
+    /// Not a failure to reach it: nothing was sent. The readiness lane shows the
+    /// configuration as the problem rather than blaming the provider, and no
+    /// request goes out on the user's behalf to an endpoint their settings do not
+    /// actually support.
+    fn not_contacted(reason: &str) -> Self {
+        Self {
+            access: lens_core::readiness::ProviderAccessState::ProviderError {
+                reason: reason.into(),
+            },
+            inventory: lens_core::readiness::ModelInventoryView::NotAttempted,
+            probe: None,
+        }
+    }
+}
+
+/// Probe one endpoint on a worker thread and map the result into readiness views.
+///
+/// One connection, and one round of requests. `Err` from the probe is the
+/// reachability answer as well as the failure, which is why the typed error is
+/// mapped rather than discarded: a 401 and a refused connection are different
+/// things to show a user.
+fn probe_endpoint(provider: lens_core::translate::Provider, endpoint: String) -> EndpointReadiness {
+    use lens_core::readiness::{ModelInventoryView, ProviderAccessState};
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let result = lens_translate::check_provider_reachable_typed(provider, &endpoint);
+    let spawned = std::thread::Builder::new().spawn(move || {
+        // No API token: settings have no field for one yet, matching the
+        // inference-visibility call below.
+        let result = lens_translate::probe_readiness(provider, &endpoint, None);
         let _ = tx.send(result);
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+    });
+    if spawned.is_err() {
+        return EndpointReadiness {
+            access: ProviderAccessState::Unreachable {
+                reason: "probe thread could not start".into(),
+            },
+            inventory: ModelInventoryView::NotAttempted,
+            probe: None,
+        };
+    }
     match rx.recv() {
-        Ok(Ok(())) => ProviderAccessState::Available,
-        Ok(Err(e)) => map_translate_error_to_access(e),
-        Err(_) => ProviderAccessState::Unreachable {
-            reason: "thread join failed".into(),
+        Ok(Ok(probe)) => EndpointReadiness {
+            access: ProviderAccessState::Available,
+            inventory: ModelInventoryView::Available {
+                models: probe.models.iter().map(|m| m.id.clone()).collect(),
+            },
+            probe: Some(probe),
+        },
+        Ok(Err(e)) => EndpointReadiness {
+            access: map_translate_error_to_access(e),
+            inventory: ModelInventoryView::NotAttempted,
+            probe: None,
+        },
+        Err(_) => EndpointReadiness {
+            access: ProviderAccessState::Unreachable {
+                reason: "thread join failed".into(),
+            },
+            inventory: ModelInventoryView::NotAttempted,
+            probe: None,
         },
     }
 }
@@ -1074,78 +1127,43 @@ fn map_translate_error_to_access(
     }
 }
 
-/// Get the model inventory for a provider.
-///
-/// Preserves errors as ModelInventoryView::LookupFailed instead of collapsing
-/// to an empty Vec.
-fn get_model_inventory(
-    provider: lens_core::translate::Provider,
-    endpoint: String,
-    access: &lens_core::readiness::ProviderAccessState,
-) -> lens_core::readiness::ModelInventoryView {
-    use lens_core::readiness::{ModelInventoryView, ProviderAccessState};
-    if *access != ProviderAccessState::Available {
-        return ModelInventoryView::NotAttempted;
-    }
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let result = lens_translate::list_models_for_provider(provider, &endpoint);
-        let _ = tx.send(result);
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
-    match rx.recv() {
-        Ok(Ok(models)) => ModelInventoryView::Available {
-            models: models.into_iter().map(|m| m.id).collect(),
-        },
-        Ok(Err(e)) => ModelInventoryView::LookupFailed {
-            reason: e.reason().into(),
-        },
-        Err(_) => ModelInventoryView::LookupFailed {
-            reason: "thread join failed".into(),
-        },
-    }
-}
-
-/// Determine model lifecycle using ProviderRuntime::model_state.
-///
-/// For LM Studio, this detects loaded_instances to produce Ready directly.
-/// For Ollama, Present + inference_visibility handles JIT semantics.
-///
-/// If model-state lookup fails, returns Unknown instead of fabricating presence.
-/// A provider/model-state error is NOT evidence that the model is available.
 fn determine_model_lifecycle_v2(
     provider: lens_core::translate::Provider,
-    endpoint: &str,
     configured_model: &Option<String>,
-    access: &lens_core::readiness::ProviderAccessState,
-    inventory: &lens_core::readiness::ModelInventoryView,
+    endpoint: &EndpointReadiness,
 ) -> lens_core::readiness::ModelLifecycle {
-    use lens_core::readiness::{ModelInventoryView, ModelLifecycle, ProviderAccessState};
+    use lens_core::readiness::ModelLifecycle;
+    use lens_core::translate::ModelState;
 
-    if *access != ProviderAccessState::Available {
+    // No probe means the endpoint never answered, so nothing is known about the
+    // model. Not "missing": an unreachable provider is not evidence of absence.
+    let Some(probe) = &endpoint.probe else {
         return ModelLifecycle::Unknown;
-    }
-
-    let model_list = match inventory {
-        ModelInventoryView::Available { models } => models,
-        ModelInventoryView::LookupFailed { .. } | ModelInventoryView::NotAttempted => {
-            return ModelLifecycle::Unknown;
-        }
     };
 
     match configured_model {
         Some(model) => {
-            if !model_list.iter().any(|m| m == model) {
+            if !probe.has(model) {
                 return ModelLifecycle::Missing;
             }
-            match get_model_state(provider, endpoint, model) {
-                Ok(state) => lens_core::readiness::model_state_to_lifecycle(state),
-                Err(_) => ModelLifecycle::Unknown,
-            }
+            // Loaded state comes from the same probe. `None` means the provider
+            // answered about its inventory but not about what it has loaded,
+            // which is unknown rather than not-loaded.
+            let state = match probe.is_loaded(model) {
+                Some(true) => ModelState::Loaded {
+                    name: model.clone(),
+                },
+                Some(false) => ModelState::Available {
+                    name: model.clone(),
+                    size: probe.size_of(model).unwrap_or(0),
+                },
+                None => return ModelLifecycle::Unknown,
+            };
+            lens_core::readiness::model_state_to_lifecycle(state)
         }
         None => match provider {
             lens_core::translate::Provider::Ollama => {
-                if model_list.is_empty() {
+                if probe.models.is_empty() {
                     ModelLifecycle::Missing
                 } else {
                     ModelLifecycle::Present
@@ -1153,31 +1171,6 @@ fn determine_model_lifecycle_v2(
             }
             lens_core::translate::Provider::LmStudio => ModelLifecycle::Missing,
         },
-    }
-}
-
-/// Get model state via ProviderRuntime.
-///
-/// Returns Err on any failure (thread join, runtime error, model missing).
-/// Callers must NOT interpret failure as model presence.
-fn get_model_state(
-    provider: lens_core::translate::Provider,
-    endpoint: &str,
-    model: &str,
-) -> Result<lens_core::translate::ModelState, String> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    let ep = endpoint.to_owned();
-    let m = model.to_owned();
-    std::thread::spawn(move || {
-        let runtime = lens_translate::build_provider_runtime(provider, &ep);
-        let result = runtime.model_state(&m);
-        let _ = tx.send(result);
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
-    match rx.recv() {
-        Ok(Ok(state)) => Ok(state),
-        Ok(Err(e)) => Err(e.reason().into()),
-        Err(_) => Err("thread join failed".into()),
     }
 }
 
@@ -1205,7 +1198,7 @@ fn check_lmstudio_inference_visibility(
     let token = api_token.map(|t| t.to_owned());
     let (tx, rx) = std::sync::mpsc::channel();
 
-    std::thread::spawn(move || {
+    let spawned = std::thread::Builder::new().spawn(move || {
         let runtime = if let Some(tok) = token {
             LmStudioRuntime::with_token(&ep, &tok)
         } else {
@@ -1213,8 +1206,10 @@ fn check_lmstudio_inference_visibility(
         };
         let result = runtime.is_inference_visible(&m);
         let _ = tx.send(result);
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+    });
+    if spawned.is_err() {
+        return InferenceVisibilityObservation::ObservationFailed;
+    }
 
     match rx.recv() {
         Ok(Ok(true)) => InferenceVisibilityObservation::Visible,
@@ -1528,12 +1523,13 @@ async fn load_lmstudio_instance(
     let (tx, rx) = std::sync::mpsc::channel();
     let endpoint_clone = endpoint.clone();
     let model_clone = model.clone();
-    std::thread::spawn(move || {
-        let runtime = lens_translate::lmstudio_runtime::LmStudioRuntime::new(&endpoint_clone);
-        let result = runtime.load_model(&model_clone);
-        let _ = tx.send(result);
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+    std::thread::Builder::new()
+        .spawn(move || {
+            let runtime = lens_translate::lmstudio_runtime::LmStudioRuntime::new(&endpoint_clone);
+            let result = runtime.load_model(&model_clone);
+            let _ = tx.send(result);
+        })
+        .map_err(|e| format!("spawn failed: {e}"))?;
 
     let instance_id = rx
         .recv()
@@ -1586,12 +1582,13 @@ async fn unload_lmstudio_instance(
     let (tx, rx) = std::sync::mpsc::channel();
     let endpoint_clone = endpoint.clone();
     let instance_id_clone = instance_id.clone();
-    std::thread::spawn(move || {
-        let runtime = lens_translate::lmstudio_runtime::LmStudioRuntime::new(&endpoint_clone);
-        let result = runtime.unload_instance(&instance_id_clone);
-        let _ = tx.send(result);
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+    std::thread::Builder::new()
+        .spawn(move || {
+            let runtime = lens_translate::lmstudio_runtime::LmStudioRuntime::new(&endpoint_clone);
+            let result = runtime.unload_instance(&instance_id_clone);
+            let _ = tx.send(result);
+        })
+        .map_err(|e| format!("spawn failed: {e}"))?;
 
     rx.recv()
         .map_err(|_| "thread error".to_string())?
@@ -1609,11 +1606,12 @@ async fn list_provider_models(
     endpoint: String,
 ) -> Result<Vec<ModelInfoView>, String> {
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let result = lens_translate::list_models_for_provider(provider, &endpoint);
-        let _ = tx.send(result);
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+    std::thread::Builder::new()
+        .spawn(move || {
+            let result = lens_translate::list_models_for_provider(provider, &endpoint);
+            let _ = tx.send(result);
+        })
+        .map_err(|e| format!("spawn failed: {e}"))?;
     rx.recv()
         .map_err(|_| "thread error".to_string())?
         .map(|models| {
@@ -1866,14 +1864,15 @@ async fn test_model(
     let provider = lens_core::translate::Provider::from_token(&provider)
         .unwrap_or(lens_core::translate::Provider::Ollama);
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        use lens_core::translate::QuickRequest;
-        let translator = lens_translate::build_translator(provider, &endpoint, &model);
-        let request = QuickRequest::new("The output files came back empty.", "ko");
-        let result = translator.quick(&request);
-        let _ = tx.send(result);
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+    std::thread::Builder::new()
+        .spawn(move || {
+            use lens_core::translate::QuickRequest;
+            let translator = lens_translate::build_translator(provider, &endpoint, &model);
+            let request = QuickRequest::new("The output files came back empty.", "ko");
+            let result = translator.quick(&request);
+            let _ = tx.send(result);
+        })
+        .map_err(|e| format!("spawn failed: {e}"))?;
     rx.recv()
         .map_err(|_| "thread error".to_string())?
         .map(|t| TestResultView {
@@ -1956,30 +1955,31 @@ async fn run_health_check(
 
     // Run health check in a background thread to avoid blocking the Tauri command.
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        use std::time::Instant;
-        // Check Quick engine using QuickRequest and Translator::quick.
-        let started_quick = Instant::now();
-        let (quick_state, quick_failure) =
-            check_quick_engine_health(quick_provider, &quick_endpoint, quick_model.as_deref());
-        let quick_latency = started_quick.elapsed().as_millis() as u64;
+    std::thread::Builder::new()
+        .spawn(move || {
+            use std::time::Instant;
+            // Check Quick engine using QuickRequest and Translator::quick.
+            let started_quick = Instant::now();
+            let (quick_state, quick_failure) =
+                check_quick_engine_health(quick_provider, &quick_endpoint, quick_model.as_deref());
+            let quick_latency = started_quick.elapsed().as_millis() as u64;
 
-        // Check Deep engine using DeepRequest and Analyser::deep (Ollama-only).
-        let started_deep = Instant::now();
-        let (deep_state, deep_failure) =
-            check_deep_engine_health(&deep_endpoint, deep_model.as_deref());
-        let deep_latency = started_deep.elapsed().as_millis() as u64;
+            // Check Deep engine using DeepRequest and Analyser::deep (Ollama-only).
+            let started_deep = Instant::now();
+            let (deep_state, deep_failure) =
+                check_deep_engine_health(&deep_endpoint, deep_model.as_deref());
+            let deep_latency = started_deep.elapsed().as_millis() as u64;
 
-        let _ = tx.send((
-            quick_state,
-            quick_failure,
-            quick_latency,
-            deep_state,
-            deep_failure,
-            deep_latency,
-        ));
-    })
-    .map_err(|e| format!("spawn failed: {e}"))?;
+            let _ = tx.send((
+                quick_state,
+                quick_failure,
+                quick_latency,
+                deep_state,
+                deep_failure,
+                deep_latency,
+            ));
+        })
+        .map_err(|e| format!("spawn failed: {e}"))?;
 
     let result = rx.recv().map_err(|_| "thread error".to_string());
 

@@ -5,11 +5,16 @@
 //! verbs. A general HTTP client brings TLS, connection pooling, and an async
 //! runtime to a socket that never leaves the machine.
 //!
-//! It is deliberately not a general client. It does not follow redirects, does
-//! not keep connections alive, and speaks to one host at a time. If Lens ever
-//! reaches a remote provider, that path gets a real client, because a remote
-//! endpoint needs TLS and certificate verification and this file has neither
-//! and must never pretend to.
+//! It is deliberately not a general client. It does not follow redirects and
+//! speaks to one host at a time. If Lens ever reaches a remote provider, that
+//! path gets a real client, because a remote endpoint needs TLS and certificate
+//! verification and this file has neither and must never pretend to.
+//!
+//! Requests are one-shot by default. [`get`] and [`post`] send
+//! `Connection: close` and each pays a fresh connect, which keeps them free of
+//! any state that could go stale between calls. [`Session`] is the one
+//! exception, for a caller that makes several requests to one endpoint in a
+//! row, and it is opt-in so that the one-shot helpers stay that simple.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -326,24 +331,51 @@ fn resolve_loopback(endpoint: &str) -> Result<std::net::SocketAddr, TranslateErr
     }
 }
 
-/// A persistent HTTP connection for consecutive requests to the same endpoint.
+/// A reused HTTP connection for consecutive requests to the same endpoint.
 ///
-/// The readiness path makes 2-4 consecutive HTTP calls to the same loopback host.
-/// Each call creating a new TCP connection wastes ~0.1ms per handshake.
-/// A session reuses one TCP connection for all calls, eliminating redundant handshakes.
+/// Sends `Connection: keep-alive` and uses `Content-Length` to find the end of
+/// each response, so the socket stays usable for the next request instead of
+/// being closed to mark the end of the body.
 ///
-/// This is a 3-5x improvement for the readiness polling path.
+/// **What this is worth, measured rather than assumed.** Against the Ollama on
+/// the development machine, `GET /api/tags` returning a 944-byte body, 40
+/// iterations, median: a fresh connection per request costs 18.972ms and a
+/// reused one costs 9.143ms. The saving is 9.8ms per request after the first.
 ///
-/// The session uses HTTP keep-alive: `Connection: keep-alive` in requests,
-/// and reads responses using `Content-Length` to know where each response ends.
+/// The handshake is not where that goes. A bare connect-and-close to the same
+/// port measures 0.398ms, so the handshake is 4% of the difference. The rest is
+/// `Connection: close` making the server end each body by closing the socket,
+/// and each request paying connection teardown. A session avoids the teardown,
+/// not the handshake, which is why the saving is 25x larger than a handshake
+/// count predicts. See `docs/benchmarks/2026-09-30-readiness-one-session.md`.
+///
+/// Not the default, for two reasons. A one-shot request cannot be stale, while a
+/// session holds a socket the peer may have closed since the last use, so a
+/// caller has to be prepared to reconnect. And the saving only exists from the
+/// second request onward: a session used once is a connection with extra steps.
 pub struct Session {
     stream: std::io::BufReader<TcpStream>,
     endpoint: String,
+    auth_token: Option<String>,
 }
 
 impl Session {
     /// Open a new session to a loopback endpoint.
-    pub fn connect(endpoint: &str, timeout: Duration) -> Result<Self, TranslateError> {
+    ///
+    /// The bearer token, when there is one, is held for the life of the session
+    /// rather than passed per call, because it belongs to the endpoint and not to
+    /// one request. Without it a session could not stand in for
+    /// [`get_with_auth`] on an authenticated endpoint, which is what LM Studio's
+    /// probes need.
+    ///
+    /// There is one constructor rather than a `connect`/`connect_with_auth` pair
+    /// because only one of the two had a caller, and an unused convenience
+    /// wrapper is how this file grew a dead `Session` in the first place.
+    pub fn connect(
+        endpoint: &str,
+        timeout: Duration,
+        auth_token: Option<&str>,
+    ) -> Result<Self, TranslateError> {
         let address = resolve_loopback(endpoint)?;
         let stream = TcpStream::connect_timeout(&address, timeout)
             .map_err(|_| TranslateError::Unavailable)?;
@@ -356,17 +388,13 @@ impl Session {
         Ok(Session {
             stream: std::io::BufReader::new(stream),
             endpoint: endpoint.to_owned(),
+            auth_token: auth_token.map(str::to_owned),
         })
     }
 
     /// Send a GET request and read the response.
     pub fn get(&mut self, path: &str) -> Result<(u16, String), TranslateError> {
         self.request("GET", path, None)
-    }
-
-    /// Send a POST request and read the response.
-    pub fn post(&mut self, path: &str, body: &str) -> Result<(u16, String), TranslateError> {
-        self.request("POST", path, Some(body))
     }
 
     fn request(
@@ -380,6 +408,9 @@ impl Session {
             "{method} {path} HTTP/1.1\r\nHost: {}\r\nConnection: keep-alive\r\nAccept: application/json\r\n",
             self.endpoint
         );
+        if let Some(token) = &self.auth_token {
+            head.push_str(&format!("Authorization: Bearer {token}\r\n"));
+        }
         if body.is_some() {
             head.push_str(&format!(
                 "Content-Type: application/json\r\nContent-Length: {}\r\n",
@@ -522,6 +553,45 @@ fn classify(error: &std::io::Error) -> TranslateError {
 
 #[cfg(test)]
 mod tests {
+    use crate::fake_server::{FakeResponse, FakeServer};
+
+    #[test]
+    fn a_session_sends_its_bearer_token_on_every_request() {
+        // The token is per-endpoint, so the second request has to carry it too.
+        // An authenticated LM Studio would 401 the follow-up otherwise, and a
+        // token attached only to the first request is the easy way to get that.
+        let server = FakeServer::start_keep_alive(vec![
+            FakeResponse::ok_json("{}")
+                .expect_get("/first")
+                .expect_header("Authorization", "Bearer secret-token"),
+            FakeResponse::ok_json("{}")
+                .expect_get("/second")
+                .expect_header("Authorization", "Bearer secret-token"),
+        ]);
+
+        let mut session = Session::connect(
+            server.address(),
+            Duration::from_secs(2),
+            Some("secret-token"),
+        )
+        .unwrap();
+        assert_eq!(session.get("/first").unwrap().0, 200);
+        assert_eq!(session.get("/second").unwrap().0, 200);
+        drop(session);
+        assert_eq!(server.connection_count(), 1);
+    }
+
+    #[test]
+    fn a_session_without_a_token_sends_no_authorization_header() {
+        let server =
+            FakeServer::start_keep_alive(vec![FakeResponse::ok_json("{}").expect_get("/only")]);
+
+        let mut session = Session::connect(server.address(), Duration::from_secs(2), None).unwrap();
+        let (status, body) = session.get("/only").unwrap();
+
+        assert_eq!(status, 200);
+        assert_eq!(body, "{}");
+    }
     use super::*;
     use std::io::Write;
     use std::net::TcpListener;

@@ -2852,3 +2852,104 @@ fn measure_whether_the_prompt_can_keep_an_identifier() {
     println!();
     println!("  kept means the identifier is in the answer character for character.");
 }
+
+/// Median of a set of durations, which is what a latency claim should quote.
+///
+/// A mean over loopback HTTP is dominated by the occasional 100ms outlier from
+/// the OS scheduler, so it flatters or damns a change for reasons that have
+/// nothing to do with the change.
+fn median_ms(mut samples: Vec<std::time::Duration>) -> f64 {
+    samples.sort();
+    samples[samples.len() / 2].as_secs_f64() * 1000.0
+}
+
+/// The one-probe readiness path agrees with the three lookups it replaced.
+///
+/// The unit tests prove the parsing and the connection reuse against a fake
+/// server. Neither shows that a real Ollama answers `/api/tags` and `/api/ps`
+/// the same way over a reused socket as it does over three fresh ones, and that
+/// is the claim the readiness UI rests on.
+///
+/// Also prints the measurement behind
+/// `docs/benchmarks/2026-09-30-readiness-one-session.md`.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn the_readiness_probe_agrees_with_the_lookups_it_replaced() {
+    use lens_core::translate::{ModelState, Provider};
+
+    let endpoint = DEFAULT_ENDPOINT;
+    let probe = match crate::probe_readiness(Provider::Ollama, endpoint, None) {
+        Ok(probe) => probe,
+        Err(TranslateError::Unavailable) => {
+            println!("SKIPPED: no Ollama on {endpoint}");
+            return;
+        }
+        Err(other) => {
+            println!("SKIPPED: {other}");
+            return;
+        }
+    };
+
+    // The old path, run separately, must produce the same facts.
+    crate::check_provider_reachable_typed(Provider::Ollama, endpoint)
+        .expect("the endpoint answered the probe, so it answers a reachability check");
+    let listed = crate::list_models_for_provider(Provider::Ollama, endpoint)
+        .expect("the endpoint answered the probe, so it lists models");
+
+    let probed: Vec<&str> = probe.models.iter().map(|m| m.id.as_str()).collect();
+    let separately: Vec<&str> = listed.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(
+        probed, separately,
+        "one session must see the same inventory as a fresh connection",
+    );
+    println!("inventory agrees: {} model(s)", probed.len());
+
+    // Loaded state, for whichever model this machine has.
+    if let Some(model) = probed.first() {
+        let runtime = crate::build_provider_runtime(Provider::Ollama, endpoint);
+        let state = runtime
+            .model_state(model)
+            .expect("model_state on a listed model");
+        let old_says_loaded = matches!(state, ModelState::Loaded { .. });
+        assert_eq!(
+            probe.is_loaded(model),
+            Some(old_says_loaded),
+            "the probe and model_state must agree on whether {model} is loaded",
+        );
+        println!("loaded state agrees for {model}: {old_says_loaded}");
+    }
+
+    // The measurement. Both paths, alternating, so a warm cache or a busy
+    // machine cannot favour whichever ran first.
+    const RUNS: usize = 20;
+    let mut old_samples = Vec::with_capacity(RUNS);
+    let mut new_samples = Vec::with_capacity(RUNS);
+    let first = probed.first().map(|m| m.to_string());
+    for _ in 0..RUNS {
+        let started = std::time::Instant::now();
+        let _ = crate::check_provider_reachable_typed(Provider::Ollama, endpoint);
+        let _ = crate::list_models_for_provider(Provider::Ollama, endpoint);
+        if let Some(model) = &first {
+            let runtime = crate::build_provider_runtime(Provider::Ollama, endpoint);
+            let _ = runtime.model_state(model);
+        }
+        old_samples.push(started.elapsed());
+
+        let started = std::time::Instant::now();
+        let _ = crate::probe_readiness(Provider::Ollama, endpoint, None);
+        new_samples.push(started.elapsed());
+    }
+
+    let old_ms = median_ms(old_samples);
+    let new_ms = median_ms(new_samples);
+    println!("three lookups, fresh connections : {old_ms:.3} ms median over {RUNS} runs");
+    println!("one probe, one connection        : {new_ms:.3} ms median over {RUNS} runs");
+    println!(
+        "saved                           : {:.3} ms",
+        old_ms - new_ms
+    );
+    assert!(
+        new_ms < old_ms,
+        "the probe exists to be faster: {new_ms:.3}ms vs {old_ms:.3}ms",
+    );
+}
