@@ -3670,7 +3670,7 @@ fn log_card(card: &Card, app: Option<&str>) {
 ///
 /// One list, because a release binary is a Windows-subsystem application and
 /// everything the banner prints goes nowhere, so the window is the only place a
-/// reader ever sees them ([#165](https://github.com/swarea/mori-lens/issues/165)).
+/// reader ever sees them ([#165](https://github.com/hey-mori/mori-lens/issues/165)).
 ///
 /// Only the short key-and-value ones. The banner's longer lines explain a
 /// setting rather than state it, and a window that repeated them would be a

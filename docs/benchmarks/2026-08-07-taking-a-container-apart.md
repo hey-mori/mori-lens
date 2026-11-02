@@ -3,8 +3,8 @@
 Where the day's other three measurements left it: a window's text is
 exposed, and it is exposed in elements too large to aim inside, so a
 point tells you the document and not the sentence. That is
-[#14](https://github.com/swarea/mori-lens/issues/14) and
-[#34](https://github.com/swarea/mori-lens/issues/34) in one sentence,
+[#14](https://github.com/hey-mori/mori-lens/issues/14) and
+[#34](https://github.com/hey-mori/mori-lens/issues/34) in one sentence,
 and `RangeFromPoint` on such an element answers about text somewhere
 else 42 times out of 43
 ([`2026-08-07-walking-up-from-the-point.md`](2026-08-07-walking-up-from-the-point.md)).

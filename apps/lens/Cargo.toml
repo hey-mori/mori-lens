@@ -6,7 +6,7 @@ edition = "2021"
 rust-version = "1.85"
 license = "UNLICENSED"
 publish = false
-repository = "https://github.com/swarea/mori-lens"
+repository = "https://github.com/hey-mori/mori-lens"
 
 # **Not a workspace member.** Tauri v2 takes the workspace from 23 crates to
 # 384, and the product binary now depends on Tauri for its main window

@@ -98,7 +98,7 @@ cold load                 1.3s                  8.6s
 because a 50% slower answer on every hover is a real cost paid by every reader
 against an attack nobody has yet seen in the wild. It is an argument that the
 choice is now a **trade** rather than a default, and that
-[#192](https://github.com/swarea/mori-lens/issues/192) is where it gets made.
+[#192](https://github.com/hey-mori/mori-lens/issues/192) is where it gets made.
 
 ## What this does not measure
 

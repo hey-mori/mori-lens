@@ -1,6 +1,6 @@
 # VS Code with screen-reader mode on, 2026-08-07
 
-[#14](https://github.com/swarea/mori-lens/issues/14) has said since the
+[#14](https://github.com/hey-mori/mori-lens/issues/14) has said since the
 first sweep that VS Code's editor exposes nothing to accessibility, and
 has named one untested condition:
 
@@ -30,7 +30,7 @@ themselves.
 
 16px is a line of code, not a window. A window holding its text in one
 piece reports a smallest the height of itself, which is what KakaoTalk
-does ([#34](https://github.com/swarea/mori-lens/issues/34)). This is the
+does ([#34](https://github.com/hey-mori/mori-lens/issues/34)). This is the
 opposite shape.
 
 ## What the pixels hold, and how much of it is in the tree
@@ -125,7 +125,7 @@ So the 8,131 characters are in the tree and they are **not** laid out as
 one element per line. They are in something large, and a point inside
 something large does not say which sentence is under the pointer.
 
-That is the shape [#34](https://github.com/swarea/mori-lens/issues/34)
+That is the shape [#34](https://github.com/hey-mori/mori-lens/issues/34)
 describes for KakaoTalk, in different words: *one text region, so Lens
 cannot tell which message you are on*. Two applications, one problem,
 which nothing before this could have shown.

@@ -195,8 +195,8 @@ All checks passed:
 
 ## Support & Feedback
 
-- **Issues**: https://github.com/swarea/mori-lens/issues
-- **Discussions**: https://github.com/swarea/mori-lens/discussions
+- **Issues**: https://github.com/hey-mori/mori-lens/issues
+- **Discussions**: https://github.com/hey-mori/mori-lens/discussions
 - **Security**: See [SECURITY.md](../SECURITY.md) for reporting vulnerabilities
 
 ## What's Next

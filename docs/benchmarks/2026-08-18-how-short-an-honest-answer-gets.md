@@ -1,6 +1,6 @@
 # How short an honest answer gets, 2026-08-18
 
-[#192](https://github.com/swarea/mori-lens/issues/192) ended with a proposed
+[#192](https://github.com/hey-mori/mori-lens/issues/192) ended with a proposed
 rule: compare the **shape** of an answer against its source, so an appended
 claim is caught without knowing either language.
 

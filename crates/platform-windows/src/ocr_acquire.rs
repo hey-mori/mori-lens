@@ -132,7 +132,7 @@ impl OcrTextAcquirer {
 
 /// What the automatic fall-through has cost this session.
 ///
-/// **The number [#87](https://github.com/swarea/mori-lens/issues/87) asks for
+/// **The number [#87](https://github.com/hey-mori/mori-lens/issues/87) asks for
 /// and nobody has.** That issue says the fall-through photographs the screen
 /// far more often than a reader would guess, that the privacy model says what
 /// is captured and never how often, and that the change it proposes has to be
