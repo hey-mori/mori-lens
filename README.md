@@ -80,14 +80,14 @@ runs only when the user opens it.
 
 ## Relationship to Mori
 
-[Mori](https://github.com/hey-mori/mori) is a local-first AI work memory
-app. Mori Lens is a separate product with a separate binary, and it
-runs with Mori not installed.
+[Mori](https://github.com/hey-mori/mori) is a local-first personal
+context workspace. Mori Lens is a separate product with a separate
+binary, and it runs with Mori not installed.
 
 - **Mori Lens** understands language on the screen, and keeps
   what a reader chose to keep of it.
-- **Mori** is the broader work memory: projects, tasks, conversations,
-  and knowledge across sources.
+- **Mori** turns the traces of a person's work, such as notes, links,
+  AI sessions and Git history, into a connected record across sources.
 
 There is no shared package, no shared database, and no runtime
 dependency in either direction.
