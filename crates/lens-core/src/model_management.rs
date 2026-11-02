@@ -103,10 +103,11 @@ impl DownloadProgress {
 ///
 /// Provider-neutral states that cover both Ollama and LM Studio download flows.
 /// Adapters map provider-specific states into these variants.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DownloadStatus {
     /// Download request has been submitted but no data received yet.
+    #[default]
     Starting,
     /// Download is in progress.
     Downloading(DownloadProgress),
@@ -136,12 +137,6 @@ impl DownloadStatus {
             self,
             DownloadStatus::Completed | DownloadStatus::AlreadyPresent | DownloadStatus::Failed(_)
         )
-    }
-}
-
-impl Default for DownloadStatus {
-    fn default() -> Self {
-        Self::Starting
     }
 }
 
