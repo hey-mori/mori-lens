@@ -2,21 +2,23 @@
 
 ## Reporting a vulnerability
 
-**Do not open a public issue for something exploitable.** A public issue
-is a disclosure, and it lands before there is a fix.
+**Do not open a public issue, discussion or pull request for something
+exploitable.** A public post is a disclosure, and it lands before there is a
+fix.
 
-Where this repository offers a **private security advisory**, its
-*Security* tab, *Report a vulnerability*, use that. It is private end to
-end and needs no address.
+While this repository is private, outside reporters cannot reach its
+*Security* tab. Report through the Mori organization's private form instead,
+which anyone signed in to GitHub can use:
+[Report a vulnerability](https://github.com/hey-mori/.github/security/advisories/new).
+Name Mori Lens and its version in the report, and if the problem involves a
+specific file or line, include the path and what you think it does.
 
-Where that form is not there, open an issue saying you have found
-something and asking how to send it privately, and keep the technical
-details out of it. That reaches the maintainer without disclosing
-anything.
-
-Expect a response within a few days, even if only to acknowledge
-receipt. If the report involves a specific file or line, include the
-path and what you think it does.
+The organization's
+[security policy](https://github.com/hey-mori/.github/blob/main/SECURITY.md)
+covers what to include, the response targets, disclosure, and what to do if
+the form is unavailable. When this repository becomes public, it will turn on
+private reporting under its own *Security* tab and this section will point
+there.
 
 ## What this product touches
 
