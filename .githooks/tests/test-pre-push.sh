@@ -51,20 +51,20 @@ trap cleanup EXIT
 # Set up a test repository with known commits.
 TESTREPO="$TMPDIR/repo/.git"
 mkdir -p "$TMPDIR/repo"
-git init -q "$TMPDIR/repo"
+git init -q -b main "$TMPDIR/repo"
 git -C "$TMPDIR/repo" config user.email "test@test"
 git -C "$TMPDIR/repo" config user.name "Test"
 
 # Create the initial commit on main.
 echo "a" > "$TMPDIR/repo/a.txt"
 git -C "$TMPDIR/repo" add a.txt
-git -C "$TMPDIR/repo" commit -q -m "initial"
+git -C "$TMPDIR/repo" commit -q -m "test: add the initial file"
 BASE_SHA=$(git -C "$TMPDIR/repo" rev-parse HEAD)
 
 # Create a second commit (fast-forward from BASE).
 echo "b" > "$TMPDIR/repo/b.txt"
 git -C "$TMPDIR/repo" add b.txt
-git -C "$TMPDIR/repo" commit -q -m "second"
+git -C "$TMPDIR/repo" commit -q -m "test: add the second file"
 FF_SHA=$(git -C "$TMPDIR/repo" rev-parse HEAD)
 
 # Create a divergent commit (non-fast-forward from FF_SHA).
@@ -72,7 +72,7 @@ FF_SHA=$(git -C "$TMPDIR/repo" rev-parse HEAD)
 git -C "$TMPDIR/repo" checkout -q -b divergent "$BASE_SHA"
 echo "c" > "$TMPDIR/repo/c.txt"
 git -C "$TMPDIR/repo" add c.txt
-git -C "$TMPDIR/repo" commit -q -m "divergent"
+git -C "$TMPDIR/repo" commit -q -m "test: add the divergent file"
 DIVERGE_SHA=$(git -C "$TMPDIR/repo" rev-parse HEAD)
 
 # Go back to main so merge-base works across refs.
