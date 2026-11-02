@@ -1,6 +1,6 @@
 //! Is this working for me, in a window rather than in a console nobody has.
 //!
-//! [#165](https://github.com/swarea/mori-lens/issues/165) puts it plainly: a
+//! [#165](https://github.com/hey-mori/mori-lens/issues/165) puts it plainly: a
 //! release binary is a Windows-subsystem application, so **everything the
 //! banner prints is invisible to the reader who most needs it**, which is the
 //! engine, the address, whether OCR has a recogniser, which chords failed to

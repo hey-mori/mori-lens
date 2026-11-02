@@ -2229,7 +2229,7 @@ fn measure_what_a_long_paragraph_does_to_the_card() {
 
 /// Windows' own OCR, from a binary built the way `lens.exe` is.
 ///
-/// [#62](https://github.com/swarea/mori-lens/issues/62) settled the question
+/// [#62](https://github.com/hey-mori/mori-lens/issues/62) settled the question
 /// that blocked this milestone: `Windows.Media.Ocr` documents a package
 /// identity requirement for desktop applications, and Lens ships one loose
 /// exe. A cargo test binary has no package identity either.

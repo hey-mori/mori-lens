@@ -9,7 +9,7 @@
 //! and the true figure is higher by however many arrived back to back.
 //!
 //! A count is not a log. It is the thing that can answer *is this working for
-//! me*, which is [#165](https://github.com/swarea/mori-lens/issues/165)'s user
+//! me*, which is [#165](https://github.com/hey-mori/mori-lens/issues/165)'s user
 //! outcome and which a release binary cannot answer at all today: it is a
 //! Windows-subsystem application, so everything the banner prints goes nowhere.
 //!

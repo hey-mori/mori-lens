@@ -112,7 +112,7 @@ relaxation buys two correct highlights and one wrong one, and a wrong highlight
 is the thing this feature must not produce. Exact equality is what keeps the
 precision at 5 of 5.
 
-## What this means for [#148](https://github.com/swarea/mori-lens/issues/148)
+## What this means for [#148](https://github.com/hey-mori/mori-lens/issues/148)
 
 **The colour parse is not buildable on this model.** Not with verification, not
 with dropping, not with a better prompt: three prompts were tried and the best

@@ -8,7 +8,7 @@
 # TRIGGER STATE: manual only, on purpose.
 #
 # The repository is private, and Actions on a private repository is metered.
-# In the sibling repository (swarea/mori) runs were being rejected before they
+# In the sibling repository (hey-mori/mori) runs were being rejected before they
 # started, which put a red X on every commit and taught us to ignore the
 # signal. A permanently failing check is worse than an honestly disabled one,
 # because it hides the real failures among the noise.
