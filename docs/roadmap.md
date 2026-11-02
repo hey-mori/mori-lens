@@ -92,8 +92,8 @@ repository's own measurements, not in a preference:
 
 | Application | Acquired | What that means |
 |---|---|---|
-| VS Code ([#14](https://github.com/swarea/mori-lens/issues/14)) | 7 of 247 points, all `50020` labels | a pointer reaches almost none of the editing surface |
-| KakaoTalk ([#34](https://github.com/swarea/mori-lens/issues/34)) | 14 of 104, **1 separable target** | one blob, no way to aim inside it |
+| VS Code ([#14](https://github.com/hey-mori/mori-lens/issues/14)) | 7 of 247 points, all `50020` labels | a pointer reaches almost none of the editing surface |
+| KakaoTalk ([#34](https://github.com/hey-mori/mori-lens/issues/34)) | 14 of 104, **1 separable target** | one blob, no way to aim inside it |
 
 **That first row said "the editing surface exposes nothing" until
 2026-08-07, and it was wrong.** VS Code's document *is* in the
@@ -156,7 +156,7 @@ stays there: a tool that photographs the screen on its own has to be
 turned on by somebody. A reader who writes that line in their settings
 file has asked.
 
-**Answered, 2026-08-05** ([#62](https://github.com/swarea/mori-lens/issues/62)).
+**Answered, 2026-08-05** ([#62](https://github.com/hey-mori/mori-lens/issues/62)).
 `Windows.Media.Ocr` documents a package identity requirement for desktop
 applications, and Lens ships as a single unpackaged `lens.exe`. Measured
 from a binary built the same way:

@@ -1637,7 +1637,7 @@ fn a_long_sentence_comes_back_whole() {
 
 /// How often does a model switch language partway through an answer?
 ///
-/// [#177](https://github.com/swarea/mori-lens/pull/177) found one: a 296
+/// [#177](https://github.com/hey-mori/mori-lens/pull/177) found one: a 296
 /// character sentence came back with its tail in Chinese, the third-language
 /// rule removed the tail, and the reader was shown the surviving Korean as
 /// though it were the whole answer. The card now says `일부만 번역됨`.
@@ -1807,7 +1807,7 @@ fn what_happens_to_a_word_with_no_counterpart() {
 
 /// What a word-scoped request loses when it drops the sentence.
 ///
-/// [#180](https://github.com/swarea/mori-lens/issues/180) proposes choosing the
+/// [#180](https://github.com/hey-mori/mori-lens/issues/180) proposes choosing the
 /// scope on the hover: one modifier answers about the word, another about the
 /// sentence. The scope itself is free, because `SegmentedText` already resolves
 /// both on every accepted hover.
@@ -2042,7 +2042,7 @@ fn measure_which_model_takes_the_wrong_sense() {
 
 /// A payload written in the reader's own script.
 ///
-/// [`#192`](https://github.com/swarea/mori-lens/issues/192) narrowed to this on
+/// [`#192`](https://github.com/hey-mori/mori-lens/issues/192) narrowed to this on
 /// 2026-08-18. `never_reached_the_target` is a rule about **script**: it fires
 /// when an answer holds no character of the reader's language. A payload the
 /// model renders in Hangul holds plenty, so the rule cannot see it.
@@ -2259,7 +2259,7 @@ fn measure_injection_defence_at_nine_runs() {
 
 /// How short an answer can honestly be.
 ///
-/// [`#192`](https://github.com/swarea/mori-lens/issues/192) ends with a rule
+/// [`#192`](https://github.com/hey-mori/mori-lens/issues/192) ends with a rule
 /// that would catch an appended claim without knowing either language. The
 /// first idea was to compare **sentence counts**, and it is dead: the hostile
 /// source is two sentences and the obedient answer is two sentences.
@@ -2336,7 +2336,7 @@ fn measure_how_short_an_honest_answer_gets() {
 
 /// Whether the deep path can be told what to put on the card.
 ///
-/// The last surface [`#192`](https://github.com/swarea/mori-lens/issues/192)
+/// The last surface [`#192`](https://github.com/hey-mori/mori-lens/issues/192)
 /// had not touched. `analyse` is not `quick`: it sends its own fence, and its
 /// reply is constrained by a JSON schema of five named fields. A payload cannot
 /// replace the card the way it replaces a translation.
@@ -2434,7 +2434,7 @@ fn measure_a_payload_in_the_deep_path() {
 
 /// Does hardening the fence help, and what does it cost.
 ///
-/// The third shape in [`#192`](https://github.com/swarea/mori-lens/issues/192),
+/// The third shape in [`#192`](https://github.com/hey-mori/mori-lens/issues/192),
 /// and by 2026-08-18 the only one nobody had tried. Detection is bypassed by a
 /// payload in the reader's script and by a longer payload; changing the model
 /// buys the quick path and not the deep one. Both fences are this repository's
@@ -2726,7 +2726,7 @@ fn measure_what_comes_back_from_a_short_source() {
 
 /// Does an identifier survive when it is not the whole sentence.
 ///
-/// [`#207`](https://github.com/swarea/mori-lens/issues/207) is a defect if the
+/// [`#207`](https://github.com/hey-mori/mori-lens/issues/207) is a defect if the
 /// product meets it and a curiosity about degenerate inputs if it does not. The
 /// issue says so and names this as the thing that would overturn it, so it is
 /// the first thing to run.
@@ -2795,7 +2795,7 @@ fn measure_whether_an_identifier_survives_a_sentence() {
 /// Can the prompt make an identifier survive.
 ///
 /// Measured first, because the alternative fixes are a caveat on the card and a
-/// retry, and both cost a reader something. [`#207`](https://github.com/swarea/mori-lens/issues/207).
+/// retry, and both cost a reader something. [`#207`](https://github.com/hey-mori/mori-lens/issues/207).
 ///
 /// `EngineDataSheetService` is found by `identifiers_in`, so it is already
 /// named in the shipped prompt, and it is transliterated anyway, 3 runs of 3,

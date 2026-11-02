@@ -1,6 +1,6 @@
 # Does a webview fit beside the message loop, 2026-08-13
 
-[#164](https://github.com/swarea/mori-lens/issues/164) stage two, the question
+[#164](https://github.com/hey-mori/mori-lens/issues/164) stage two, the question
 that could not be answered outside the tree.
 
 `lens.exe` owns a Win32 message loop, a tray icon, global hotkeys, a layered
