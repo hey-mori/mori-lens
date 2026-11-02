@@ -1,6 +1,6 @@
 # A word without its sentence, 2026-08-18
 
-[#180](https://github.com/swarea/mori-lens/issues/180) proposes choosing the
+[#180](https://github.com/hey-mori/mori-lens/issues/180) proposes choosing the
 scope on the hover: one modifier answers about the word under the pointer,
 another about the sentence. The scope itself is free, because `SegmentedText`
 already resolves both on every accepted hover.
