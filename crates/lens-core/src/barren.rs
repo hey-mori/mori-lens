@@ -5,7 +5,7 @@
 //! so in an editor nearly every settled hover costs a wait for the compositor,
 //! a capture, and up to two recognition passes: roughly half a second of work,
 //! mostly to discover that the pointer was in a margin
-//! ([#87](https://github.com/swarea/mori-lens/issues/87)).
+//! ([#87](https://github.com/hey-mori/mori-lens/issues/87)).
 //!
 //! # The observation this rests on
 //!

@@ -1,6 +1,6 @@
 # What an automatic OCR fall-through costs, 2026-08-06
 
-[#101](https://github.com/swarea/mori-lens/pull/101) added a memory of
+[#101](https://github.com/hey-mori/mori-lens/pull/101) added a memory of
 where the last reading found lines, so a hover in the same margin is not
 another capture. It shipped with the saving **unmeasured**, and the
 instrument added rather than the number claimed. This is that run.
@@ -29,7 +29,7 @@ and the case an editor produces most of the time.
 
 ## The cost was recorded as smaller than it is
 
-[#87](https://github.com/swarea/mori-lens/issues/87) says a fall-through
+[#87](https://github.com/hey-mori/mori-lens/issues/87) says a fall-through
 is "roughly half a second of work per hover". That is about right over a
 margin at the edge of the screen, and it is **two and a half times too
 low** over a window with text in it:

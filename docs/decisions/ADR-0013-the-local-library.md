@@ -22,7 +22,7 @@ export is available as Markdown and JSON.
 `README.md` has meanwhile carried `Storage (later): SQLite, opt-in history`
 since before any of this was discussed. A proposal that a database should wait
 for a measurably slow file was written on 2026-08-13 without noticing that line,
-which is [#160](https://github.com/swarea/mori-lens/issues/160)'s whole subject.
+which is [#160](https://github.com/hey-mori/mori-lens/issues/160)'s whole subject.
 
 **The test "wait until reading the file is slow" is the wrong test.** It measures
 the one requirement a flat file meets. The requirements it does not meet are
@@ -113,12 +113,12 @@ best effort by necessity, and the file being untouched is what makes a failed
 import survivable.
 
 **It does not add sync, conflict resolution, or any field that exists only for
-a server.** [#169](https://github.com/swarea/mori-lens/issues/169) gates that,
+a server.** [#169](https://github.com/hey-mori/mori-lens/issues/169) gates that,
 and a schema that anticipates it would be a schema shaped by a decision nobody
 has taken.
 
 **It stores nothing a reader did not keep on purpose.** Whether a durable
-history exists at all is [#163](https://github.com/swarea/mori-lens/issues/163)
+history exists at all is [#163](https://github.com/hey-mori/mori-lens/issues/163)
 and its own record. This ADR gives that decision somewhere to put its rows and
 takes no position on whether it should.
 

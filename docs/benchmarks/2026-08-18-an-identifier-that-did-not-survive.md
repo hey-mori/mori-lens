@@ -1,6 +1,6 @@
 # An identifier that did not survive, 2026-08-18
 
-[#207](https://github.com/swarea/mori-lens/issues/207) was filed with an escape
+[#207](https://github.com/hey-mori/mori-lens/issues/207) was filed with an escape
 hatch: *a measurement that it does not happen when the identifier sits inside a
 sentence would make this a curiosity about degenerate inputs rather than a
 defect a reader meets.*
