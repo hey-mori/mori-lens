@@ -93,5 +93,5 @@ means.
 Both this and the 2.2% point the same way. The text is exposed, and it
 is exposed in pieces too big to aim inside. Getting from a point to the
 sentence under it within one large element is the open problem
-[#34](https://github.com/swarea/mori-lens/issues/34) already has for
+[#34](https://github.com/hey-mori/mori-lens/issues/34) already has for
 KakaoTalk, and nothing measured here shortens it.

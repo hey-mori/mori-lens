@@ -67,7 +67,7 @@ hover works with it closed, and closing it leaves the product as it is today.
 
 It may be a webview, which ADR-0004 already permits for exactly these screens.
 **Tauri v2 is the direction**, and
-[#164](https://github.com/swarea/mori-lens/issues/164) is the feasibility and
+[#164](https://github.com/hey-mori/mori-lens/issues/164) is the feasibility and
 regression spike that confirms or refutes it rather than a comparison whose
 answer is open.
 
@@ -100,14 +100,14 @@ field exists.
 
 **This ADR decides no storage, no history, no account and no signing.** Each has
 its own issue and its own later record:
-[#162](https://github.com/swarea/mori-lens/issues/162),
-[#163](https://github.com/swarea/mori-lens/issues/163),
-[#169](https://github.com/swarea/mori-lens/issues/169),
-[#170](https://github.com/swarea/mori-lens/issues/170). An earlier draft of this
+[#162](https://github.com/hey-mori/mori-lens/issues/162),
+[#163](https://github.com/hey-mori/mori-lens/issues/163),
+[#169](https://github.com/hey-mori/mori-lens/issues/169),
+[#170](https://github.com/hey-mori/mori-lens/issues/170). An earlier draft of this
 ADR ruled on all four and got two of them wrong, which is the argument for
 keeping a decision record to one decision.
 
 **It is not free, and it is not first.** This is the largest addition since the
 overlay, and it competes with the work that stands between this product and its
-first outside reader: [#140](https://github.com/swarea/mori-lens/issues/140) and
-[#170](https://github.com/swarea/mori-lens/issues/170). It comes after those.
+first outside reader: [#140](https://github.com/hey-mori/mori-lens/issues/140) and
+[#170](https://github.com/hey-mori/mori-lens/issues/170). It comes after those.

@@ -1,6 +1,6 @@
 # What a webview weighs, 2026-08-13
 
-[#164](https://github.com/swarea/mori-lens/issues/164) stage two, first
+[#164](https://github.com/hey-mori/mori-lens/issues/164) stage two, first
 question. Before asking whether Tauri v2 coexists with this process, it is worth
 knowing what it brings with it, because one of the numbers turns out to be about
 this repository rather than about Tauri.

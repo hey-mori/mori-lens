@@ -1,6 +1,6 @@
 # When a model changes language partway, 2026-08-13
 
-[#177](https://github.com/swarea/mori-lens/pull/177) found a card ending
+[#177](https://github.com/hey-mori/mori-lens/pull/177) found a card ending
 mid-phrase. The cause was not the token budget: the model had switched to
 Chinese partway through the answer, the third-language rule removed the tail,
 and the surviving Korean went onto the card as though it were the whole thing.
@@ -33,7 +33,7 @@ src   out   cut    secs             src   out   cut    secs
 The first row of each column is a cold model load and not a translation. It is
 left in because removing it would hide what a reader pays on their first hover
 of a session, which is separately
-[#140](https://github.com/swarea/mori-lens/issues/140)'s subject.
+[#140](https://github.com/hey-mori/mori-lens/issues/140)'s subject.
 
 ## What it says
 

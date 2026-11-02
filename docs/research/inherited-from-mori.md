@@ -9,8 +9,8 @@ and re-discovering them would cost days.
 
 Source, for anyone who wants the original:
 
-- `swarea/mori` · `src-tauri/src/language/capture_windows.rs`
-- `swarea/mori` · `docs/design/language-loop.md` §4 and §6
+- `hey-mori/mori` · `src-tauri/src/language/capture_windows.rs`
+- `hey-mori/mori` · `docs/design/language-loop.md` §4 and §6
 
 Everything below is a claim Mori verified by running, not by reading
 documentation. Where Lens's situation differs, that is called out.
