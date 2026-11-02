@@ -30,19 +30,31 @@ errors=""
 
 valid_types="feat|fix|perf|refactor|test|docs|chore"
 
-# 1. Subject must start with a valid type prefix.
-if ! echo "$subject" | grep -qE "^(${valid_types}): .+"; then
-  errors="${errors}ERROR: subject must start with '<type>: ' where type is one of: ${valid_types}\n"
+# Merge commits keep the message git or GitHub writes (docs/git-workflow.md:
+# merge commits, never squash), including a pull request title as the body,
+# which is not a bullet. Bringing main into a branch is a merge too, since
+# rewriting a pushed branch is refused. Those subjects skip the shape rules
+# (1-3, 9-10) and are still checked for attribution (4-8).
+is_merge=""
+if echo "$subject" | grep -qE "^Merge (pull request #[0-9]+ from |branch '|remote-tracking branch '|[0-9a-f]{7,40} into )"; then
+  is_merge=1
 fi
 
-# 2. Subject must be under 72 characters.
-if [ "${#subject}" -gt 72 ]; then
-  errors="${errors}ERROR: subject is ${#subject} chars (max 72)\n"
-fi
+if [ -z "$is_merge" ]; then
+  # 1. Subject must start with a valid type prefix.
+  if ! echo "$subject" | grep -qE "^(${valid_types}): .+"; then
+    errors="${errors}ERROR: subject must start with '<type>: ' where type is one of: ${valid_types}\n"
+  fi
 
-# 3. No trailing period on subject.
-if echo "$subject" | grep -q '\.$'; then
-  errors="${errors}ERROR: subject must not end with a period\n"
+  # 2. Subject must be under 72 characters.
+  if [ "${#subject}" -gt 72 ]; then
+    errors="${errors}ERROR: subject is ${#subject} chars (max 72)\n"
+  fi
+
+  # 3. No trailing period on subject.
+  if echo "$subject" | grep -q '\.$'; then
+    errors="${errors}ERROR: subject must not end with a period\n"
+  fi
 fi
 
 # 4. No Co-Authored-By lines.
@@ -72,7 +84,7 @@ fi
 
 # 9. Body must be bullet-only (every non-blank line after subject starts with "- ").
 body="$(echo "$msg" | tail -n +3)"
-if [ -n "$body" ]; then
+if [ -n "$body" ] && [ -z "$is_merge" ]; then
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     if ! echo "$line" | grep -q '^- '; then

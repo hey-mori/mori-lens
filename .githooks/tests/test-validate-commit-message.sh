@@ -98,6 +98,22 @@ expect reject "an AI-assisted line" \
 
 - AI-assisted change'
 
+echo "Merge commits"
+expect accept "a GitHub pull request merge with the PR title as its body" \
+  'Merge pull request #661 from hey-mori/docs/security-report-channel
+
+docs: point private reports at the organization form while private'
+expect accept "main merged into a branch by git" \
+  "Merge remote-tracking branch 'origin/main' into fix/workspace-linux-gate"
+expect accept "a local branch merge" \
+  "Merge branch 'main' into docs/a-very-long-branch-name-that-pushes-the-subject-past-72"
+expect reject "a merge that carries a Co-Authored-By trailer" \
+  'Merge pull request #1 from hey-mori/x
+
+Co-Authored-By: Someone <someone@example.com>'
+expect reject "a subject that only starts with the word Merge" \
+  'Merge the two settings screens'
+
 echo
 echo "Result: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1
