@@ -1,6 +1,6 @@
 //! Words out of a captured rectangle, with where each one is on screen.
 //!
-//! The spike ([#62](https://github.com/swarea/mori-lens/issues/62)) settled
+//! The spike ([#62](https://github.com/hey-mori/mori-lens/issues/62)) settled
 //! that `Windows.Media.Ocr` works from an unpackaged binary and that this
 //! machine has both English and Korean recognisers. This is the same engine
 //! used for what the product actually needs: not a page of text, but **words

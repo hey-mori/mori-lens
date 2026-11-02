@@ -359,4 +359,4 @@ about a service split names its own: *until there is a UI to protect*.
   `%APPDATA%\Mori Lens\settings.toml` on launch. A versioned TOML
   settings file (`crates/lens-settings/`) and a Tauri v2 settings
   window (`apps/lens/web/index.html`) are built and wired into the
-  running product ([#165](https://github.com/swarea/mori-lens/issues/165)).
+  running product ([#165](https://github.com/hey-mori/mori-lens/issues/165)).

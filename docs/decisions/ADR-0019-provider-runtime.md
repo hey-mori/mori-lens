@@ -5,7 +5,7 @@
 ## Context
 
 Mori Lens uses local language models for translation. P4 spike
-([#567](https://github.com/swarea/mori-lens/issues/567),
+([#567](https://github.com/hey-mori/mori-lens/issues/567),
 docs/spikes/2026-09-15-p4-provider-architecture.md) investigated adding
 LM Studio support alongside the existing Ollama support. The spike
 revealed a tension:

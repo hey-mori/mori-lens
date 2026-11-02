@@ -1,6 +1,6 @@
 # Does hardening the fence help, 2026-08-18
 
-The third shape in [#192](https://github.com/swarea/mori-lens/issues/192), and
+The third shape in [#192](https://github.com/hey-mori/mori-lens/issues/192), and
 by the end of the day the only one nobody had tried. Detection is bypassed by a
 payload in the reader's script and by a longer payload. Changing the model buys
 the quick path and not the deep one. Both fences are this repository's own text,

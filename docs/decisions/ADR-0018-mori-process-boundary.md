@@ -9,7 +9,7 @@ and says no shared code until duplication is observed in both, against
 interfaces that have both stopped changing. If integration is wanted
 before that point, it is a process boundary and not a library.
 
-[#168](https://github.com/swarea/mori-lens/issues/168) names the scope:
+[#168](https://github.com/hey-mori/mori-lens/issues/168) names the scope:
 capability discovery, schema version negotiation, idempotency, explicit
 consent, graceful absence, and typed failure. The non-goals are: no
 shared package, no reading from Mori, no coupling releases.

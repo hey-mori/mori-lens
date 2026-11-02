@@ -1,6 +1,6 @@
 # A payload in the deep path, 2026-08-18
 
-The last surface [#192](https://github.com/swarea/mori-lens/issues/192) had not
+The last surface [#192](https://github.com/hey-mori/mori-lens/issues/192) had not
 touched. `analyse` is not `quick`: it sends its own fence, which says the same
 thing in its own words, and its reply is constrained by a **JSON schema of five
 named fields**. A payload cannot replace the card the way it replaces a

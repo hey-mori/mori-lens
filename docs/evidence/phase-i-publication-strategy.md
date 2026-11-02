@@ -8,7 +8,7 @@
 **Audited baseline SHA**: c48f9c36b5c3a0ea8748ea1e9650adc40dc3a342  
 **Total commits (as of audited baseline)**: 1,392  
 **Visibility**: PRIVATE  
-**Repository**: swarea/mori-lens
+**Repository**: hey-mori/mori-lens
 
 The merge commit containing subsequent reports necessarily postdates the audited baseline. The final RC SHA is established externally after all publication changes have landed.
 

@@ -25,7 +25,7 @@ rust-version = "1.85"
 # the string above only describes one.
 license = "UNLICENSED"
 publish = false
-repository = "https://github.com/swarea/mori-lens"
+repository = "https://github.com/hey-mori/mori-lens"
 
 [workspace.dependencies]
 lens-core = { path = "crates/lens-core" }

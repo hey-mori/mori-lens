@@ -103,7 +103,7 @@ So an attacker can no longer choose the exact string on the card. An attacker
 can still steer it toward a word of their choosing, now wearing Hangul, which
 looks **more** like a translation than `PWNED` did. That is a reduction in
 control, not a restoration of the promise, and
-[#192](https://github.com/swarea/mori-lens/issues/192) stays open on the
+[#192](https://github.com/hey-mori/mori-lens/issues/192) stays open on the
 difference.
 
 ### It costs nothing on ordinary text

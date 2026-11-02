@@ -7,7 +7,7 @@
 Mori Lens started as an idea for a Mori feature: Mori already ships a
 language capability that reads another application's *selection* through
 UI Automation and explains it in a mini overlay
-(`swarea/mori`, `src-tauri/src/language/`, documented in that repository's
+(`hey-mori/mori`, `src-tauri/src/language/`, documented in that repository's
 `docs/design/language-loop.md`). Hover-to-understand looks like the next
 adapter on that same ladder.
 
@@ -37,7 +37,7 @@ unsettled.
 
 ## Decision
 
-**Mori Lens lives in `swarea/mori-lens`, an independent repository, and
+**Mori Lens lives in `hey-mori/mori-lens`, an independent repository, and
 runs with Mori not installed.**
 
 Concretely:

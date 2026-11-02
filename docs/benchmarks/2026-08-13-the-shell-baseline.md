@@ -1,6 +1,6 @@
 # The floor a main window has to beat, 2026-08-13
 
-[#164](https://github.com/swarea/mori-lens/issues/164) is a staged spike, and
+[#164](https://github.com/hey-mori/mori-lens/issues/164) is a staged spike, and
 its first stage is the baseline: **what a plain native window costs inside the
 process Lens already has.** Every other option is compared against this and not
 against zero.

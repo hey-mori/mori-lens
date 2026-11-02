@@ -80,7 +80,7 @@ runs only when the user opens it.
 
 ## Relationship to Mori
 
-[Mori](https://github.com/swarea/mori) is a local-first AI work memory
+[Mori](https://github.com/hey-mori/mori) is a local-first AI work memory
 app. Mori Lens is a separate product with a separate binary, and it
 runs with Mori not installed.
 

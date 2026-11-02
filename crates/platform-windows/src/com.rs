@@ -5,7 +5,7 @@
 //! than a pair of calls: an early `?` must never leave a thread in an apartment
 //! this code created.
 //!
-//! Re-derived from `swarea/mori`'s `src-tauri/src/language/capture_windows.rs`.
+//! Re-derived from `hey-mori/mori`'s `src-tauri/src/language/capture_windows.rs`.
 //! Copied rather than shared, per `docs/decisions/ADR-0006-no-shared-package-yet.md`; the
 //! origin is named here so a later extraction can find both sites.
 

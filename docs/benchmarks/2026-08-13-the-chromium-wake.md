@@ -1,6 +1,6 @@
 # What the Chromium accessibility wake costs, 2026-08-13
 
-[Issue #4](https://github.com/swarea/mori-lens/issues/4) has said since the
+[Issue #4](https://github.com/hey-mori/mori-lens/issues/4) has said since the
 first week that the wake is unmeasured. The instrument to measure it was built
 and never run. This is the run.
 
