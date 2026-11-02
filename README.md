@@ -1,10 +1,21 @@
 <div align="center">
 
-<img src="apps/lens/icons/icon.png" alt="" width="96" height="96">
+<img src="apps/lens/icons/icon.png" alt="" width="88" height="88">
 
 # Mori Lens
 
-Mori Lens explains what you are reading, without interrupting it.
+**Mori Lens explains what you are reading, without interrupting it.**
+
+Rest the pointer on a word or a sentence in any application, and Lens shows its
+meaning in your language, on your own machine.
+
+[Current state](#current-state) ·
+[Installation](#installation) ·
+[Develop](#develop) ·
+[Privacy](#privacy)
+
+![status: pre-release](https://img.shields.io/badge/status-pre--release-6246f5)
+![license: not chosen yet](https://img.shields.io/badge/license-not%20chosen%20yet-1c1e22)
 
 </div>
 
