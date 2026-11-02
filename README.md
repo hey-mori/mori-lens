@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/mark.png" alt="" width="96" height="96">
+<img src="apps/lens/icons/icon.png" alt="" width="96" height="96">
 
 # Mori Lens
 
