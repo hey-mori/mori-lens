@@ -3189,6 +3189,21 @@ pub fn main() -> std::process::ExitCode {
             while let Ok(answer) = answers_rx.try_recv() {
                 if answer.final_answer {
                     log_card(&answer.card, answer.app.as_deref());
+                }
+                // The generation check lives in the lifecycle, so an answer for a
+                // hover the reader has left is dropped in one place rather than at
+                // each call site that might forget. It is also what says whether
+                // the answer is finished, which is when it may touch anything
+                // beyond the screen.
+                let effect = life.stream_answer_arrived(
+                    answer.generation,
+                    answer.anchor,
+                    answer.final_answer,
+                );
+                if effect == lifecycle::AnswerEffect::Drop {
+                    continue;
+                }
+                if effect == lifecycle::AnswerEffect::ShowFinished {
                     // The reason the panel exists. An explanation arrives and the
                     // translation the reader was already reading stays where it is,
                     // instead of them re-hovering to get one and then the other.
@@ -3231,24 +3246,22 @@ pub fn main() -> std::process::ExitCode {
                         });
                     }
                 }
-                // The generation check lives in the lifecycle, so an answer for a
-                // hover the reader has left is dropped in one place rather than at
-                // each call site that might forget.
-                if life.answer_arrived(answer.generation, answer.anchor) == lifecycle::Action::Show
-                {
-                    show_card(
-                        &overlay,
-                        &mut on_screen,
-                        answer.card,
-                        answer.anchor,
-                        PresentationKind::Reading,
-                        answer.app.as_deref(),
-                        &answer.target_language,
-                        &shared_recent,
-                        &loop_library,
-                        &loop_settings,
-                    );
-                }
+                let kind = match effect {
+                    lifecycle::AnswerEffect::ShowFinished => PresentationKind::Reading,
+                    _ => PresentationKind::Partial,
+                };
+                show_card(
+                    &overlay,
+                    &mut on_screen,
+                    answer.card,
+                    answer.anchor,
+                    kind,
+                    answer.app.as_deref(),
+                    &answer.target_language,
+                    &shared_recent,
+                    &loop_library,
+                    &loop_settings,
+                );
             }
 
             std::thread::sleep(Duration::from_millis(25));
@@ -3531,6 +3544,9 @@ enum PresentationKind {
     Reading,
     /// A copy/save confirmation or error message. Do not record.
     Feedback,
+    /// An answer still arriving. Drawn but not recorded: it is a prefix of
+    /// the reading, and the finished answer is recorded when it lands.
+    Partial,
 }
 
 /// Render a card on the overlay and update the on-screen state.
@@ -3613,8 +3629,8 @@ fn show_card(
                     settings,
                 );
             }
-            PresentationKind::Feedback => {
-                // Do not record feedback cards to history.
+            PresentationKind::Feedback | PresentationKind::Partial => {
+                // Do not record feedback cards or partial answers to history.
             }
         }
     }
