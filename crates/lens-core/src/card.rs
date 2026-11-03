@@ -998,6 +998,66 @@ pub fn place_card(
     ScreenRect::new(x, y, width, height)
 }
 
+/// Where a card already on screen goes when its answer grows.
+///
+/// A streamed answer arrives in pieces, and the card that holds it gets taller
+/// several times a second. Placing it afresh for each piece is what once put
+/// the same card in three places, so the card keeps its side of the text and
+/// its left edge, and grows **away from the text**: downwards when it sits
+/// below, upwards when it sits above.
+///
+/// Growing only downwards, which is what the overlay did, is right for a card
+/// below the text and wrong for one above it: [`place_card`] puts the card
+/// above exactly when the text is near the bottom of the screen, so the first
+/// long answer there grew down over the sentence it was explaining. A card
+/// below the text near the bottom edge had the opposite problem and grew off
+/// the screen, losing the end of the answer without a mark.
+///
+/// Only when the card no longer fits on its own side does it move, once, to
+/// the other side; and only when it fits on neither does it overlap the text,
+/// clamped inside the work area as [`place_card`] does.
+pub fn grow_card(
+    previous: ScreenRect,
+    height: i32,
+    anchor: ScreenRect,
+    work_area: ScreenRect,
+) -> ScreenRect {
+    const GAP: i32 = 12;
+    let height = height.max(previous.height);
+    let below = anchor.bottom() + GAP;
+    let above = anchor.y - GAP - height;
+    let fits_below = below + height <= work_area.bottom();
+    let fits_above = above >= work_area.y;
+    let inside = (work_area.bottom() - height).max(work_area.y);
+
+    let y = if previous.bottom() <= anchor.y {
+        // Above the text: keep the bottom edge where it was and grow upwards.
+        let upwards = previous.bottom() - height;
+        if upwards >= work_area.y {
+            upwards
+        } else if fits_below {
+            below
+        } else {
+            inside
+        }
+    } else if previous.y >= anchor.bottom() {
+        // Below the text: keep the top edge and grow downwards.
+        if previous.y + height <= work_area.bottom() {
+            previous.y
+        } else if fits_above {
+            above
+        } else {
+            inside
+        }
+    } else {
+        // Already over the text, which only happens when it fitted on neither
+        // side to begin with.
+        inside
+    };
+
+    ScreenRect::new(previous.x, y, previous.width, height)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1187,6 +1247,86 @@ mod tests {
             "{placed:?}"
         );
         assert!(placed.x < 0, "the card left its monitor: {placed:?}");
+    }
+
+    /// A card placed, then grown the way a streamed answer grows it.
+    fn placed_then_grown(
+        anchor: ScreenRect,
+        first: i32,
+        grown: i32,
+        work: ScreenRect,
+    ) -> (ScreenRect, ScreenRect) {
+        let placed = place_card(anchor, anchor.center(), (360, first), work);
+        (placed, grow_card(placed, grown, anchor, work))
+    }
+
+    fn overlaps(a: ScreenRect, b: ScreenRect) -> bool {
+        a.x < b.right() && b.x < a.right() && a.y < b.bottom() && b.y < a.bottom()
+    }
+
+    #[test]
+    fn a_card_above_the_text_grows_upwards_not_over_the_text() {
+        let work = ScreenRect::new(0, 0, 1920, 1080);
+        let line = ScreenRect::new(400, 1040, 300, 20);
+        let (placed, grown) = placed_then_grown(line, 100, 300, work);
+        assert!(
+            placed.bottom() <= line.y,
+            "test setup: placed above {placed:?}"
+        );
+        assert!(!overlaps(grown, line), "grew over the text: {grown:?}");
+        assert_eq!(
+            grown.bottom(),
+            placed.bottom(),
+            "the edge by the text moved"
+        );
+        assert!(grown.y >= work.y, "{grown:?}");
+    }
+
+    #[test]
+    fn a_card_below_the_text_grows_downwards_while_there_is_room() {
+        let work = ScreenRect::new(0, 0, 1920, 1080);
+        let line = ScreenRect::new(400, 200, 300, 20);
+        let (placed, grown) = placed_then_grown(line, 100, 400, work);
+        assert_eq!((grown.x, grown.y), (placed.x, placed.y), "{grown:?}");
+        assert_eq!(grown.height, 400);
+    }
+
+    #[test]
+    fn a_card_that_outgrows_the_space_below_moves_above_rather_than_off_screen() {
+        let work = ScreenRect::new(0, 0, 1920, 1080);
+        let line = ScreenRect::new(400, 700, 300, 20);
+        let (placed, grown) = placed_then_grown(line, 100, 500, work);
+        assert!(
+            placed.y >= line.bottom(),
+            "test setup: placed below {placed:?}"
+        );
+        assert!(
+            grown.bottom() <= work.bottom(),
+            "ran off the screen: {grown:?}"
+        );
+        assert!(!overlaps(grown, line), "moved over the text: {grown:?}");
+    }
+
+    #[test]
+    fn a_card_that_fits_on_neither_side_stays_on_its_monitor() {
+        // A second monitor above the primary, short enough that a long answer
+        // fits neither above nor below the line.
+        let work = ScreenRect::new(0, -900, 1600, 900);
+        let line = ScreenRect::new(300, -450, 300, 20);
+        let (_, grown) = placed_then_grown(line, 100, 700, work);
+        assert!(
+            grown.y >= work.y && grown.bottom() <= work.bottom(),
+            "{grown:?}"
+        );
+    }
+
+    #[test]
+    fn a_card_never_shrinks_while_its_answer_streams() {
+        let work = ScreenRect::new(0, 0, 1920, 1080);
+        let line = ScreenRect::new(400, 200, 300, 20);
+        let placed = place_card(line, line.center(), (360, 300), work);
+        let grown = grow_card(placed, 120, line, work);
+        assert_eq!(grown, placed);
     }
 
     #[test]
