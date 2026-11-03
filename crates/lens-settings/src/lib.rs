@@ -737,6 +737,12 @@ fn extract_shortcuts(
         }
     };
 
+    let default_config = if cfg!(target_os = "macos") {
+        lens_core::shortcut::default_macos_shortcuts()
+    } else {
+        lens_core::shortcut::default_windows_shortcuts()
+    };
+
     let mut bindings = Vec::new();
     for action in ShortcutAction::ALL {
         let key = action.as_str();
@@ -744,14 +750,13 @@ fn extract_shortcuts(
 
         // Check if key exists
         let Some(val) = value else {
-            // Missing key: use platform default for this action
-            let default_config = if cfg!(target_os = "macos") {
-                lens_core::shortcut::default_macos_shortcuts()
-            } else {
-                lens_core::shortcut::default_windows_shortcuts()
-            };
-            let default_shortcut = default_config.get(action).cloned().flatten();
-            bindings.push((action, default_shortcut));
+            // Missing key: use the platform default for this action. An action
+            // the platform defaults leave out (Pin on macOS) stays out, so a
+            // saved default file loads back to the same bindings rather than
+            // gaining an explicit unbound entry.
+            if let Some(default_shortcut) = default_config.get(action) {
+                bindings.push((action, *default_shortcut));
+            }
             continue;
         };
 
@@ -2278,18 +2283,19 @@ endpoint = \"127.0.0.1:11434\"
             content.contains("[shortcuts]"),
             "missing [shortcuts] section"
         );
-        assert!(
-            content.contains("pause = \"Ctrl+Alt+L\""),
-            "missing pause binding"
-        );
-        assert!(
-            content.contains("ocr = \"Ctrl+Alt+O\""),
-            "missing ocr binding"
-        );
-        assert!(
-            content.contains("deep = \"Ctrl+Alt+D\""),
-            "missing deep binding"
-        );
+        // The defaults differ by platform: Ctrl+Alt on Windows, Cmd+Opt
+        // (written as Meta+Alt) on macOS, which also has no Pin binding.
+        let modifiers = if cfg!(target_os = "macos") {
+            "Meta+Alt"
+        } else {
+            "Ctrl+Alt"
+        };
+        for (action, key) in [("pause", 'L'), ("ocr", 'O'), ("deep", 'D')] {
+            let line = format!("{action} = \"{modifiers}+{key}\"");
+            assert!(content.contains(&line), "missing {action} binding: {line}");
+        }
+        let has_pin = content.lines().any(|line| line.starts_with("pin = "));
+        assert_eq!(has_pin, !cfg!(target_os = "macos"));
 
         let _ = fs::remove_dir_all(&dir);
     }
