@@ -160,7 +160,10 @@ mod tests {
 
     pub(super) fn scratch(name: &str) -> PathBuf {
         let mut path = std::env::temp_dir();
-        path.push(format!("mori-lens-refresh-{name}.conf"));
+        path.push(format!(
+            "mori-lens-refresh-{name}-{}.conf",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&path);
         path
     }
