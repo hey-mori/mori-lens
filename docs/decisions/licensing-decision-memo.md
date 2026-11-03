@@ -30,8 +30,11 @@ added an Apache-2.0 `LICENSE` ("Copyright 2026 Isaac Lee"), and the README and
 day) removed the file and both statements. Its message says the manifest was the
 statement the owner had made and that the file had been dropped in with the
 other community files. The file is present in the tree of seven commits on
-`main`, `cff6b73` through `4d37636e`. The history was not rewritten and those
-commits stay readable.
+`main`, `cff6b73` through `4d37636e`. Those commits were not removed when the
+file was, and they stay readable in the public history. The message of `08c722c`
+cites `3268b7a`, which no longer exists, so the history had been rewritten once
+before the repository reached its present form; the hashes here are the ones
+that exist now.
 
 What the record does not settle: whether any copy of the tree from that window
 reached anyone other than the owner, and what that would mean in law. The
