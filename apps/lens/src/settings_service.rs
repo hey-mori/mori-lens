@@ -1097,7 +1097,14 @@ mod tests {
     #[test]
     fn restart_status_no_restart_when_unchanged() {
         let dir = temp_dir();
-        let state = load_or_migrate(&dir.join("settings.toml"), default_baseline());
+        // A freshly written file carries the platform's default shortcuts
+        // (Ctrl+Alt on Windows, Cmd+Opt without Pin on macOS), so the running
+        // baseline must too, or the shortcuts read as changed.
+        let baseline = ActiveEngineSettings {
+            shortcuts: lens_settings::schema::Schema::default().shortcuts,
+            ..default_baseline()
+        };
+        let state = load_or_migrate(&dir.join("settings.toml"), baseline);
 
         let (restart_required, reasons) = state.restart_status();
         assert!(!restart_required);
