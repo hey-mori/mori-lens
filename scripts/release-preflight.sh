@@ -138,8 +138,9 @@ GATE_FAILURES=0
 gate_fail() { GATE_FAILURES=$((GATE_FAILURES + 1)); }
 
 # ── Summary capture ──────────────────────────────────────────────────────────
-declare -A SUMMARY
-summary_set() { SUMMARY["$1"]="$2"; }
+# One variable per key (SUMMARY_FULL_GATE, ...) rather than an associative
+# array: macOS ships bash 3.2, which has no `declare -A` and exits 2 on it.
+summary_set() { printf -v "SUMMARY_$1" '%s' "$2"; }
 
 summary_set "REVISION" "$REVISION"
 summary_set "VERSION" "$VERSION"
@@ -491,37 +492,37 @@ echo "================================================================"
 echo "  Release Preflight Summary"
 echo "================================================================"
 echo ""
-echo "REVISION:             ${SUMMARY[REVISION]:-unknown}"
-echo "VERSION:              ${SUMMARY[VERSION]:-unknown}"
-echo "TREE:                 ${SUMMARY[TREE]:-unknown}"
+echo "REVISION:             ${SUMMARY_REVISION:-unknown}"
+echo "VERSION:              ${SUMMARY_VERSION:-unknown}"
+echo "TREE:                 ${SUMMARY_TREE:-unknown}"
 echo ""
-echo "FULL_GATE:            ${SUMMARY[FULL_GATE]:-SKIP}"
-echo "VERSION_CONSISTENCY:  ${SUMMARY[VERSION_CONSISTENCY]:-SKIP}"
-echo "PRODUCTION_ASSETS:    ${SUMMARY[PRODUCTION_ASSETS]:-SKIP}"
+echo "FULL_GATE:            ${SUMMARY_FULL_GATE:-SKIP}"
+echo "VERSION_CONSISTENCY:  ${SUMMARY_VERSION_CONSISTENCY:-SKIP}"
+echo "PRODUCTION_ASSETS:    ${SUMMARY_PRODUCTION_ASSETS:-SKIP}"
 echo ""
 
 if [[ "$SOURCE_ONLY" == "true" ]]; then
-    echo "PACKAGE_READINESS:    ${SUMMARY[PACKAGE_READINESS]:-NOT VERIFIED}"
+    echo "PACKAGE_READINESS:    ${SUMMARY_PACKAGE_READINESS:-NOT VERIFIED}"
 elif [[ "$IS_WINDOWS" == "true" ]]; then
-    echo "NSIS_BUILD:           ${SUMMARY[NSIS_BUILD]:-SKIP}"
-    echo "NSIS_ARTIFACT:        ${SUMMARY[NSIS_ARTIFACT]:-NONE}"
-    echo "NSIS_SHA256:          ${SUMMARY[NSIS_SHA256]:-NONE}"
-    echo "NSIS_VERIFY:          ${SUMMARY[NSIS_VERIFY]:-SKIP}"
-    if [[ -n "${SUMMARY[NSIS_PAYLOAD]:-}" ]]; then
-        echo "NSIS_PAYLOAD:         ${SUMMARY[NSIS_PAYLOAD]}"
+    echo "NSIS_BUILD:           ${SUMMARY_NSIS_BUILD:-SKIP}"
+    echo "NSIS_ARTIFACT:        ${SUMMARY_NSIS_ARTIFACT:-NONE}"
+    echo "NSIS_SHA256:          ${SUMMARY_NSIS_SHA256:-NONE}"
+    echo "NSIS_VERIFY:          ${SUMMARY_NSIS_VERIFY:-SKIP}"
+    if [[ -n "${SUMMARY_NSIS_PAYLOAD:-}" ]]; then
+        echo "NSIS_PAYLOAD:         ${SUMMARY_NSIS_PAYLOAD}"
     fi
     echo ""
-    echo "MSIX_BUILD:           ${SUMMARY[MSIX_BUILD]:-SKIP}"
-    echo "MSIX_ARTIFACT:        ${SUMMARY[MSIX_ARTIFACT]:-NONE}"
-    echo "MSIX_SHA256:          ${SUMMARY[MSIX_SHA256]:-NONE}"
-    echo "MSIX_VERIFY:          ${SUMMARY[MSIX_VERIFY]:-SKIP}"
+    echo "MSIX_BUILD:           ${SUMMARY_MSIX_BUILD:-SKIP}"
+    echo "MSIX_ARTIFACT:        ${SUMMARY_MSIX_ARTIFACT:-NONE}"
+    echo "MSIX_SHA256:          ${SUMMARY_MSIX_SHA256:-NONE}"
+    echo "MSIX_VERIFY:          ${SUMMARY_MSIX_VERIFY:-SKIP}"
 elif [[ "$IS_MACOS" == "true" ]]; then
-    echo "APP_BUNDLE_VERIFY:    ${SUMMARY[APP_BUNDLE_VERIFY]:-SKIP}"
+    echo "APP_BUNDLE_VERIFY:    ${SUMMARY_APP_BUNDLE_VERIFY:-SKIP}"
 fi
 
 echo ""
-echo "BUILD_PROVENANCE:     ${SUMMARY[BUILD_PROVENANCE]:-SKIP}"
-echo "EMBEDDED_BUILD_STAMP: ${SUMMARY[EMBEDDED_BUILD_STAMP]:-SKIP}"
+echo "BUILD_PROVENANCE:     ${SUMMARY_BUILD_PROVENANCE:-SKIP}"
+echo "EMBEDDED_BUILD_STAMP: ${SUMMARY_EMBEDDED_BUILD_STAMP:-SKIP}"
 echo ""
 echo "SIGNING:              BLOCKED / UNSIGNED"
 echo "STORE PUBLISHER:      PLACEHOLDER / CONFIGURED"
@@ -539,29 +540,29 @@ if [[ $GATE_FAILURES -eq 0 ]]; then
 
     # Check build provenance and embedded stamp for final verdict
     if [[ "$VERIFY_ONLY" == "true" ]]; then
-        if [[ "${SUMMARY[EMBEDDED_BUILD_STAMP]}" == "UNPROVEN" ]]; then
+        if [[ "${SUMMARY_EMBEDDED_BUILD_STAMP}" == "UNPROVEN" ]]; then
             echo "OVERALL:              ARTIFACT STRUCTURE VALID, EMBEDDED STAMP UNPROVEN"
             echo ""
             echo "Artifacts are structurally valid, but embedded build stamp could not be verified."
             echo "The artifacts may not be from this exact revision."
             echo "For exact-revision readiness, rebuild from clean tree or use artifacts with verified stamp."
             exit 0
-        elif [[ "${SUMMARY[EMBEDDED_BUILD_STAMP]}" == "MISMATCH" ]]; then
+        elif [[ "${SUMMARY_EMBEDDED_BUILD_STAMP}" == "MISMATCH" ]]; then
             echo "OVERALL:              FAILED (embedded stamp mismatch)"
             echo ""
             echo "Artifacts are structurally valid but the embedded build stamp does not match this revision."
             exit 1
-        elif [[ "${SUMMARY[EMBEDDED_BUILD_STAMP]}" == "VERIFIED" ]]; then
+        elif [[ "${SUMMARY_EMBEDDED_BUILD_STAMP}" == "VERIFIED" ]]; then
             echo "OVERALL:              STRUCTURALLY READY"
             echo ""
             echo "All gates passed. Packages are structurally valid and verified for this revision."
             echo "Signing and distribution remain external blockers."
             exit 0
         else
-            echo "OVERALL:              FAILED (unexpected embedded stamp: ${SUMMARY[EMBEDDED_BUILD_STAMP]})"
+            echo "OVERALL:              FAILED (unexpected embedded stamp: ${SUMMARY_EMBEDDED_BUILD_STAMP})"
             exit 1
         fi
-    elif [[ "${SUMMARY[BUILD_PROVENANCE]}" == "DIRTY_WORKTREE" ]]; then
+    elif [[ "${SUMMARY_BUILD_PROVENANCE}" == "DIRTY_WORKTREE" ]]; then
         echo "OVERALL:              STRUCTURE VALID, DIRTY-WORKTREE PROVENANCE"
         echo ""
         echo "All gates passed. Packages are structurally valid but were built from a dirty working tree."
@@ -571,26 +572,26 @@ if [[ $GATE_FAILURES -eq 0 ]]; then
         exit 0
     else
         # Canonical clean final RC build: require EMBEDDED_BUILD_STAMP = VERIFIED
-        if [[ "${SUMMARY[EMBEDDED_BUILD_STAMP]}" == "VERIFIED" ]]; then
+        if [[ "${SUMMARY_EMBEDDED_BUILD_STAMP}" == "VERIFIED" ]]; then
             echo "OVERALL:              STRUCTURALLY READY"
             echo ""
             echo "All gates passed. Packages are structurally valid and verified for this revision."
             echo "Signing and distribution remain external blockers."
             exit 0
-        elif [[ "${SUMMARY[EMBEDDED_BUILD_STAMP]}" == "UNPROVEN" ]]; then
+        elif [[ "${SUMMARY_EMBEDDED_BUILD_STAMP}" == "UNPROVEN" ]]; then
             echo "OVERALL:              FAILED (embedded stamp unproven for canonical clean build)"
             echo ""
             echo "Canonical clean build requires EMBEDDED_BUILD_STAMP = VERIFIED."
             echo "The embedded build stamp could not be verified, which means the exact-source provenance is not proven."
             echo "Investigate the build-stamp subsystem and runtime --version contract."
             exit 1
-        elif [[ "${SUMMARY[EMBEDDED_BUILD_STAMP]}" == "MISMATCH" ]]; then
+        elif [[ "${SUMMARY_EMBEDDED_BUILD_STAMP}" == "MISMATCH" ]]; then
             echo "OVERALL:              FAILED (embedded stamp mismatch)"
             echo ""
             echo "Artifacts are structurally valid but the embedded build stamp does not match this revision."
             exit 1
         else
-            echo "OVERALL:              FAILED (unexpected embedded stamp: ${SUMMARY[EMBEDDED_BUILD_STAMP]})"
+            echo "OVERALL:              FAILED (unexpected embedded stamp: ${SUMMARY_EMBEDDED_BUILD_STAMP})"
             exit 1
         fi
     fi
