@@ -324,17 +324,15 @@ CI must never re-list these commands in YAML. If it did, the local rule
 and the CI rule would drift, and the pull request checklist would start
 meaning two things.
 
-**The remote CI is manual-only for now, matching Mori, and for the same
-reason.** The repository is private and Actions on a private repository
-is metered; a permanently failing check is worse than an honestly
-disabled one, because real failures hide inside the noise and everyone
-learns to ignore the signal. The automatic triggers are commented out in
-[`ci.yml`](../.github/workflows/ci.yml), not deleted, and restoring them
-is a one-line change once billing is configured or the repository is
-public.
+**Remote CI runs on every push to `main` and every pull request**, on
+GitHub-hosted runners only. It was manual-only while the repository was
+private, because Actions on a private repository is metered and runs that
+were rejected before they started put a red X on every commit. Public,
+standard runners are free. No job targets a self-hosted runner: a pull
+request from a fork can edit the workflow it runs.
 
-So today the real gate is `scripts/check.sh`, run locally and recorded
-in the pull request under "How it was verified".
+The real gate is still `scripts/check.sh`, run locally and recorded in the
+pull request under "How it was verified". CI adds a clean-checkout signal.
 
 Stating a rule the tooling cannot enforce would make this document
 decorative. This section says what is actually true.
