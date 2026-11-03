@@ -2867,7 +2867,7 @@ pub fn main() -> std::process::ExitCode {
                 && !policy.allows(process_name.as_deref(), false)
                 && policy.allows(process_name.as_deref(), true);
             if reach.pointer(position, now, blocked_by_the_modifier) {
-                println!("hint  not reading here without the modifier");
+                println!("hint  not reading here unless the modifier key is held");
                 // Through the lifecycle like any other card, so it retires when the
                 // pointer leaves rather than sitting there. A round trip for the
                 // generation, which happens once a session at most and only while
