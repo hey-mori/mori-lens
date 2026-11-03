@@ -2,6 +2,7 @@
 name = "p13-live-baseline"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
 
 [dependencies]
 lens-core = { path = "../../crates/lens-core" }
