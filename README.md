@@ -178,16 +178,14 @@ cargo build --release --manifest-path apps/lens/Cargo.toml
 powershell -ExecutionPolicy Bypass -File scripts/install.ps1
 ```
 
-### Manual installation from source build
-
-After building, run the PowerShell installer script:
+### Uninstall
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File install.ps1
+powershell -ExecutionPolicy Bypass -File scripts/uninstall.ps1
 ```
 
-`uninstall.ps1` reverses all of it. Add `-Purge` to also delete the
-settings file.
+This reverses the installation and keeps the settings file. Add `-Purge` to
+also delete it.
 
 ## Use it
 
@@ -282,8 +280,8 @@ The full model, with what each promise depends on and how to verify it:
 **Not licensed for use.** The author holds the copyright and has granted no
 permission to use, copy, modify or distribute this code.
 
-That is a state rather than a decision. Nothing has shipped, the repository is
-private, and opening it later stays possible: every commit is one author's, so
-relicensing needs nobody's consent, and every dependency is permissive, so a
-permissive licence remains reachable. Opening a repository is a commit. Closing
-one is not, what has shipped stays shipped.
+That is a state rather than a decision. Nothing has shipped, and choosing a
+licence later stays possible: every commit is one author's, so relicensing needs
+nobody's consent, and no dependency is under a strong copyleft licence, so any
+of the usual open-source licences remains reachable. A few crates in the app
+build are MPL-2.0, used unmodified.
