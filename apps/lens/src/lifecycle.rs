@@ -50,6 +50,19 @@ pub enum Action {
     Hide,
 }
 
+/// What an answer from the translation stream may do once it arrives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnswerEffect {
+    /// It belongs to a hover the reader has left. Nothing at all.
+    Drop,
+    /// Part of the answer, still arriving. Drawn, and nothing else: it is not
+    /// a reading to record, and not yet a sentence to explain.
+    ShowPartial,
+    /// The finished answer for the current hover. Drawn, recorded, and the
+    /// sentence the pinned panel and Deep now refer to.
+    ShowFinished,
+}
+
 /// The lifetime of the visible card.
 #[derive(Debug)]
 pub struct CardLifecycle {
@@ -164,6 +177,33 @@ impl CardLifecycle {
         Action::Show
     }
 
+    /// An answer from the translation stream arrived. What may it change?
+    ///
+    /// [`answer_arrived`](Self::answer_arrived) decides whether it is drawn.
+    /// This also decides what a drawn answer may change beyond the screen,
+    /// because two of those effects used to reach answers that should not have
+    /// had them:
+    ///
+    /// - every partial was recorded as a reading, so one streamed sentence
+    ///   wrote a history row per redraw, and session-recent, which skips a
+    ///   repeated original, kept the first cut-off prefix and dropped the
+    ///   finished answer;
+    /// - a finished answer for a hover the reader had already left rewrote the
+    ///   pinned panel and became the sentence Deep explains, paired with the
+    ///   newer hover's focus word and anchor.
+    pub fn stream_answer_arrived(
+        &mut self,
+        generation: Generation,
+        anchor: ScreenRect,
+        final_answer: bool,
+    ) -> AnswerEffect {
+        match self.answer_arrived(generation, anchor) {
+            Action::Show if final_answer => AnswerEffect::ShowFinished,
+            Action::Show => AnswerEffect::ShowPartial,
+            _ => AnswerEffect::Drop,
+        }
+    }
+
     /// The pointer moved. Should the card go?
     ///
     /// `card` is where the card actually is, when one is on screen. It matters
@@ -253,6 +293,43 @@ mod tests {
             assert_eq!(action, Action::Nothing, "retired at tick {tick}");
         }
         assert!(life.showing());
+    }
+
+    #[test]
+    fn a_streamed_sentence_is_finished_once_and_only_by_its_final_answer() {
+        // Partials are drawn but are not readings: recording each one wrote a
+        // history row per redraw and left a cut-off prefix in session-recent.
+        let mut life = CardLifecycle::new();
+        life.hover_settled(Generation(1));
+        life.job_dispatched(Generation(1), WORD, ms(0));
+        for _ in 0..5 {
+            assert_eq!(
+                life.stream_answer_arrived(Generation(1), WORD, false),
+                AnswerEffect::ShowPartial
+            );
+        }
+        assert_eq!(
+            life.stream_answer_arrived(Generation(1), WORD, true),
+            AnswerEffect::ShowFinished
+        );
+    }
+
+    #[test]
+    fn a_finished_answer_for_a_hover_the_reader_left_changes_nothing() {
+        // It used to rewrite the pinned panel and become the sentence Deep
+        // explains before the generation was checked.
+        let mut life = CardLifecycle::new();
+        life.hover_settled(Generation(1));
+        life.job_dispatched(Generation(1), WORD, ms(0));
+        life.hover_settled(Generation(2));
+        assert_eq!(
+            life.stream_answer_arrived(Generation(1), WORD, false),
+            AnswerEffect::Drop
+        );
+        assert_eq!(
+            life.stream_answer_arrived(Generation(1), WORD, true),
+            AnswerEffect::Drop
+        );
     }
 
     #[test]
