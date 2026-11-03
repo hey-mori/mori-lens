@@ -4554,7 +4554,10 @@ mod history_privacy_tests {
         let off_per_call = off_duration.as_nanos() / iterations as u128;
 
         // Measure history ON with actual DB write
-        let path = std::env::temp_dir().join("history_latency_benchmark.db");
+        let path = std::env::temp_dir().join(format!(
+            "history_latency_benchmark-{}.db",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&path);
         let lib = lens_storage::Library::open(&path).unwrap();
 
@@ -4616,7 +4619,10 @@ mod settings_migration_tests {
     use std::fs;
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("lens-settings-migration-{name}"));
+        let dir = std::env::temp_dir().join(format!(
+            "lens-settings-migration-{name}-{}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir

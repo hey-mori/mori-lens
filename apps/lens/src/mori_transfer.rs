@@ -614,7 +614,10 @@ mod tests {
     /// atomic_write_payload writes a valid JSON file and removes the temp file.
     #[test]
     fn atomic_write_payload_creates_valid_json_and_cleans_up_temp() {
-        let dir = std::env::temp_dir().join("mori-lens-atomic-write-test");
+        let dir = std::env::temp_dir().join(format!(
+            "mori-lens-atomic-write-test-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
