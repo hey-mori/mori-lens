@@ -88,6 +88,21 @@ fi
 
 # 9. Body must be bullet-only (every non-blank line after subject starts with "- ").
 body="$(echo "$msg" | tail -n +3)"
+
+# The one trailer allowed is a DCO sign-off (CONTRIBUTING.md, "Sign off your
+# commits"): a final block of `Signed-off-by: Name <email>` lines after one
+# blank line, which is where `git commit -s` puts it. It is split off here so
+# rules 9 and 10 see only the bullets. A sign-off anywhere else is still a
+# non-bullet line and is rejected.
+body="$(printf '%s\n' "$body" | awk '
+  { line[NR] = $0 }
+  END {
+    n = NR
+    while (n > 0 && line[n] ~ /^Signed-off-by: [^<>]+ <[^<>]+>$/) n--
+    # Keep the block only when a blank line separates it from the bullets.
+    if (n < NR && n > 0) { if (line[n] == "") n--; else n = NR }
+    for (i = 1; i <= n; i++) print line[i]
+  }')"
 if [ -n "$body" ] && [ -z "$is_merge" ]; then
   while IFS= read -r line; do
     [ -z "$line" ] && continue

@@ -243,6 +243,37 @@ for architectural decisions.
 - Repository artifacts are English. Product UI copy will be Korean-first
   when a UI exists. See [`docs/git-workflow.md`](docs/git-workflow.md) §7.
 
+## Licence and sign-off
+
+Mori Lens is licensed under the [Mozilla Public License 2.0](LICENSE)
+(`MPL-2.0`), and a contribution is accepted under that same licence. There is
+no separate contributor agreement and no transfer of copyright: you keep the
+copyright in what you wrote.
+
+Every commit in a pull request from outside the organization carries a
+sign-off, as the last block of the message after a blank line:
+
+```
+Signed-off-by: Your Name <you@example.com>
+```
+
+`git commit -s` adds it from your `user.name` and `user.email`, which must
+match the commit's author. By signing off you certify the
+[Developer Certificate of Origin 1.1](https://developercertificate.org): that
+you wrote the change, or otherwise have the right to submit it under this
+repository's licence. The `dco` check on the pull request names any commit
+without one, and `git rebase --signoff main` adds it to every commit on a
+branch. Maintainers' own commits do not need it.
+
+Code you did not write yourself, generated code included, is yours to account
+for: do not submit it unless its origin allows you to license it under
+MPL-2.0. Third-party code keeps its own licence and notice, recorded in
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
+
+The licence grants no rights to the Mori names or logos (MPL-2.0 §2.3). A
+modified version you distribute may say it is based on Mori Lens, but must not
+use the Mori name or logo as its own name or icon.
+
 ## Commit messages
 
 Every commit MUST follow [`docs/commit-format.md`](docs/commit-format.md).
@@ -256,3 +287,5 @@ That file is the authoritative spec. The short form:
   paragraphs. No blank lines between bullets. 3 to 7 bullets is typical.
 - Never include emoji, an AI footer, `Co-Authored-By:` lines,
   "Generated with" lines, validation logs, or filler.
+- The one trailer allowed is a `Signed-off-by:` block at the end, after a
+  blank line (see "Licence and sign-off" above).

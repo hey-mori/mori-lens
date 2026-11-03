@@ -98,6 +98,53 @@ expect reject "an AI-assisted line" \
 
 - AI-assisted change'
 
+echo
+echo "DCO sign-off"
+expect accept "bullets followed by a sign-off block" \
+  'fix: do a thing
+
+- Change one thing
+- Change another thing
+
+Signed-off-by: Some One <someone@example.com>'
+expect accept "a subject-only commit with a sign-off" \
+  'chore: ignore the release staging directory
+
+Signed-off-by: Some One <someone@example.com>'
+expect accept "two sign-offs in the final block" \
+  'fix: do a thing
+
+- Change one thing
+
+Signed-off-by: Some One <someone@example.com>
+Signed-off-by: Other Person <other@example.com>'
+expect reject "a sign-off with no blank line before it" \
+  'fix: do a thing
+
+- Change one thing
+Signed-off-by: Some One <someone@example.com>'
+expect reject "a sign-off between bullets" \
+  'fix: do a thing
+
+- Change one thing
+
+Signed-off-by: Some One <someone@example.com>
+
+- Change another thing'
+expect reject "a sign-off without an email address" \
+  'fix: do a thing
+
+- Change one thing
+
+Signed-off-by: Some One'
+expect reject "a Co-Authored-By trailer beside a sign-off" \
+  'fix: do a thing
+
+- Change one thing
+
+Signed-off-by: Some One <someone@example.com>
+Co-Authored-By: Someone <someone@example.com>'
+
 echo "Merge commits"
 expect accept "a GitHub pull request merge with the PR title as its body" \
   'Merge pull request #661 from hey-mori/docs/security-report-channel
