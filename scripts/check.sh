@@ -251,6 +251,9 @@ if [[ "$FULL" == "1" ]]; then
   cargo test -p lens-platform-macos
 fi
 
+step "executable files keep LF endings"
+bash "$(dirname "$0")/check-line-endings.sh"
+
 step "commit message validator"
 bash "$(dirname "$0")/../.githooks/tests/test-validate-commit-message.sh"
 
