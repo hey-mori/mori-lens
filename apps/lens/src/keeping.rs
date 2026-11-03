@@ -322,7 +322,8 @@ mod tests {
     use std::time::{Duration, UNIX_EPOCH};
 
     fn scratch(name: &str) -> PathBuf {
-        let folder = std::env::temp_dir().join(format!("mori-lens-keep-{name}"));
+        let folder =
+            std::env::temp_dir().join(format!("mori-lens-keep-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&folder);
         std::fs::create_dir_all(&folder).expect("create scratch directory");
         folder.join("saved.md")
@@ -586,7 +587,8 @@ mod tests {
     /// macOS execute_save() also uses save_card(), writing to both files.
     #[test]
     fn append_writes_both_file_and_library() {
-        let dir = std::env::temp_dir().join("mori-lens-keep-no-persist");
+        let dir =
+            std::env::temp_dir().join(format!("mori-lens-keep-no-persist-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("saved.md");
@@ -657,7 +659,10 @@ mod tests {
     /// save_card refuses Waiting cards — they are transient, not savable.
     #[test]
     fn save_card_refuses_waiting() {
-        let dir = std::env::temp_dir().join("mori-lens-save-refuse-waiting");
+        let dir = std::env::temp_dir().join(format!(
+            "mori-lens-save-refuse-waiting-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("saved.md");
@@ -676,7 +681,10 @@ mod tests {
     /// save_card accepts Translation cards and writes both saved.md and library.db.
     #[test]
     fn save_card_accepts_translation() {
-        let dir = std::env::temp_dir().join("mori-lens-save-accept-translation");
+        let dir = std::env::temp_dir().join(format!(
+            "mori-lens-save-accept-translation-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("saved.md");
@@ -704,7 +712,10 @@ mod tests {
     /// arrived, and save_card copies it from there.
     #[test]
     fn save_card_model_comes_from_card_metadata() {
-        let dir = std::env::temp_dir().join("mori-lens-save-model-metadata");
+        let dir = std::env::temp_dir().join(format!(
+            "mori-lens-save-model-metadata-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("saved.md");
@@ -739,7 +750,8 @@ mod tests {
         use std::sync::Arc;
         use std::thread;
 
-        let dir = std::env::temp_dir().join("mori-lens-save-concurrent");
+        let dir =
+            std::env::temp_dir().join(format!("mori-lens-save-concurrent-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let file = Arc::new(dir.join("saved.md"));
@@ -797,7 +809,10 @@ mod tests {
         use std::sync::Arc;
         use std::thread;
 
-        let dir = std::env::temp_dir().join("mori-lens-append-concurrent");
+        let dir = std::env::temp_dir().join(format!(
+            "mori-lens-append-concurrent-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let file = Arc::new(dir.join("saved.md"));
@@ -855,7 +870,10 @@ mod tests {
     #[cfg(unix)]
     fn existing_broad_saved_md_is_tightened_before_append() {
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let dir = std::env::temp_dir().join("mori-lens-keep-harden-broad");
+        let dir = std::env::temp_dir().join(format!(
+            "mori-lens-keep-harden-broad-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("saved.md");
@@ -908,7 +926,8 @@ mod tests {
     /// (not a directory), so directory creation cannot succeed.
     #[test]
     fn create_dir_all_failure_propagates_as_not_written() {
-        let dir = std::env::temp_dir().join("mori-lens-keep-dir-fail");
+        let dir =
+            std::env::temp_dir().join(format!("mori-lens-keep-dir-fail-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         // Create a regular file where we need a parent directory.
