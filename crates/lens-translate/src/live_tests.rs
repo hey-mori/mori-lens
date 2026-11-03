@@ -2953,3 +2953,105 @@ fn the_readiness_probe_agrees_with_the_lookups_it_replaced() {
         "the probe exists to be faster: {new_ms:.3}ms vs {old_ms:.3}ms",
     );
 }
+
+/// Whether a word with a software sense keeps it on a short interface line.
+///
+/// A reader hovered the line Lens prints when the modifier key is not held,
+/// `not reading here without the modifier`, and got 제시문에 조사 없이 읽지
+/// 마세요: "modifier" read as grammar and "reading" as a reading exercise. The
+/// quick prompt sends the sentence and the focused word, and nothing about
+/// where the text sits, so a ten-word interface line has to carry its own
+/// sense.
+///
+/// This measures that before anything is added to the prompt. The cases mix
+/// interface lines whose words have a keyboard or programming sense with prose
+/// whose same word has its everyday or grammatical sense, so that a later
+/// change which pushes every sentence towards software terms shows up here as
+/// a loss on the prose rows, not only a gain on the interface rows.
+///
+/// Each row lists Korean words any of which marks the right sense. The lists
+/// are one reader's judgement, written down so the next run can disagree with
+/// them on purpose rather than by accident.
+#[test]
+#[ignore = "needs a running Ollama; run manually"]
+fn measure_software_terms_on_short_interface_lines() {
+    let Some(translator) = live() else {
+        return;
+    };
+
+    // (where it is from, text, any of these marks the right sense)
+    let cases: [(&str, &str, &[&str]); 8] = [
+        (
+            "lens hint",
+            "not reading here unless the modifier key is held",
+            &["보조 키", "보조키", "수정 키", "수정키"],
+        ),
+        (
+            "lens hint, old wording",
+            "not reading here without the modifier",
+            &["보조 키", "보조키", "수정 키", "수정키", "키"],
+        ),
+        (
+            "app menu",
+            "Hold the modifier and rest the pointer on a sentence.",
+            &["보조 키", "보조키", "수정 키", "수정키", "키"],
+        ),
+        (
+            "design tool",
+            "Option-click a layer to select every layer under it.",
+            &["Option", "옵션"],
+        ),
+        (
+            "dialog",
+            "Press Escape to close the dialog without saving.",
+            &["Esc", "ESC", "이스케이프"],
+        ),
+        (
+            "code editor",
+            "The access modifier makes the field private.",
+            &["제어자", "지정자", "한정자"],
+        ),
+        (
+            "grammar text",
+            "In English, a modifier is a word that describes another word.",
+            &["수식어", "수식하는"],
+        ),
+        (
+            "prose",
+            "She pressed the key into his hand and left without a word.",
+            &["열쇠"],
+        ),
+    ];
+
+    println!();
+    println!("  where                    right sense  ms     answer");
+    let (mut right, mut answered, mut total_ms) = (0, 0, 0u64);
+    for (place, text, marks) in cases {
+        match translator.quick(&QuickRequest::new(text, "Korean")) {
+            Ok(answer) => {
+                answered += 1;
+                total_ms += answer.latency_ms as u64;
+                let ok = marks.iter().any(|mark| answer.text.contains(mark));
+                if ok {
+                    right += 1;
+                }
+                println!(
+                    "  {:<24} {:<12} {:<6} {}",
+                    place,
+                    if ok { "yes" } else { "NO" },
+                    answer.latency_ms,
+                    answer.text.trim(),
+                );
+            }
+            Err(error) => println!("  {:<24} FAILED [{}]", place, error.reason()),
+        }
+    }
+    println!(
+        "\n  {right} of {answered} kept the sense their context gives them, {} ms on average",
+        if answered == 0 {
+            0
+        } else {
+            total_ms / answered as u64
+        },
+    );
+}
