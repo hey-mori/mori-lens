@@ -166,11 +166,11 @@ The gate validates:
 - No unpushed commits on the branch
 - PR is mergeable (when queryable)
 
-This repository does not have CI running on every PR (GitHub Actions
-costs are metered), so the merge-readiness gate is a local check rather
-than a GitHub-side hard block. The script enforces what can be enforced
-without CI; what cannot be enforced (for example, a PR body edited after
-the script ran) is instead a convention upheld by the author.
+CI runs on every pull request (§9), and the ruleset on `main` requires
+its two `scripts/check.sh` jobs to pass. The wrapper still matters: it
+checks what CI does not, such as the PR body and commit attribution.
+What neither can enforce (for example, a PR body edited after the script
+ran) is a convention upheld by the author.
 
 
 ## 5. Pull requests
