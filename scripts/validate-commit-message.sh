@@ -78,7 +78,11 @@ if echo "$msg" | grep -qiE '(claude|qwen|copilot|chatgpt|gemini) (code|sonnet|op
 fi
 
 # 8. No emoji in commit messages.
-if echo "$msg" | grep -qP '[\x{1F300}-\x{1F9FF}]' 2>/dev/null; then
+# Matched as UTF-8 bytes under the C locale, so the rule holds under any locale
+# and any grep. grep -P needs a UTF-8 locale and the BSD grep on macOS has no
+# -P; either way the old pattern errored and the rule skipped itself silently.
+# F0 9F 8C-AB is U+1F300 to U+1FAFF, E2 98-9E is U+2600 to U+27BF.
+if printf '%s' "$msg" | LC_ALL=C grep -qE $'\xf0\x9f[\x8c-\xab]|\xe2[\x98-\x9e]'; then
   errors="${errors}ERROR: emoji in commit messages is forbidden\n"
 fi
 
