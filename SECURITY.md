@@ -6,19 +6,16 @@
 exploitable.** A public post is a disclosure, and it lands before there is a
 fix.
 
-While this repository is private, outside reporters cannot reach its
-*Security* tab. Report through the Mori organization's private form instead,
-which anyone signed in to GitHub can use:
-[Report a vulnerability](https://github.com/hey-mori/.github/security/advisories/new).
-Name Mori Lens and its version in the report, and if the problem involves a
+Report it privately under this repository's *Security* tab, which anyone
+signed in to GitHub can use:
+[Report a vulnerability](https://github.com/hey-mori/mori-lens/security/advisories/new).
+Name the Mori Lens version in the report, and if the problem involves a
 specific file or line, include the path and what you think it does.
 
 The organization's
 [security policy](https://github.com/hey-mori/.github/blob/main/SECURITY.md)
 covers what to include, the response targets, disclosure, and what to do if
-the form is unavailable. When this repository becomes public, it will turn on
-private reporting under its own *Security* tab and this section will point
-there.
+the form is unavailable.
 
 ## What this product touches
 
