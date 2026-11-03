@@ -7,11 +7,12 @@
 //! The lock file lives at `~/Library/Application Support/Mori Lens/.lock`.
 
 use std::fs;
-use std::os::raw::c_int;
+use std::os::raw::{c_int, c_uint};
 use std::path::PathBuf;
 
 extern "C" {
-    fn open(path: *const std::os::raw::c_char, flags: c_int, mode: u32) -> c_int;
+    // `open` is variadic in libc: the mode is only read when O_CREAT is set.
+    fn open(path: *const std::os::raw::c_char, flags: c_int, ...) -> c_int;
     fn flock(fd: c_int, operation: c_int) -> c_int;
     fn close(fd: c_int) -> c_int;
     fn getpid() -> i32;
@@ -49,7 +50,7 @@ impl SingleInstance {
 
         // SAFETY: open() with O_CREAT creates the file if it doesn't exist.
         // The path is a valid C string.
-        let fd = unsafe { open(path_cstr.as_ptr(), O_RDWR | O_CREAT, 0o600) };
+        let fd = unsafe { open(path_cstr.as_ptr(), O_RDWR | O_CREAT, 0o600 as c_uint) };
         if fd < 0 {
             return None;
         }
