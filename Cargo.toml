@@ -23,7 +23,7 @@ rust-version = "1.85"
 # Not an SPDX identifier -- it is an npm convention -- and kept because it is the
 # statement that was actually made. `publish = false` is what prevents a release;
 # the string above only describes one.
-license = "UNLICENSED"
+license = "MPL-2.0"
 publish = false
 repository = "https://github.com/hey-mori/mori-lens"
 

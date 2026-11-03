@@ -4,7 +4,7 @@ description = "Mori Lens: rest the pointer on a sentence and read it in your lan
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
-license = "UNLICENSED"
+license = "MPL-2.0"
 publish = false
 repository = "https://github.com/hey-mori/mori-lens"
 
