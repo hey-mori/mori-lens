@@ -4,5 +4,9 @@
 # interpreter.
 *.sh text eol=lf
 
+# Git hooks have no extension and run through their shebang, so they need the
+# same rule. scripts/check-line-endings.sh holds every executable file to it.
+/.githooks/** text eol=lf
+
 # Rust and Markdown are normalised in the repository and checked out native.
 * text=auto
