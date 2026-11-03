@@ -22,7 +22,6 @@ use std::time::{Duration, Instant};
 use crate::dispatch_carrier::{DeepJob, QuickJob, TransResult};
 
 use lens_core::acquire::{AcquireContext, AcquireError, AcquisitionSource, TextAcquirer};
-use lens_core::analyse::Analyser;
 use lens_core::cache::{AnalysisCache, CacheKey, TranslationCache};
 use lens_core::card::{Card, CardBody};
 use lens_core::geometry::{ScreenPoint, ScreenRect};
@@ -31,7 +30,7 @@ use lens_core::language::decide;
 use lens_core::policy::{effective_ocr, AppPolicy};
 use lens_core::session::OcrMode;
 use lens_core::tally::Tally;
-use lens_core::translate::{Provider, QuickRequest, Translator};
+use lens_core::translate::{Provider, QuickRequest};
 use lens_platform_macos::{
     clipboard, hotkey, overlay, AxPermission, Lifecycle, MacTextAcquirer, MenuBar, OcrTextAcquirer,
     Overlay, ProductCommand, SingleInstance,
@@ -485,7 +484,7 @@ fn product_loop(
     mut ai_config: AiRuntimeConfig,
     mut dwell_ms: u64,
     mut ocr_mode: OcrMode,
-    mut cli_ocr_override: Option<OcrMode>,
+    cli_ocr_override: Option<OcrMode>,
     mut ocr_rules: Vec<lens_core::policy::AppOcrRule>,
     mut policy: AppPolicy,
     mut hover_scope: String,
@@ -592,14 +591,12 @@ fn product_loop(
     let quick_cache = cache.clone();
     let quick_result_tx = result_tx.clone();
     let quick_provider = ai_config.quick.provider;
-    let quick_endpoint = ai_config.quick.endpoint.clone();
     let quick_model_error_for_worker = quick_model_error.clone();
     std::thread::spawn(move || {
         let mut translator = quick_translator;
         let mut current_model = quick_model;
         let mut current_provider = quick_provider;
         let mut current_resolution_error = quick_model_error_for_worker;
-        let mut current_endpoint = quick_endpoint;
         // P12: Per-lane failure state tracker for recovery event emission.
         let mut quick_lane_state = lens_core::event_ring::DiagnosticLaneState::new();
         while let Ok(job) = quick_rx.recv() {
@@ -607,7 +604,6 @@ fn product_loop(
             // After this drain, current_model is authoritative for the cache key.
             while let Ok((provider, ep, m)) = quick_config_rx.try_recv() {
                 current_provider = provider;
-                current_endpoint = ep.clone();
                 // Use the shared resolution seam instead of duplicating logic.
                 let resolved_model_result =
                     lens_translate::resolve_model_for_provider(provider, &ep, m.as_deref());
@@ -715,7 +711,7 @@ fn product_loop(
                     Err(err)
                 }
             };
-            let _ = quick_result_tx.send(current.into_result(result.map_err(|e| e.to_owned())));
+            let _ = quick_result_tx.send(current.into_result(result.map_err(|e| e.to_string())));
         }
     });
 
@@ -753,13 +749,11 @@ fn product_loop(
     };
     let deep_result_tx = result_tx;
     let deep_provider = ai_config.deep.provider;
-    let deep_endpoint = ai_config.deep.endpoint.clone();
     std::thread::spawn(move || {
         let mut analyser = deep_ollama;
         let mut current_model = deep_model;
         let mut current_provider = deep_provider;
         let mut current_resolution_error: Option<lens_core::translate::TranslateError> = None;
-        let mut current_endpoint = deep_endpoint;
         // Deep analysis cache — separate from translation cache per ADR-0005.
         let mut explanations = AnalysisCache::new(ANALYSIS_ENTRIES);
         // P12: Per-lane failure state tracker for recovery event emission.
@@ -768,7 +762,6 @@ fn product_loop(
             // Check for config updates (non-blocking).
             while let Ok((provider, ep, m)) = deep_config_rx.try_recv() {
                 current_provider = provider;
-                current_endpoint = ep.clone();
                 // Deep is Ollama-only. LM Studio Deep is not supported.
                 let resolved_model_result = match provider {
                     Provider::Ollama => {
@@ -778,8 +771,9 @@ fn product_loop(
                         }
                         match t.resolve_model() {
                             Ok(rm) => {
+                                let rm = rm.to_owned();
                                 analyser = Some(t);
-                                Ok(Some(rm.to_owned()))
+                                Ok(Some(rm))
                             }
                             Err(e) => {
                                 // If resolution failed but we have a configured model, use it
@@ -880,7 +874,7 @@ fn product_loop(
     let mut current_card: Option<(Card, String, String)> = None;
     let mut current_focused_word: Option<String> = None;
     let mut current_app: Option<String> = None;
-    let mut pending_app: Option<String> = None;
+    let mut pending_app: Option<String>;
     let mut current_anchor = ScreenRect::new(0, 0, 0, 0);
     let mut current_generation: u64 = 0;
     let mut paused = false;
@@ -917,7 +911,7 @@ fn product_loop(
                         continue;
                     }
                     // Use the app/focus from the job itself, not global pending state.
-                    current_app = app;
+                    current_app = app.clone();
                     current_focused_word = focused_word;
                     match result {
                         Ok(translation) => {
@@ -942,12 +936,7 @@ fn product_loop(
                         Err(msg) => {
                             // Diagnostics are recorded in the worker thread where the error is still typed.
                             // No string-matching classification here.
-                            let card = Card {
-                                original: display_text.clone(),
-                                body: CardBody::Problem(msg),
-                                footer: String::new(),
-                                metadata: None,
-                            };
+                            let card = Card::not_readable(msg);
                             show_card_at(
                                 &overlay,
                                 &card,
@@ -977,7 +966,7 @@ fn product_loop(
                         continue;
                     }
                     // Use the app/focus from the job itself, not global pending state.
-                    current_app = app;
+                    current_app = app.clone();
                     current_focused_word = focused_word;
                     match result {
                         Ok(analysis) => {
@@ -999,12 +988,7 @@ fn product_loop(
                         Err(msg) => {
                             // Diagnostics are recorded in the worker thread where the error is still typed.
                             // No string-matching classification here.
-                            let card = Card {
-                                original: sentence.clone(),
-                                body: CardBody::Problem(format!("analysis failed: {}", msg)),
-                                footer: String::new(),
-                                metadata: None,
-                            };
+                            let card = Card::not_readable(format!("analysis failed: {}", msg));
                             show_card_at(
                                 &overlay,
                                 &card,
@@ -1201,14 +1185,7 @@ fn product_loop(
                                 "ocr   denied by policy for {}",
                                 manual_process.as_deref().unwrap_or("<unknown>")
                             );
-                            let card = Card {
-                                original: String::new(),
-                                body: CardBody::Problem(
-                                    "이 앱은 OCR이 허용되지 않습니다".to_owned(),
-                                ),
-                                footer: String::new(),
-                                metadata: None,
-                            };
+                            let card = Card::not_readable("이 앱은 OCR이 허용되지 않습니다");
                             show_card_at(
                                 &overlay,
                                 &card,
@@ -1234,12 +1211,7 @@ fn product_loop(
                                 "ocr   OCR is off for {}",
                                 manual_process.as_deref().unwrap_or("<unknown>")
                             );
-                            let card = Card {
-                                original: String::new(),
-                                body: CardBody::Problem("OCR이 비활성화되어 있습니다".to_owned()),
-                                footer: String::new(),
-                                metadata: None,
-                            };
+                            let card = Card::not_readable("OCR이 비활성화되어 있습니다");
                             show_card_at(
                                 &overlay,
                                 &card,
@@ -1261,14 +1233,7 @@ fn product_loop(
                                 lens_platform_macos::capture::request();
                                 screen_recording_requested = true;
                             }
-                            let card = Card {
-                                original: String::new(),
-                                body: CardBody::Problem(
-                                    "Screen Recording permission required. Grant in System Settings, then restart Mori Lens.".to_owned(),
-                                ),
-                                footer: String::new(),
-                                metadata: None,
-                            };
+                            let card = Card::not_readable("Screen Recording permission required. Grant in System Settings, then restart Mori Lens.");
                             show_card_at(
                                 &overlay,
                                 &card,
@@ -1318,12 +1283,7 @@ fn product_loop(
                                     current_focused_word =
                                         target.segmented.word_text().map(str::to_owned);
                                     current_card = Some((
-                                        Card {
-                                            original: sentence.clone(),
-                                            body: CardBody::Waiting("reading...".to_owned()),
-                                            footer: String::new(),
-                                            metadata: None,
-                                        },
+                                        Card::waiting(sentence.clone()),
                                         sentence,
                                         language.clone(),
                                     ));
@@ -1542,9 +1502,9 @@ fn product_loop(
                 // Off mode never runs OCR.
                 let effective_ocr_mode = lens_core::policy::effective_ocr(
                     ocr_mode,
-                    &ocr_rules,
-                    cli_ocr_override,
                     process_name.as_deref(),
+                    cli_ocr_override,
+                    &ocr_rules,
                 );
                 let target = match acquire_result {
                     Ok(target) => target,
@@ -1558,13 +1518,9 @@ fn product_loop(
                                     lens_platform_macos::capture::request();
                                     screen_recording_requested = true;
                                 }
-                                let card = Card {
-                                    original: String::new(),
-                                    body: CardBody::Problem(
-                                        "Screen Recording permission required. Grant in System Settings, then restart Mori Lens.".to_owned(),
-                                    ),
-                                    footer: String::new(),
-                                };
+                                let card = Card::not_readable(
+                                    "Screen Recording permission required. Grant in System Settings, then restart Mori Lens.",
+                                );
                                 show_card_at(
                                     &overlay,
                                     &card,
@@ -1639,12 +1595,7 @@ fn product_loop(
                 // Language decision + translation.
                 match decide(&sentence, &language) {
                     lens_core::language::Decision::AlreadyInTarget => {
-                        let card = Card {
-                            original: display_text.clone(),
-                            body: CardBody::Problem("already in your language".to_owned()),
-                            footer: String::new(),
-                            metadata: None,
-                        };
+                        let card = Card::not_readable("already in your language");
                         show_card(
                             &overlay,
                             &card,
@@ -1682,16 +1633,8 @@ fn product_loop(
                         });
                         // Store target for when result arrives.
                         current_app = pending_app.clone();
-                        current_card = Some((
-                            Card {
-                                original: display_text,
-                                body: CardBody::Waiting("translating...".to_owned()),
-                                footer: String::new(),
-                                metadata: None,
-                            },
-                            sentence,
-                            language.clone(),
-                        ));
+                        current_card =
+                            Some((Card::waiting(display_text), sentence, language.clone()));
                     }
                 }
             }
@@ -1756,6 +1699,7 @@ enum PresentationKind {
     Feedback,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn show_card(
     overlay: &Option<Overlay>,
     card: &Card,
@@ -1772,7 +1716,7 @@ fn show_card(
         None => return,
     };
     show_card_at(
-        &overlay,
+        overlay,
         card,
         &anchor,
         kind,
@@ -1784,6 +1728,7 @@ fn show_card(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn show_card_at(
     overlay: &Option<Overlay>,
     card: &Card,
