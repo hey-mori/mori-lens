@@ -606,13 +606,12 @@ impl OllamaTranslator {
     /// earned, the reply came back `done_reason: length` with nothing in it,
     /// every time, and Lens told the reader the result could not be understood.
     fn retry_once(&self, request: &QuickRequest) -> Result<QuickTranslation, TranslateError> {
-        let (body, _) = self.body_with_budget(request, false, GENEROUS_BUDGET);
+        let (body, fence) = self.body_with_budget(request, false, GENEROUS_BUDGET);
         let started = Instant::now();
-        let Ok((status, response)) =
-            http::post(&self.endpoint, "/api/generate", &body, self.timeout)
-        else {
-            return Err(TranslateError::Malformed);
-        };
+        // A transport failure is reported as what it is. Turning it into
+        // `Malformed` told a reader whose Ollama had stopped between the two
+        // attempts that the answer could not be understood.
+        let (status, response) = http::post(&self.endpoint, "/api/generate", &body, self.timeout)?;
         // Status is the first-class diagnostic boundary here too.
         if !(200..=299).contains(&status) {
             if let Some(TranslateError::ModelMissing(_)) = self.error_in(&response) {
@@ -623,14 +622,26 @@ impl OllamaTranslator {
         if let Some(error) = self.error_in(&response) {
             return Err(error);
         }
-        let text = json::string_value_of_key(&response, "response")
-            .unwrap_or_default()
-            .trim()
-            .to_owned();
+        let text = json::string_value_of_key(&response, "response").unwrap_or_default();
+        // The same frame as the first attempt, taken back off the same way.
+        let text = lens_core::translate::without_the_fence(text.trim(), &fence);
         if text.is_empty() {
             // Twice, with room. That is the model saying something, and a
             // hover is not the place to keep asking.
             return Err(TranslateError::Malformed);
+        }
+        // The same refusals as the other retry. Without them this was the one
+        // way past the echo and obeyed-injection checks: an empty first answer,
+        // then anything at all.
+        if lens_core::translate::reads_as_the_source(&request.source_text, &text)
+            || lens_core::language::never_reached_the_target(
+                &request.source_text,
+                &text,
+                &request.target_language,
+            )
+            || lens_core::translate::answer_is_suspiciously_short(&request.source_text, &text)
+        {
+            return Err(self.why_it_came_back_unchanged(request));
         }
         // Checked after every other rule has finished with the text, so a
         // name lost to a third-language cut is not reported twice.
@@ -2106,6 +2117,48 @@ mod lease_tests {
         assert!(
             matches!(err, TranslateError::HttpFailed(500)),
             "expected HttpFailed(500), got {err:?}"
+        );
+    }
+
+    /// The retry after an empty answer is held to the same refusals as the
+    /// other retry. It used to return whatever came back, so a second answer
+    /// that was the source given back reached the card and the cache as a
+    /// translation.
+    #[test]
+    fn a_retry_that_gives_the_source_back_is_refused() {
+        use crate::fake_server::{FakeResponse, FakeServer};
+
+        let source = "Press the modifier key while you click the link to open it.";
+        let server = FakeServer::start(vec![
+            FakeResponse::ok_json(r#"{"response":""}"#),
+            FakeResponse::ok_json(&format!(r#"{{"response":"{source}"}}"#)),
+        ]);
+        let translator = OllamaTranslator::new(server.address(), "any");
+        let request = QuickRequest::new(source, "Korean");
+
+        let result = translator.quick(&request);
+        assert!(
+            result.is_err(),
+            "the source given back was accepted as a translation: {result:?}"
+        );
+    }
+
+    /// A transport failure on the retry is reported as one. It used to become
+    /// `Malformed`, so a reader whose Ollama stopped between the two attempts
+    /// was told the answer could not be understood.
+    #[test]
+    fn a_retry_that_cannot_connect_is_not_reported_as_malformed() {
+        use crate::fake_server::{FakeResponse, FakeServer};
+
+        let server = FakeServer::start(vec![FakeResponse::ok_json(r#"{"response":""}"#)]);
+        let address = server.address();
+        let translator = OllamaTranslator::new(address, "any");
+        let request = QuickRequest::new("a sentence worth translating", "Korean");
+
+        let err = translator.quick(&request).unwrap_err();
+        assert!(
+            !matches!(err, TranslateError::Malformed),
+            "a connection failure was reported as Malformed"
         );
     }
 
