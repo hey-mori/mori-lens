@@ -21,8 +21,23 @@ kept as the record of how it was reached.
 
 ## State before the decision
 
-Until 2026-11-03 the repository was **all rights reserved**, and the README said
-it was not licensed for use.
+From 2026-08-27 until 2026-11-03 the README said the code was not licensed for
+use, and the Cargo manifests declared `UNLICENSED`.
+
+Git history records one earlier file. Commit `cff6b73` (2026-08-27, 11:07 +0900)
+added an Apache-2.0 `LICENSE` ("Copyright 2026 Isaac Lee"), and the README and
+`SECURITY.md` named Apache-2.0 at that commit. Commit `08c722c` (13:42 the same
+day) removed the file and both statements. Its message says the manifest was the
+statement the owner had made and that the file had been dropped in with the
+other community files. The file is present in the tree of seven commits on
+`main`, `cff6b73` through `4d37636e`. The history was not rewritten and those
+commits stay readable.
+
+What the record does not settle: whether any copy of the tree from that window
+reached anyone other than the owner, and what that would mean in law. The
+message of `08c722c` describes the repository as private at the time. This memo
+draws no legal conclusion about the Apache-2.0 file; that needs the owner's
+confirmation and, if it matters, legal advice.
 
 ## Future Licensing Options
 
@@ -78,7 +93,7 @@ All current dependencies use permissive licenses:
 
 No strong-copyleft (GPL, LGPL, AGPL) dependency. MPL-2.0 is file-level copyleft: it binds changes to those crates' own files, which Lens uses unmodified, so it places no condition on the licence Lens itself chooses beyond keeping their notices. No licence choice faces a compatibility barrier.
 
-## Decision Required
+## Decision required (as posed before 2026-11-03)
 
 The owner must decide:
 
@@ -93,9 +108,9 @@ Regardless of the decision, the repository is prepared:
 - ✅ THIRD-PARTY-NOTICES.md documents all dependencies
 - ✅ Asset provenance documented in docs/assets/README.md
 - ✅ No strong-copyleft dependencies to complicate licensing (MPL-2.0 crates are used unmodified)
-- ✅ All commits are from one person, under several commit identities (easy relicensing)
+- ✅ Every commit on `main` is authored by one person under three commit identities. That shows who committed, not who owns the rights: employment or contract terms, tool-generated code and third-party material are not recorded in git
 
-## Recommendation
+## Recommendation at the time (not the decision taken)
 
 Apply MIT OR Apache-2.0 dual license when making the repository public. This is the path of least resistance, maximizes adoption, and is compatible with all dependencies.
 
