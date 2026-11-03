@@ -178,16 +178,14 @@ cargo build --release --manifest-path apps/lens/Cargo.toml
 powershell -ExecutionPolicy Bypass -File scripts/install.ps1
 ```
 
-### Manual installation from source build
-
-After building, run the PowerShell installer script:
+### Uninstall
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File install.ps1
+powershell -ExecutionPolicy Bypass -File scripts/uninstall.ps1
 ```
 
-`uninstall.ps1` reverses all of it. Add `-Purge` to also delete the
-settings file.
+This reverses the installation and keeps the settings file. Add `-Purge` to
+also delete it.
 
 ## Use it
 
