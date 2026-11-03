@@ -15,7 +15,7 @@ meaning in your language, on your own machine.
 [Privacy](#privacy)
 
 ![status: pre-release](https://img.shields.io/badge/status-pre--release-6246f5)
-![license: not chosen yet](https://img.shields.io/badge/license-not%20chosen%20yet-1c1e22)
+[![license: MPL-2.0](https://img.shields.io/badge/license-MPL--2.0-1c1e22)](LICENSE)
 
 </div>
 
@@ -277,11 +277,9 @@ The full model, with what each promise depends on and how to verify it:
 
 ## License
 
-**Not licensed for use.** The author holds the copyright and has granted no
-permission to use, copy, modify or distribute this code.
+The source code in this repository is licensed under the [Mozilla Public License 2.0](LICENSE)
+(`MPL-2.0`). Copyright 2026 Isaac Lee.
 
-That is a state rather than a decision. Nothing has shipped, and choosing a
-licence later stays possible: every commit is one author's, so relicensing needs
-nobody's consent, and no dependency is under a strong copyleft licence, so any
-of the usual open-source licences remains reachable. A few crates in the app
-build are MPL-2.0, used unmodified.
+- Third-party dependencies keep their own licences.
+- The licence grants no rights to the Mori names or logos as trademarks.
+- Contributions are accepted under the same licence.
