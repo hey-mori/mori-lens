@@ -42,7 +42,9 @@ use crate::ai_runtime::AiRuntimeConfig;
 use crate::detail_view::{self, SharedSavePath};
 use crate::library_service::{self, SharedLibrary};
 use crate::settings_service::{self, SharedSettings};
-use crate::tauri_app::{self, AppHandle, SharedDiagnostics, SharedRecent};
+use crate::tauri_app::{
+    self, AppHandle, PauseRequest, QuitRequest, SharedDiagnostics, SharedRecent,
+};
 
 const USAGE: &str = "lens · Mori Lens (macOS)
 
@@ -260,20 +262,21 @@ pub fn main() -> std::process::ExitCode {
     let shared_recent: SharedRecent = Arc::new(Mutex::new(lens_core::recent::SessionRecent::new()));
 
     // Build Tauri app (must happen on main thread before spawning worker).
-    let (tauri_handle, shared_diagnostics, tauri_app) = match tauri_app::build(
-        shared_settings.clone(),
-        shared_library.clone(),
-        shared_detail.clone(),
-        shared_recent.clone(),
-        explain_flag.clone(),
-        shared_save_path.clone(),
-    ) {
-        Ok(triple) => triple,
-        Err(error) => {
-            eprintln!("Tauri initialization failed: {error}");
-            return std::process::ExitCode::from(1);
-        }
-    };
+    let (tauri_handle, shared_diagnostics, pause_request, quit_request, tauri_app) =
+        match tauri_app::build(
+            shared_settings.clone(),
+            shared_library.clone(),
+            shared_detail.clone(),
+            shared_recent.clone(),
+            explain_flag.clone(),
+            shared_save_path.clone(),
+        ) {
+            Ok(built) => built,
+            Err(error) => {
+                eprintln!("Tauri initialization failed: {error}");
+                return std::process::ExitCode::from(1);
+            }
+        };
     println!("  tauri     running");
 
     // Print startup banner.
@@ -424,6 +427,8 @@ pub fn main() -> std::process::ExitCode {
         product_loop(
             loop_tauri,
             loop_diagnostics,
+            pause_request,
+            quit_request,
             loop_settings,
             loop_library,
             loop_recent,
@@ -462,6 +467,8 @@ pub fn main() -> std::process::ExitCode {
 fn product_loop(
     tauri_handle: AppHandle,
     shared_diagnostics: SharedDiagnostics,
+    pause_request: PauseRequest,
+    quit_request: QuitRequest,
     shared_settings: SharedSettings,
     shared_library: SharedLibrary,
     shared_recent: SharedRecent,
@@ -1055,6 +1062,16 @@ fn product_loop(
             if mb.poll_open_library() {
                 pending_commands.push(ProductCommand::OpenLibrary);
             }
+        }
+
+        // The Control Center's pause and quit buttons set these requests. They
+        // dispatch as the same commands the menu bar and hotkeys send, as the
+        // Windows loop does with them.
+        if pause_request.take() {
+            pending_commands.push(ProductCommand::PauseToggle);
+        }
+        if quit_request.take() {
+            pending_commands.push(ProductCommand::Quit);
         }
 
         if hotkeys_available {
