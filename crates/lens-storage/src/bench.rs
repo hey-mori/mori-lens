@@ -24,7 +24,7 @@ use std::time::Instant;
 
 fn temp_db(name: &str) -> PathBuf {
     let mut path = std::env::temp_dir();
-    path.push(format!("lens-bench-{}.db", name));
+    path.push(format!("lens-bench-{}-{}.db", name, std::process::id()));
     if path.exists() {
         std::fs::remove_file(&path).unwrap();
     }
