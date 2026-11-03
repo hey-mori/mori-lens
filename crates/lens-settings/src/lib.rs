@@ -2284,9 +2284,10 @@ endpoint = \"127.0.0.1:11434\"
             "missing [shortcuts] section"
         );
         // The defaults differ by platform: Ctrl+Alt on Windows, Cmd+Opt
-        // (written as Meta+Alt) on macOS, which also has no Pin binding.
+        // (written Alt+Meta, the canonical modifier order) on macOS, which also
+        // has no Pin binding.
         let modifiers = if cfg!(target_os = "macos") {
-            "Meta+Alt"
+            "Alt+Meta"
         } else {
             "Ctrl+Alt"
         };
