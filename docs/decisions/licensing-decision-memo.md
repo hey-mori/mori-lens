@@ -1,16 +1,28 @@
 # Licensing Decision Memo
 
 **Date**: 2026-09-25  
-**Status**: Decision pending owner input
+**Status**: Decided 2026-11-03: MPL-2.0, copyright Isaac Lee
 
-## Current State
+## Decision
 
-The repository is **all rights reserved**. The README states:
+The owner chose the **Mozilla Public License 2.0** for Mori Lens and for the
+other Mori repositories that are being opened (`mori`, `mori-browser-extension`).
+Anyone may use, modify and build on the code, commercially as well, and
+changes to MPL-covered files that are distributed stay available as source.
+The licence is file-level, so code combined with Lens under other terms stays
+under those terms.
 
-> Not licensed for use. The author holds the copyright and has granted no
-> permission to use, copy, modify or distribute this code.
+What it does not cover: third-party dependencies keep their own licences
+(see `THIRD-PARTY-NOTICES.md`), and the licence grants no rights to the Mori
+names or logos as trademarks.
 
-This is accurate as of v0.1.0. Nothing has shipped publicly, and the repository is private.
+The sections below are the options as they were weighed before the decision,
+kept as the record of how it was reached.
+
+## State before the decision
+
+Until 2026-11-03 the repository was **all rights reserved**, and the README said
+it was not licensed for use.
 
 ## Future Licensing Options
 
