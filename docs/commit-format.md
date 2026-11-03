@@ -65,6 +65,11 @@ followed or to be argued with.
     `(P2.5)`, `[Milestone 1]`. The branch and the issue already carry
     that, and a subject line that starts with a label reads worse a
     year later.
+- **Merge commits** keep the message git or GitHub writes:
+  `Merge pull request #N from ...` with the pull request title as its
+  body, or `Merge branch '...' into ...` when main is brought into a
+  branch, since a pushed branch is never rewritten. They are exempt
+  from the shape rules and still checked for attribution.
 
 Every rule above is checked by `scripts/validate-commit-message.sh`, which the
 commit-msg hook, the pre-push hook and `scripts/check-commit-policy.sh` all call,
