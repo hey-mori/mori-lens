@@ -83,6 +83,36 @@ cargo clippy --workspace --all-targets -- -D warnings
 step "cargo test"
 cargo test --workspace
 
+# Two test runs at once must not touch each other's files. The lens-storage
+# failure seen on 2026-09-30 was exactly that: tests named their scratch
+# databases after the test alone, so a second gate on the same machine deleted
+# the first one's files mid-run. The scratch helpers now add the process id;
+# this runs the storage and settings test binaries twice in parallel to keep it
+# that way. It runs the binaries directly, since two `cargo test` invocations
+# would queue on cargo's build lock and prove nothing.
+step "concurrent test runs share no scratch files"
+concurrent_bins="$(cargo test -p lens-storage -p lens-settings --no-run --message-format=json 2>/dev/null \
+  | python3 -c 'import json, sys
+for line in sys.stdin:
+    m = json.loads(line)
+    if m.get("reason") == "compiler-artifact" and m.get("executable") and m["target"]["kind"] == ["lib"]:
+        print(m["executable"])')"
+[ -n "$concurrent_bins" ] || { echo "no test binaries found for the concurrency check"; exit 1; }
+concurrent_failed=0
+for bin in $concurrent_bins; do
+  "$bin" -q >/dev/null 2>&1 &
+  other=$!
+  "$bin" -q >/dev/null 2>&1 || concurrent_failed=1
+  wait "$other" || concurrent_failed=1
+done
+if [ "$concurrent_failed" != 0 ]; then
+  printf '\ntwo runs of the same tests interfered with each other. A test helper\n'
+  printf 'is using a scratch path without the process id; see temp_db in\n'
+  printf 'crates/lens-storage/src/lib.rs for the pattern.\n'
+  exit 1
+fi
+echo "$(echo "$concurrent_bins" | wc -l) test binaries ran twice in parallel without interference"
+
 step "smoke asset verification"
 python3 "$(dirname "$0")/verify-smoke-assets.py"
 
