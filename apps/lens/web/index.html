@@ -220,9 +220,9 @@
       <div class="field">
         <label data-i18n="general.default.tier">Default tier</label>
         <select id="f-default-tier">
-          <option value="allow" data-i18n="general.default.tier.allow">Allow</option>
-          <option value="modifier" data-i18n="general.default.tier.modifier">Modifier</option>
-          <option value="deny" data-i18n="general.default.tier.deny">Deny</option>
+          <option value="allow" data-i18n="general.default.tier.allow">Always read</option>
+          <option value="modifier" data-i18n="general.default.tier.modifier">Only while the modifier key is held</option>
+          <option value="deny" data-i18n="general.default.tier.deny">Never read</option>
         </select>
       </div>
       <h2 data-i18n="general.history.title">History</h2>
@@ -335,9 +335,9 @@
         <input type="text" id="new-app-name" data-i18n="apps.process.name.placeholder" placeholder="Process name" aria-label="Application process name" style="width:150px;padding:4px 8px;border:1px solid #ccc;border-radius:4px">
         <label for="new-app-tier" class="sr-only" data-i18n="apps.tier">Application tier</label>
         <select id="new-app-tier" aria-label="Application tier" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px">
-          <option value="allow">Allow</option>
-          <option value="modifier">Modifier</option>
-          <option value="deny">Deny</option>
+          <option value="allow" data-i18n="general.default.tier.allow">Always read</option>
+          <option value="modifier" data-i18n="general.default.tier.modifier">Only while the modifier key is held</option>
+          <option value="deny" data-i18n="general.default.tier.deny">Never read</option>
         </select>
         <label for="new-app-ocr" class="sr-only" data-i18n="apps.ocr">Application OCR behavior</label>
         <select id="new-app-ocr" aria-label="Application OCR behavior" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px">
