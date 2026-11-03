@@ -482,8 +482,10 @@ unsafe fn show_card(
         Some(previous) => (previous.width, previous.width),
         None => (0, widest),
     };
+    // The monitor the text is on, not the primary one.
     // SAFETY: read-only monitor queries.
-    let ceiling = card_height_ceiling(unsafe { work_area_for(anchor.center()) });
+    let work_area = unsafe { work_area_for(anchor.center()) };
+    let ceiling = card_height_ceiling(work_area);
 
     // **Laid out, and cut to fit if it does not.** A card taller than its
     // ceiling is clipped by the window, and what disappears is the end of the
@@ -551,29 +553,20 @@ unsafe fn show_card(
         *slot = Some(card);
     }
 
-    let mut placed = lens_core::card::place_card(
-        anchor,
-        anchor.center(),
-        (width, height),
-        // The monitor the text is on, not the primary one.
-        // SAFETY: read-only monitor queries.
-        unsafe { work_area_for(anchor.center()) },
-    );
+    let mut placed =
+        lens_core::card::place_card(anchor, anchor.center(), (width, height), work_area);
 
     // A card arriving, rather than one growing. A streamed answer calls this
     // several times a second and only the first of them is an entrance: the
     // rest would be a card that flashes once per word.
     let arriving = holding.is_none();
 
-    // Same hover: keep where it already is, and only let it grow downwards.
-    // Re-placing on every partial is what put the same card in three places.
+    // Same hover: keep its side of the text and grow away from the text.
+    // Re-placing on every partial is what put the same card in three places;
+    // growing only downwards is what pushed a card placed above the text down
+    // over it. See `grow_card`.
     if let Some(previous) = holding {
-        placed = ScreenRect::new(
-            previous.x,
-            previous.y,
-            previous.width,
-            placed.height.max(previous.height),
-        );
+        placed = lens_core::card::grow_card(previous, placed.height, anchor, work_area);
     }
     shown.anchor = Some(anchor);
     shown.placed = Some(placed);
