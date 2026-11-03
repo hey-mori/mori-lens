@@ -423,7 +423,7 @@ fn system_prompt(
     // **Named, not described.** The line above already says identifiers stay
     // verbatim, and a 7B model applying that to a bare CamelCase word in the
     // middle of a sentence evidently does not: one turned
-    // `EngineDataSheetService` into 엔진데이터시트서비스 on a reader's card, which
+    // `LedgerDataSheetService` into 레저데이터시트서비스 on a reader's card, which
     // is worse than not translating the sentence at all. Listing the tokens
     // turns a rule the model has to apply into a list it has to copy.
     //
@@ -1889,10 +1889,10 @@ mod keep_tests {
     #[test]
     fn named_identifiers_reach_the_prompt() {
         let keep = lens_core::translate::identifiers_in(
-            "insway의 EngineDataSheetService 에 export_csv 를 넣고, POST /projects/{id}/insbase/tables/{table}/export 라우트를 붙였습니다.",
+            "orbita의 LedgerDataSheetService 에 export_csv 를 넣고, POST /projects/{id}/orbbase/tables/{table}/export 라우트를 붙였습니다.",
         );
         let prompt = system_prompt("Korean", None, &keep, "#LENS-test#");
-        assert!(prompt.contains("EngineDataSheetService"), "{prompt}");
+        assert!(prompt.contains("LedgerDataSheetService"), "{prompt}");
         assert!(prompt.contains("export_csv"), "{prompt}");
         assert!(prompt.contains("/projects/"), "{prompt}");
     }

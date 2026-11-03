@@ -953,8 +953,8 @@ mod from_a_card_tests {
     /// in Chinese and here is the Korean part, then the Korean translation
     /// again. Kept here verbatim because a rule tuned on a paraphrase of a
     /// defect is a rule tuned on the wrong thing.
-    const SOURCE: &str = "For the database separation, since insway's bootstrap role is a cluster superuser with role bypass RLS, moving to another database on the same server doesn't create a real boundary unless the role loses superuser privileges.";
-    const ANSWER: &str = "데이터베이스 분리에 대해 insway의 부트스트랩 역할은 클러스터 슈퍼유저 권한을 가지고 있으며 역할 피어스 RLS를 통해 권한을 상실하면 같은 서버상의 문본无法继续使用中文呈现，以下是翻译结果的韩文部分：\n\n데이터베이스 분리에 대해 insway의 부트스트랩 역할은 클러스터 슈퍼유저 권한을 가지고 있으며 역할 피어스 RLS를 통해 권한을 상실하면 같은 서버에서도 실제 경계가 형성되지 않습니다.";
+    const SOURCE: &str = "For the database separation, since orbita's bootstrap role is a cluster superuser with role bypass RLS, moving to another database on the same server doesn't create a real boundary unless the role loses superuser privileges.";
+    const ANSWER: &str = "데이터베이스 분리에 대해 orbita의 부트스트랩 역할은 클러스터 슈퍼유저 권한을 가지고 있으며 역할 피어스 RLS를 통해 권한을 상실하면 같은 서버상의 문본无法继续使用中文呈现，以下是翻译结果的韩文部分：\n\n데이터베이스 분리에 대해 orbita의 부트스트랩 역할은 클러스터 슈퍼유저 권한을 가지고 있으며 역할 피어스 RLS를 통해 권한을 상실하면 같은 서버에서도 실제 경계가 형성되지 않습니다.";
 
     #[test]
     fn the_card_from_the_screenshot_is_caught() {
@@ -1072,8 +1072,8 @@ mod stray_script_tests {
     #[test]
     fn an_identifier_kept_verbatim_is_not_caught() {
         assert!(!never_reached_the_target(
-            "EngineDataSheetService",
-            "EngineDataSheetService",
+            "LedgerDataSheetService",
+            "LedgerDataSheetService",
             "Korean",
         ));
     }

@@ -160,7 +160,7 @@ text is not.
 
 A suffix does not count, and that distinction is the rule. Korean technical
 writing attaches particles to English identifiers constantly, `export_csv를`,
-`insbase에`, `k8s를`, and flagging those would fire on most of what this
+`orbbase에`, `k8s를`, and flagging those would fire on most of what this
 product's first reader writes.
 
 It is a floor rather than a ceiling, and the gaps are asserted in their own

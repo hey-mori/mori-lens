@@ -215,7 +215,7 @@ counterpart that was produced was a substring of the translation.
 The counterpart naturally filters out cases where "what translates
 this word" would be ambiguous: abstract terms (A01 "rests"), technical
 terms (D01 "adapter", D03 "assumption"), and proper nouns (F02
-"Worklynx") never produce a counterpart. The filter is the product
+"Workloom") never produce a counterpart. The filter is the product
 of two model calls that must agree exactly, and it works.
 
 The cost question: 1.9 seconds for a counterpart that is always

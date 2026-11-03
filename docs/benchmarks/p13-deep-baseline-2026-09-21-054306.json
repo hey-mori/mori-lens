@@ -936,9 +936,9 @@
       "category": "edge",
       "lane": "deep",
       "run_index": 0,
-      "source": "The Worklynx dashboard shows one row per session.",
-      "focused_word": "Worklynx",
-      "output": "Worklynx|명사|워크라이너스 시스템의 관리자 인터페이스|주어+동사+보어|",
+      "source": "The Workloom dashboard shows one row per session.",
+      "focused_word": "Workloom",
+      "output": "Workloom|명사|워크룸 시스템의 관리자 인터페이스|주어+동사+보어|",
       "automated": {
         "non_empty": true,
         "target_language_detected": true,

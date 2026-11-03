@@ -1142,28 +1142,28 @@ Each field scored 0-2:
 
 ## F02 -- edge
 
-**Source:** The Worklynx dashboard shows one row per session.
+**Source:** The Workloom dashboard shows one row per session.
 
-**Focused word:** Worklynx
+**Focused word:** Workloom
 
-**Reference translation:** Worklynx 대시보드는 세션당 한 줄을 표시합니다.
+**Reference translation:** Workloom 대시보드는 세션당 한 줄을 표시합니다.
 
 **Expected (corpus ground truth):**
 
-- Expected lemma: Worklynx
+- Expected lemma: Workloom
 - Expected POS: 명사
 - Expected grammar: proper noun
 - Corpus note: proper noun: lemma should not change the form
 
 **Model analysis (canonical output):**
 
-- Lemma: Worklynx
+- Lemma: Workloom
 - POS: 명사
-- Sense: 워크라이너스 시스템의 관리자 인터페이스
+- Sense: 워크룸 시스템의 관리자 인터페이스
 - Structure: 주어+동사+보어
 - Note: (empty)
 
-**Raw canonical output:** `Worklynx|명사|워크라이너스 시스템의 관리자 인터페이스|주어+동사+보어|`
+**Raw canonical output:** `Workloom|명사|워크룸 시스템의 관리자 인터페이스|주어+동사+보어|`
 
 **Automated evidence:**
 

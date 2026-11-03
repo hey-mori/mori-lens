@@ -104,15 +104,15 @@ of an adverb is the adverb itself.
 **Audit: Expected lemma "vacuously" is correct. Single-word entry,
 lemma is the word itself.**
 
-**F02: Worklynx proper noun**
+**F02: Workloom proper noun**
 
-F02: "The Worklynx dashboard shows one row per session." word: Worklynx
-Expected lemma: "Worklynx"
+F02: "The Workloom dashboard shows one row per session." word: Workloom
+Expected lemma: "Workloom"
 
-"Worklynx" is a proper noun (product name). Proper nouns do not change
+"Workloom" is a proper noun (product name). Proper nouns do not change
 form. The lemma is the word itself.
 
-**Audit: Expected lemma "Worklynx" is correct. Proper nouns are their
+**Audit: Expected lemma "Workloom" is correct. Proper nouns are their
 own lemma.**
 
 ### Summary of audit
@@ -123,7 +123,7 @@ own lemma.**
 | C01/C02 | Note expectation for Reader | **Corpus expectation wrong** — Reader doesn't detect idioms |
 | D02 | nearest → near | Expected correct, model failed |
 | F01 | vacuously → vacuously | Expected correct |
-| F02 | Worklynx → Worklynx | Expected correct |
+| F02 | Workloom → Workloom | Expected correct |
 
 ## Step 3 — Human Evaluation Rubric (fixed)
 

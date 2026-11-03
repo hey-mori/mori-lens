@@ -71,9 +71,9 @@ Corpus expected idiom notes for C01/C02 under Reader profile. But the production
 
 "vacuously" is already in its base form (adverb). Expected lemma "vacuously" is correct. **Audit: Expected correct.**
 
-### F02: Worklynx → Worklynx
+### F02: Workloom → Workloom
 
-"Worklynx" is a proper noun. Proper nouns are their own lemma. **Audit: Expected correct.**
+"Workloom" is a proper noun. Proper nouns are their own lemma. **Audit: Expected correct.**
 
 ## Human Evaluation Rubric (Fixed)
 

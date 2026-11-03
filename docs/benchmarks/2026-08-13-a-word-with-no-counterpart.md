@@ -6,7 +6,7 @@ ended with a list of what it had not measured, and named this one exactly:
 > A particle, an article, or a word the translation drops entirely is the case
 > that will produce a confident wrong answer, and none was tried.
 
-Then a selftest walked into it. The focused word was `worklynx.hdhub.app`, a
+Then a selftest walked into it. The focused word was `workloom.orbit.app`, a
 URL, and the card carried a `번역에서` row with fourteen characters in it. A URL
 has no counterpart in a Korean sentence.
 
@@ -17,7 +17,7 @@ should come back as nothing.
 
 ```
 word                 first                 second                 kept
-worklynx.hdhub.app   "worklynx.hdhub.app"  "worklynx.hdhub.app을"  -
+workloom.orbit.app   "workloom.orbit.app"  "workloom.orbit.app을"  -
 the                  "각"                   "제공자"                -
 a                    "캡처"                  "작"                   -
 is                   "은"                   "은"                    -
@@ -30,7 +30,7 @@ rectangle            "타입"                  "타입"                  타입
 ## Two mechanisms, and both earned their place
 
 **Disagreement caught four.** The URL is the nicest of them: one question
-answered `worklynx.hdhub.app` and the other `worklynx.hdhub.app을`, differing by
+answered `workloom.orbit.app` and the other `workloom.orbit.app을`, differing by
 the object particle Korean attaches to a foreign noun. Exact equality, which
 [ADR-0013's neighbour](2026-08-11-one-word-and-its-counterpart.md) argued for
 against containment, is what turns that one character into a refusal.

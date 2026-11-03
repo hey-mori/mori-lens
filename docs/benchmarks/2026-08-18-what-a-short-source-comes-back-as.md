@@ -25,7 +25,7 @@ empty                     5   48  #LENS-5a23bfc686af5a74#\n공백\n#LENS-5a23bfc
 commit                    6    2  커밋
 the lease                 9    6  임대 계약서
 a stale element          15    6  오래된 요소
-EngineDataSheetService   22   10  엔진데이터시트서비스
+LedgerDataSheetService   22   10  레저데이터시트서비스
 export_csv               10   10  export_csv
 windows-rs 0.62          15   15  windows-r스 0.62
 OK                        2    7  확인했습니다.
@@ -74,7 +74,7 @@ it.
 ## The identifiers were transliterated, and that is not fixed here
 
 ```
-EngineDataSheetService   →  엔진데이터시트서비스
+LedgerDataSheetService   →  레저데이터시트서비스
 windows-rs 0.62          →  windows-r스 0.62
 ```
 

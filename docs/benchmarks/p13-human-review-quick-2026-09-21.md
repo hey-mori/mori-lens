@@ -690,11 +690,11 @@
 
 ## F02 -- edge
 
-**Source:** The Worklynx dashboard shows one row per session.
+**Source:** The Workloom dashboard shows one row per session.
 
-**Focused word:** Worklynx
+**Focused word:** Workloom
 
-**Reference translation:** Worklynx 대시보드는 세션당 한 줄을 표시합니다.
+**Reference translation:** Workloom 대시보드는 세션당 한 줄을 표시합니다.
 
 **Inference status:** completed
 **Latency:** 1383ms
