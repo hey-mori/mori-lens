@@ -37,7 +37,7 @@ When the repository is made public, the owner must choose a license. The options
 - Strong community protection
 
 **Cons:**
-- GPL is incompatible with Apache-2.0 (some dependencies)
+- GPL-2.0-only is incompatible with Apache-2.0 dependencies; GPL-3.0 is compatible with them
 - AGPL may deter commercial adoption
 - More complex license compliance
 
@@ -57,11 +57,14 @@ When the repository is made public, the owner must choose a license. The options
 ## Dependency Analysis
 
 All current dependencies use permissive licenses:
-- Rust crates: MIT, Apache-2.0
+- Rust crates: MIT or Apache-2.0 for almost all of them. The app build
+  (`apps/lens`) also pulls in five MPL-2.0 crates through Tauri's HTML
+  tooling: `cssparser`, `cssparser-macros`, `dtoa-short`, `selectors` and
+  `option-ext`. Checked with `cargo metadata` on 2026-11-03.
 - JavaScript: MIT, MPL-2.0
 - External providers (Ollama, LM Studio): MIT, user-installed
 
-No copyleft dependencies detected. A permissive license choice faces no compatibility barriers.
+No strong-copyleft (GPL, LGPL, AGPL) dependency. MPL-2.0 is file-level copyleft: it binds changes to those crates' own files, which Lens uses unmodified, so it places no condition on the licence Lens itself chooses beyond keeping their notices. No licence choice faces a compatibility barrier.
 
 ## Decision Required
 
@@ -77,8 +80,8 @@ Regardless of the decision, the repository is prepared:
 
 - ✅ THIRD-PARTY-NOTICES.md documents all dependencies
 - ✅ Asset provenance documented in docs/assets/README.md
-- ✅ No copyleft dependencies to complicate licensing
-- ✅ All commits are from a single author (easy relicensing)
+- ✅ No strong-copyleft dependencies to complicate licensing (MPL-2.0 crates are used unmodified)
+- ✅ All commits are from one person, under several commit identities (easy relicensing)
 
 ## Recommendation
 
