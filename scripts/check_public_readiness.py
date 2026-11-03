@@ -200,21 +200,50 @@ def check_version_consistency():
 
 
 def check_license_state():
-    """Check license state consistency."""
+    """Check that the README, the LICENSE file and the Cargo manifests agree.
+
+    Two states are consistent, and the gate does not choose between them:
+    no licence anywhere (no LICENSE, an all-rights-reserved README, UNLICENSED
+    manifests), or one licence everywhere (a LICENSE file, a README that names
+    it, and the same SPDX expression in every manifest). The first version
+    accepted only the first state, so adding any licence failed the gate.
+    """
     print("\n· license state")
     readme = REPO_ROOT / "README.md"
-    if readme.exists():
-        content = readme.read_text(encoding="utf-8", errors="ignore")
-        if "Not licensed for use" in content or "all rights reserved" in content.lower():
+    content = readme.read_text(encoding="utf-8", errors="ignore") if readme.exists() else ""
+    all_rights = "Not licensed for use" in content or "all rights reserved" in content.lower()
+    license_files = sorted(p.name for p in REPO_ROOT.glob("LICENSE*"))
+
+    manifests = {}
+    for manifest in (REPO_ROOT / "Cargo.toml", REPO_ROOT / "apps" / "lens" / "Cargo.toml"):
+        if manifest.exists():
+            found = re.search(r'^license\s*=\s*"([^"]*)"', manifest.read_text(encoding="utf-8"), re.M)
+            manifests[str(manifest.relative_to(REPO_ROOT))] = found.group(1) if found else ""
+    declared = set(manifests.values())
+
+    if not license_files:
+        if all_rights:
             ok("README states all-rights-reserved")
         else:
-            fail("README license state unclear")
-    # Check that no LICENSE file exists (since we're all-rights-reserved)
-    license_files = list(REPO_ROOT.glob("LICENSE*"))
-    if not license_files:
-        ok("no LICENSE file (consistent with all-rights-reserved)")
+            fail("no LICENSE file, and the README does not say the code is not licensed for use")
+        if declared <= {"UNLICENSED"}:
+            ok("no LICENSE file, manifests say UNLICENSED")
+        else:
+            fail(f"no LICENSE file, but the manifests declare {sorted(declared)}")
+        return
+
+    ok(f"LICENSE file present: {', '.join(license_files)}")
+    if all_rights:
+        fail("a LICENSE file exists but the README still says the code is not licensed for use")
+    if len(declared) != 1 or "" in declared or "UNLICENSED" in declared:
+        fail(f"the manifests must all carry the licence's SPDX expression: {manifests}")
+        return
+    spdx = declared.pop()
+    ok(f"manifests agree on {spdx}")
+    if spdx in content:
+        ok(f"README names {spdx}")
     else:
-        fail(f"LICENSE file exists: {license_files[0].name}")
+        fail(f"the README does not name {spdx}")
 
 
 def check_no_secrets():
