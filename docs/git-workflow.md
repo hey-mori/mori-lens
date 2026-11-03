@@ -239,11 +239,13 @@ a clean `main`. The one bootstrapping exception, recorded so it is not
 mistaken for the rule: the initial commit that creates the repository
 skeleton has no `main` to branch from.
 
-`main` is protected by the pre-push hook and by the verification gate
-rather than by a hard branch-protection rule, because the repository is
-private on a plan where protection rules are not available. That is a
-platform limitation, not a preference: when the constraint lifts, turn
-protection on.
+`main` is protected twice. The pre-push hook and the verification gate
+guard a local clone. Since the repository became public, a GitHub ruleset on
+the default branch also forbids deleting it, forbids non-fast-forward pushes,
+and requires changes to arrive through a pull request that merges with a merge
+commit. The ruleset requires no approving review and no status check, has no
+bypass actors, and does not replace the local gate: the gate and CI results
+are still checked by whoever merges.
 
 ## 7. Language
 
