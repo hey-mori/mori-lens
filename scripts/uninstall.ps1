@@ -48,7 +48,7 @@ $RunValue = 'Mori Lens'
 $ProductKey = 'HKCU:\Software\Mori Lens'
 
 function Say($message) { Write-Host "  $message" }
-function Step($message) { Write-Host "`n· $message" }
+function Step($message) { Write-Host "`n- $message" }
 
 if (-not $Prefix) {
     # What the installer recorded, so a custom prefix is remembered rather

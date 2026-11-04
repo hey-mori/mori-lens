@@ -56,7 +56,7 @@ $AppName = 'Mori Lens'
 $RegistryKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MoriLens'
 
 function Say($message) { Write-Host "  $message" }
-function Step($message) { Write-Host "`n· $message" }
+function Step($message) { Write-Host "`n- $message" }
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $source = Join-Path $here 'lens.exe'
@@ -93,7 +93,7 @@ if ($running) {
     exit 1
 }
 
-# `--version` prints `Mori Lens 0.1.0 · build <sha>`, which is a sentence and
+# `--version` prints `Mori Lens 0.1.0 - build <sha>`, which is a sentence and
 # not a version. Settings > Apps puts DisplayVersion in a narrow column, and
 # the whole line there reads as a product whose version number is its name.
 #
