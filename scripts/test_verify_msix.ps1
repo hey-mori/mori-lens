@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# Mori Lens — MSIX verifier regression tests.
+# Mori Lens, MSIX verifier regression tests.
 #
 # Tests that verify-msix.ps1 correctly handles various scenarios using
 # temporary fixtures.  No installation, no Store credentials, no real
