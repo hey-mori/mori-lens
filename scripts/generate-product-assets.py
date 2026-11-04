@@ -1,235 +1,244 @@
 #!/usr/bin/env python3
 """
-Generate production-quality application icons for Mori Lens.
+Generate the Mori Lens application icons.
 
-This script creates canonical production assets from a deterministic source.
-Unlike smoke assets (grey placeholders), these are suitable for distribution.
+Design: the Mori tile, the same rounded square and purple gradient as the Mori
+app icon, carrying a white lens: a ring with a handle, and the Mori star inside
+the ring. The tile and star say which family Lens belongs to, the lens says
+which member it is. docs/assets/lens-mark.svg is the same drawing as a vector,
+for the README.
 
-Design: A simple lens/magnifying glass motif representing the hover-to-translate
-concept. Uses a blue gradient to suggest clarity and focus.
+Small sizes are drawn, not shrunk. At 32 pixels and below the star inside the ring
+reads as a plus sign, a zoom-in button, so the 16 to 32 pixel icons carry
+the ring and handle alone, drawn heavier.
+
+Every size is rendered at 8x and reduced with a Lanczos filter, so curves are
+anti-aliased at every size Windows asks for.
 
 Output:
-- apps/lens/icons/icon.png (1024x1024)
-- apps/lens/icons/icon.ico (16x16, 32x32, 48x48, 256x256)
-- apps/lens/icons/icon.icns (multiple sizes for macOS)
-- packaging/windows-msix/Assets/*.png (various sizes for MSIX)
+- apps/lens/icons/icon.png (1024x1024, with the macOS safe-area margin)
+- apps/lens/icons/icon.ico (16 to 256, near full bleed, as Windows draws them)
+- apps/lens/icons/icon.icns (from icon.png)
+- packaging/windows-msix/Assets/*.png
 
 Usage:
     python scripts/generate-product-assets.py
+
+Deterministic for a given Pillow version, which scripts/requirements-assets.txt
+pins.
 """
 
+import math
+import struct
 import sys
 from pathlib import Path
 
-# Force UTF-8 output for Windows
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 try:
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw
 except ImportError:
     print("ERROR: Pillow is required. Install with: pip install Pillow", file=sys.stderr)
     sys.exit(1)
 
 REPO_ROOT = Path(__file__).parent.parent.absolute()
 
-# Design parameters
-BG_COLOR = (240, 248, 255)  # Alice blue - light, clean
-LENS_COLOR = (70, 130, 180)  # Steel blue - professional
-LENS_HIGHLIGHT = (135, 206, 250)  # Light sky blue - for highlight
-HANDLE_COLOR = (100, 100, 100)  # Dark grey - subtle
+# Rendering scale. Every icon is drawn this many times larger, then reduced.
+SUPERSAMPLE = 8
+
+# The Mori tile gradient, top left to bottom right, from public/mori-mark.svg
+# in hey-mori/mori.
+GRADIENT = [(0.0, (0x5C, 0x52, 0xF4)), (0.55, (0x71, 0x5D, 0xEB)), (1.0, (0xAA, 0x86, 0xF5))]
+
+# Tile corner radius in the 1024 design box, as in the Mori mark.
+TILE_RADIUS = 152
+
+# Margins, as a fraction of the canvas on each side. macOS icons sit inside
+# Apple's grid; Windows draws its icons close to full bleed.
+MARGIN_MACOS = 0.098
+MARGIN_WINDOWS = 0.03
+
+# The lens, in the 1024 design box. The full drawing, for 40 pixels and up.
+FULL = {
+    "centre": 468,
+    "ring_radius": 235,  # to the middle of the stroke
+    "ring_width": 74,
+    "handle_end": 800,
+    "handle_width": 96,
+    "star_scale": 0.46,
+}
+# The small drawing, for 32 pixels and below: no star, heavier strokes.
+SMALL = {
+    "centre": 452,
+    "ring_radius": 248,
+    "ring_width": 104,
+    "handle_end": 820,
+    "handle_width": 124,
+    "star_scale": 0.0,
+}
+SMALL_UP_TO = 32
+
+# The Mori star, as the cubic segments of public/mori-mark.svg in hey-mori/mori.
+STAR_SEGMENTS = [
+    ((512, 226), (552, 226), (566, 263), (584, 337)),
+    ((584, 337), (606, 428), (638, 462), (722, 485)),
+    ((722, 485), (787, 502), (806, 517), (806, 536)),
+    ((806, 536), (806, 561), (775, 572), (714, 588)),
+    ((714, 588), (630, 610), (601, 643), (579, 734)),
+    ((579, 734), (561, 808), (552, 836), (512, 836)),
+    ((512, 836), (472, 836), (463, 808), (445, 734)),
+    ((445, 734), (423, 643), (394, 610), (310, 588)),
+    ((310, 588), (249, 572), (218, 561), (218, 536)),
+    ((218, 536), (218, 517), (237, 502), (302, 485)),
+    ((302, 485), (386, 462), (418, 428), (440, 337)),
+    ((440, 337), (458, 263), (472, 226), (512, 226)),
+]
+STAR_CENTRE = (512, 531)
+WHITE = (255, 255, 255, 255)
 
 
-def create_lens_icon(size):
-    """
-    Create a simple lens/magnifying glass icon.
+def star_points(steps=32):
+    points = []
+    for p0, p1, p2, p3 in STAR_SEGMENTS:
+        for i in range(steps):
+            t = i / steps
+            u = 1 - t
+            points.append(
+                (
+                    u**3 * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t**3 * p3[0],
+                    u**3 * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t**3 * p3[1],
+                )
+            )
+    return points
 
-    Design:
-    - Circular lens with gradient effect
-    - Handle extending from bottom-right
-    - Transparent background
-    - Recognizable at small sizes (16px+)
-    """
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+
+def gradient(size):
+    """The diagonal tile gradient at `size`, computed small and smoothly enlarged."""
+    base = 256
+    img = Image.new("RGB", (base, base))
+    pixels = img.load()
+    for y in range(base):
+        for x in range(base):
+            t = (x + y) / (2 * (base - 1))
+            for (o0, c0), (o1, c1) in zip(GRADIENT, GRADIENT[1:]):
+                if o0 <= t <= o1:
+                    f = (t - o0) / (o1 - o0)
+                    pixels[x, y] = tuple(round(c0[i] + (c1[i] - c0[i]) * f) for i in range(3))
+                    break
+    return img.resize((size, size), Image.BICUBIC)
+
+
+def render(size, margin):
+    """The icon at `size` pixels square, tile inset by `margin` on each side."""
+    lens = SMALL if size <= SMALL_UP_TO else FULL
+    canvas = size * SUPERSAMPLE
+    inset = margin * canvas
+    tile = canvas - 2 * inset
+    unit = tile / 1024
+
+    def at(x, y):
+        return (inset + x * unit, inset + y * unit)
+
+    img = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
+    mask = Image.new("L", (canvas, canvas), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        [inset, inset, canvas - inset - 1, canvas - inset - 1],
+        radius=TILE_RADIUS * unit,
+        fill=255,
+    )
+    img.paste(gradient(canvas), (0, 0), mask)
+
     draw = ImageDraw.Draw(img)
+    centre = lens["centre"]
+    radius = lens["ring_radius"]
 
-    # Calculate proportions
-    margin = max(1, size // 16)
-    lens_center_x = int(size * 0.45)
-    lens_center_y = int(size * 0.45)
-    lens_radius = int(size * 0.35)
+    # The handle first, from inside the ring so the two overlap, down the
+    # diagonal to a rounded end.
+    start = centre + radius * math.cos(math.pi / 4)
+    end = lens["handle_end"]
+    half = lens["handle_width"] * unit / 2
+    draw.line([at(start, start), at(end, end)], fill=WHITE, width=round(2 * half))
+    ex, ey = at(end, end)
+    draw.ellipse([ex - half, ey - half, ex + half, ey + half], fill=WHITE)
 
-    # Draw lens circle (outer ring)
-    draw.ellipse(
-        [
-            lens_center_x - lens_radius,
-            lens_center_y - lens_radius,
-            lens_center_x + lens_radius,
-            lens_center_y + lens_radius,
-        ],
-        fill=LENS_COLOR,
-        outline=None,
-    )
+    outer = radius + lens["ring_width"] / 2
+    x0, y0 = at(centre - outer, centre - outer)
+    x1, y1 = at(centre + outer, centre + outer)
+    draw.ellipse([x0, y0, x1, y1], outline=WHITE, width=round(lens["ring_width"] * unit))
 
-    # Draw inner highlight (gives 3D effect)
-    highlight_radius = int(lens_radius * 0.7)
-    highlight_offset = int(lens_radius * 0.15)
-    draw.ellipse(
-        [
-            lens_center_x - highlight_radius + highlight_offset,
-            lens_center_y - highlight_radius + highlight_offset,
-            lens_center_x + highlight_radius + highlight_offset,
-            lens_center_y + highlight_radius + highlight_offset,
-        ],
-        fill=LENS_HIGHLIGHT,
-        outline=None,
-    )
+    scale = lens["star_scale"]
+    if scale:
+        draw.polygon(
+            [
+                at(centre + (x - STAR_CENTRE[0]) * scale, centre + (y - STAR_CENTRE[1]) * scale)
+                for x, y in star_points()
+            ],
+            fill=WHITE,
+        )
 
-    # Draw handle
-    handle_start_x = lens_center_x + int(lens_radius * 0.7)
-    handle_start_y = lens_center_y + int(lens_radius * 0.7)
-    handle_end_x = int(size * 0.85)
-    handle_end_y = int(size * 0.85)
-    handle_width = max(2, size // 8)
-
-    draw.line(
-        [(handle_start_x, handle_start_y), (handle_end_x, handle_end_y)],
-        fill=HANDLE_COLOR,
-        width=handle_width,
-    )
-
-    return img
+    return img.resize((size, size), Image.LANCZOS)
 
 
-def create_icns_from_png(png_path, icns_path):
-    """Create a minimal valid ICNS file from a PNG.
-
-    ICNS format:
-    - 4 bytes: "icns" magic
-    - 4 bytes: total file length (big-endian)
-    - Entries:
-      - 4 bytes: OSType
-      - 4 bytes: entry length (big-endian)
-      - PNG data
-    """
-    import struct
-
-    with open(png_path, "rb") as f:
-        png_data = f.read()
-
-    # Use ic10 OSType for 1024x1024
-    ostype = b"ic10"
-    entry_length = 8 + len(png_data)  # OSType + length + PNG data
-    total_length = 8 + entry_length  # icns magic + length + entry
-
-    with open(icns_path, "wb") as f:
-        # Write ICNS header
-        f.write(b"icns")
-        f.write(struct.pack(">I", total_length))
-
-        # Write entry
-        f.write(ostype)
-        f.write(struct.pack(">I", entry_length))
-        f.write(png_data)
+def write_icns(png_path, icns_path):
+    """A minimal ICNS holding the 1024 PNG as its ic10 entry."""
+    png = png_path.read_bytes()
+    entry = b"ic10" + struct.pack(">I", 8 + len(png)) + png
+    icns_path.write_bytes(b"icns" + struct.pack(">I", 8 + len(entry)) + entry)
 
 
 def generate_application_icons():
-    """Generate all application icon formats."""
-    print("Generating production application icons...")
+    icons = REPO_ROOT / "apps" / "lens" / "icons"
+    icons.mkdir(parents=True, exist_ok=True)
 
-    # Generate base 1024x1024 PNG
-    icon_png_path = REPO_ROOT / "apps" / "lens" / "icons" / "icon.png"
-    icon_png_path.parent.mkdir(parents=True, exist_ok=True)
+    png = icons / "icon.png"
+    print(f"  {png.relative_to(REPO_ROOT)} (1024x1024)")
+    render(1024, MARGIN_MACOS).save(png, "PNG")
 
-    print(f"  Creating {icon_png_path} (1024x1024)...")
-    icon_1024 = create_lens_icon(1024)
-    icon_1024.save(icon_png_path, "PNG")
-
-    # Generate ICO (Windows)
-    icon_ico_path = REPO_ROOT / "apps" / "lens" / "icons" / "icon.ico"
-    print(f"  Creating {icon_ico_path} (multi-size)...")
-
-    # Create multiple sizes for ICO
-    ico_sizes = [16, 32, 48, 256]
-    ico_images = []
-    for size in ico_sizes:
-        img = create_lens_icon(size)
-        ico_images.append(img)
-
-    # Save as ICO (Pillow will handle multi-size)
-    ico_images[0].save(
-        icon_ico_path,
+    ico = icons / "icon.ico"
+    sizes = [16, 20, 24, 32, 40, 48, 64, 128, 256]
+    print(f"  {ico.relative_to(REPO_ROOT)} ({', '.join(map(str, sizes))})")
+    images = [render(size, MARGIN_WINDOWS) for size in sizes]
+    images[-1].save(
+        ico,
         format="ICO",
-        sizes=[(size, size) for size in ico_sizes],
-        append_images=ico_images[1:],
+        sizes=[(size, size) for size in sizes],
+        append_images=images[:-1],
     )
 
-    # Generate ICNS (macOS) from the PNG
-    icon_icns_path = REPO_ROOT / "apps" / "lens" / "icons" / "icon.icns"
-    print(f"  Creating {icon_icns_path} (macOS)...")
-    create_icns_from_png(icon_png_path, icon_icns_path)
-
-    print("✓ Application icons generated")
+    icns = icons / "icon.icns"
+    print(f"  {icns.relative_to(REPO_ROOT)}")
+    write_icns(png, icns)
 
 
 def generate_msix_assets():
-    """Generate MSIX packaging assets."""
-    print("\nGenerating MSIX packaging assets...")
+    assets = REPO_ROOT / "packaging" / "windows-msix" / "Assets"
+    assets.mkdir(parents=True, exist_ok=True)
 
-    msix_assets_dir = REPO_ROOT / "packaging" / "windows-msix" / "Assets"
-    msix_assets_dir.mkdir(parents=True, exist_ok=True)
-
-    # MSIX requires specific sizes
-    assets = {
+    for name, size in {
         "StoreLogo.png": 50,
         "Square44x44Logo.png": 44,
         "Square150x150Logo.png": 150,
-        "Wide310x150Logo.png": (310, 150),  # Wide format
-    }
+    }.items():
+        print(f"  {(assets / name).relative_to(REPO_ROOT)} ({size}x{size})")
+        render(size, MARGIN_WINDOWS).save(assets / name, "PNG")
 
-    for asset_name, size_spec in assets.items():
-        asset_path = msix_assets_dir / asset_name
-
-        if isinstance(size_spec, tuple):
-            width, height = size_spec
-            # For wide format, create a landscape version
-            img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-            # Center the lens icon in the wide format
-            icon_size = min(width, height) - 20
-            icon = create_lens_icon(icon_size)
-            # Paste centered
-            paste_x = (width - icon_size) // 2
-            paste_y = (height - icon_size) // 2
-            img.paste(icon, (paste_x, paste_y), icon)
-        else:
-            img = create_lens_icon(size_spec)
-
-        print(f"  Creating {asset_name} ({size_spec if isinstance(size_spec, int) else f'{size_spec[0]}x{size_spec[1]}'})...")
-        img.save(asset_path, "PNG")
-
-    print("✓ MSIX assets generated")
+    # The wide tile: the icon centred on a transparent banner.
+    width, height = 310, 150
+    icon_size = 110
+    wide = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    icon = render(icon_size, MARGIN_WINDOWS)
+    wide.paste(icon, ((width - icon_size) // 2, (height - icon_size) // 2), icon)
+    print(f"  {(assets / 'Wide310x150Logo.png').relative_to(REPO_ROOT)} ({width}x{height})")
+    wide.save(assets / "Wide310x150Logo.png", "PNG")
 
 
 def main():
-    print("=" * 70)
-    print("Mori Lens Production Asset Generator")
-    print("=" * 70)
-    print()
-    print("This generator creates production-quality application icons.")
-    print("These are suitable for distribution, not just smoke testing.")
-    print()
-
+    print("Generating Mori Lens icons")
     generate_application_icons()
     generate_msix_assets()
-
-    print()
-    print("=" * 70)
-    print("Production assets generated successfully.")
-    print()
-    print("Note: These assets are deterministic and can be regenerated.")
-    print("For custom branding, modify the design parameters in this script.")
-    print("=" * 70)
+    print("Done")
 
 
 if __name__ == "__main__":
