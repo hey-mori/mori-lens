@@ -60,15 +60,15 @@ const LESSONS: [Lesson; 2] = [
     Lesson {
         language: "English",
         lines: [
-            "Rest the pointer on this line and wait without clicking.",
-            "Nothing you read here leaves this machine.",
+            "Let the pointer rest on this sentence for a moment.",
+            "Nothing you read here leaves this computer.",
         ],
     },
     Lesson {
         language: "Korean",
         lines: [
-            "이 줄에 포인터를 올려 두고 누르지 말고 기다리세요.",
-            "여기서 읽은 것은 이 컴퓨터를 떠나지 않습니다.",
+            "이 문장 위에 포인터를 잠시 멈춰 두세요.",
+            "여기서 읽은 내용은 이 컴퓨터 밖으로 나가지 않습니다.",
         ],
     },
 ];
@@ -177,9 +177,9 @@ pub fn lesson_for(reader_language: &str) -> Option<Lesson> {
 /// gesture and the honest thing is to stage nothing at all.
 pub fn heading_for(tier: AppTier, modifier: &str) -> Option<String> {
     match tier {
-        AppTier::Allow => Some("문장 위에 포인터를 올려 두면 카드가 나타납니다".to_owned()),
+        AppTier::Allow => Some("문장 위에 포인터를 잠시 멈추면 카드가 나타납니다".to_owned()),
         AppTier::Modifier => Some(format!(
-            "{modifier} 키를 누른 채로 문장 위에 포인터를 올려 두세요"
+            "{modifier} 키를 누른 채 문장 위에 포인터를 멈춰 두세요"
         )),
         AppTier::Deny => None,
     }

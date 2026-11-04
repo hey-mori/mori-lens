@@ -102,8 +102,8 @@ fn focus_in(line: &str, rect: ScreenRect, point: ScreenPoint) -> usize {
 mod tests {
     use super::*;
 
-    const LINE: &str = "이 줄에 포인터를 올려 두고 누르지 말고 기다리세요.";
-    const LATIN: &str = "Rest the pointer on this line and wait without clicking.";
+    const LINE: &str = "이 문장 위에 포인터를 잠시 멈춰 두세요.";
+    const LATIN: &str = "Let the pointer rest on this sentence for a moment.";
 
     fn rect() -> ScreenRect {
         ScreenRect::new(100, 200, 400, 20)
