@@ -1,0 +1,53 @@
+# Developer Certificate of Origin.
+#
+# A contribution from outside the organization is accepted under the
+# repository's licence, MPL-2.0, and every commit in it carries a sign-off that
+# certifies the contributor may submit it (https://developercertificate.org).
+# `git commit -s` adds the line. The policy is in CONTRIBUTING.md.
+#
+# Maintainers (the owner, organization members and collaborators) and bots are
+# skipped: the sign-off certifies the right to contribute to a project, and the
+# people who hold the project's rights do not need to certify that to
+# themselves. A skipped job counts as passed.
+#
+# This job only reads git objects. It interpolates no pull request text into a
+# shell command, so it is safe on the read-only token a fork receives.
+name: dco
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  sign-off:
+    name: commits are signed off
+    if: >-
+      github.event.pull_request.user.type != 'Bot' &&
+      !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: every commit has a Signed-off-by line for its author
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=0
+          for commit in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            author="$(git log -1 --format='%an <%ae>' "$commit")"
+            if ! git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$commit" | grep -qxF "$author"; then
+              echo "::error::$(git log -1 --format='%h' "$commit") has no 'Signed-off-by: $author' line"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Add the sign-off with 'git commit --amend -s' or 'git rebase --signoff $BASE', then push again."
+            exit 1
+          fi
+          echo "Every commit is signed off."
