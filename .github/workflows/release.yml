@@ -1,13 +1,17 @@
 # Release workflow.
 #
-# Builds Windows distribution artifacts when a version tag is pushed:
+# Builds Windows distribution artifacts when a version tag is pushed, and
+# creates a draft GitHub Release that a maintainer publishes by hand:
 #   - NSIS installer (.exe)
 #   - MSIX package (Store-preparation artifact)
 # Then creates a GitHub Release with all artifacts + SHA-256 manifests.
 #
 # v0.1.0 is Windows-only. macOS build verification remains in package-smoke.yml.
 #
-# The tag must match the version in Cargo.toml and tauri.conf.json.
+# The tag must match the version in Cargo.toml and tauri.conf.json. A release
+# candidate tag, vX.Y.Z-rc.N, builds the same X.Y.Z artifacts and marks the
+# draft as a pre-release, so a candidate can be installed and checked before
+# the final tag exists.
 #
 # CODE SIGNING: not configured. The Windows certificate must be imported as
 # GitHub secrets (WINDOWS_CERTIFICATE, WINDOWS_CERTIFICATE_PASSWORD) before
@@ -21,6 +25,7 @@ on:
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
 
 permissions:
   contents: read
@@ -66,6 +71,7 @@ jobs:
           CARGO_VERSION=$(grep -m1 '^version' apps/lens/Cargo.toml | cut -d'"' -f2)
           TAURI_VERSION=$(jq -r '.version' apps/lens/tauri.conf.json)
           TAG_VERSION="${GITHUB_REF_NAME#v}"
+          TAG_VERSION="${TAG_VERSION%%-rc.*}"
           if [ "$CARGO_VERSION" != "$TAG_VERSION" ] || [ "$TAURI_VERSION" != "$TAG_VERSION" ]; then
             echo "version mismatch: cargo=$CARGO_VERSION tauri=$TAURI_VERSION tag=$TAG_VERSION"
             exit 1
@@ -84,6 +90,7 @@ jobs:
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${VERSION%%-rc.*}"
           EXE="apps/lens/target/release/bundle/nsis/Mori Lens_${VERSION}_x64-setup.exe"
           if [ ! -f "$EXE" ]; then
             echo "ERROR: NSIS installer not found: $EXE"
@@ -94,7 +101,7 @@ jobs:
       - name: Verify installer (structural)
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}".TrimStart('v')
+          $version = "${{ github.ref_name }}".TrimStart('v') -replace '-rc\.\d+$', ''
           $exe = "apps/lens/target/release/bundle/nsis/Mori Lens_${version}_x64-setup.exe"
           $payload = "apps/lens/target/release/lens.exe"
           if (-not (Test-Path $exe)) { Write-Error "NSIS installer not found: $exe"; exit 1 }
@@ -206,3 +213,4 @@ jobs:
             **Note**: macOS support is planned for a future release. The macOS implementation exists in the source tree but has not been runtime-verified.
           generate_release_notes: true
           draft: true
+          prerelease: ${{ contains(github.ref_name, '-rc.') }}
