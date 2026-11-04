@@ -224,7 +224,7 @@
 
 | Capability | Status | Evidence | Notes |
 |------------|--------|----------|-------|
-| CI workflow configured | SOURCE VERIFIED | .github/workflows/ci.yml | Manual-only trigger |
+| CI workflow configured | SOURCE VERIFIED | .github/workflows/ci.yml | Push to main and pull requests, hosted runners |
 | Package smoke workflow configured | SOURCE VERIFIED | .github/workflows/package-smoke.yml | Manual-only trigger |
 | Release workflow configured | SOURCE VERIFIED | .github/workflows/release.yml | Tag-triggered |
 | CI run on current main | NOT RUN ON CURRENT MAIN | — | Historical success on old SHA (0cf3c47, 2026-09-06) |
@@ -316,7 +316,7 @@
 
 | Workflow | Trigger | Status |
 |----------|---------|--------|
-| ci.yml | workflow_dispatch (manual) | CONFIGURED, MANUAL-ONLY |
+| ci.yml | push to main, pull_request, workflow_dispatch | CONFIGURED, AUTOMATIC |
 | package-smoke.yml | workflow_dispatch (manual) | CONFIGURED, MANUAL-ONLY |
 | release.yml | tag push (v*.*.*) | CONFIGURED, TAG-TRIGGERED |
 
