@@ -5,21 +5,20 @@
 # locally, so there is exactly one definition of "verified" and local and CI
 # cannot drift apart.
 #
-# TRIGGER STATE: manual only, on purpose.
+# TRIGGER STATE: every push to main and every pull request.
 #
-# The repository is private, and Actions on a private repository is metered.
-# In the sibling repository (hey-mori/mori) runs were being rejected before they
-# started, which put a red X on every commit and taught us to ignore the
-# signal. A permanently failing check is worse than an honestly disabled one,
-# because it hides the real failures among the noise.
+# The triggers were manual-only while the repository was private, because
+# Actions on a private repository is metered and rejected runs had put a red X
+# on every commit. Public, standard GitHub-hosted runners are free.
 #
-# So the automatic triggers are commented out rather than deleted, and the real
-# gate is `scripts/check.sh`, recorded in each pull request under "How it was
-# verified" (docs/git-workflow.md §9).
+# Every job runs on a GitHub-hosted runner. A pull request from a fork runs with
+# the read-only token below and no secrets, on a machine discarded afterwards,
+# and its first run waits for a maintainer's approval. No job may target a
+# self-hosted runner: a fork can change this file in its own pull request.
 #
-# TO RESTORE: once billing is configured, or the repository becomes public and
-# standard runners are free, uncomment the `push` and `pull_request` triggers
-# below. Nothing else needs to change.
+# The real gate is still `scripts/check.sh`, recorded in each pull request
+# under "How it was verified" (docs/git-workflow.md §9); CI adds a clean-checkout
+# signal on top.
 #
 # WHAT CI CANNOT DO HERE: the acquisition adapter needs a live desktop with a
 # focused window, so no runner can verify it. Windows-hosted jobs compile it and
@@ -29,9 +28,9 @@ name: ci
 
 on:
   workflow_dispatch:
-  # push:
-  #   branches: [main]
-  # pull_request:
+  push:
+    branches: [main]
+  pull_request:
 
 permissions:
   contents: read
