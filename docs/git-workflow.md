@@ -166,11 +166,11 @@ The gate validates:
 - No unpushed commits on the branch
 - PR is mergeable (when queryable)
 
-This repository does not have CI running on every PR (GitHub Actions
-costs are metered), so the merge-readiness gate is a local check rather
-than a GitHub-side hard block. The script enforces what can be enforced
-without CI; what cannot be enforced (for example, a PR body edited after
-the script ran) is instead a convention upheld by the author.
+CI runs on every pull request (§9), and the ruleset on `main` requires
+its two `scripts/check.sh` jobs to pass. The wrapper still matters: it
+checks what CI does not, such as the PR body and commit attribution.
+What neither can enforce (for example, a PR body edited after the script
+ran) is a convention upheld by the author.
 
 
 ## 5. Pull requests
@@ -239,11 +239,13 @@ a clean `main`. The one bootstrapping exception, recorded so it is not
 mistaken for the rule: the initial commit that creates the repository
 skeleton has no `main` to branch from.
 
-`main` is protected by the pre-push hook and by the verification gate
-rather than by a hard branch-protection rule, because the repository is
-private on a plan where protection rules are not available. That is a
-platform limitation, not a preference: when the constraint lifts, turn
-protection on.
+`main` is protected twice. The pre-push hook and the verification gate
+guard a local clone. Since the repository became public, a GitHub ruleset on
+the default branch also forbids deleting it, forbids non-fast-forward pushes,
+and requires changes to arrive through a pull request that merges with a merge
+commit. The ruleset requires no approving review and no status check, has no
+bypass actors, and does not replace the local gate: the gate and CI results
+are still checked by whoever merges.
 
 ## 7. Language
 
@@ -324,17 +326,15 @@ CI must never re-list these commands in YAML. If it did, the local rule
 and the CI rule would drift, and the pull request checklist would start
 meaning two things.
 
-**The remote CI is manual-only for now, matching Mori, and for the same
-reason.** The repository is private and Actions on a private repository
-is metered; a permanently failing check is worse than an honestly
-disabled one, because real failures hide inside the noise and everyone
-learns to ignore the signal. The automatic triggers are commented out in
-[`ci.yml`](../.github/workflows/ci.yml), not deleted, and restoring them
-is a one-line change once billing is configured or the repository is
-public.
+**Remote CI runs on every push to `main` and every pull request**, on
+GitHub-hosted runners only. It was manual-only while the repository was
+private, because Actions on a private repository is metered and runs that
+were rejected before they started put a red X on every commit. Public,
+standard runners are free. No job targets a self-hosted runner: a pull
+request from a fork can edit the workflow it runs.
 
-So today the real gate is `scripts/check.sh`, run locally and recorded
-in the pull request under "How it was verified".
+The real gate is still `scripts/check.sh`, run locally and recorded in the
+pull request under "How it was verified". CI adds a clean-checkout signal.
 
 Stating a rule the tooling cannot enforce would make this document
 decorative. This section says what is actually true.

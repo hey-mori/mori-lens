@@ -427,6 +427,8 @@ impl AppHandle {
     ///
     /// Emits a Tauri event that the web UI listens for to switch sections.
     /// Section names: "status", "library", "history", "general", etc.
+    // Only the Windows tray opens a section directly.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn show_window_section(&self, section: &str) {
         if let Some(window) = self.0.get_webview_window("main") {
             let _ = window.show();

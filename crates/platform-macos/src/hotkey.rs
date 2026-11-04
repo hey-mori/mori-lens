@@ -16,7 +16,7 @@
 
 use std::os::raw::c_int;
 
-use lens_core::shortcut::{Key, Modifiers, Shortcut, ShortcutAction, ShortcutConfig};
+use lens_core::shortcut::{Key, Modifiers, ShortcutAction, ShortcutConfig};
 
 /// Product command from a global hotkey or menu action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

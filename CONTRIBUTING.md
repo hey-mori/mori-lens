@@ -280,8 +280,8 @@ Every commit MUST follow [`docs/commit-format.md`](docs/commit-format.md).
 That file is the authoritative spec. The short form:
 
 - Subject: `<type>: <imperative lower-case summary>`, no trailing
-  period, under ~70 chars. Type is one of `feat`, `fix`, `refactor`,
-  `test`, `docs`, `chore`.
+  period, under ~70 chars. Type is one of `feat`, `fix`, `perf`,
+  `refactor`, `test`, `docs`, `chore`.
 - One blank line after the subject.
 - Body is a **bullet list only**, each line starting with `- `. No prose
   paragraphs. No blank lines between bullets. 3 to 7 bullets is typical.
