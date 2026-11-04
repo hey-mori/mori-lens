@@ -102,7 +102,7 @@ This document traces the origin and distribution rights for all visual assets in
 
 ### 4. Smoke Test Assets (Structural CI Only)
 
-**Smoke assets are placeholders for CI structural validation only. They are NOT used in release builds.**
+**Smoke assets are placeholders for structural tests only. No workflow builds with them: release and package-smoke builds both use the committed production assets.**
 
 #### Smoke Asset Generator
 - **Script**: `scripts/generate-smoke-assets.py`
@@ -146,9 +146,9 @@ python scripts/generate-smoke-assets.py
 ### Asset Pipeline Architecture
 
 ```
-package-smoke.yml (CI structural test)
-  → generate-smoke-assets.py (grey placeholders)
-  → package with placeholders
+package-smoke.yml (manual test build)
+  → verify-product-assets.py (Windows job)
+  → package with production assets, so an installed smoke build shows the real icon
   → upload as smoke test artifacts
   → NOT for distribution
 
