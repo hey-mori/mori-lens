@@ -1,5 +1,8 @@
 //! The tray glyph, as pixels rather than as a file.
 //!
+//! The glyph is the application icon's lens, a ring and its handle, drawn in
+//! one colour as tray icons are, without the tile behind it.
+//!
 //! Lens has no icon asset and this is deliberate. A tray icon has to be sharp
 //! at whatever size Windows asks for, which on a mixed-DPI desktop is not one
 //! size, and it has to say at a glance whether the product is listening. A
@@ -36,18 +39,31 @@ pub enum Glyph {
 /// one picture with two weights.
 const PAUSED_ALPHA: f64 = 0.38;
 
-/// Outer edge of the ring, as a fraction of the icon's half-width.
+/// Centre of the lens, as a fraction of the icon's size on both axes.
 ///
-/// Not 1.0: Windows draws tray icons hard against their neighbours, and a glyph
-/// touching its own bounds looks larger and dirtier than the system ones beside
-/// it.
-const OUTER: f64 = 0.86;
+/// Up and to the left of the middle, so the ring and its handle together sit
+/// centred in the square, as they do in the application icon.
+const CENTRE: f64 = 0.42;
+
+/// Outer edge of the ring, as a fraction of the icon's size.
+const OUTER: f64 = 0.34;
 
 /// Inner edge, leaving a ring thick enough to survive a 16 pixel icon.
 ///
-/// At 16px the ring is about 2.5 pixels across. Thinner and anti-aliasing eats
-/// it; thicker and it closes into a blob at small sizes.
-const INNER: f64 = 0.54;
+/// At 16px the ring is about 2 pixels across. Thinner and anti-aliasing eats
+/// it; thicker and the hole closes into a blob at small sizes.
+const INNER: f64 = 0.21;
+
+/// Where the handle ends, on the diagonal, as a fraction of the icon's size.
+///
+/// Short of the corner: Windows draws tray icons hard against their
+/// neighbours, and a glyph touching its own bounds looks larger and dirtier
+/// than the system ones beside it.
+const HANDLE_END: f64 = 0.84;
+
+/// Half the handle's width, as a fraction of the icon's size. A little wider
+/// than the ring, as in the application icon, so it reads as a grip.
+const HANDLE_HALF_WIDTH: f64 = 0.075;
 
 /// Samples per axis inside each pixel.
 ///
@@ -75,9 +91,16 @@ pub fn tray_glyph(size: u32, colour: Rgb, glyph: Glyph) -> Vec<u32> {
         Glyph::Paused => PAUSED_ALPHA,
     };
 
-    let half = f64::from(size) / 2.0;
-    let outer = half * OUTER;
-    let inner = half * INNER;
+    let scale = f64::from(size);
+    let centre = scale * CENTRE;
+    let outer = scale * OUTER;
+    let inner = scale * INNER;
+    // The handle starts inside the ring, so the two overlap rather than meet
+    // at a seam, and runs down the diagonal.
+    let reach = (outer + inner) / 2.0 * std::f64::consts::FRAC_1_SQRT_2;
+    let handle_start = centre + reach;
+    let handle_end = scale * HANDLE_END;
+    let handle_half_width = scale * HANDLE_HALF_WIDTH;
     let step = 1.0 / f64::from(SUPERSAMPLE);
 
     let mut pixels = Vec::with_capacity((size * size) as usize);
@@ -87,13 +110,16 @@ pub fn tray_glyph(size: u32, colour: Rgb, glyph: Glyph) -> Vec<u32> {
             for sub_y in 0..SUPERSAMPLE {
                 for sub_x in 0..SUPERSAMPLE {
                     // The sample sits at the centre of its sub-cell, not its
-                    // corner. Sampling corners biases the whole ring half a
+                    // corner. Sampling corners biases the whole glyph half a
                     // pixel up and left, which is invisible at 64 and obvious
                     // at 16.
                     let px = f64::from(x) + (f64::from(sub_x) + 0.5) * step;
                     let py = f64::from(y) + (f64::from(sub_y) + 0.5) * step;
-                    let distance = (px - half).hypot(py - half);
-                    if distance <= outer && distance >= inner {
+                    let distance = (px - centre).hypot(py - centre);
+                    let on_ring = distance <= outer && distance >= inner;
+                    let on_handle =
+                        distance_to_diagonal(px, py, handle_start, handle_end) <= handle_half_width;
+                    if on_ring || on_handle {
                         hits += 1;
                     }
                 }
@@ -104,6 +130,16 @@ pub fn tray_glyph(size: u32, colour: Rgb, glyph: Glyph) -> Vec<u32> {
         }
     }
     pixels
+}
+
+/// Distance from a point to the segment of the diagonal `x == y` between
+/// `(from, from)` and `(to, to)`, which is the handle's centre line. Measuring
+/// to a segment rather than a line gives the handle rounded ends.
+fn distance_to_diagonal(x: f64, y: f64, from: f64, to: f64) -> f64 {
+    // Project onto the diagonal: the nearest point on the infinite line is
+    // where both coordinates equal their mean.
+    let along = ((x + y) / 2.0).clamp(from, to);
+    (x - along).hypot(y - along)
 }
 
 /// One pixel, as `0xAARRGGBB` with the colour already multiplied by the alpha.
@@ -143,13 +179,26 @@ mod tests {
         }
     }
 
-    /// It is a ring, so the middle must be a hole. A filled circle would read
-    /// as a dot, which is what half the tray already looks like.
+    /// It is a lens, so the middle of the ring must be a hole. A filled circle
+    /// would read as a dot, which is what half the tray already looks like.
     #[test]
-    fn the_centre_is_transparent() {
+    fn the_centre_of_the_lens_is_transparent() {
         let size = 32;
         let pixels = tray_glyph(size, INK, Glyph::Listening);
-        assert_eq!(alpha_at(&pixels, size, size / 2, size / 2), 0);
+        let centre = (f64::from(size) * CENTRE) as u32;
+        assert_eq!(alpha_at(&pixels, size, centre, centre), 0);
+    }
+
+    /// The handle is what makes the ring a lens rather than a letter O.
+    #[test]
+    fn the_handle_is_drawn_down_the_diagonal() {
+        let size = 32;
+        let pixels = tray_glyph(size, INK, Glyph::Listening);
+        let on_handle = (f64::from(size) * (HANDLE_END - 0.08)) as u32;
+        assert_eq!(alpha_at(&pixels, size, on_handle, on_handle), 255);
+        // And only there: the opposite corner of the square stays empty.
+        let off_handle = (f64::from(size) * 0.9) as u32;
+        assert_eq!(alpha_at(&pixels, size, off_handle, size / 8), 0);
     }
 
     #[test]
@@ -162,15 +211,16 @@ mod tests {
     }
 
     /// The ring itself, sampled where it must be solid: halfway between the
-    /// inner and outer edges, on the horizontal through the centre.
+    /// inner and outer edges, on the horizontal through the lens's centre.
     #[test]
     fn the_ring_is_opaque_where_it_is_thickest() {
         let size = 32;
         let pixels = tray_glyph(size, INK, Glyph::Listening);
-        let half = f64::from(size) / 2.0;
-        let radius = half * (OUTER + INNER) / 2.0;
-        let x = (half + radius).round() as u32 - 1;
-        assert_eq!(alpha_at(&pixels, size, x, size / 2), 255);
+        let scale = f64::from(size);
+        let centre = scale * CENTRE;
+        let radius = scale * (OUTER + INNER) / 2.0;
+        let x = (centre - radius) as u32;
+        assert_eq!(alpha_at(&pixels, size, x, centre as u32), 255);
     }
 
     /// Survives the size that matters. At 16 pixels the ring is thin enough
