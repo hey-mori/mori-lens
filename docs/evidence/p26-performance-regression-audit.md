@@ -30,5 +30,5 @@ Performance is **stable with no release blockers**. P20C work already addressed 
 ## Related
 
 - P13 benchmarks: `docs/benchmarks/p13-quick-baseline-2026-09-21-054306.md`
-- Event delegation: commit 6167e8a
-- Stable DOM: commit 76f98ef
+- Event delegation: commit 5e22ef2
+- Stable DOM: commit dece993

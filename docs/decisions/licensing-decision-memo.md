@@ -24,21 +24,23 @@ kept as the record of how it was reached.
 From 2026-08-27 until 2026-11-03 the README said the code was not licensed for
 use, and the Cargo manifests declared `UNLICENSED`.
 
-Git history records one earlier file. Commit `cff6b73` (2026-08-27, 11:07 +0900)
+Git history records one earlier file. Commit `a522b83` (2026-08-27, 11:07 +0900)
 added an Apache-2.0 `LICENSE` ("Copyright 2026 Isaac Lee"), and the README and
-`SECURITY.md` named Apache-2.0 at that commit. Commit `08c722c` (13:42 the same
+`SECURITY.md` named Apache-2.0 at that commit. Commit `043e816` (13:42 the same
 day) removed the file and both statements. Its message says the manifest was the
 statement the owner had made and that the file had been dropped in with the
 other community files. The file is present in the tree of seven commits on
-`main`, `cff6b73` through `4d37636e`. Those commits were not removed when the
-file was, and they stay readable in the public history. The message of `08c722c`
+`main`, `a522b83` through `bc6e6fd4`. Those commits were not removed when the
+file was, and they stay readable in the public history. The message of `043e816`
 cites `3268b7a`, which no longer exists, so the history had been rewritten once
-before the repository reached its present form; the hashes here are the ones
-that exist now.
+before the repository reached its present form. On 2026-11-04 the history from
+2026-08-06 on was rewritten again, to remove a workplace system's names from
+test fixtures; the Apache-2.0 file and the statements about it were not
+touched, and the hashes here are the rewritten ones.
 
 What the record does not settle: whether any copy of the tree from that window
 reached anyone other than the owner, and what that would mean in law. The
-message of `08c722c` describes the repository as private at the time. This memo
+message of `043e816` describes the repository as private at the time. This memo
 draws no legal conclusion about the Apache-2.0 file; that needs the owner's
 confirmation and, if it matters, legal advice.
 
