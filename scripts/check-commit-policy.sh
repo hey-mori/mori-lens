@@ -39,6 +39,10 @@ fi
 failed=0
 
 while IFS= read -r sha; do
+  # A bot's commit (Dependabot's, for one) carries the message GitHub writes for it, which the format cannot ask it to change, so it is skipped.
+  case "$(git log -1 --format='%ae' "$sha")" in
+    *"[bot]@users.noreply.github.com") continue ;;
+  esac
   msg="$(git log -1 --format='%B' "$sha")"
   subject="$(echo "$msg" | head -1)"
   errors="$(echo "$msg" | bash scripts/validate-commit-message.sh --stdin 2>&1)" || true
