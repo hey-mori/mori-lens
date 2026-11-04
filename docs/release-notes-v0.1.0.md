@@ -51,7 +51,7 @@ Mori Lens is an accessibility-first text capture and translation tool for Window
 
 ### Windows NSIS Installer (Recommended)
 
-1. Download `Mori Lens_0.1.0_x64-setup.exe` from the release assets
+1. Download `MoriLens_0.1.0_x64-setup.exe` from the release assets
 2. Run the installer (no admin rights required)
 3. Launch Mori Lens from Start Menu or desktop shortcut
 4. Follow the welcome lesson
