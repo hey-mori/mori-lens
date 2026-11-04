@@ -27,7 +27,7 @@ if [[ "$1" == "-extract" ]]; then
   # Return canned values based on key
   case "$KEY" in
     CFBundleIdentifier)
-      echo "area.mori.lens"
+      echo "dev.swarea.mori-lens"
       ;;
     CFBundleVersion)
       echo "0.1.0"
@@ -92,7 +92,7 @@ cat > "$VALID_APP/Contents/Info.plist" << 'PLIST'
 <plist version="1.0">
 <dict>
   <key>CFBundleIdentifier</key>
-  <string>area.mori.lens</string>
+  <string>dev.swarea.mori-lens</string>
   <key>CFBundleVersion</key>
   <string>0.1.0</string>
   <key>CFBundleShortVersionString</key>
@@ -145,7 +145,7 @@ cat > "$INVALID_APP/Contents/Info.plist" << 'PLIST'
 <plist version="1.0">
 <dict>
   <key>CFBundleIdentifier</key>
-  <string>area.mori.lens</string>
+  <string>dev.swarea.mori-lens</string>
 </dict>
 </plist>
 PLIST
