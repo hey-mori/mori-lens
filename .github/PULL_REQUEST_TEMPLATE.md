@@ -20,8 +20,8 @@ A green `cargo test` does not verify a platform adapter: UI Automation needs a
 live desktop, so `cargo test` compiles crates/platform-* and exercises nothing.
 Say which of code, test, or a live run each claim rests on.
 
-- scripts/check.sh, with the outcome, since remote CI is manual-only and this
-  is the actual gate
+- scripts/check.sh, with the outcome. It is the actual gate; CI runs the same
+  script on a clean checkout
 - Adapter change: a probe run against named applications, pasted, and
   transcribed into docs/compatibility/windows-app-matrix.md. Never paste
   captured text.
