@@ -253,9 +253,7 @@ Before committing:
 scripts/check.sh          # the fast gate; CI runs scripts/check.sh --full
 ```
 
-`--full` also builds the Tauri app and runs its tests. It is meant for
-Windows and macOS: on Linux the app's platform code reads as unused and
-clippy fails, so use the fast gate there.
+`--full` also builds the desktop app and runs its tests on Windows and macOS.
 [CONTRIBUTING.md](CONTRIBUTING.md) covers the full development contract.
 
 ## Privacy
