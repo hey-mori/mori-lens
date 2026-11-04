@@ -459,14 +459,14 @@ impl Card {
     pub fn cannot_read_this_app(hotkey: Option<&str>) -> Self {
         match hotkey {
             Some(key) => Self {
-                original: "이 앱은 글자를 내주지 않습니다".to_owned(),
-                body: CardBody::Problem(format!("{key} 를 누르면 화면을 읽습니다")),
+                original: "이 앱은 텍스트를 제공하지 않습니다".to_owned(),
+                body: CardBody::Problem(format!("{key}를 누르면 화면에서 읽습니다")),
                 footer: "화면 읽기".to_owned(),
                 metadata: None,
             },
             None => Self {
                 original: String::new(),
-                body: CardBody::Problem("이 앱은 글자를 내주지 않습니다".to_owned()),
+                body: CardBody::Problem("이 앱은 텍스트를 제공하지 않습니다".to_owned()),
                 footer: "화면 읽기를 쓸 수 없습니다".to_owned(),
                 metadata: None,
             },
@@ -485,7 +485,7 @@ impl Card {
         Self {
             original: String::new(),
             body: CardBody::Problem("읽을 수 있는 언어라 번역하지 않았습니다".to_owned()),
-            footer: format!("{key} 를 누르면 뜻을 설명합니다"),
+            footer: format!("{key}를 누르면 뜻을 설명합니다"),
             metadata: None,
         }
     }
@@ -513,7 +513,7 @@ impl Card {
     pub fn hold_the_modifier(key: &str) -> Self {
         Self {
             original: "지금은 읽지 않고 있습니다".to_owned(),
-            body: CardBody::Problem(format!("{key}를 누른 채 문장 위에 올려두세요")),
+            body: CardBody::Problem(format!("{key}를 누른 채 문장 위에 포인터를 멈춰 두세요")),
             footer: "설정에서 항상 읽도록 바꿀 수 있습니다".to_owned(),
             metadata: None,
         }
