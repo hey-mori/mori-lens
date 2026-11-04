@@ -108,21 +108,30 @@ jobs:
           if (-not (Test-Path $payload)) { Write-Error "Payload not found: $payload"; exit 1 }
           & .\scripts\verify-nsis.ps1 -ExePath $exe -PayloadExePath $payload -ExpectedVersion $version
 
-      - name: Generate SHA-256 manifest
+      # GitHub replaces a space in a release asset's name with a dot, so the
+      # installer is published as MoriLens_..., matching the MSIX, and the
+      # checksum is computed over that name: `sha256sum -c` then works on a
+      # downloaded copy. v0.1.0-rc.3 shipped "Mori.Lens_..." beside a manifest
+      # naming "Mori Lens_...".
+      - name: Stage installer and SHA-256 manifest
         shell: bash
         run: |
-          cd apps/lens/target/release/bundle/nsis
+          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${VERSION%%-rc.*}"
+          mkdir -p dist/windows
+          cp "apps/lens/target/release/bundle/nsis/Mori Lens_${VERSION}_x64-setup.exe" "dist/windows/MoriLens_${VERSION}_x64-setup.exe"
+          cd dist/windows
           sha256sum *.exe > SHA256SUMS.txt
           cat SHA256SUMS.txt
-          cd -
+          sha256sum -c SHA256SUMS.txt
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-nsis
           path: |
-            apps/lens/target/release/bundle/nsis/*.exe
-            apps/lens/target/release/bundle/nsis/SHA256SUMS.txt
+            dist/windows/*.exe
+            dist/windows/SHA256SUMS.txt
 
   build-msix:
     name: Build MSIX package (Windows)
