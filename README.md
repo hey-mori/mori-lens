@@ -9,12 +9,11 @@
 Rest the pointer on a word or a sentence in any application, and Lens shows its
 meaning in your language, on your own machine.
 
-[Current state](#current-state) ·
+[Features](#features) ·
 [Installation](#installation) ·
-[Develop](#develop) ·
-[Privacy](#privacy)
+[Privacy](#privacy) ·
+[Develop](#develop)
 
-![status: pre-release](https://img.shields.io/badge/status-pre--release-6246f5)
 [![license: MPL-2.0](https://img.shields.io/badge/license-MPL--2.0-1c1e22)](LICENSE)
 
 </div>
@@ -31,22 +30,7 @@ in-memory OCR crop when an application exposes nothing to ask. That
 single decision is what makes it cheap enough to leave running, accurate
 about word boundaries, and respectful of privacy by default.
 
-## Current state
-
-**Pre-release · Windows.** There is no published release or installer
-yet. You build Lens from source and install it with the scripts under
-[Installation](#installation). On Windows the whole product runs: hover,
-read, translate, the card, OCR, deep analysis, saving to the Library, manual
-review, and the Control Center for settings and the library. Version 0.1.0 is
-being prepared as the first release; CI already builds unsigned NSIS and MSIX
-packages to prove the packaging, but they are not published.
-
-**macOS:** the macOS app compiles and its tests pass in CI, but it has not
-been run and checked by real readers, which needs the Accessibility and
-Screen Recording permissions. macOS is not part of the 0.1.0 scope.
-Sequenced in [docs/roadmap.md](docs/roadmap.md).
-
-What works on Windows:
+## Features
 
 - Hover to translation to card, end to end. Acquisition p50 3-7ms, a
   warm translation about 1.5s, a repeat of the same sentence from memory.
@@ -70,8 +54,15 @@ Global shortcuts are configurable in Control Center.
 The Control Center interface supports English and Korean, selectable in
 Settings > General, without restarting the application.
 
-The authoritative list, capability by capability, is in
+The full list, capability by capability, is in
 [`docs/mori-lens-project-goal.md`](docs/mori-lens-project-goal.md).
+
+## Platforms
+
+| Platform | |
+| --- | --- |
+| Windows 10 and 11, x64 | Supported. Measured against the applications in the [compatibility matrix](docs/compatibility/windows-app-matrix.md). |
+| macOS | Builds and passes its tests in CI. Not packaged; see [docs/roadmap.md](docs/roadmap.md). |
 
 ## How it works
 
@@ -262,9 +253,7 @@ Before committing:
 scripts/check.sh          # the fast gate; CI runs scripts/check.sh --full
 ```
 
-`--full` also builds the Tauri app and runs its tests. It is meant for
-Windows and macOS: on Linux the app's platform code reads as unused and
-clippy fails, so use the fast gate there.
+`--full` also builds the desktop app and runs its tests on Windows and macOS.
 [CONTRIBUTING.md](CONTRIBUTING.md) covers the full development contract.
 
 ## Privacy
