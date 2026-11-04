@@ -65,6 +65,12 @@ followed or to be argued with.
     `(P2.5)`, `[Milestone 1]`. The branch and the issue already carry
     that, and a subject line that starts with a label reads worse a
     year later.
+- **A DCO sign-off is the one trailer allowed.** A final block of
+  `Signed-off-by: Name <email>` lines, after one blank line, is where
+  `git commit -s` puts it, and the validator splits it off before the bullet
+  rules. Outside contributors need it on every commit (`CONTRIBUTING.md`,
+  "Licence and sign-off"); a sign-off anywhere else is a non-bullet line and
+  is rejected.
 - **Merge commits** keep the message git or GitHub writes:
   `Merge pull request #N from ...` with the pull request title as its
   body, or `Merge branch '...' into ...` when main is brought into a
