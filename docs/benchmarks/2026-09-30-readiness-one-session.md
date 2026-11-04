@@ -20,7 +20,7 @@ Each lookup opened its own TCP connection, on its own spawned thread.
 | Machine | 12th Gen Intel Core i7-12650H, 10 physical / 16 logical cores, 32 GB RAM |
 | OS | Windows 11 Home 10.0.26200, build 26200 |
 | Toolchain | rustc 1.89.0 (29483883e 2025-08-04), `dev` profile |
-| Base commit | `4fb79aa` |
+| Base commit | `1dacf4a` |
 | Provider | Ollama 0.30.7 on `127.0.0.1:11434` |
 | Installed models | `qwen2.5:7b` (4.68 GB), `translategemma:latest` (3.30 GB) |
 | Date | 2026-09-30 |
