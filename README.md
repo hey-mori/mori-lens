@@ -33,17 +33,20 @@ about word boundaries, and respectful of privacy by default.
 
 ## Current state
 
-**v0.1.0 Release Candidate · Windows.** The full product runs on
-Windows: hover, read, translate, card, OCR, deep analysis,
-save to Library, manual review, and a Tauri settings/library UI.
-`cargo build --release --manifest-path apps/lens/Cargo.toml` produces
-something you can use today.
+**Pre-release · Windows.** There is no published release or installer
+yet. You build Lens from source and install it with the scripts under
+[Installation](#installation). On Windows the whole product runs: hover,
+read, translate, the card, OCR, deep analysis, saving to the Library, manual
+review, and the Control Center for settings and the library. Version 0.1.0 is
+being prepared as the first release; CI already builds unsigned NSIS and MSIX
+packages to prove the packaging, but they are not published.
 
-**macOS:** Source implementation is substantial and mirrors the Windows
-product, but runtime validation with outside readers is pending. macOS is
-not part of the v0.1.0 release scope. Sequenced in [docs/roadmap.md](docs/roadmap.md).
+**macOS:** the macOS app compiles and its tests pass in CI, but it has not
+been run and checked by real readers, which needs the Accessibility and
+Screen Recording permissions. macOS is not part of the 0.1.0 scope.
+Sequenced in [docs/roadmap.md](docs/roadmap.md).
 
-What ships:
+What works on Windows:
 
 - Hover to translation to card, end to end. Acquisition p50 3-7ms, a
   warm translation about 1.5s, a repeat of the same sentence from memory.
@@ -65,11 +68,7 @@ What ships:
 Global shortcuts are configurable in Control Center.
 
 The Control Center interface supports English and Korean, selectable in
-Settings > General. All UI strings are translated dynamically without
-restarting the application.
-
-What does not exist yet: real-world validation on macOS with outside
-readers (requires Accessibility and Screen Recording permissions).
+Settings > General, without restarting the application.
 
 The authoritative list, capability by capability, is in
 [`docs/mori-lens-project-goal.md`](docs/mori-lens-project-goal.md).
@@ -156,9 +155,10 @@ Model resolution is provider-specific: Ollama's router picks the best
 installed model when none is named; LM Studio uses the configured or
 discovered model.
 
-### From the repository
+### From the repository (Windows)
 
-Requires [Rust 1.85+](https://rustup.rs).
+Requires [Rust 1.85+](https://rustup.rs) and a local provider from the step
+above.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/build-and-install.ps1
@@ -247,7 +247,7 @@ cargo test
 ```
 
 ```bash
-cargo run -p hover-probe
+cargo run -p hover-probe   # Windows only
 ```
 
 The probe prints one line per resolved hover: the application, how the
@@ -259,21 +259,36 @@ and for how to record a session into the compatibility matrix.
 Before committing:
 
 ```bash
-scripts/check.sh
+scripts/check.sh          # the fast gate; CI runs scripts/check.sh --full
 ```
+
+`--full` also builds the Tauri app and runs its tests. It is meant for
+Windows and macOS: on Linux the app's platform code reads as unused and
+clippy fails, so use the fast gate there.
+[CONTRIBUTING.md](CONTRIBUTING.md) covers the full development contract.
 
 ## Privacy
 
 Local-first is a constraint, not a marketing line. The short version:
 
 - Password and protected fields are refused before their contents are read.
-- Nothing captured is written to disk.
+- Nothing captured is written to disk unless you save it, or turn on
+  history, which is off by default.
 - No screen image is taken at all in the default configuration.
 - No network call leaves the machine; translation runs against a local
   provider (Ollama or LM Studio) over a loopback address only.
 
 The full model, with what each promise depends on and how to verify it:
 [docs/privacy-model.md](docs/privacy-model.md).
+
+## Contributing and security
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Commits
+follow [docs/commit-format.md](docs/commit-format.md), and contributors from
+outside the organization sign off each commit (`git commit -s`).
+
+Report a vulnerability privately as [SECURITY.md](SECURITY.md) describes,
+never in an issue.
 
 ## License
 
