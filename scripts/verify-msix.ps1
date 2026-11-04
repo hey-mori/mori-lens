@@ -1,4 +1,4 @@
-# Mori Lens — MSIX verification script.
+# Mori Lens, MSIX verification script.
 #
 # Validates an MSIX package for Store submission readiness.
 # Verifies structural correctness, version accuracy, payload

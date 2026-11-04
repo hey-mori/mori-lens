@@ -261,6 +261,18 @@ if [[ "$FULL" == "1" ]]; then
   cargo test -p lens-platform-macos
 fi
 
+# Windows PowerShell 5.1, which the release workflow and a user's
+# `powershell -File` run, reads a script without a BOM in the ANSI code page. An
+# em dash then arrives as three bytes, one of them a closing quote, and the
+# script fails to parse: package-msix.ps1 did exactly that on v0.1.0-rc.2.
+# A leading UTF-8 BOM is allowed: with it, 5.1 reads the file correctly.
+step "PowerShell scripts are ASCII"
+if git ls-files '*.ps1' | LC_ALL=C xargs grep -nP '[\x80-\xFF]' \
+  | LC_ALL=C grep -vP '^[^:]+:1:\xEF\xBB\xBF[\x00-\x7F]*$'; then
+  echo "PowerShell scripts must be ASCII: Windows PowerShell 5.1 misreads UTF-8 without a BOM" >&2
+  exit 1
+fi
+
 step "executable files keep LF endings"
 bash "$(dirname "$0")/check-line-endings.sh"
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# Mori Lens — NSIS verifier regression tests.
+# Mori Lens, NSIS verifier regression tests.
 #
 # Tests that the NSIS verifier correctly handles various scenarios.
 # Uses temporary files and fixtures to avoid requiring real installers.
@@ -50,14 +50,14 @@ function Test-Case($Name, $ScriptBlock, $ShouldSucceed) {
 
 try {
     # ==========================================================================
-    # Test 1: Missing installer → fail
+    # Test 1: Missing installer -> fail
     # ==========================================================================
     Test-Case "Missing installer" {
         & $Verifier -ExePath "$TempDir\nonexistent.exe"
     } -ShouldSucceed $false
 
     # ==========================================================================
-    # Test 2: Non-PE/corrupt installer → fail
+    # Test 2: Non-PE/corrupt installer -> fail
     # ==========================================================================
     Test-Case "Non-PE file" {
         $fakeExe = Join-Path $TempDir "fake.exe"
@@ -66,7 +66,7 @@ try {
     } -ShouldSucceed $false
 
     # ==========================================================================
-    # Test 3: Incorrect expected version → fail
+    # Test 3: Incorrect expected version -> fail
     # ==========================================================================
     Test-Case "Incorrect expected version" {
         # Create a minimal valid PE with wrong version (> 1MB to pass size check)
@@ -86,7 +86,7 @@ try {
     } -ShouldSucceed $false
 
     # ==========================================================================
-    # Test 4: Valid PE with correct version, no payload → pass with warning
+    # Test 4: Valid PE with correct version, no payload -> pass with warning
     # ==========================================================================
     Test-Case "Valid installer without payload verification" {
         # Create a minimal valid PE (> 1MB with version in name)
@@ -101,7 +101,7 @@ try {
     } -ShouldSucceed $true
 
     # ==========================================================================
-    # Test 5: Valid installer + x64 payload → pass architecture contract
+    # Test 5: Valid installer + x64 payload -> pass architecture contract
     # ==========================================================================
     Test-Case "x86 installer bootstrap + x64 payload" {
         # Create installer with x86 bootstrap (> 1MB with version in name)
@@ -126,7 +126,7 @@ try {
     } -ShouldSucceed $true
 
     # ==========================================================================
-    # Test 6: Valid installer + x86 payload → fail (payload must be x64)
+    # Test 6: Valid installer + x86 payload -> fail (payload must be x64)
     # ==========================================================================
     Test-Case "x86 installer bootstrap + x86 payload (should fail)" {
         # Create installer with x86 bootstrap (> 1MB with version in name)
@@ -151,7 +151,7 @@ try {
     } -ShouldSucceed $false
 
     # ==========================================================================
-    # Test 7: Valid installer + x64 payload (bootstrap also x64) → pass
+    # Test 7: Valid installer + x64 payload (bootstrap also x64) -> pass
     # ==========================================================================
     Test-Case "x64 installer bootstrap + x64 payload" {
         # Create installer with x64 bootstrap (> 1MB with version in name)
