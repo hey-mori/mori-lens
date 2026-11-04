@@ -212,11 +212,11 @@
 
 - Lemma: "vacuously" ✓, Sense: correct ✓
 
-### F02 · "The Worklynx dashboard shows one row per session." · word: "Worklynx"
+### F02 · "The Workloom dashboard shows one row per session." · word: "Workloom"
 
 | field | expected | actual | type | cause |
 |-------|----------|--------|------|-------|
-| sense | proper noun | "워크라이너스 시스템의 관리자 도구" | F5 | 알려지지 않은 고유명사의 의미를 환각 |
+| sense | proper noun | "워크룸 시스템의 관리자 도구" | F5 | 알려지지 않은 고유명사의 의미를 환각 |
 | structure | (something) | (empty) | F5 | multi-word 문장에서 구조 누락 |
 
 - Overall: Neutral (고유명사 처리로는 합리적)

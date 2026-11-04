@@ -135,7 +135,7 @@ fn run_deep(translator: &OllamaTranslator, entry: &CorpusEntry) -> Option<DeepAn
 /// own dictionary form and stays in the language it is written in."
 ///
 /// "rests" and "rest" are NOT a match: the model failed to lemmatise.
-/// "Worklynx" and "Worklynx" are a match: proper noun, already in base form.
+/// "Workloom" and "Workloom" are a match: proper noun, already in base form.
 fn lemma_matches(actual: &str, expected: &str) -> bool {
     let a = actual.trim().to_lowercase();
     let e = expected.trim().to_lowercase();

@@ -43,7 +43,7 @@ CRITICAL: You MUST leave "lemma", "part_of_speech" and "sense" as empty strings.
 - A05: "unavailable" → "available" (wrong, missed negation prefix)
 - D04: "targeting" → "target" (wrong, "targeting" is correct as gerund)
 - E02: "processed" → "processed" (wrong, should be "process")
-- F02: "Worklynx" → "dashboard" (wrong, analyzed wrong word)
+- F02: "Workloom" → "dashboard" (wrong, analyzed wrong word)
 
 ### POS accuracy
 

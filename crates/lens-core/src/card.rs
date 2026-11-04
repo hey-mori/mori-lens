@@ -2231,9 +2231,9 @@ mod name_changed_tests {
     #[test]
     fn a_changed_name_is_said_on_the_card() {
         let card = Card::translated(
-            "The EngineDataSheetService returns one row per sheet.",
+            "The LedgerDataSheetService returns one row per sheet.",
             &QuickTranslation {
-                text: "엔진데이터시트서비스는 한 장당 한 행씩 반환합니다.".to_owned(),
+                text: "레저데이터시트서비스는 한 장당 한 행씩 반환합니다.".to_owned(),
                 engine: EngineId::Local,
                 model: "qwen2.5:7b".to_owned(),
                 provider: Provider::default(),
@@ -2259,9 +2259,9 @@ mod name_changed_tests {
     #[test]
     fn a_changed_name_and_a_cut_answer_are_both_said() {
         let card = Card::translated(
-            "The EngineDataSheetService returns one row per sheet.",
+            "The LedgerDataSheetService returns one row per sheet.",
             &QuickTranslation {
-                text: "엔진데이터시트서비스는 한 장당".to_owned(),
+                text: "레저데이터시트서비스는 한 장당".to_owned(),
                 engine: EngineId::Local,
                 model: "qwen2.5:7b".to_owned(),
                 provider: Provider::default(),

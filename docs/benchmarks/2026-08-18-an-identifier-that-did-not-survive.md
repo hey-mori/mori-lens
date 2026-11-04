@@ -8,8 +8,8 @@ defect a reader meets.*
 **It happens inside a sentence.**
 
 ```
-EngineDataSheetService   alone       엔진데이터시트서비스
-                         a sentence  엔진데이터시트서비스는 한 장당 한 행씩 반환합니다.
+LedgerDataSheetService   alone       레저데이터시트서비스
+                         a sentence  레저데이터시트서비스는 한 장당 한 행씩 반환합니다.
 ```
 
 Three runs of three, both arms. The sentence arm is what a hover actually
@@ -17,7 +17,7 @@ produces.
 
 ## The mitigation is running and does not work
 
-`identifiers_in` finds `EngineDataSheetService` by its camel hump, and the
+`identifiers_in` finds `LedgerDataSheetService` by its camel hump, and the
 prompt lists it so the model copies it rather than applying a rule. Its own
 comment names this exact token as the failure it was written against.
 

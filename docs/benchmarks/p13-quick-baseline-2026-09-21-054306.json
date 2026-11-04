@@ -936,8 +936,8 @@
       "category": "edge",
       "lane": "quick",
       "run_index": 0,
-      "source": "The Worklynx dashboard shows one row per session.",
-      "focused_word": "Worklynx",
+      "source": "The Workloom dashboard shows one row per session.",
+      "focused_word": "Workloom",
       "output": "워크 lynx 대시보드는 한 줄씩 세션을 표시합니다.",
       "automated": {
         "non_empty": true,

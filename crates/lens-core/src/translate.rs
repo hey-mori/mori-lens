@@ -666,9 +666,9 @@ pub struct QuickTranslation {
     pub part_was_removed: bool,
     /// Whether an identifier the prompt named did not come back.
     ///
-    /// Measured 2026-08-18: `EngineDataSheetService` is found by
+    /// Measured 2026-08-18: `LedgerDataSheetService` is found by
     /// [`identifiers_in`], listed in the request so the model copies it, and
-    /// transliterated to 엔진데이터시트서비스 anyway, alone and inside an
+    /// transliterated to 레저데이터시트서비스 anyway, alone and inside an
     /// ordinary sentence. A wording added to the prompt to insist scored
     /// exactly the same, three samples running.
     ///
@@ -1350,7 +1350,7 @@ mod tests {
 mod echo_tests {
     use super::reads_as_the_source;
 
-    const SOURCE: &str = "For the mechanics: I'd dump the two schemas and history table from the current database, create a fresh `insbase` database owned by `insbase_app`, then drop the old schemas after a grace period.";
+    const SOURCE: &str = "For the mechanics: I'd dump the two schemas and history table from the current database, create a fresh `orbbase` database owned by `orbbase_app`, then drop the old schemas after a grace period.";
 
     #[test]
     fn the_answer_that_was_the_question_is_caught() {
@@ -1371,7 +1371,7 @@ mod echo_tests {
         // What a good answer to that sentence looks like: every name kept,
         // every word around them replaced. This is the case the ratio has to
         // survive, and it is why the bar is 0.8 rather than something lower.
-        let good = "구조적으로는 현재 데이터베이스에서 두 스키마와 이력 테이블을 덤프하고, `insbase_app`이 소유하는 새 `insbase` 데이터베이스를 만든 다음, 유예 기간이 지나면 예전 스키마를 삭제합니다.";
+        let good = "구조적으로는 현재 데이터베이스에서 두 스키마와 이력 테이블을 덤프하고, `orbbase_app`이 소유하는 새 `orbbase` 데이터베이스를 만든 다음, 유예 기간이 지나면 예전 스키마를 삭제합니다.";
         assert!(!reads_as_the_source(SOURCE, good));
     }
 
@@ -1480,7 +1480,7 @@ mod half_translated_tests {
 ///
 /// The prompt lists the identifiers it found so the model copies them rather
 /// than applying a rule to them. Measured 2026-08-18, that is not enough:
-/// `EngineDataSheetService` is found, named, and transliterated anyway, three
+/// `LedgerDataSheetService` is found, named, and transliterated anyway, three
 /// runs of three, **alone and inside an ordinary sentence**. Naming it harder
 /// changed nothing at all: a wording added to the system prompt scored exactly
 /// the same 9 of 18 as the shipped one, three samples running.
@@ -1505,7 +1505,7 @@ pub fn identifiers_lost(source: &str, answer: &str) -> Vec<String> {
 /// Tokens in `text` that are code rather than words.
 ///
 /// A model translating a Korean sentence full of English identifiers turned
-/// `EngineDataSheetService` into 엔진데이터시트서비스 on a reader's card. The
+/// `LedgerDataSheetService` into 레저데이터시트서비스 on a reader's card. The
 /// system prompt already says identifiers stay verbatim, and a 7B model
 /// applying that to a bare CamelCase word in the middle of a sentence is
 /// evidently not something a sentence of instruction achieves.
@@ -1584,7 +1584,7 @@ fn looks_like_code(token: &str) -> bool {
     // A path rather than a sentence that happens to contain a slash. Both
     // sides have to be there, **or** it begins with one, which is what an
     // absolute route looks like and what the first version of this missed:
-    // `/projects/{id}/insbase/tables/{table}/export` has nothing before its
+    // `/projects/{id}/orbbase/tables/{table}/export` has nothing before its
     // first slash, so a rule about both sides rejected the longest and most
     // fragile identifier on the card.
     if let Some(rest) = token.strip_prefix('/') {
@@ -1600,7 +1600,7 @@ fn looks_like_code(token: &str) -> bool {
     if token.contains('_') {
         return true;
     }
-    // A camel hump. `EngineDataSheetService` has one and `English` does not,
+    // A camel hump. `LedgerDataSheetService` has one and `English` does not,
     // which is the whole distinction: an initial capital is a sentence
     // starting, and a capital after a lower-case letter is not.
     token
@@ -1614,7 +1614,7 @@ fn looks_like_code(token: &str) -> bool {
 /// A source that is nothing but identifiers has nothing to translate:
 /// a model will transliterate them into the target script, producing a
 /// card that looks like a translation but matches nothing.
-/// `EngineDataSheetService` alone became 엔진데이터시트서비스; `windows-rs
+/// `LedgerDataSheetService` alone became 레저데이터시트서비스; `windows-rs
 /// 0.62` became windows-r스 0.62. Both are worse than no card.
 ///
 /// The check is broader than [`identifiers_in`] on purpose: it also
@@ -1678,11 +1678,11 @@ mod identifier_tests {
     /// The token the prompt named and the model rewrote anyway.
     #[test]
     fn a_transliterated_identifier_is_reported_lost() {
-        let source = "The EngineDataSheetService returns one row per sheet.";
-        let answer = "엔진데이터시트서비스는 한 장당 한 행씩 반환합니다.";
+        let source = "The LedgerDataSheetService returns one row per sheet.";
+        let answer = "레저데이터시트서비스는 한 장당 한 행씩 반환합니다.";
         assert_eq!(
             identifiers_lost(source, answer),
-            vec!["EngineDataSheetService".to_owned()],
+            vec!["LedgerDataSheetService".to_owned()],
         );
     }
 
@@ -1727,7 +1727,7 @@ mod identifier_tests {
     #[test]
     fn what_the_prompt_is_told_to_keep() {
         for (text, expected) in [
-            ("EngineDataSheetService", true),
+            ("LedgerDataSheetService", true),
             ("export_csv", true),
             ("/projects/{id}/export", true),
             ("https://example.com/a", true),
@@ -1745,10 +1745,10 @@ mod identifier_tests {
     /// The line from the card, and the token it damaged.
     #[test]
     fn the_identifiers_a_model_transliterated_are_found() {
-        let line = "insway의 EngineDataSheetService 에 export_csv 를 넣고, POST /projects/{id}/insbase/tables/{table}/export 라우트를 붙였습니다.";
+        let line = "orbita의 LedgerDataSheetService 에 export_csv 를 넣고, POST /projects/{id}/orbbase/tables/{table}/export 라우트를 붙였습니다.";
         let found = identifiers_in(line);
         assert!(
-            found.iter().any(|token| token == "EngineDataSheetService"),
+            found.iter().any(|token| token == "LedgerDataSheetService"),
             "{found:?}"
         );
         assert!(found.iter().any(|token| token == "export_csv"), "{found:?}");
@@ -1815,7 +1815,7 @@ mod identifier_tests {
     /// path checks before calling the model.
     #[test]
     fn a_source_that_is_entirely_an_identifier_is_not_worth_translating() {
-        let request = QuickRequest::new("EngineDataSheetService", "Korean");
+        let request = QuickRequest::new("LedgerDataSheetService", "Korean");
         assert!(
             !request.is_worth_translating(),
             "a bare identifier must not reach the model"
@@ -1845,7 +1845,7 @@ mod identifier_tests {
     #[test]
     fn a_sentence_with_a_camel_identifier_is_still_worth_translating() {
         let request = QuickRequest::new(
-            "The EngineDataSheetService returns one row per sheet.",
+            "The LedgerDataSheetService returns one row per sheet.",
             "Korean",
         );
         assert!(request.is_worth_translating());
@@ -1854,7 +1854,7 @@ mod identifier_tests {
     /// The `mostly_identifiers` function itself, tested at the boundary.
     #[test]
     fn mostly_identifiers_threshold() {
-        assert!(mostly_identifiers("EngineDataSheetService"));
+        assert!(mostly_identifiers("LedgerDataSheetService"));
         assert!(mostly_identifiers("windows-rs 0.62"));
         assert!(mostly_identifiers("export_csv"));
         assert!(!mostly_identifiers(

@@ -640,7 +640,7 @@ impl Recognised {
 ///
 /// A suffix does not count, and that distinction is the whole rule. Korean
 /// technical writing attaches particles to English identifiers constantly:
-/// `export_csv를`, `insbase에`, `RowQuery의`, `k8s를`. Those are Hangul at the
+/// `export_csv를`, `orbbase에`, `RowQuery의`, `k8s를`. Those are Hangul at the
 /// end of a Latin token and they are correct readings of correct text.
 /// Flagging them would fire on most of what this product's first reader
 /// writes, which is worse than the silence it is trying to fix.
@@ -824,7 +824,7 @@ mod misreading_tests {
     fn a_particle_on_an_identifier_is_not_a_misreading() {
         for word in [
             "export_csv를",
-            "insbase에",
+            "orbbase에",
             "RowQuery의",
             "systemd에서",
             "k8s를",

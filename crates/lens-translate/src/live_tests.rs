@@ -761,7 +761,7 @@ fn measure_the_sentence_that_came_back_in_english() {
     };
 
     let sentences = [
-        "For the mechanics: I'd dump the two schemas and history table from the current database, create a fresh `insbase` database owned by `insbase_app`, restore those objects into it, repoint the engine, verify everything works, then drop the old schemas after a grace period.",
+        "For the mechanics: I'd dump the two schemas and history table from the current database, create a fresh `orbbase` database owned by `orbbase_app`, restore those objects into it, repoint the engine, verify everything works, then drop the old schemas after a grace period.",
         "The build failed because `cargo fmt --check` found a difference in src/main.rs.",
         "Rest the pointer on a word and the card explains it without any clicking.",
     ];
@@ -836,7 +836,7 @@ fn the_sentence_that_echoed_now_comes_back_in_korean() {
         return;
     };
 
-    let source = "For the mechanics: I'd dump the two schemas and history table from the current database, create a fresh `insbase` database owned by `insbase_app`, restore those objects into it, repoint the engine, verify everything works, then drop the old schemas after a grace period.";
+    let source = "For the mechanics: I'd dump the two schemas and history table from the current database, create a fresh `orbbase` database owned by `orbbase_app`, restore those objects into it, repoint the engine, verify everything works, then drop the old schemas after a grace period.";
 
     for round in 1..=3 {
         match translator.quick(&QuickRequest::new(source, "Korean")) {
@@ -1052,8 +1052,8 @@ fn measure_warm_latency_of_the_two_candidates() {
 
 /// Do the identifiers survive, now that they are named?
 ///
-/// The line a reader photographed, whose `EngineDataSheetService` came back as
-/// 엔진데이터시트서비스. The system prompt already said identifiers stay verbatim
+/// The line a reader photographed, whose `LedgerDataSheetService` came back as
+/// 레저데이터시트서비스. The system prompt already said identifiers stay verbatim
 /// and that was not enough, so they are now listed by name. This is whether
 /// listing them worked.
 ///
@@ -1068,8 +1068,8 @@ fn measure_whether_named_identifiers_survive() {
 
     let cases: [(&str, &[&str]); 3] = [
         (
-            "insway의 EngineDataSheetService 에 export_csv 를 넣고, POST /projects/{id}/insbase/tables/{table}/export 라우트를 붙였습니다.",
-            &["EngineDataSheetService", "export_csv", "/projects/"],
+            "orbita의 LedgerDataSheetService 에 export_csv 를 넣고, POST /projects/{id}/orbbase/tables/{table}/export 라우트를 붙였습니다.",
+            &["LedgerDataSheetService", "export_csv", "/projects/"],
         ),
         (
             "The build failed because cargo fmt --check found a difference in src/main.rs before the tests ran.",
@@ -1725,7 +1725,7 @@ fn measure_how_often_a_model_changes_language_partway() {
 /// > case that will produce a confident wrong answer, and none was tried.
 ///
 /// A selftest then walked straight into it: the focused word was
-/// `worklynx.hdhub.app`, a URL, and the card carried a `번역에서` row with
+/// `workloom.orbit.app`, a URL, and the card carried a `번역에서` row with
 /// fourteen characters in it. A URL has no counterpart in a Korean sentence.
 ///
 /// **The two-question rule is the only thing standing between that and a wrong
@@ -1746,9 +1746,9 @@ fn what_happens_to_a_word_with_no_counterpart() {
     // (sentence, translation, focused word, why it has no counterpart)
     let cases: [(&str, &str, &str, &str); 6] = [
         (
-            "Open worklynx.hdhub.app to see the dashboard.",
-            "대시보드를 보려면 worklynx.hdhub.app을 여세요.",
-            "worklynx.hdhub.app",
+            "Open workloom.orbit.app to see the dashboard.",
+            "대시보드를 보려면 workloom.orbit.app을 여세요.",
+            "workloom.orbit.app",
             "a URL, carried through untranslated",
         ),
         (
@@ -2686,7 +2686,7 @@ fn measure_what_comes_back_from_a_short_source() {
         ("the lease", "two ordinary words"),
         ("a stale element", "three ordinary words"),
         (
-            "EngineDataSheetService",
+            "LedgerDataSheetService",
             "an identifier, keeping it is correct",
         ),
         ("export_csv", "an identifier, keeping it is correct"),
@@ -2744,8 +2744,8 @@ fn measure_whether_an_identifier_survives_a_sentence() {
     // own subject matter, which is what a reader of this project would hover.
     let cases: [(&str, &str); 4] = [
         (
-            "EngineDataSheetService",
-            "The EngineDataSheetService returns one row per sheet.",
+            "LedgerDataSheetService",
+            "The LedgerDataSheetService returns one row per sheet.",
         ),
         (
             "windows-rs 0.62",
@@ -2797,7 +2797,7 @@ fn measure_whether_an_identifier_survives_a_sentence() {
 /// Measured first, because the alternative fixes are a caveat on the card and a
 /// retry, and both cost a reader something. [`#207`](https://github.com/hey-mori/mori-lens/issues/207).
 ///
-/// `EngineDataSheetService` is found by `identifiers_in`, so it is already
+/// `LedgerDataSheetService` is found by `identifiers_in`, so it is already
 /// named in the shipped prompt, and it is transliterated anyway, 3 runs of 3,
 /// alone and inside a sentence. This asks whether naming it harder is enough.
 #[test]
@@ -2819,12 +2819,12 @@ fn measure_whether_the_prompt_can_keep_an_identifier() {
 
     let cases = [
         (
-            "EngineDataSheetService",
-            "The EngineDataSheetService returns one row per sheet.",
+            "LedgerDataSheetService",
+            "The LedgerDataSheetService returns one row per sheet.",
         ),
         (
-            "insbase_app",
-            "Grant insbase_app the rights it needs and nothing more.",
+            "orbbase_app",
+            "Grant orbbase_app the rights it needs and nothing more.",
         ),
     ];
 

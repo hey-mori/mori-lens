@@ -42,7 +42,7 @@ Score each translation on a 0-2 scale:
 | E02 | exam | The data, having been processed, was written to the output. | | /2 | /2 | /2 | |
 | E03 | exam | So quickly did the model respond that nobody noticed the latency. | | /2 | /2 | /2 | |
 | F01 | edge | vacuously | | /2 | /2 | /2 | |
-| F02 | edge | The Worklynx dashboard shows one row per session. | | /2 | /2 | /2 | |
+| F02 | edge | The Workloom dashboard shows one row per session. | | /2 | /2 | /2 | |
 | F03 | edge | The timeout is 404ms, which exceeds the 200ms budget. | | /2 | /2 | /2 | |
 
 ## Deep Lane (Analysis Quality)
@@ -70,7 +70,7 @@ For each analysis, score the fields on a 0-2 scale. Check the JSON report for th
 | E01 | fail | ✓/✗ | ✓/✗ | Expected: fail, 동사 |
 | E02 | processed | ✓/✗ | ✓/✗ | Expected: process, 분사 |
 | F01 | vacuously | ✓/✗ | ✓/✗ | Expected: vacuously, 부사 |
-| F02 | Worklynx | ✓/✗ | ✓/✗ | Expected: Worklynx, 명사 |
+| F02 | Workloom | ✓/✗ | ✓/✗ | Expected: Workloom, 명사 |
 | F03 | timeout | ✓/✗ | ✓/✗ | Expected: timeout, 명사 |
 
 ### Analysis Quality (all entries)
