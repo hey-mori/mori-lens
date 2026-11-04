@@ -8,7 +8,7 @@
 - `p13-deep-baseline-2026-09-21-054306.md`
 
 **PR:** #612
-**Source HEAD:** `42100d989330c26db429c84c6e2c28221e277bb7`
+**Source HEAD:** `aff1387e5de11902d48cde157b58de15e759e5df`
 
 ---
 

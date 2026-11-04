@@ -1,7 +1,7 @@
 # Mori Lens Capability and Evidence Matrix
 
 **Date:** 2026-09-22
-**Main SHA:** de85537296d778d83ac9e645b5114d1b4c61fc79
+**Main SHA:** 9bba29143aa549adca05c1d1364b1070485cb008
 **Purpose:** Canonical capability inventory with evidence classification
 
 ## Evidence classification
@@ -310,7 +310,7 @@
 ## CI/CD evidence status
 
 **Date:** 2026-09-22
-**Audited against SHA:** de85537296d778d83ac9e645b5114d1b4c61fc79
+**Audited against SHA:** 9bba29143aa549adca05c1d1364b1070485cb008
 
 ### Workflow configuration
 

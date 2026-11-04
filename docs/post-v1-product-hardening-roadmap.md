@@ -2,7 +2,7 @@
 
 **Started:** 2026-09-22
 **Previous roadmap:** P1–P17 (P1–P12 COMPLETE, P13 IN PROGRESS human-only, P14–P17 COMPLETE)
-**Main at start:** de85537296d778d83ac9e645b5114d1b4c61fc79
+**Main at start:** 9bba29143aa549adca05c1d1364b1070485cb008
 
 ## Objective
 
