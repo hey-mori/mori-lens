@@ -5,4 +5,4 @@
 # If you update this version, verify that regenerated assets are byte-identical
 # (or document what changed and why).
 
-Pillow==10.1.0
+Pillow==13.0.0
