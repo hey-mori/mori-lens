@@ -96,14 +96,21 @@ concurrent_bins="$(cargo test -p lens-storage -p lens-settings --no-run --messag
 for line in sys.stdin:
     m = json.loads(line)
     if m.get("reason") == "compiler-artifact" and m.get("executable") and m["target"]["kind"] == ["lib"]:
-        print(m["executable"])')"
+        print(m["executable"])' | tr -d '\r')"
 [ -n "$concurrent_bins" ] || { echo "no test binaries found for the concurrency check"; exit 1; }
 concurrent_failed=0
 for bin in $concurrent_bins; do
-  "$bin" -q >/dev/null 2>&1 &
+  log_a="$(mktemp)"
+  log_b="$(mktemp)"
+  "$bin" -q >"$log_a" 2>&1 &
   other=$!
-  "$bin" -q >/dev/null 2>&1 || concurrent_failed=1
+  "$bin" -q >"$log_b" 2>&1 || concurrent_failed=1
   wait "$other" || concurrent_failed=1
+  if [ "$concurrent_failed" != 0 ]; then
+    printf '\n--- %s\n' "$bin"
+    tail -n 40 "$log_a" "$log_b"
+  fi
+  rm -f "$log_a" "$log_b"
 done
 if [ "$concurrent_failed" != 0 ]; then
   printf '\ntwo runs of the same tests interfered with each other. A test helper\n'

@@ -882,6 +882,7 @@ mod tests {
         {
             let mut f = std::fs::OpenOptions::new()
                 .create(true)
+                .truncate(true)
                 .write(true)
                 .mode(0o644)
                 .open(&file)
