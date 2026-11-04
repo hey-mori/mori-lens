@@ -99,13 +99,20 @@ if [[ -f "$PLIST_PATH" ]]; then
 fi
 
 # Check 8: Extract and verify CFBundleIdentifier
+# The expected value is the one Tauri builds the bundle from, read from
+# tauri.conf.json, so the two cannot drift. A hard-coded copy did: it said
+# area.mori.lens while every bundle carried dev.swarea.mori-lens.
 if [[ -f "$PLIST_PATH" ]]; then
+  TAURI_CONF="$(dirname "$0")/../apps/lens/tauri.conf.json"
+  EXPECTED_ID=$(sed -n 's/^[[:space:]]*"identifier":[[:space:]]*"\([^"]*\)".*/\1/p' "$TAURI_CONF" 2>/dev/null | head -n 1)
   BUNDLE_ID=$(plutil -extract CFBundleIdentifier raw "$PLIST_PATH" 2>/dev/null || echo "")
-  if [[ -n "$BUNDLE_ID" ]]; then
-    if [[ "$BUNDLE_ID" == "area.mori.lens" ]]; then
+  if [[ -z "$EXPECTED_ID" ]]; then
+    fail "No identifier found in $TAURI_CONF"
+  elif [[ -n "$BUNDLE_ID" ]]; then
+    if [[ "$BUNDLE_ID" == "$EXPECTED_ID" ]]; then
       pass "CFBundleIdentifier is correct ($BUNDLE_ID)"
     else
-      fail "CFBundleIdentifier is wrong (expected area.mori.lens, got $BUNDLE_ID)"
+      fail "CFBundleIdentifier is wrong (expected $EXPECTED_ID, got $BUNDLE_ID)"
     fi
   else
     fail "CFBundleIdentifier not found in Info.plist"
