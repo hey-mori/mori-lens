@@ -1,7 +1,7 @@
-# Mori Lens — NSIS installer structural verification.
+# Mori Lens, NSIS installer structural verification.
 #
 # Validates an NSIS installer for structural correctness.
-# This is NOT an installation test — it verifies the artifact shape.
+# This is NOT an installation test, it verifies the artifact shape.
 #
 # NSIS installers have a two-layer architecture:
 #   1. INSTALLER BOOTSTRAP: x86 PE for maximum Windows compatibility
@@ -61,13 +61,13 @@ function Check($Name, $Condition, $Message) {
         Write-Host "  PASS: $Name"
         $script:Passed++
     } else {
-        Write-Host "  FAIL: $Name — $Message"
+        Write-Host "  FAIL: $Name, $Message"
         $script:Failed++
     }
 }
 
 function Warn($Name, $Message) {
-    Write-Host "  WARN: $Name — $Message"
+    Write-Host "  WARN: $Name, $Message"
     $script:Warnings++
 }
 
@@ -143,7 +143,7 @@ if ($VersionInfo) {
 
 # 6. Installer bootstrap architecture (PE machine type)
 # NSIS installers legitimately use x86 bootstrap for Windows compatibility.
-# This is NOT the application architecture — that's checked separately.
+# This is NOT the application architecture, that's checked separately.
 if ($HasMZ -and $Bytes.Length -ge 64) {
     # PE header offset is at 0x3C
     $PeOffset = [BitConverter]::ToInt32($Bytes, 0x3C)
@@ -158,7 +158,7 @@ if ($HasMZ -and $Bytes.Length -ge 64) {
                 0xAA64 { "ARM64" }
                 default { "Unknown (0x$($BootstrapMachine.ToString('X4')))" }
             }
-            # NSIS bootstrap may be x86 or x64 — both are valid
+            # NSIS bootstrap may be x86 or x64, both are valid
             Check "Installer bootstrap architecture" ($BootstrapMachine -eq 0x8664 -or $BootstrapMachine -eq 0x014c) "Unexpected bootstrap architecture: $BootstrapMachineName"
         } else {
             Warn "Installer PE signature" "Not found at expected offset"
@@ -237,7 +237,7 @@ if ($PayloadExePath) {
         }
     }
 } else {
-    # No payload path provided — warn that payload architecture is unverified
+    # No payload path provided, warn that payload architecture is unverified
     Warn "Payload architecture" "Not verified (use -PayloadExePath to verify the bundled lens.exe)"
 }
 
@@ -263,7 +263,7 @@ try {
 if ($SigStatus -eq "SIGNED") {
     Check "Authenticode signature" $true "Signed"
 } elseif ($SigStatus -eq "UNSIGNED") {
-    Warn "Authenticode signature" "Unsigned — expected for development builds (signing is external blocker)"
+    Warn "Authenticode signature" "Unsigned, expected for development builds (signing is external blocker)"
 } else {
     Warn "Authenticode signature" $SigStatus
 }

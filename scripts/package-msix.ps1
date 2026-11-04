@@ -1,4 +1,4 @@
-# Mori Lens — MSIX packaging script.
+# Mori Lens, MSIX packaging script.
 #
 # Builds the Windows release binary and packages it as an MSIX for
 # Microsoft Store submission (ADR-0017).
@@ -99,13 +99,13 @@ New-Item -ItemType Directory -Path $StagingDir -Force | Out-Null
 # Copy binary
 Copy-Item $Binary (Join-Path $StagingDir "lens.exe")
 
-# Process manifest template — auto-detect encoding (handles BOM transparently)
+# Process manifest template, auto-detect encoding (handles BOM transparently)
 $Manifest = [System.IO.File]::ReadAllText($ManifestTemplate, [System.Text.Encoding]::Default)
 # Strip any BOM characters that may have survived encoding detection
 $Manifest = $Manifest.TrimStart([char]0xFEFF, [char]0xFFFD)
 # Replace the template version with the actual product version (simple string replacement)
 $Manifest = $Manifest.Replace('Version="0.1.0.0"', "Version=`"$MsixVersion`"")
-# Note: Publisher placeholders remain — they must be replaced before Store submission
+# Note: Publisher placeholders remain, they must be replaced before Store submission
 # Write manifest as UTF-8 without BOM
 $Utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText(
@@ -126,7 +126,7 @@ $RequiredAssets = @("StoreLogo.png", "Square44x44Logo.png", "Square150x150Logo.p
 foreach ($Asset in $RequiredAssets) {
     $AssetPath = Join-Path $StagingAssets $Asset
     if (-not (Test-Path $AssetPath)) {
-        Write-Host "  Warning: $Asset not found — Store submission will need real assets"
+        Write-Host "  Warning: $Asset not found, Store submission will need real assets"
     }
 }
 
