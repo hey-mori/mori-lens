@@ -66,7 +66,9 @@ const CHROME_POINTS: i32 = 11;
 /// reader's own rules, which only the application knows
 /// ([`lens_core::welcome::heading_for`]).
 const FOOTER_KEY: &str = "닫으려면 Esc";
-const FOOTER_WHY: &str = "누르지 않아도 됩니다. 멈추기만 하면 됩니다.";
+/// True in both reading modes: holding Alt is not a click, and in the mode
+/// that reads without it, resting is all there is.
+const FOOTER_WHY: &str = "클릭할 필요는 없습니다.";
 
 /// What the window paints, read by its own thread inside `WM_PAINT`.
 ///

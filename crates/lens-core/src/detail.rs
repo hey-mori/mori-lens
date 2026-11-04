@@ -166,7 +166,7 @@ impl Detail {
     /// `lens_core::reach` exists: a capability nobody can discover is a silent
     /// product.
     pub fn nothing_explained_yet(key: &str) -> String {
-        format!("{key} 를 누르면 이 문장을 설명합니다")
+        format!("{key}를 누르면 이 문장을 설명합니다")
     }
 
     /// Placeholder text when Deep action is unbound or unavailable.
