@@ -137,6 +137,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
+      # scripts/check.sh runs the Control Center's Vitest suite, which needs the
+      # app's Node dependencies, exactly as in the NSIS job above.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Node dependencies
+        run: npm ci --prefix apps/lens
+
       - name: Verify production assets
         shell: bash
         run: |
