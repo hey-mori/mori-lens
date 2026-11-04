@@ -14,7 +14,8 @@ use windows::core::BOOL;
 use windows::Win32::Foundation::POINT;
 use windows::Win32::System::Console::{SetConsoleCtrlHandler, CTRL_BREAK_EVENT, CTRL_C_EVENT};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, VK_CONTROL, VK_LBUTTON, VK_MBUTTON, VK_MENU, VK_RBUTTON,
+    GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+    KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL, VK_LBUTTON, VK_MBUTTON, VK_MENU, VK_RBUTTON,
 };
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
@@ -79,6 +80,35 @@ pub const MODIFIER_NAME: &str = "Alt";
 /// The policy modifier. Alt, matching the modifier-tier design.
 pub fn modifier_held() -> bool {
     key_down(VK_MENU)
+}
+
+/// A virtual-key code no keyboard sends and Windows assigns to nothing, so no
+/// application binds it. The same code AutoHotkey uses for its menu mask.
+const MENU_MASK_KEY: VIRTUAL_KEY = VIRTUAL_KEY(0xE8);
+
+/// Press and release [`MENU_MASK_KEY`] while the modifier is held, so that the
+/// release which follows is not read as "Alt on its own" and does not open the
+/// application's menu. See `lens_core::menu_mask` for when this is called.
+///
+/// Best effort: an elevated window ignores input from Lens, and a failure
+/// leaves the old behaviour rather than anything worse.
+pub fn mask_menu_activation() {
+    let key = |flags: KEYBD_EVENT_FLAGS| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: MENU_MASK_KEY,
+                wScan: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let inputs = [key(KEYBD_EVENT_FLAGS(0)), key(KEYEVENTF_KEYUP)];
+    // SAFETY: `inputs` is a valid array of keyboard INPUT structures and the
+    // size passed is the size of one of them.
+    let _ = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
 }
 
 /// The Ctrl key, which toggles the hover scope between word and sentence.

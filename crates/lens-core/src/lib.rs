@@ -36,6 +36,7 @@ pub mod hover;
 pub mod icon;
 pub mod keep;
 pub mod language;
+pub mod menu_mask;
 pub mod model_management;
 pub mod panel;
 pub mod policy;

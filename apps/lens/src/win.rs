@@ -1770,6 +1770,9 @@ pub fn main() -> std::process::ExitCode {
     // the console is a lower bound on what happened and cannot answer *is this
     // working for me*. See `lens_core::tally`.
     let mut tally = lens_core::tally::Tally::default();
+    // Keeps releasing Alt after a card from opening the application's menu.
+    // See `lens_core::menu_mask`.
+    let mut menu_mask = lens_core::menu_mask::MenuMask::new();
     let mut advised = false;
     // Whether the acquisition thread's death has already been reported, so it
     // is said once rather than on every tick of a loop that keeps running.
@@ -2847,6 +2850,7 @@ pub fn main() -> std::process::ExitCode {
                 ctrl_held: pointer::ctrl_held(),
                 ocr_requested: false,
             };
+            menu_mask.modifier(input.modifier_held);
             let process_name = pointer::process_name_at(position);
             let now = started.elapsed();
             // Handed over, not performed. This is the line the whole file was
@@ -2909,6 +2913,11 @@ pub fn main() -> std::process::ExitCode {
                     continue;
                 };
                 life.hover_settled(generation);
+                // The reader held Alt for this, so its release must not
+                // reach the application as a menu command.
+                if menu_mask.lens_acted(pointer::modifier_held()) {
+                    pointer::mask_menu_activation();
+                }
                 match resolution {
                     Resolution::Presented(target) => {
                         // This application can be read, so it is never offered the
