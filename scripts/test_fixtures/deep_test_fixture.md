@@ -9,7 +9,7 @@
 | Endpoint | 127.0.0.1:11434 |
 | Source artifact | `p13-deep-baseline-2026-09-21-054306.json` |
 | Merged PR | #612 |
-| Merged main SHA | `d3e0e34caaceb1a1208f390f83733fb08a506fae` |
+| Merged main SHA | `ca2b70a94820e77c6511a5f0fb0da4322ca4500b` |
 | Reviewer | Test Reviewer |
 | Review date | 2026-09-22 |
 

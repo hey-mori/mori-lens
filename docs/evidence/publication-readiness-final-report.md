@@ -10,7 +10,7 @@ The Mori Lens repository has completed all publication-readiness work. All gates
 
 **Recommendation**: Convert existing repository to public as-is. Do NOT create a new repository.
 
-**Audited baseline SHA**: c48f9c36b5c3a0ea8748ea1e9650adc40dc3a342
+**Audited baseline SHA**: a094f119c8a0c42bbae9a671f3ff5acfcaed6d8f
 
 The merge commit containing this report necessarily postdates the audited baseline. The final RC SHA is established externally after all publication changes have landed.
 
@@ -18,7 +18,7 @@ The merge commit containing this report necessarily postdates the audited baseli
 
 | Category | Status | Evidence Reference |
 |----------|--------|-------------------|
-| Audited baseline SHA | PASS | c48f9c36b5c3a0ea8748ea1e9650adc40dc3a342 |
+| Audited baseline SHA | PASS | a094f119c8a0c42bbae9a671f3ff5acfcaed6d8f |
 | Public-facing tree | PASS | Phase C complete, PR #637 merged |
 | Third-party inventory | PASS | 10 first-party, 458 third-party, 28 unique licenses |
 | Asset provenance | PASS | docs/assets/PROVENANCE.md, Phase D complete |
@@ -225,7 +225,7 @@ WORKFLOW SOURCE CONTRACT = VERIFIED
 DISTRIBUTION PIPELINE CONTRACT = VERIFIED
 FINAL RC DISTRIBUTION = PENDING
 
-AUDITED BASELINE SHA = c48f9c36b5c3a0ea8748ea1e9650adc40dc3a342
+AUDITED BASELINE SHA = a094f119c8a0c42bbae9a671f3ff5acfcaed6d8f
 AUDITED BASELINE COMMIT COUNT = 1,392
 
 LICENCE PREPARATION = COMPLETE
