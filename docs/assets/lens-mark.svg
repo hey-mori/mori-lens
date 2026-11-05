@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Mori Lens mark">
+  <!-- The Mori tile and star (public/mori-mark.svg in hey-mori/mori) with a lens.
+       Same geometry as scripts/generate-product-assets.py draws for the app icon. -->
+  <defs>
+    <linearGradient id="lens-mark-tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5C52F4" />
+      <stop offset="0.55" stop-color="#715DEB" />
+      <stop offset="1" stop-color="#AA86F5" />
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="152" fill="url(#lens-mark-tile)" />
+  <line x1="634.2" y1="634.2" x2="800" y2="800" stroke="#FFFFFF" stroke-width="96" />
+  <circle cx="800" cy="800" r="48" fill="#FFFFFF" />
+  <circle cx="468" cy="468" r="235" fill="none" stroke="#FFFFFF" stroke-width="74" />
+  <path fill="#FFFFFF" transform="translate(468 468) scale(0.46) translate(-512 -531)"
+    d="M512 226 C552 226 566 263 584 337
+       C606 428 638 462 722 485
+       C787 502 806 517 806 536
+       C806 561 775 572 714 588
+       C630 610 601 643 579 734
+       C561 808 552 836 512 836
+       C472 836 463 808 445 734
+       C423 643 394 610 310 588
+       C249 572 218 561 218 536
+       C218 517 237 502 302 485
+       C386 462 418 428 440 337
+       C458 263 472 226 512 226 Z" />
+</svg>
