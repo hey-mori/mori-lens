@@ -14,6 +14,5 @@ This directory holds icon assets for MSIX Store packaging.
 ## Notes
 
 - These are required for Microsoft Store submission
-- All assets are resized from `apps/lens/icons/icon.png` (1024x1024)
-- A polished design pass is tracked as an asset improvement, not a blocker
+- `scripts/generate-product-assets.py` draws each asset at its own size from the same geometry as `apps/lens/icons/icon.png`
 - The MSIX packages structurally with these assets and they render correctly
